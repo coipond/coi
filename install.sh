@@ -312,6 +312,15 @@ setup_nft_sudoers() {
         return
     fi
 
+    # Ask before adding a passwordless-sudo rule (a security-relevant change).
+    # It is what lets COI apply network isolation (restricted/allowlist modes)
+    # without a password prompt; declining leaves open mode working.
+    if ! user_agrees "  Configure passwordless sudo for nft — needed for network isolation? [Y/n]: "; then
+        echo -e "${YELLOW}⚠ Skipped: without passwordless nft, restricted/allowlist network modes won't work (open mode still does).${NC}"
+        echo -e "   Enable later: ${BLUE}echo \"\$USER ALL=(ALL) NOPASSWD: $nft_path\" | sudo tee /etc/sudoers.d/coi-nft && sudo chmod 0440 /etc/sudoers.d/coi-nft${NC}"
+        return
+    fi
+
     echo -e "${BLUE}→ Configuring passwordless sudo for nft...${NC}"
     echo "$USER ALL=(ALL) NOPASSWD: $nft_path" | sudo tee /etc/sudoers.d/coi-nft > /dev/null
     sudo chmod 0440 /etc/sudoers.d/coi-nft
@@ -826,6 +835,20 @@ fetch_detection_databases() {
 }
 
 # Post-install setup
+# Hand any root-owned Incus client config back to the invoking user. `sudo incus`
+# calls during setup run as root but keep the user's HOME, so Incus can create
+# ~/.config/incus owned by root, which then fails the user's own commands with a
+# permission error. Best-effort and idempotent.
+restore_incus_config_ownership() {
+    local user home group
+    user="${USER:-$(id -un)}"
+    home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
+    [ -n "$home" ] || home="$HOME"
+    [ -d "$home/.config/incus" ] || return 0
+    group="$(id -gn "$user" 2>/dev/null || echo "$user")"
+    sudo chown -R "$user:$group" "$home/.config/incus" 2>/dev/null || true
+}
+
 post_install() {
     setup_nm_unmanaged_veths
     ensure_incus_service || true
@@ -834,6 +857,13 @@ post_install() {
 
     # Try to set up fast storage (best-effort, don't abort installer on failure)
     setup_fast_storage || true
+
+    # The `sudo incus` reads/writes above run as root but keep the invoking
+    # user's HOME, so Incus can leave a root-owned client config at
+    # ~/.config/incus — which then blocks the user's own `coi`/`incus` with
+    # "permission denied". Hand it back to the user so the very next command
+    # works. Best-effort; no-op if nothing was created.
+    restore_incus_config_ownership || true
 
     # Fetch GTFOBins and Sigma detection databases
     fetch_detection_databases || true
@@ -853,9 +883,18 @@ post_install() {
     echo -e "     ${BLUE}coi --help${NC}"
     echo ""
 
-    if ! groups | grep -q incus-admin; then
-        echo -e "${YELLOW}⚠ Remember to add yourself to incus-admin group:${NC}"
-        echo -e "   ${BLUE}sudo usermod -aG incus-admin \$USER${NC}"
+    local admin_user="${USER:-$(id -un)}"
+    if groups | grep -qw incus-admin; then
+        : # already active in this session — nothing to say
+    elif id -nG "$admin_user" 2>/dev/null | grep -qw incus-admin; then
+        # We added them (or they were already a member), but this shell hasn't
+        # activated the group. Say so accurately instead of "remember to add".
+        echo -e "${GREEN}✓ You're in the incus-admin group.${NC}"
+        echo -e "   Open a new shell (or log out and back in) to activate it, then: ${BLUE}coi build${NC}"
+        echo ""
+    else
+        echo -e "${YELLOW}⚠ Add yourself to the incus-admin group:${NC}"
+        echo -e "   ${BLUE}sudo usermod -aG incus-admin $admin_user${NC}"
         echo "   Then log out and back in."
         echo ""
     fi
