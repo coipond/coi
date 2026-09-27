@@ -204,6 +204,47 @@ func TestRunFixes_ArgvBuildErrorIsFailed(t *testing.T) {
 	}
 }
 
+// The nft-sudoers remediation must fire ONLY for the specific failure "nft
+// installed but passwordless sudo not configured", never for the other nft
+// states (a sudoers rule wouldn't fix them).
+func TestNftRemediation_ShouldApplyGating(t *testing.T) {
+	var nft *Remediation
+	reg := remediationList()
+	for i := range reg {
+		if reg[i].Check == "nft" {
+			nft = &reg[i]
+			break
+		}
+	}
+	if nft == nil {
+		t.Fatal("no remediation registered for the nft check")
+	}
+	if nft.ShouldApply == nil {
+		t.Fatal("nft remediation must gate with ShouldApply")
+	}
+
+	det := func(installed, available bool) map[string]interface{} {
+		return map[string]interface{}{"nft_installed": installed, "nft_available": available}
+	}
+	cases := []struct {
+		name string
+		c    HealthCheck
+		want bool
+	}{
+		{"installed-but-no-sudo", HealthCheck{Status: StatusFailed, Details: det(true, false)}, true},
+		{"not-installed", HealthCheck{Status: StatusFailed, Details: det(false, false)}, false},
+		{"already-available", HealthCheck{Status: StatusFailed, Details: det(true, true)}, false},
+		{"warning-use-sudo-false", HealthCheck{Status: StatusWarning, Details: det(true, false)}, false},
+		{"ok", HealthCheck{Status: StatusOK, Details: det(true, true)}, false},
+		{"failed-no-details", HealthCheck{Status: StatusFailed}, false},
+	}
+	for _, tc := range cases {
+		if got := nft.ShouldApply(tc.c); got != tc.want {
+			t.Errorf("%s: ShouldApply = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 // The real registry must be internally consistent: every entry must be able to
 // build its argv (given the current host) or fail cleanly, and must carry a
 // recheck so RunFixes verifies rather than assumes.

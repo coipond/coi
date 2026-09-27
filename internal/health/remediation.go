@@ -150,7 +150,58 @@ func remediations() []Remediation {
 			},
 			Recheck: func() HealthCheck { return CheckIPForwarding() },
 		},
+		{
+			Check:      "nft",
+			Summary:    "Configure passwordless sudo for nft (needed for restricted/allowlist network isolation)",
+			Class:      FixSafe,
+			Privileged: true,
+			// Only when nft is installed but passwordless sudo isn't configured
+			// (the "nft installed but passwordless sudo not configured" failure).
+			// Other nft-check failures — not installed, masquerade off, or the
+			// use_sudo=false opt-out (a WARNING) — are not fixed by a sudoers rule.
+			ShouldApply: func(c HealthCheck) bool {
+				if c.Status != StatusFailed {
+					return false
+				}
+				installed, _ := c.Details["nft_installed"].(bool)
+				available, _ := c.Details["nft_available"].(bool)
+				return installed && !available
+			},
+			Argv: func() ([]string, error) {
+				u, err := user.Current()
+				if err != nil {
+					return nil, fmt.Errorf("could not determine current user: %w", err)
+				}
+				// Write the drop-in and lock its perms in one privileged shell
+				// (the framework prefixes sudo). Username/path are system values
+				// with no quote chars, so single-quoting the line is safe.
+				line := u.Username + " ALL=(ALL) NOPASSWD: " + nftBinaryPath()
+				script := "echo '" + line + "' > /etc/sudoers.d/coi-nft && chmod 0440 /etc/sudoers.d/coi-nft"
+				return []string{"sh", "-c", script}, nil
+			},
+			Recheck: recheckNftSudo,
+		},
 	}
+}
+
+// nftBinaryPath resolves the nft binary, falling back to its usual location
+// (nft lives in /usr/sbin, which isn't always on a non-root user's PATH).
+func nftBinaryPath() string {
+	if p, err := exec.LookPath("nft"); err == nil {
+		return p
+	}
+	return "/usr/sbin/nft"
+}
+
+// recheckNftSudo reports whether passwordless `sudo -n nft` works now — the
+// exact condition the nft-sudoers remediation fixes. It is config-independent
+// (sudoers is read per invocation, so no re-login is needed): if
+// `sudo -n nft list ruleset` succeeds, the drop-in is in effect.
+func recheckNftSudo() HealthCheck {
+	if exec.Command("sudo", "-n", nftBinaryPath(), "list", "ruleset").Run() == nil {
+		return HealthCheck{Name: "nft", Status: StatusOK, Message: "Passwordless sudo for nft configured"}
+	}
+	return HealthCheck{Name: "nft", Status: StatusFailed, Message: "Passwordless sudo for nft still not configured"}
 }
 
 // RunFixes attempts to remediate every non-OK check in result that has a
