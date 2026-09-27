@@ -439,6 +439,15 @@ ensure_build_deps() {
     { command -v cc &> /dev/null || command -v gcc &> /dev/null; } || need="$need gcc"
     [ -z "$need" ] && return 0
 
+    # Ask before installing (consistent with the installer's other system
+    # changes). Building from source genuinely can't proceed without these, so a
+    # decline stops here with a pointer to the pre-built binary.
+    if ! user_agrees "  Building from source needs:${need} — install now? [Y/n]: "; then
+        echo -e "${RED}✗ Can't build from source without:${need}${NC}"
+        echo "  Install them and re-run, or choose the pre-built binary instead."
+        exit 1
+    fi
+
     echo -e "${BLUE}→ Installing build dependencies:${need}${NC}"
     case "$PKG_MANAGER" in
         apt)    sudo apt-get install -y git build-essential ;;
@@ -882,10 +891,11 @@ fetch_detection_databases() {
     echo ""
 
     # `coi update patterns` clones these over git, so git must be present. A
-    # clean Ubuntu image has no git, which made this step fail with
-    # "git: executable file not found". Install it first (best-effort).
-    if ! command -v git &> /dev/null; then
-        echo -e "${BLUE}→ Installing git (required to fetch detection databases)...${NC}"
+    # clean Ubuntu image has no git; offer to install it (with consent, like the
+    # installer's other system changes). Declining just skips the fetch — the
+    # `coi update patterns` below then fails gracefully into the "run it later"
+    # hint.
+    if ! command -v git &> /dev/null && user_agrees "  git is required to fetch detection databases — install it? [Y/n]: "; then
         pkg_install git || true
     fi
 
