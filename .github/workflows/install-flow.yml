@@ -67,6 +67,17 @@ jobs:
           sudo incus admin waitready --timeout=60 || true
           incus version || true
 
+      - name: Make the Incus socket reachable as the runner user
+        run: |
+          # Simulate the intended steady state: the user is set up to talk to
+          # Incus (as they would be after `usermod -aG incus-admin` + re-login).
+          # We open the socket directly because a fresh CI shell can't pick up a
+          # new group. Incus stays UNINITIALISED — the next step verifies that —
+          # so install.sh's own initialisation is still what gets exercised.
+          sudo usermod -aG incus-admin "$USER" || true
+          sudo chmod 666 /var/lib/incus/unix.socket
+          incus version   # must now report a Server version, or install.sh aborts in check_incus
+
       - name: Confirm the starting state is UNINITIALISED
         run: |
           # If Incus already has a usable default profile, this lane would be
