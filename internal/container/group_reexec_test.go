@@ -32,10 +32,11 @@ func TestMaybeReexec_GuardShortCircuits(t *testing.T) {
 // -n (no prompt), same-user (initgroups activates the group), guard set to
 // prevent recursion, and the user's original args preserved verbatim.
 func TestBuildReexecArgv(t *testing.T) {
-	got := buildReexecArgv("/usr/bin/sudo", "ubuntu", "/usr/local/bin/coi", []string{"build", "--slot", "2"})
+	got := buildReexecArgv("/usr/bin/sudo", "ubuntu", "/usr/local/bin/coi",
+		[]string{"HTTPS_PROXY=http://p:8080", "COI_X=1"}, []string{"build", "--slot", "2"})
 	want := []string{
 		"/usr/bin/sudo", "-n", "-u", "ubuntu",
-		"env", "COI_INCUS_GROUP_REEXEC=1",
+		"env", "HTTPS_PROXY=http://p:8080", "COI_X=1", "COI_INCUS_GROUP_REEXEC=1",
 		"/usr/local/bin/coi", "build", "--slot", "2",
 	}
 	if len(got) != len(want) {
@@ -46,18 +47,33 @@ func TestBuildReexecArgv(t *testing.T) {
 			t.Errorf("argv[%d]: got %q, want %q", i, got[i], want[i])
 		}
 	}
-	// The guard token must match the constant the short-circuit checks.
-	if want[5] != incusGroupReexecGuard+"=1" {
-		t.Errorf("guard token %q does not match const %q", want[5], incusGroupReexecGuard)
+	// The forwarded environment must come BEFORE the guard, and the guard BEFORE
+	// the exe — otherwise env would treat the exe as an assignment or vice versa.
+	guardIdx, exeIdx := -1, -1
+	for i, a := range got {
+		if a == incusGroupReexecGuard+"=1" {
+			guardIdx = i
+		}
+		if a == "/usr/local/bin/coi" {
+			exeIdx = i
+		}
+	}
+	if guardIdx <= 0 || exeIdx != guardIdx+1 {
+		t.Errorf("guard must immediately precede the exe; guardIdx=%d exeIdx=%d argv=%v", guardIdx, exeIdx, got)
 	}
 }
 
-// With no args (bare `coi`), argv is just the sudo/env preamble plus the exe.
-func TestBuildReexecArgv_NoArgs(t *testing.T) {
-	got := buildReexecArgv("/usr/bin/sudo", "me", "/opt/coi", nil)
+// With no forwarded env and no args (bare `coi`), argv is just the preamble.
+func TestBuildReexecArgv_NoEnvNoArgs(t *testing.T) {
+	got := buildReexecArgv("/usr/bin/sudo", "me", "/opt/coi", nil, nil)
 	want := []string{"/usr/bin/sudo", "-n", "-u", "me", "env", "COI_INCUS_GROUP_REEXEC=1", "/opt/coi"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("argv[%d]: got %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

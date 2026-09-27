@@ -185,8 +185,12 @@ user_agrees() {
     # answer — so a later prompt (e.g. nft) could be silently "declined". A
     # line-oriented read avoids that. Empty (just Enter) defaults to yes.
     local reply
-    read -r -p "$prompt" reply </dev/tty || reply=""
-    reply="${reply:-y}"
+    # EOF / no readable tty must NOT be read as consent — treat it as a decline
+    # so a closed terminal can't silently approve a system-changing step.
+    if ! read -r -p "$prompt" reply </dev/tty; then
+        return 1
+    fi
+    reply="${reply:-y}" # a bare Enter defaults to yes
     [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
@@ -260,7 +264,7 @@ check_incus() {
                         if install_incus_zabbly; then
                             sudo systemctl restart incus 2>/dev/null || true
                             sudo incus admin waitready --timeout=60 2>/dev/null || true
-                            echo -e "${GREEN}✓ Incus upgraded ($(incus version 2>/dev/null | grep -i '^Server version:' | cut -d: -f2 | tr -d ' '))${NC}"
+                            echo -e "${GREEN}✓ Incus upgraded ($(sudo incus version 2>/dev/null | grep -i '^Server version:' | cut -d: -f2 | tr -d ' '))${NC}"
                         else
                             echo -e "${YELLOW}⚠ Incus upgrade did not complete${NC}"
                             prompt_continue "Continue with the current Incus anyway?"
@@ -281,7 +285,7 @@ check_incus() {
 check_group() {
     local user="${USER:-$(id -un)}"
 
-    if groups | grep -q incus-admin; then
+    if groups | grep -qw incus-admin; then
         echo -e "${GREEN}✓ User is in incus-admin group${NC}"
         return
     fi
@@ -306,11 +310,14 @@ check_group() {
 
 # Set up passwordless sudo for nft (required for network isolation)
 setup_nft_sudoers() {
-    local nft_path
+    local nft_path user
     nft_path="$(command -v nft 2>/dev/null)"
     if [ -z "$nft_path" ]; then
         return
     fi
+    # Resolve the user robustly: an empty $USER would write a malformed sudoers
+    # line (" ALL=(ALL) ...") that makes sudo reject the whole drop-in.
+    user="${USER:-$(id -un)}"
 
     # Already configured? Check for the sudoers drop-in directly so we don't
     # get a false positive from a cached sudo timestamp.
@@ -324,12 +331,12 @@ setup_nft_sudoers() {
     # without a password prompt; declining leaves open mode working.
     if ! user_agrees "  Configure passwordless sudo for nft — needed for network isolation? [Y/n]: "; then
         echo -e "${YELLOW}⚠ Skipped: without passwordless nft, restricted/allowlist network modes won't work (open mode still does).${NC}"
-        echo -e "   Enable later: ${BLUE}echo \"\$USER ALL=(ALL) NOPASSWD: $nft_path\" | sudo tee /etc/sudoers.d/coi-nft && sudo chmod 0440 /etc/sudoers.d/coi-nft${NC}"
+        echo -e "   Enable later: ${BLUE}echo \"$user ALL=(ALL) NOPASSWD: $nft_path\" | sudo tee /etc/sudoers.d/coi-nft && sudo chmod 0440 /etc/sudoers.d/coi-nft${NC}"
         return
     fi
 
     echo -e "${BLUE}→ Configuring passwordless sudo for nft...${NC}"
-    echo "$USER ALL=(ALL) NOPASSWD: $nft_path" | sudo tee /etc/sudoers.d/coi-nft > /dev/null
+    echo "$user ALL=(ALL) NOPASSWD: $nft_path" | sudo tee /etc/sudoers.d/coi-nft > /dev/null
     sudo chmod 0440 /etc/sudoers.d/coi-nft
     echo -e "${GREEN}✓ Passwordless sudo configured for nft${NC}"
 }
@@ -571,6 +578,13 @@ ensure_incus_initialized() {
     if ! command -v incus &> /dev/null; then
         return
     fi
+
+    # Wait for the daemon to accept the API before probing. A just-installed or
+    # just-restarted Incus may not be ready yet; without this, the detection
+    # queries below fail, look like "cannot determine", and init is silently
+    # skipped — the half-configured-host failure (#823) this function guards
+    # against. Bounded and best-effort.
+    sudo incus admin waitready --timeout=90 2>/dev/null || true
 
     # Decide whether Incus has been initialized without being fooled by the
     # unmanaged physical/loopback interfaces that appear on every real host: a

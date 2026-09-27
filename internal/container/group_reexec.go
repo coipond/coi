@@ -17,10 +17,13 @@ const incusGroupReexecGuard = "COI_INCUS_GROUP_REEXEC"
 // reexecProbe / reexecExec are indirections so tests can exercise the decision
 // logic without actually shelling out to sudo or replacing the process.
 var (
-	// reexecProbe reports whether `sudo -n -u <user> true` succeeds — i.e. the
-	// sudo re-exec would be seamless (passwordless). Overridable in tests.
+	// reexecProbe reports whether `sudo -n -u <user> env true` succeeds — i.e.
+	// the sudo re-exec would be seamless (passwordless). It probes via `env`,
+	// the same command the real re-exec runs, so a command-restricted sudoers
+	// policy can't let the probe pass while the real exec is denied. Overridable
+	// in tests.
 	reexecProbe = func(sudoPath, username string) bool {
-		return exec.Command(sudoPath, "-n", "-u", username, "true").Run() == nil
+		return exec.Command(sudoPath, "-n", "-u", username, "env", "true").Run() == nil
 	}
 	// reexecExec replaces the current process with argv (via execve). On success
 	// it does not return. Overridable in tests.
@@ -116,7 +119,12 @@ func MaybeReexecUnderIncusGroup() {
 		return
 	}
 
-	argv := buildReexecArgv(sudoPath, cur.Username, exe, os.Args[1:])
+	// Forward the current environment through `env` so the re-exec'd coi behaves
+	// identically to the original invocation. sudo's env_reset would otherwise
+	// strip HTTPS_PROXY, COI_* config vars, the user's PATH, etc. — silently
+	// changing build/config behavior. Re-running as the SAME user is not a
+	// privilege escalation, so forwarding the full environment is safe here.
+	argv := buildReexecArgv(sudoPath, cur.Username, exe, os.Environ(), os.Args[1:])
 
 	// If exec fails for any reason, just return and let normal flow continue.
 	_ = reexecExec(sudoPath, argv, os.Environ())
@@ -125,14 +133,18 @@ func MaybeReexecUnderIncusGroup() {
 // buildReexecArgv assembles the sudo command line that re-runs coi under the
 // user's full group set:
 //
-//		sudo -n -u <user> env <guard>=1 <exe> <original args...>
+//		sudo -n -u <user> env <env...> <guard>=1 <exe> <original args...>
 //
 //	  - -n            never prompt (callers probe passwordless sudo first)
 //	  - -u <user>     run as the SAME user -> initgroups activates incus-admin
-//	  - env <guard>=1 survives sudo's env_reset and stops any re-exec recursion
+//	  - env <env...>  re-apply the caller's environment, which sudo's env_reset
+//	    would otherwise strip (proxy vars, COI_* config, PATH, ...)
+//	  - <guard>=1     survives env_reset and stops any re-exec recursion
 //
 // Kept as a pure function so the exact form is unit-tested without shelling out.
-func buildReexecArgv(sudoPath, username, exe string, args []string) []string {
-	argv := []string{sudoPath, "-n", "-u", username, "env", incusGroupReexecGuard + "=1", exe}
+func buildReexecArgv(sudoPath, username, exe string, env, args []string) []string {
+	argv := []string{sudoPath, "-n", "-u", username, "env"}
+	argv = append(argv, env...)
+	argv = append(argv, incusGroupReexecGuard+"=1", exe)
 	return append(argv, args...)
 }
