@@ -516,6 +516,34 @@ is_orbstack() {
     esac
 }
 
+# Decide the size (in GiB) for the container storage pool.
+#
+# 50GiB is often not enough once a few images and containers pile up, so scale
+# with the machine: half of the total disk backing /var/lib/incus, with a 50GiB
+# floor. The zfs/btrfs pool is a sparse loop-backed file, so this size is a
+# CAP, not an upfront reservation — it does not consume the space until used,
+# which is why a generous cap (and the floor even on smaller disks) is safe.
+# Falls back to the 50GiB floor whenever the disk size can't be determined.
+pool_size_gib() {
+    local target="/var/lib/incus"
+    [ -d "$target" ] || target="/"
+
+    # df -Pk: POSIX format (no line-wrap), 1024-byte blocks; column 2 is total.
+    local total_kib
+    total_kib="$(df -Pk "$target" 2>/dev/null | awk 'NR==2 {print $2}')"
+
+    local half_gib=0
+    if [ -n "$total_kib" ] && [ "$total_kib" -gt 0 ] 2>/dev/null; then
+        half_gib=$(( total_kib / 2 / 1024 / 1024 ))
+    fi
+
+    if [ "$half_gib" -lt 50 ]; then
+        echo 50
+    else
+        echo "$half_gib"
+    fi
+}
+
 # Set up fast copy-on-write storage for containers.
 # ZFS is the first choice (fastest), btrfs the fallback when ZFS is unavailable.
 # btrfs is still copy-on-write, so still far faster than the default `dir` pool.
@@ -581,9 +609,11 @@ setup_zfs_storage() {
     fi
 
     # Create ZFS storage pool
-    echo -e "${BLUE}→ Creating ZFS storage pool (50GiB)...${NC}"
+    local pool_size
+    pool_size="$(pool_size_gib)"
+    echo -e "${BLUE}→ Creating ZFS storage pool (${pool_size}GiB)...${NC}"
     local storage_output
-    if storage_output="$(sudo incus storage create zfs-pool zfs size=50GiB 2>&1)"; then
+    if storage_output="$(sudo incus storage create zfs-pool zfs "size=${pool_size}GiB" 2>&1)"; then
         echo -e "${GREEN}✓ ZFS storage pool created${NC}"
 
         # Configure default profile to use ZFS
@@ -641,9 +671,11 @@ setup_btrfs_storage() {
     fi
 
     # Create btrfs storage pool
-    echo -e "${BLUE}→ Creating btrfs storage pool (50GiB)...${NC}"
+    local pool_size
+    pool_size="$(pool_size_gib)"
+    echo -e "${BLUE}→ Creating btrfs storage pool (${pool_size}GiB)...${NC}"
     local storage_output
-    if storage_output="$(sudo incus storage create btrfs-pool btrfs size=50GiB 2>&1)"; then
+    if storage_output="$(sudo incus storage create btrfs-pool btrfs "size=${pool_size}GiB" 2>&1)"; then
         echo -e "${GREEN}✓ btrfs storage pool created${NC}"
 
         # Configure default profile to use btrfs
