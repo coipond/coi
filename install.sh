@@ -427,10 +427,45 @@ download_binary() {
 }
 
 # Build from source
+# Ensure the tools needed to build from source that `make build`'s own
+# check-deps does NOT cover: git (to clone, before make ever runs) and a C
+# toolchain + make (cgo compile). Their absence otherwise fails cryptically
+# ("git: command not found" / "make: command not found"). Go and the systemd
+# headers are left to check-deps, which reports them with actionable messages.
+ensure_build_deps() {
+    local need=""
+    command -v git  &> /dev/null || need="$need git"
+    command -v make &> /dev/null || need="$need make"
+    { command -v cc &> /dev/null || command -v gcc &> /dev/null; } || need="$need gcc"
+    [ -z "$need" ] && return 0
+
+    echo -e "${BLUE}→ Installing build dependencies:${need}${NC}"
+    case "$PKG_MANAGER" in
+        apt)    sudo apt-get install -y git build-essential ;;
+        pacman) sudo pacman -S --noconfirm --needed git base-devel ;;
+        dnf)    sudo dnf install -y git make gcc ;;
+        zypper) sudo zypper install -y git make gcc ;;
+        *)      : ;;
+    esac
+
+    # Verify the essentials the build genuinely cannot proceed without.
+    local missing=""
+    command -v git  &> /dev/null || missing="$missing git"
+    command -v make &> /dev/null || missing="$missing make"
+    if [ -n "$missing" ]; then
+        echo -e "${RED}✗ Building from source needs:${missing}${NC}"
+        echo "  Install them and re-run, or choose the pre-built binary instead."
+        exit 1
+    fi
+}
+
 build_from_source() {
     local tmp_dir
 
     echo -e "${BLUE}→ Building from source...${NC}"
+
+    # Install git + C toolchain first (see ensure_build_deps).
+    ensure_build_deps
 
     # Check for Go
     if ! command -v go &> /dev/null; then
@@ -932,8 +967,8 @@ post_install() {
         echo -e "   Install with: ${BLUE}sudo apt install nftables${NC}"
         echo ""
     elif ! [ -f /etc/sudoers.d/coi-nft ]; then
-        echo -e "${YELLOW}⚠ Passwordless sudo for nft not configured — network isolation will not work.${NC}"
-        echo -e "   Run: ${BLUE}echo \"\$USER ALL=(ALL) NOPASSWD: \$(command -v nft)\" | sudo tee /etc/sudoers.d/coi-nft && sudo chmod 0440 /etc/sudoers.d/coi-nft${NC}"
+        echo -e "${YELLOW}⚠ Passwordless sudo for nft not configured — network isolation (restricted/allowlist) won't work.${NC}"
+        echo -e "   Fix it with: ${BLUE}coi health --fix${NC}"
         echo ""
     fi
 
