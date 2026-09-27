@@ -42,21 +42,30 @@ def _run_health(coi_binary, *args, timeout=300):
     )
 
 
-def _stat_or_none(path):
-    """(size, mtime_ns, mode) for a path, or None if it does not exist.
+def _sudo_stat(path):
+    """Observe a root-only path via `sudo -n stat`: size|mtime|mode, None if
+    absent, or the sentinel "unobservable" when even sudo can't look.
 
-    Sudoers drop-ins are 0440 root:root, so their CONTENT is unreadable without
-    root — but stat() metadata is enough to detect a rewrite: --fix writing the
-    file changes its mtime (and usually size). Only FileNotFoundError maps to
-    None: if stat() itself is blocked (e.g. a 0750 /etc/sudoers.d), the test
-    must ERROR loudly rather than silently compare None==None and stop
-    observing the very target the read-only contract exists to watch.
+    /etc/sudoers.d is 0750 root:root on GitHub runners (and RHEL), so the
+    drop-in can't be stat()ed — or even seen — by the test user directly.
+    Passwordless sudo is present on every CI lane, so the metadata is observed
+    through `sudo -n stat` (-n fails fast instead of prompting on password-sudo
+    hosts). %y carries nanosecond mtime, so a same-second rewrite still shows.
+    The "unobservable" sentinel is returned consistently for both snapshots on
+    hosts without passwordless sudo, keeping the comparison valid — the
+    contract simply isn't assertable where we cannot look.
     """
-    try:
-        st = path.stat()
-    except FileNotFoundError:
+    result = subprocess.run(
+        ["sudo", "-n", "stat", "-c", "%s|%y|%a", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if "No such file" in result.stderr:
         return None
-    return (st.st_size, st.st_mtime_ns, st.st_mode)
+    return "unobservable"
 
 
 def _snapshot_fix_targets():
@@ -64,7 +73,7 @@ def _snapshot_fix_targets():
 
     The safe-remediation registry currently has three fixes; two of their
     targets are snapshotted here:
-      - /etc/sudoers.d/coi-nft (nft rule) — via stat() metadata
+      - /etc/sudoers.d/coi-nft (nft rule) — via sudo -n stat metadata
       - incus-admin membership in /etc/group (usermod) — world-readable content
 
     net.ipv4.ip_forward (the sysctl fix's target) is deliberately NOT
@@ -78,7 +87,7 @@ def _snapshot_fix_targets():
     extended.
     """
     snapshot = {
-        "coi_nft": _stat_or_none(Path("/etc/sudoers.d/coi-nft")),
+        "coi_nft": _sudo_stat(Path("/etc/sudoers.d/coi-nft")),
     }
     group_lines = [
         line
