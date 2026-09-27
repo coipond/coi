@@ -49,6 +49,7 @@ var (
 //   - incus / sudo not installed, or the incus-admin group is absent,
 //   - the group is already active in this session,
 //   - the user is not actually a member in /etc/group,
+//   - Incus is already reachable (the inactive group isn't actually blocking),
 //   - passwordless `sudo -u` is not available (so it would prompt/hang).
 //
 // On a successful re-exec the process image is replaced and this never returns.
@@ -85,6 +86,17 @@ func MaybeReexecUnderIncusGroup() {
 	// re-exec would be pointless (and this is not the state we handle).
 	cur, err := user.Current()
 	if err != nil || !UserInGroupFile(cur.Username, "incus-admin") {
+		return
+	}
+
+	// If Incus is already reachable, there is nothing to fix — do NOT re-exec.
+	// The group being inactive only matters when it actually blocks socket
+	// access; when the socket is reachable another way (e.g. a 0666 socket, or
+	// access granted out of band) a re-exec would be pointless and could perturb
+	// the environment (sudo resets it) for a command that already works. This
+	// keeps the re-exec strictly to the genuine "can't reach the daemon because
+	// the group isn't active yet" case.
+	if Available() {
 		return
 	}
 
