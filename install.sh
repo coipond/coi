@@ -179,8 +179,15 @@ user_agrees() {
         [ "${COI_ASSUME_YES:-0}" = "1" ]
         return
     fi
-    prompt_choice "$prompt" "y"
-    [[ "$REPLY" =~ ^[Yy]$ ]]
+    # Read a FULL line (not a single char) from the terminal. With several
+    # prompts in one `curl | bash` run, single-char reads leave the trailing
+    # newline in the tty buffer, which the next prompt then consumes as a stray
+    # answer — so a later prompt (e.g. nft) could be silently "declined". A
+    # line-oriented read avoids that. Empty (just Enter) defaults to yes.
+    local reply
+    read -r -p "$prompt" reply </dev/tty || reply=""
+    reply="${reply:-y}"
+    [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
 # Check if Incus is installed
@@ -826,6 +833,15 @@ fetch_detection_databases() {
     echo "  This clones the GTFOBins reverse-shell database and Sigma linux/process_creation"
     echo "  rules used by the monitoring daemon. The Sigma clone is sparse (~300 KB)."
     echo ""
+
+    # `coi update patterns` clones these over git, so git must be present. A
+    # clean Ubuntu image has no git, which made this step fail with
+    # "git: executable file not found". Install it first (best-effort).
+    if ! command -v git &> /dev/null; then
+        echo -e "${BLUE}→ Installing git (required to fetch detection databases)...${NC}"
+        pkg_install git || true
+    fi
+
     if coi update patterns; then
         echo -e "${GREEN}✓ Detection databases fetched${NC}"
     else
