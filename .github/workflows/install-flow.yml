@@ -41,6 +41,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Build coi from this checkout
+        run: |
+          # Test THIS tree's coi (with the sudo group re-exec), not the last
+          # release. install.sh installs a released coi; we overwrite it after.
+          sudo apt-get update -qq && sudo apt-get install -y -qq libsystemd-dev
+          go build -o /tmp/coi ./cmd/coi
+          /tmp/coi version
+
       - name: Confirm the starting state is EMPTY (no Incus)
         run: |
           if command -v incus >/dev/null 2>&1; then
@@ -56,6 +70,9 @@ jobs:
           # Incus install and the incus-admin group add. install.sh downloads
           # the released coi binary, exactly as a user's `curl … | bash` does.
           COI_ASSUME_YES=1 CI=true bash ./install.sh
+
+      - name: Use this checkout's coi binary (for the re-exec assertion)
+        run: sudo install -m 0755 /tmp/coi "$(command -v coi || echo /usr/local/bin/coi)"
 
       - name: Assert the host is READY — the north star (#823)
         run: |
@@ -94,6 +111,29 @@ jobs:
           fi
 
           exit "$fail"
+
+      - name: Assert coi works WITHOUT re-login — frictionless (#823)
+        run: |
+          set -x
+          # install.sh added this user to incus-admin, but the current shell has
+          # NOT activated the group (usermod never affects a running session).
+          # Confirm that, so we know we're really exercising the sudo re-exec and
+          # not an already-active group.
+          if id -nG | tr ' ' '\n' | grep -qx incus-admin; then
+            echo "::error::incus-admin already active in this shell — the re-exec path is not being exercised"
+            exit 1
+          fi
+
+          # As the (stale-group) user, with NO sudo prefix and no re-login, a coi
+          # command that needs the Incus socket must still work — proving coi
+          # transparently re-execs under the group via sudo. This is the exact
+          # thing that failed before (`coi build` -> "session does not have it
+          # active yet"). `coi list` exercises the same socket access, fast.
+          if ! coi list; then
+            echo "::error::coi could not reach Incus without re-login — frictionless re-exec failed"
+            exit 1
+          fi
+          echo "OK: coi reached Incus in a stale-group session (sudo re-exec worked)."
 
       - name: Diagnostics (on failure)
         if: failure()
