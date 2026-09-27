@@ -1,18 +1,21 @@
 name: Install Flow (clean Ubuntu)
 
 # Exercises the REAL end-to-end install experience on a clean Ubuntu host:
-# `install.sh` sets everything up and a container then actually launches — the
-# "curl | bash, then it just works" contract.
+# `install.sh` sets EVERYTHING up from scratch — installs Incus, adds the user
+# to incus-admin, initialises Incus, sizes storage, installs coi — and a
+# container then actually launches. This is the "curl | bash, then it works"
+# contract (the goal behind #823).
 #
-# Why this exists: the main CI lanes (and the Lima lane) initialise Incus with a
-# hand-written `incus admin init --preseed`, so install.sh's OWN setup logic
-# (ensure_incus_initialized, setup_fast_storage, ensure_idmap, ...) is never
-# executed there. That is exactly the code path that broke on a clean Ubuntu box
-# (#823). This lane installs Incus but deliberately leaves it UNINITIALISED, then
-# lets install.sh do the initialising, and finally proves the host is usable.
+# Unlike the main and Lima lanes (which hand-write `incus admin init --preseed`
+# and so never run install.sh's own setup), this lane starts from a machine with
+# NO Incus at all and lets install.sh install and configure it unattended
+# (COI_ASSUME_YES=1 grants consent for the install/group steps; CI=true makes it
+# non-interactive). Assertions use `sudo incus` because the runner's shell isn't
+# in the freshly-added incus-admin group yet — the same reason install.sh uses
+# sudo internally.
 #
 # Not a required check (branch protection is review-based) and path-filtered, so
-# it only runs when the install/setup surface changes — no noise on unrelated PRs.
+# it only runs when the install/setup surface changes.
 
 on:
   workflow_dispatch: {}
@@ -38,70 +41,32 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Install Incus (Zabbly) — but do NOT initialise it
+      - name: Confirm the starting state is EMPTY (no Incus)
         run: |
-          # Mirror the repo's Zabbly install so Incus is >= 6.1, then start the
-          # daemon. Crucially we do NOT run `incus admin init` here: install.sh's
-          # own initialisation is what this lane exists to exercise.
-          sudo mkdir -p /etc/apt/keyrings/
-          ZABBLY_SOURCES=/etc/apt/sources.list.d/zabbly-incus-stable.sources
-          if sudo curl -fsSL --connect-timeout 10 --retry 2 --retry-delay 5 https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc 2>/dev/null; then
-            sudo sh -c "cat <<SOURCES > $ZABBLY_SOURCES
-          Enabled: yes
-          Types: deb
-          URIs: https://pkgs.zabbly.com/incus/stable
-          Suites: \$(. /etc/os-release && echo \${VERSION_CODENAME})
-          Components: main
-          Architectures: \$(dpkg --print-architecture)
-          Signed-By: /etc/apt/keyrings/zabbly.asc
-          SOURCES"
-          fi
-          sudo apt-get update
-          if ! sudo apt-get install -y incus nftables; then
-            echo "Zabbly install failed; falling back to Ubuntu-native Incus"
-            sudo rm -f "$ZABBLY_SOURCES"
-            sudo apt-get update
-            sudo apt-get install -y incus nftables
-          fi
-          sudo systemctl enable --now incus || true
-          sudo incus admin waitready --timeout=60 || true
-          incus version || true
-
-      - name: Make the Incus socket reachable as the runner user
-        run: |
-          # Simulate the intended steady state: the user is set up to talk to
-          # Incus (as they would be after `usermod -aG incus-admin` + re-login).
-          # We open the socket directly because a fresh CI shell can't pick up a
-          # new group. Incus stays UNINITIALISED — the next step verifies that —
-          # so install.sh's own initialisation is still what gets exercised.
-          sudo usermod -aG incus-admin "$USER" || true
-          sudo chmod 666 /var/lib/incus/unix.socket
-          incus version   # must now report a Server version, or install.sh aborts in check_incus
-
-      - name: Confirm the starting state is UNINITIALISED
-        run: |
-          # If Incus already has a usable default profile, this lane would be
-          # testing nothing — fail loudly so the premise can't silently rot.
-          if sudo incus profile device get default root pool >/dev/null 2>&1; then
-            echo "FATAL: default profile already has a root device — Incus is pre-initialised;"
-            echo "this lane must start from an uninitialised Incus to exercise install.sh."
-            sudo incus profile show default || true
+          if command -v incus >/dev/null 2>&1; then
+            echo "FATAL: Incus is already installed on the runner — this lane must"
+            echo "start from an empty machine so install.sh does the installing."
             exit 1
           fi
-          echo "OK: Incus installed but uninitialised (no root device on default profile)."
+          echo "OK: no Incus present — install.sh will install and configure it."
 
       - name: Run install.sh unattended (the curl | bash path)
         run: |
-          # CI=true makes install.sh non-interactive (see its NONINTERACTIVE gate)
-          # and it downloads the released coi binary — exactly what a user's
-          # `curl … | bash` does. The setup logic under test runs from THIS
-          # checkout's install.sh.
-          CI=true bash ./install.sh
+          # CI=true  -> non-interactive; COI_ASSUME_YES=1 -> consent to the
+          # Incus install and the incus-admin group add. install.sh downloads
+          # the released coi binary, exactly as a user's `curl … | bash` does.
+          COI_ASSUME_YES=1 CI=true bash ./install.sh
 
       - name: Assert the host is READY — the north star (#823)
         run: |
           set -x
           fail=0
+
+          # Incus must now be installed by install.sh.
+          if ! command -v incus >/dev/null 2>&1; then
+            echo "::error::install.sh did not install Incus"
+            exit 1
+          fi
 
           # 1) default profile must have a root disk on a real storage pool
           if ! pool=$(sudo incus profile device get default root pool) || [ -z "$pool" ]; then
@@ -122,12 +87,20 @@ jobs:
           fi
           sudo incus delete -f coi-selftest 2>/dev/null || true
 
+          # 4) the coi binary was installed and runs
+          if ! command -v coi >/dev/null 2>&1; then
+            echo "::error::coi binary was not installed"
+            fail=1
+          fi
+
           exit "$fail"
 
       - name: Diagnostics (on failure)
         if: failure()
         run: |
+          echo "===== incus version =====";        sudo incus version || true
           echo "===== incus profile show default ====="; sudo incus profile show default || true
-          echo "===== incus storage list ====="; sudo incus storage list || true
-          echo "===== incus network list ====="; sudo incus network list || true
-          echo "===== coi health ====="; coi health || true
+          echo "===== incus storage list =====";   sudo incus storage list || true
+          echo "===== incus network list =====";   sudo incus network list || true
+          echo "===== groups =====";                groups || true
+          echo "===== coi health =====";            sudo incus admin waitready --timeout=5 || true; coi health || true
