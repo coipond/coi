@@ -272,6 +272,9 @@ if [[ "$*" == *"incus admin init --auto"* ]]; then
 	exit 0
 fi
 # Pass through other sudo calls
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -338,6 +341,9 @@ if [[ "$*" == *"incus admin init --auto"* ]]; then
 	touch "$COI_TEST_MARKER"
 	exit 0
 fi
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -403,6 +409,9 @@ if [[ "$*" == *"incus admin init --auto"* ]]; then
 	touch "$COI_TEST_MARKER"
 	exit 0
 fi
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -455,6 +464,9 @@ if [[ "$*" == *"incus admin init --auto"* ]]; then
 	echo "Error: something went wrong"
 	exit 1
 fi
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -554,6 +566,9 @@ if [[ "$*" == *"storage create"* ]]; then
 	echo "If this is your first time running Incus, you should also run: incus admin init"
 	exit 0
 fi
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -666,6 +681,9 @@ fi
 if [[ "\$*" == *"storage create"* ]]; then
 	exit 0
 fi
+# Forward sudo-incus calls (storage list, profile device set, ...) to the
+# PATH-mocked incus; install.sh now sudo-runs them (#823).
+if [ "\$1" = "incus" ]; then exec "\$@"; fi
 exec /usr/bin/sudo "\$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -783,6 +801,9 @@ if [[ "$*" == *"storage create"* ]]; then
 	echo "SHOULD_NOT_CREATE"
 	exit 0
 fi
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -827,6 +848,9 @@ if [[ "$*" == *"systemctl restart incus"* ]]; then
 	echo "STEP:RESTART"
 	exit 0
 fi
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -886,6 +910,9 @@ func TestInstallSh_SetupBtrfsStorage_WaitsReadyBeforeCreatingPool(t *testing.T) 
 if [[ "$*" == *"apt-get install"* ]]; then exit 0; fi
 if [[ "$*" == *"systemctl restart incus"* ]]; then echo "STEP:RESTART"; exit 0; fi
 if [[ "$*" == *"storage create"* ]]; then exit 0; fi
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
@@ -957,6 +984,9 @@ if [[ "$*" == *"install"* && "$*" == *"zfs"* ]] || [[ "$*" == *"pacman"* && "$*"
 	exit 0
 fi
 if [[ "$*" == *"storage create"* ]]; then exit 0; fi
+# Forward sudo-incus calls to the PATH-mocked incus (install.sh now sudo-runs
+# incus queries/config; real sudo would lose the test PATH). #823.
+if [ "$1" = "incus" ]; then exec "$@"; fi
 exec /usr/bin/sudo "$@"
 STUB
 		chmod +x "$tmpdir/sudo"
