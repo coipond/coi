@@ -129,18 +129,86 @@ detect_platform() {
     echo -e "${BLUE}→ Detected platform: ${OS}/${ARCH}${NC}"
 }
 
+# Install Incus from the Zabbly stable repository (apt only).
+#
+# Ubuntu ships Incus 6.0.x, which is below coi's 6.1 minimum, so a plain
+# `apt install incus` is a trap on Ubuntu — Zabbly provides a current Incus.
+# Also used to UPGRADE an existing too-old Incus (apt-get install pulls the
+# newer Zabbly build). Returns non-zero if Incus could not be installed.
+install_incus_zabbly() {
+    echo -e "${BLUE}→ Adding the Zabbly stable repository and installing Incus...${NC}"
+
+    sudo mkdir -p /etc/apt/keyrings
+    if ! sudo curl -fsSL --connect-timeout 10 --retry 3 --retry-delay 5 \
+            https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc; then
+        echo -e "${YELLOW}⚠ Could not download the Zabbly signing key${NC}"
+        return 1
+    fi
+
+    local codename arch
+    # shellcheck source=/dev/null  # /etc/os-release is a system file, not in-repo
+    codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-}")"
+    arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+
+    if ! sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.sources >/dev/null <<SOURCES
+Enabled: yes
+Types: deb
+URIs: https://pkgs.zabbly.com/incus/stable
+Suites: ${codename}
+Components: main
+Architectures: ${arch}
+Signed-By: /etc/apt/keyrings/zabbly.asc
+SOURCES
+    then
+        echo -e "${YELLOW}⚠ Could not write the Zabbly apt source${NC}"
+        return 1
+    fi
+
+    sudo apt-get update -qq || return 1
+    sudo apt-get install -y incus || return 1
+    return 0
+}
+
+# Decide whether the user agrees to an Incus install/upgrade. Interactive: ask
+# (default yes). Non-interactive: only proceed when explicitly authorised via
+# COI_ASSUME_YES=1, so an unattended run never silently adds a repo and installs
+# packages without consent.
+incus_install_agreed() {
+    local prompt="$1"
+    if [ "$NONINTERACTIVE" = "1" ]; then
+        [ "${COI_ASSUME_YES:-0}" = "1" ]
+        return
+    fi
+    prompt_choice "$prompt" "y"
+    [[ "$REPLY" =~ ^[Yy]$ ]]
+}
+
 # Check if Incus is installed
 check_incus() {
     echo -e "${BLUE}→ Checking Incus installation...${NC}"
 
     if ! command -v incus &> /dev/null; then
-        echo -e "${YELLOW}⚠ Incus not found${NC}"
+        echo -e "${YELLOW}⚠ Incus is not installed${NC}"
+
+        # On apt-based systems (Ubuntu/Debian) we can install it directly so a
+        # `curl | bash` on an empty machine works end-to-end. Other distros keep
+        # the guided path below (Incus setup there is out of scope for now).
+        if [ "$PKG_MANAGER" = "apt" ] && incus_install_agreed "  Install Incus now from the Zabbly repo (recommended)? [Y/n]: "; then
+            if install_incus_zabbly && command -v incus &> /dev/null; then
+                echo -e "${GREEN}✓ Incus installed${NC}"
+                sudo systemctl enable --now incus 2>/dev/null || true
+                sudo incus admin waitready --timeout=60 2>/dev/null || true
+                return 0
+            fi
+            echo -e "${YELLOW}⚠ Automatic Incus install did not complete${NC}"
+        fi
+
         echo ""
-        echo "  code-on-incus requires Incus to be installed."
+        echo "  code-on-incus requires Incus (>= 6.1) to be installed."
         echo "  Install Incus: https://linuxcontainers.org/incus/docs/main/installing/"
         echo ""
         echo "  Quick install examples:"
-        echo "    Ubuntu/Debian: sudo apt install -y incus"
+        echo "    Ubuntu/Debian: from the Zabbly repo (https://github.com/zabbly/incus)"
         echo "    Arch Linux:    sudo pacman -S incus"
         echo "    Fedora:        sudo dnf install incus"
         echo ""
@@ -175,10 +243,23 @@ check_incus() {
                     echo "  You may see errors like:"
                     echo "    'Failed to setup device mount: idmapping abilities are required'"
                     echo ""
-                    echo "  Please install Incus >= 6.1 from the Zabbly repository:"
-                    echo "    https://github.com/zabbly/incus"
-                    echo ""
-                    prompt_continue "Continue installation anyway?"
+
+                    # On apt we can upgrade in place from Zabbly; elsewhere, guide.
+                    if [ "$PKG_MANAGER" = "apt" ] && incus_install_agreed "  Upgrade Incus from the Zabbly repo now? [Y/n]: "; then
+                        if install_incus_zabbly; then
+                            sudo systemctl restart incus 2>/dev/null || true
+                            sudo incus admin waitready --timeout=60 2>/dev/null || true
+                            echo -e "${GREEN}✓ Incus upgraded ($(incus version 2>/dev/null | grep -i '^Server version:' | cut -d: -f2 | tr -d ' '))${NC}"
+                        else
+                            echo -e "${YELLOW}⚠ Incus upgrade did not complete${NC}"
+                            prompt_continue "Continue with the current Incus anyway?"
+                        fi
+                    else
+                        echo "  Install Incus >= 6.1 from the Zabbly repository:"
+                        echo "    https://github.com/zabbly/incus"
+                        echo ""
+                        prompt_continue "Continue installation anyway?"
+                    fi
                 fi
             fi
         fi
