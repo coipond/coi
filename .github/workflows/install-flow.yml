@@ -148,8 +148,13 @@ jobs:
           # active yet" message — proving no infinite sudo loop.
           out="$(COI_INCUS_GROUP_REEXEC=1 coi list 2>&1 || true)"
           echo "$out"
-          if ! echo "$out" | grep -qi "does not have it active"; then
-            echo "::error::guarded run should surface the stale-group message (no re-exec, no loop)"
+          # With the guard set, coi must NOT re-exec — it hits the socket directly
+          # as the stale-group user and fails fast with a permission error (either
+          # coi's friendly "does not have it active yet" or incus's raw "needed
+          # permissions to talk to the incus daemon"). Either proves no re-exec /
+          # no infinite sudo loop.
+          if ! echo "$out" | grep -qiE "does not have it active|needed permissions|permission denied"; then
+            echo "::error::guarded run should fail fast with a permission error (no re-exec, no loop)"
             exit 1
           fi
 
