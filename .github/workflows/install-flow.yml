@@ -1,0 +1,122 @@
+name: Install Flow (clean Ubuntu)
+
+# Exercises the REAL end-to-end install experience on a clean Ubuntu host:
+# `install.sh` sets everything up and a container then actually launches — the
+# "curl | bash, then it just works" contract.
+#
+# Why this exists: the main CI lanes (and the Lima lane) initialise Incus with a
+# hand-written `incus admin init --preseed`, so install.sh's OWN setup logic
+# (ensure_incus_initialized, setup_fast_storage, ensure_idmap, ...) is never
+# executed there. That is exactly the code path that broke on a clean Ubuntu box
+# (#823). This lane installs Incus but deliberately leaves it UNINITIALISED, then
+# lets install.sh do the initialising, and finally proves the host is usable.
+#
+# Not a required check (branch protection is review-based) and path-filtered, so
+# it only runs when the install/setup surface changes — no noise on unrelated PRs.
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - install.sh
+      - internal/installer/**
+      - profiles/**
+      - .github/workflows/install-flow.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-flow-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-ubuntu:
+    name: install.sh end-to-end on clean Ubuntu 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Incus (Zabbly) — but do NOT initialise it
+        run: |
+          # Mirror the repo's Zabbly install so Incus is >= 6.1, then start the
+          # daemon. Crucially we do NOT run `incus admin init` here: install.sh's
+          # own initialisation is what this lane exists to exercise.
+          sudo mkdir -p /etc/apt/keyrings/
+          ZABBLY_SOURCES=/etc/apt/sources.list.d/zabbly-incus-stable.sources
+          if sudo curl -fsSL --connect-timeout 10 --retry 2 --retry-delay 5 https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc 2>/dev/null; then
+            sudo sh -c "cat <<SOURCES > $ZABBLY_SOURCES
+          Enabled: yes
+          Types: deb
+          URIs: https://pkgs.zabbly.com/incus/stable
+          Suites: \$(. /etc/os-release && echo \${VERSION_CODENAME})
+          Components: main
+          Architectures: \$(dpkg --print-architecture)
+          Signed-By: /etc/apt/keyrings/zabbly.asc
+          SOURCES"
+          fi
+          sudo apt-get update
+          if ! sudo apt-get install -y incus nftables; then
+            echo "Zabbly install failed; falling back to Ubuntu-native Incus"
+            sudo rm -f "$ZABBLY_SOURCES"
+            sudo apt-get update
+            sudo apt-get install -y incus nftables
+          fi
+          sudo systemctl enable --now incus || true
+          sudo incus admin waitready --timeout=60 || true
+          incus version || true
+
+      - name: Confirm the starting state is UNINITIALISED
+        run: |
+          # If Incus already has a usable default profile, this lane would be
+          # testing nothing — fail loudly so the premise can't silently rot.
+          if sudo incus profile device get default root pool >/dev/null 2>&1; then
+            echo "FATAL: default profile already has a root device — Incus is pre-initialised;"
+            echo "this lane must start from an uninitialised Incus to exercise install.sh."
+            sudo incus profile show default || true
+            exit 1
+          fi
+          echo "OK: Incus installed but uninitialised (no root device on default profile)."
+
+      - name: Run install.sh unattended (the curl | bash path)
+        run: |
+          # CI=true makes install.sh non-interactive (see its NONINTERACTIVE gate)
+          # and it downloads the released coi binary — exactly what a user's
+          # `curl … | bash` does. The setup logic under test runs from THIS
+          # checkout's install.sh.
+          CI=true bash ./install.sh
+
+      - name: Assert the host is READY — the north star (#823)
+        run: |
+          set -x
+          fail=0
+
+          # 1) default profile must have a root disk on a real storage pool
+          if ! pool=$(sudo incus profile device get default root pool) || [ -z "$pool" ]; then
+            echo "::error::default profile has no root disk — install.sh did not initialise storage"
+            fail=1
+          fi
+
+          # 2) default profile must have a NIC on a managed network
+          if ! sudo incus profile show default | grep -qE '^\s*type: nic'; then
+            echo "::error::default profile has no NIC — install.sh did not initialise networking"
+            fail=1
+          fi
+
+          # 3) the real proof: a throwaway container actually launches and stops
+          if ! sudo incus launch images:ubuntu/24.04 coi-selftest; then
+            echo "::error::container failed to launch — the host is not usable after install"
+            fail=1
+          fi
+          sudo incus delete -f coi-selftest 2>/dev/null || true
+
+          exit "$fail"
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "===== incus profile show default ====="; sudo incus profile show default || true
+          echo "===== incus storage list ====="; sudo incus storage list || true
+          echo "===== incus network list ====="; sudo incus network list || true
+          echo "===== coi health ====="; coi health || true
