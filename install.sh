@@ -169,11 +169,11 @@ SOURCES
     return 0
 }
 
-# Decide whether the user agrees to an Incus install/upgrade. Interactive: ask
-# (default yes). Non-interactive: only proceed when explicitly authorised via
-# COI_ASSUME_YES=1, so an unattended run never silently adds a repo and installs
-# packages without consent.
-incus_install_agreed() {
+# Decide whether the user agrees to a system-changing step (install Incus, add
+# to a group, ...). Interactive: ask (default yes). Non-interactive: only
+# proceed when explicitly authorised via COI_ASSUME_YES=1, so an unattended run
+# never silently modifies the system without consent.
+user_agrees() {
     local prompt="$1"
     if [ "$NONINTERACTIVE" = "1" ]; then
         [ "${COI_ASSUME_YES:-0}" = "1" ]
@@ -193,7 +193,7 @@ check_incus() {
         # On apt-based systems (Ubuntu/Debian) we can install it directly so a
         # `curl | bash` on an empty machine works end-to-end. Other distros keep
         # the guided path below (Incus setup there is out of scope for now).
-        if [ "$PKG_MANAGER" = "apt" ] && incus_install_agreed "  Install Incus now from the Zabbly repo (recommended)? [Y/n]: "; then
+        if [ "$PKG_MANAGER" = "apt" ] && user_agrees "  Install Incus now from the Zabbly repo (recommended)? [Y/n]: "; then
             if install_incus_zabbly && command -v incus &> /dev/null; then
                 echo -e "${GREEN}✓ Incus installed${NC}"
                 sudo systemctl enable --now incus 2>/dev/null || true
@@ -217,8 +217,12 @@ check_incus() {
         echo ""
         prompt_continue "Continue installation anyway?"
     else
+        # Use sudo: a non-root user who isn't in incus-admin yet (or whose
+        # current session predates the membership) cannot reach the daemon
+        # socket, so a plain `incus version` returns non-zero and — under
+        # `set -e` — would abort the whole installer here. root always can.
         local incus_version_output
-        incus_version_output="$(incus version 2>/dev/null)"
+        incus_version_output="$(sudo incus version 2>/dev/null || true)"
         echo -e "${GREEN}✓ Incus found: ${incus_version_output}${NC}"
 
         # Check minimum version (>= 6.1)
@@ -245,7 +249,7 @@ check_incus() {
                     echo ""
 
                     # On apt we can upgrade in place from Zabbly; elsewhere, guide.
-                    if [ "$PKG_MANAGER" = "apt" ] && incus_install_agreed "  Upgrade Incus from the Zabbly repo now? [Y/n]: "; then
+                    if [ "$PKG_MANAGER" = "apt" ] && user_agrees "  Upgrade Incus from the Zabbly repo now? [Y/n]: "; then
                         if install_incus_zabbly; then
                             sudo systemctl restart incus 2>/dev/null || true
                             sudo incus admin waitready --timeout=60 2>/dev/null || true
@@ -268,16 +272,29 @@ check_incus() {
 
 # Check if user is in incus-admin group
 check_group() {
+    local user="${USER:-$(id -un)}"
+
     if groups | grep -q incus-admin; then
         echo -e "${GREEN}✓ User is in incus-admin group${NC}"
-    else
-        echo -e "${YELLOW}⚠ User is not in incus-admin group${NC}"
-        echo ""
-        echo "  You need to be in the incus-admin group to use code-on-incus."
-        echo "  Run: sudo usermod -aG incus-admin \$USER"
-        echo "  Then log out and back in for changes to take effect."
-        echo ""
+        return
     fi
+
+    # Not in the group yet. Add the user (with consent) so `coi` works without a
+    # manual step. Group membership only takes effect in a NEW login session, so
+    # we still tell them to re-login — but the installer's own Incus setup uses
+    # sudo and does not depend on this session's groups, so setup still completes.
+    if user_agrees "  Add '$user' to the incus-admin group now (needed to run coi)? [Y/n]: "; then
+        if sudo usermod -aG incus-admin "$user"; then
+            echo -e "${GREEN}✓ Added '$user' to the incus-admin group${NC}"
+            echo -e "${YELLOW}  Log out and back in (or run: newgrp incus-admin) for it to take effect.${NC}"
+            return
+        fi
+        echo -e "${YELLOW}⚠ Could not add '$user' to incus-admin${NC}"
+    fi
+
+    echo -e "${YELLOW}⚠ Not in the incus-admin group${NC}"
+    echo "  Add yourself with: sudo usermod -aG incus-admin $user"
+    echo "  Then log out and back in for changes to take effect."
 }
 
 # Set up passwordless sudo for nft (required for network isolation)
@@ -546,15 +563,22 @@ ensure_incus_initialized() {
     # (incusbr0) and a storage pool, so treat either as proof of initialization -
     # a host set up with an existing/custom network and no managed bridge still
     # has a pool, which is the reliable signal.
-    # If the network query itself fails (daemon down, no permissions), warn and
-    # bail out rather than incorrectly triggering init.
+    # If the network query itself fails (daemon down), warn and bail out rather
+    # than incorrectly triggering init.
+    #
+    # Use `sudo incus` for these queries: during a fresh install the user was
+    # only just added to incus-admin and this same shell is not in the group
+    # yet, so a non-sudo `incus network list` would fail with a permission error
+    # — which the old code mistook for "cannot determine" and skipped init,
+    # leaving a half-configured host (#823). root can always reach the socket,
+    # so sudo gives a reliable answer regardless of the current session's groups.
     local networks pools
-    if ! networks="$(incus network list --format=csv 2>/dev/null)"; then
+    if ! networks="$(sudo incus network list --format=csv 2>/dev/null)"; then
         echo -e "${YELLOW}⚠ Unable to determine whether Incus has been initialized${NC}"
-        echo "  Could not query Incus networks. Ensure the Incus daemon is running and your user has access."
+        echo "  Could not query Incus networks. Ensure the Incus daemon is running."
         return 1
     fi
-    pools="$(incus storage list --format=csv 2>/dev/null)"
+    pools="$(sudo incus storage list --format=csv 2>/dev/null)"
     # MANAGED is CSV column 3 (YES/NO); awk avoids the cut|grep -q pipe whose
     # early exit trips `set -o pipefail`.
     if printf '%s\n' "$networks" | awk -F, '$3 == "YES" { found=1 } END { exit !found }' \
@@ -684,7 +708,7 @@ setup_zfs_storage() {
     fi
 
     # Check if ZFS pool already exists
-    if incus storage list --format=csv 2>/dev/null | grep -q "^zfs-pool,"; then
+    if sudo incus storage list --format=csv 2>/dev/null | grep -q "^zfs-pool,"; then
         echo -e "${GREEN}✓ ZFS storage pool already configured${NC}"
         return 0
     fi
@@ -700,7 +724,7 @@ setup_zfs_storage() {
         # Configure default profile to use ZFS
         echo -e "${BLUE}→ Configuring default profile to use ZFS...${NC}"
         local profile_output
-        if profile_output="$(incus profile device set default root pool=zfs-pool 2>&1)"; then
+        if profile_output="$(sudo incus profile device set default root pool=zfs-pool 2>&1)"; then
             echo -e "${GREEN}✓ Default profile configured for ZFS${NC}"
             echo -e "${GREEN}✓ Containers will now start instantly (~50ms vs 5-10s)${NC}"
         else
@@ -746,7 +770,7 @@ setup_btrfs_storage() {
     fi
 
     # Check if btrfs pool already exists
-    if incus storage list --format=csv 2>/dev/null | grep -q "^btrfs-pool,"; then
+    if sudo incus storage list --format=csv 2>/dev/null | grep -q "^btrfs-pool,"; then
         echo -e "${GREEN}✓ btrfs storage pool already configured${NC}"
         return 0
     fi
@@ -762,7 +786,7 @@ setup_btrfs_storage() {
         # Configure default profile to use btrfs
         echo -e "${BLUE}→ Configuring default profile to use btrfs...${NC}"
         local profile_output
-        if profile_output="$(incus profile device set default root pool=btrfs-pool 2>&1)"; then
+        if profile_output="$(sudo incus profile device set default root pool=btrfs-pool 2>&1)"; then
             echo -e "${GREEN}✓ Default profile configured for btrfs${NC}"
             echo -e "${GREEN}✓ Containers will now start much faster (~0.2s vs 1-5s)${NC}"
         else
