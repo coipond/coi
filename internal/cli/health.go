@@ -14,6 +14,8 @@ import (
 var (
 	healthFormat  string
 	healthVerbose bool
+	healthFix     bool
+	healthDryRun  bool
 )
 
 var healthCmd = &cobra.Command{
@@ -27,6 +29,8 @@ Examples:
   coi health                  # Basic health check (text output)
   coi health --format json    # JSON output for scripting
   coi health --verbose        # Include additional checks
+  coi health --fix            # Apply safe remediations for failing checks, then re-check
+  coi health --fix --dry-run  # Show what --fix would do, without changing anything
 
 Exit codes:
   0 = healthy (all checks pass)
@@ -40,6 +44,8 @@ func init() {
 	healthCmd.Flags().StringVar(&healthFormat, "format", "text", "Output format: text or json")
 	healthCmd.Flags().Bool("json", false, "Alias for --format json")
 	healthCmd.Flags().BoolVarP(&healthVerbose, "verbose", "v", false, "Include additional verbose checks")
+	healthCmd.Flags().BoolVar(&healthFix, "fix", false, "Apply safe remediations for failing checks, then re-check")
+	healthCmd.Flags().BoolVar(&healthDryRun, "dry-run", false, "With --fix, show the remediation plan without changing anything")
 }
 
 func healthCommand(cmd *cobra.Command, args []string) error {
@@ -47,6 +53,13 @@ func healthCommand(cmd *cobra.Command, args []string) error {
 	applyJSONFormatAlias(cmd, &healthFormat)
 	if err := validateTextOrJSON(healthFormat); err != nil {
 		return err
+	}
+
+	if healthDryRun && !healthFix {
+		return fmt.Errorf("--dry-run only applies together with --fix")
+	}
+	if healthFix && healthFormat == "json" {
+		return fmt.Errorf("--fix is not supported with --format json; run it in text mode")
 	}
 
 	// Use package-level cfg from PersistentPreRunE, fall back to defaults
@@ -58,12 +71,64 @@ func healthCommand(cmd *cobra.Command, args []string) error {
 	// Run all health checks
 	result := health.RunAllChecks(healthCfg, healthVerbose)
 
+	// Apply remediations before reporting so the printed table and exit code
+	// reflect the post-fix state. RunFixes updates result in place.
+	if healthFix {
+		outcomes := health.RunFixes(result, health.FixOptions{DryRun: healthDryRun})
+		printFixReport(outcomes, healthDryRun)
+	}
+
 	// Output based on format
 	if healthFormat == "json" {
 		return outputHealthJSON(result)
 	}
 
 	return outputHealthText(result)
+}
+
+// printFixReport prints the outcome of `coi health --fix` above the health
+// table. Each line states what was (or would be) done and, where relevant, the
+// exact command and any follow-up the user must perform themselves.
+func printFixReport(outcomes []health.FixOutcome, dryRun bool) {
+	if dryRun {
+		fmt.Println("Remediation plan (--dry-run — nothing was changed):")
+	} else {
+		fmt.Println("Applying remediations:")
+	}
+
+	if len(outcomes) == 0 {
+		fmt.Println("  Nothing to do — no failing check has an applicable automatic remediation.")
+		fmt.Println()
+		return
+	}
+
+	for _, o := range outcomes {
+		var icon, verb string
+		switch o.Status {
+		case health.FixPlanned:
+			icon, verb = "[PLAN]", "would run"
+		case health.FixApplied:
+			icon, verb = "[DONE]", "fixed"
+		case health.FixReloginRequired:
+			icon, verb = "[DONE]", "applied (action still needed)"
+		case health.FixManualRequired:
+			icon, verb = "[MANUAL]", "run this yourself"
+		case health.FixFailed:
+			icon, verb = "[FAIL]", "failed"
+		}
+
+		fmt.Printf("  %-8s %s: %s\n", icon, formatCheckName(o.Check), o.Summary)
+		if len(o.Command) > 0 && (o.Status == health.FixPlanned || o.Status == health.FixManualRequired) {
+			fmt.Printf("           %s: %s\n", verb, strings.Join(o.Command, " "))
+		}
+		if o.Err != nil {
+			fmt.Printf("           error: %v\n", o.Err)
+		}
+		if o.Note != "" {
+			fmt.Printf("           note: %s\n", o.Note)
+		}
+	}
+	fmt.Println()
 }
 
 // outputHealthJSON outputs health check results as JSON
