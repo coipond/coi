@@ -34,17 +34,31 @@ def _run_health(coi_binary, *args, timeout=300):
     )
 
 
+def _stat_or_none(path):
+    """(size, mtime_ns, mode) for a path, or None if absent/unobservable.
+
+    Sudoers drop-ins are 0440 root:root, so their CONTENT is unreadable without
+    root — but stat() metadata is enough to detect a rewrite: --fix writing the
+    file changes its mtime (and usually size). PermissionError is tolerated the
+    same way on both snapshots, so the before/after comparison stays valid.
+    """
+    try:
+        st = path.stat()
+    except (FileNotFoundError, PermissionError):
+        return None
+    return (st.st_size, st.st_mtime_ns, st.st_mode)
+
+
 def _snapshot_fix_targets():
     """Capture the host state every registered remediation could touch.
 
     The safe-remediation registry currently writes exactly three things:
     /etc/sudoers.d/coi-nft (nft rule), net.ipv4.ip_forward (sysctl), and
-    incus-admin membership in /etc/group (usermod). All are world-readable, so
-    the read-only contract of --dry-run can be asserted without root.
+    incus-admin membership in /etc/group (usermod). The last two are
+    world-readable; the sudoers drop-in is observed via stat() metadata.
     """
-    nft = Path("/etc/sudoers.d/coi-nft")
     snapshot = {
-        "coi_nft": nft.read_text() if nft.exists() else None,
+        "coi_nft": _stat_or_none(Path("/etc/sudoers.d/coi-nft")),
     }
     ip_forward = Path("/proc/sys/net/ipv4/ip_forward")
     snapshot["ip_forward"] = ip_forward.read_text() if ip_forward.exists() else None
