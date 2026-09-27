@@ -9,27 +9,18 @@
 ### Bug Fixes
 
 - [Bug Fix] **macOS: hint how to bring a Keychain-stored login into the container (#818)** — `coi shell` prints how to bridge a macOS Keychain OAuth token into the container.
-
 - [Bug Fix] **macOS/Colima: tool credentials now seed from the shared Mac home (#817)** — seeds credentials and config from the Mac's shared home when the guest home has none.
-
 - [Bug Fix] **Image build no longer hangs on broken container IPv6** — `coi build` forces IPv4 with bounded apt timeouts so base-dependency installs no longer stall.
 
 ### Features
 
 - [Feature] **Per-mount UID/GID shifting: `shift` on `[[mounts]]` (#604)** — a bind mount can set `shift = true`/`false` to override the session-wide UID-shifting decision.
-
 - [Feature] **Forensics survive an auto-kill: `[monitoring] forensics_on_kill`** — preserves a forensic copy of a container before an auto-kill deletes it. Opt-in.
-
 - [Feature] **Health probes honor the kernel-surface policy** — `coi health` probes boot with the user's `docker`/`reduce_kernel_surface` policy instead of the full surface.
-
 - [Feature] **Clean commit authorship: `[git] strip_attribution` (#788)** — strips AI-injected attribution (`Co-Authored-By`, "Generated with…") from every commit. On by default.
-
 - [Feature] **`[git] readonly` now makes the commit identity truly unoverridable** — pins `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env and re-stamps commits so the locked identity can't be bypassed.
-
 - [Feature] **Kernel attack-surface hardening: `[container] docker` and `[security] reduce_kernel_surface`** — make Docker-in-container a flag and optionally deny risky syscall families (io_uring, bpf, userfaultfd, keyring).
-
 - [Feature] **Stricter kernel-surface tier: `[security] reduce_kernel_surface_strict` (#790)** — opt-in tier that additionally denies `perf_event_open`. Implies `reduce_kernel_surface`.
-
 - [Feature] **Freshness checks in `coi health`** — warns on old kernel build age, disabled CPU mitigations, near/past-EOL distro, and outdated Incus.
 
 ## 0.12.0 (2026-09-09)
@@ -37,71 +28,42 @@
 ### Features
 
 - [Feature] **Switch AI tools on the same container via profiles (#708)** — profiles sharing a `[container] session_name` re-enter the same persistent container with a different AI tool.
-
 - [Feature] **Headless "fire and forget" prompt runs (#701)** — `coi run --prompt` runs the agent to completion on a prompt and exits with its status code.
-
 - [Feature] **Cap a container's disk with `[limits.disk] size` (#728)** — bound a container's root filesystem from a profile (needs a CoW pool).
-
 - [Feature] **`--json` on every command** — any command offering `--format text|json` now also accepts `--json` as shorthand.
-
 - [Feature] **`coi tool spec` — launch spec for external orchestrators (#751)** — prints the exact command and environment to run the profile's AI tool in an existing container.
-
 - [Feature] **`coi top` — live per-container resource usage (#707)** — shows per-container CPU, memory, disk, and network usage, busiest first, with per-process drill-down.
-
 - [Feature] **Machine-readable `~/SANDBOX_CONTEXT.json` (#705)** — A structured companion to `SANDBOX_CONTEXT.md` for programmatic consumers; toggle with `[tool] context_json`.
-
 - [Feature] **OpenAI Codex CLI is now supported (#698, thanks @breml)** — `[tool] name = "codex"` launches straight into codex with per-tool model and effort.
-
 - [Feature] **Oh My Pi (`omp`) is now supported (#743, thanks @VIVAAN-DHAWAN)** — `[tool] name = "omp"` launches straight into omp.
-
 - [Feature] **Per-host ports on `[[network.hosts]]`** — scope a single LAN service to specific ports while the rest of the internet stays open.
-
 - [Feature] **`[git] readonly = true`** — Lock the container's git commit identity so the agent can't change who commits are authored by.
-
 - [Feature] **Per-destination ports in `allowed_domains` (#704)** — Allowlist entries take a `:ports` suffix (`"github.com:443"`), so each destination is reachable only on its own ports.
-
 - [Feature] **`[network] dns_servers` and `allowed_ports` (#704)** — Pin which DNS resolvers are reachable and cap outbound ports for tighter egress control.
 
 ### Changed
 
 - [Change] **Mount blocks and `env_command_timeout` now work identically in config and profiles (#783)** — `[mounts]` blocks and `env_command_timeout` can be set in global config, project config, and profiles alike.
-
 - [Change] **More reliable container-status checks (#782)** — status comparisons are now case-insensitive everywhere.
-
 - [Change] **Leaner injected sandbox context, ~30% fewer per-session tokens (#718)** — removed duplicated sections from the injected `SANDBOX_CONTEXT.md`.
 
 ### Bug Fixes
 
 - [Bug Fix] **`coi build` works on a non-default `[incus] project` (#777, thanks @marshalfevzi)** — building on a non-default project no longer fails with "image not found".
-
 - [Bug Fix] **Sandbox context no longer duplicates in a Windows-edited `CLAUDE.md`/`AGENTS.md` (#674 follow-up)** — CRLF files no longer get a fresh context block appended every session.
-
 - [Bug Fix] **`coi shell` works under kitty and similar terminals (#772)** — terminals exporting `TERM=xterm-kitty` (and `foot`/`rio`/`contour`/`st-…`) no longer fail with "missing or unsuitable terminal".
-
 - [Bug Fix] **`[limits.disk] tmpfs_size` now applies on `coi run` too (#728 follow-up)** — Previously only `coi shell` honored it.
-
 - [Bug Fix] **`permission_mode = "interactive"` keeps Claude Code's auto mode selectable (#764)** — Interactive mode no longer silently disables the in-session Shift+Tab auto-mode toggle.
-
 - [Bug Fix] **Per-tool model/effort reaches external `coi container exec` and reused containers (#744)** — a profile's `[tool.claude] model`/`effort_level` now applies on `coi container exec` and reused containers.
-
 - [Bug Fix] **Security monitor no longer false-freezes a healthy container** — a transient I/O-counter blip is now clamped so it can't trigger an auto-pause.
-
 - [Bug Fix] **Clearer ephemeral-launch retry messages (#716)** — a failed launch no longer blames UID isolation for unrelated causes.
-
 - [Bug Fix] **`[limits.disk] tmpfs_size` now actually resizes `/tmp` (#733)** — the setting previously had no effect; `/tmp` is now sized as configured.
-
 - [Bug Fix] **`coi shell` honors `[container] storage_pool` (#726)** — Interactive sessions now land on the configured pool instead of always the Incus default.
-
 - [Bug Fix] **`coi run` gets the same hardening as `coi shell` (#726 follow-up)** — NIC anti-spoofing, boot-window egress block, IPv6 disable, credential seeding, and git locks now apply to `coi run`.
-
 - [Bug Fix] **Container no longer blocks host suspend (#706, thanks @blegat)** — masked the container's `udisks2` service so it doesn't stop the host from sleeping.
-
 - [Bug Fix] **`install.sh` initializes a fresh Incus correctly (#703)** — it no longer skips `incus admin init` on real hosts.
-
 - [Bug Fix] **Fewer leaked firewall rules (#696)** — `coi container delete` and `coi clean` now fully reclaim a container's firewall rules.
-
 - [Bug Fix] **Writable workspace on OrbStack ≥2.2.2 (#691)** — `coi container start` applies the UID-mapping fix a pre-upgrade container needs.
-
 - [Bug Fix] **`coi health` flags slow non-thin LVM pools (#686)** — a non-thin (or cluster) LVM pool re-copies the whole image every launch; health now warns.
 
 ## 0.11.2 (2026-08-11)
@@ -109,7 +71,6 @@
 ### Bug Fixes
 
 - [Bug Fix] **`coi health` detects firewalld zone bloat, and the installer prevents it (#695)** — a new health check flags ballooned firewalld rulesets, and `install.sh` prevents the enrollment.
-
 - [Bug Fix] **Closed the first nft teardown leaks from the #696 audit** — `coi kill`/`shutdown` now remove the container's IPv6 egress block.
 
 ## 0.11.1 (2026-08-11)
@@ -121,19 +82,14 @@
 ### Features
 
 - [Feature] **`[container] session_name` — named sessions that survive workspace moves** — key a session on a name instead of its workspace path. Trusted-scope only.
-
 - [Feature] **`coi health` flags a `dir` storage pool driver (#659, thanks @technicalpickles)** — a `dir` pool re-unpacks the whole image every launch; the health check warns.
 
 ### Bug Fixes
 
 - [Bug Fix] **Workspace filesystem is checked before using a `shift=true` mount (#683, thanks @technicalpickles)** — FUSE-backed shares are detected up front and use `raw.idmap`.
-
 - [Bug Fix] **Reusing a stopped persistent container no longer hard-fails on hosts without idmapped mounts (#685, thanks @technicalpickles)** — reuse applies the same UID-mapping fallback fresh launches use.
-
 - [Bug Fix] **Hosts whose kernel can't do idmapped mounts now fall back automatically (#678, thanks @technicalpickles)** — coi converts to `raw.idmap` and retries instead of failing to launch.
-
 - [Bug Fix] **Fixed a doubled `v` in release versions and a broken `coi update` check (#673, thanks @sklarsa)** — `coi update` no longer wrongly reports you're already on the latest version.
-
 - [Bug Fix] **Sandbox context no longer grows `~/.claude/CLAUDE.md` every session (#674)** — the injected block is delimited and rewritten in place, and already-bloated files are healed.
 
 ## 0.11.0 (2026-07-29)
@@ -145,47 +101,30 @@
 ### Features
 
 - [Feature] **`COI_TIMING_DEBUG=1` reports where a session's startup time went** — a wall-clock timeline of every `incus`/`nft` call, to help diagnose slow launches.
-
 - [Feature] **`[[network.hosts]]` and `coi hosts` (#605)** — give a container fixed `/etc/hosts` name→address entries with matching firewall reachability. Trusted-scope only.
-
 - [Feature] **`[defaults] profile` (#607)** — pick the profile a bare `coi` uses when `--profile` isn't passed. Trusted-scope only.
-
 - [Feature] **`coi close` is an alias for `coi shutdown` (#593)** — mirrors the `close` verb you type inside a container.
 
 ### Bug Fixes
 
 - [Bug Fix] **The installer no longer auto-installs ZFS where that can break the system (#666)** — coi uses ZFS only where it's safe and falls back to btrfs otherwise.
-
 - [Bug Fix] **`raw.idmap` is set when `code_uid` matches the host UID and shift is off (#667)** — fixes an unwritable `/workspace` on that configuration.
-
 - [Bug Fix] **Claude Code's dangerous-permissions confirmation is now actually suppressed in sandbox mode (#649)** — non-interactive sandbox startup no longer stalls on the prompt.
-
 - [Bug Fix] **The installer falls back to btrfs when ZFS can't be set up, and skips ZFS on OrbStack (#661)** — containers no longer silently stay on the slow default storage pool.
-
 - [Bug Fix] **`[[network.hosts]]` in allowlist mode honors `allow_local_network_access` for private targets (#605)** — a private-address host entry no longer aborts setup when local-network access is enabled.
-
 - [Bug Fix] **`coi kill` no longer reports a failure when it loses a delete race for a container it killed (#609)** — a container that's already gone now counts as killed.
-
 - [Bug Fix] **`coi run -- <cmd>` runs with `HOME`/`USER` set (#623)** — `~` and `git config --global` work under `coi run`, matching `coi shell`.
-
 - [Bug Fix] **A `code_uid` remap no longer aborts setup when a read-only mount lives under `/home/code` (#608, thanks @technicalpickles)**.
-
 - [Bug Fix] **A persistent container no longer wedges on restart when a protected path was removed from the workspace (#610)** — security mounts are reconciled on restart and re-established for the current workspace.
-
 - [Bug Fix] **Allowlist mode now works with domains behind rotating IP pools (Vertex, Bedrock, most cloud APIs)** — coi resolves allowlisted domains host-side and pins the same addresses in the container's `/etc/hosts`.
-
 - [Bug Fix] **Allowlist firewall refresh/teardown hardened** — the firewall uses atomic named sets and teardown no longer leaks nft sets across sessions.
-
 - [Bug Fix] **Typing `close` no longer mislabels a shutting-down container as "kept running" or leaks a stopped ephemeral container (#616)**, plus a round of shutdown-detection hardening (#597).
-
 - [Bug Fix] **`coi shell --container <missing>` fails fast with a clear error** instead of a misleading 30s timeout.
-
 - [Bug Fix] **`managed-settings.json` lands root-owned and world-readable (#364 follow-up)** — Claude Code no longer fails OAuth when the host UID differs from the container's code user.
 
 ### Security
 
 - [Security] **A container in allowlist mode can no longer reach any nameserver** — DNS egress is blocked so it can't learn an address the firewall wasn't already given.
-
 - [Security] **`coi kill` no longer fails when the container is already gone, and now reports why a delete actually failed** instead of a bare exit code.
 
 ## 0.10.1 (2026-07-12)
@@ -193,15 +132,12 @@
 ### Features
 
 - [Feature] **Host port publishing: `[ports] pool` and `[[ports.map]]` (#558)** — publish container ports to `localhost:<port>`: `pool = N` identity-mapped ports, `[[ports.map]]` named services.
-
 - [Feature] **`coi list` shows published ports (#558)** — published ports appear in text output and as `published_ports` in `--format json`.
 
 ### Bug Fixes
 
 - [Bug Fix] **`coi list --stopped` no longer titles the output "Active Containers:" (#592)** — the heading now follows the status filter.
-
 - [Bug Fix] **`close`/poweroff inside `coi shell` is no longer mislabeled as a normal exit (#597)** — cleanup now waits for the real shutdown and honors the ephemeral/persistent contract.
-
 - [Bug Fix] **`coi tmux capture` / `send` / `list` and `coi attach` no longer target the wrong user's tmux socket (#588)** — they now resolve the `code` user's actual UID instead of root's socket.
 
 ## 0.10.0 (2026-07-10)
@@ -209,85 +145,55 @@
 ### Breaking Changes
 
 - [Breaking] **The legacy `claude-on-incus` name is fully retired** — the installer no longer creates the compatibility symlink and removes a leftover one on upgrade.
-
 - [Breaking] **All env-var config overrides removed (`COI_LIMIT_*`, `CLAUDE_ON_INCUS_*`)** — configuration is now config/profiles only; set the equivalent config keys instead.
-
 - [Breaking] **Config-shaped CLI flags removed** — `--image`, `--persistent`, `--tmux`, `--tool`, and others now live in config/profiles; a removed flag prints its replacement key.
 
 ### Features
 
 - [Feature] **Generic credential catalog with `[[credentials]]` (#549)** — seed any provider's credential file into the container via a named bundle or ad-hoc host/container file pair.
-
 - [Feature] **`coi list` status filters: `--running`, `--stopped`, `--status <state>` (#578)** — narrow the listing to containers in a given state.
-
 - [Feature] **Workspace run script: `coi run` with no command runs `./coi-run` in the sandbox** — an executable `coi-run` at the workspace root is booted and executed, propagating its exit code.
-
 - [Feature] **`coi run` streams output live and connects piped stdin** — long builds show output as it's produced, and `cat data | coi run -- ./process.sh` works.
-
 - [Feature] **`coi run` now starts security monitoring** — arbitrary commands and run scripts get the same watchers as agent sessions.
-
 - [Feature] **Persistent `coi run` reuses its stopped container** — state actually persists across runs instead of launching a fresh container each time.
-
 - [Feature] **Resume can change a session's persistence via config** — an explicit `[container] persistent` now wins over the resumed session's recorded mode.
-
 - [Feature] **Explicit `--profile` wins over the workspace overlay** — a project `.coi/config.toml` can no longer override the profile's `[container]` settings.
-
 - [Feature] **Built-in `hardened` profile for untrusted repos (#496)** — `--profile hardened` bundles COI's strongest controls into one preset.
-
 - [Feature] **Non-sudoers mode `[network] use_sudo = false` (#508)** — run without the passwordless-sudo nft rule; restricted/allowlist modes fail closed, open mode works.
 
 ### Improvements
 
 - [Enhancement] **Configurable container readiness window** — new `[container] ready_timeout` (default 30s) for slow hosts, also applied to `coi run`.
-
 - [Enhancement] **`coi health` now proves isolation at runtime** — adversarial checks confirm secret masking, host-credential isolation, and network blocking actually hold.
-
 - [Enhancement] **Broadened the `hardened` profile's default secret-mask set (#496)** — also masks `*.p12`, `*.tfvars`, `*.tfstate`, `.git-credentials`, `kubeconfig`, and more.
 
 ### Security
 
 - [Security] **Workspace secret-path masking `[security] secret_paths` (#494)** — an opt-in list of workspace globs masked read-only inside the container. Fail-closed and symlink-safe.
-
 - [Security] **`.claude/settings.json` / `settings.local.json` are now mounted read-only** — a contained agent can't plant a `hooks` command a later session would auto-execute.
-
 - [Security] **New `[security] writable_paths` opt-out** — remove specific entries from `protected_paths`; trusted-scope only.
-
 - [Security] **All protection-weakening config fields are now trusted-scope only** — an untrusted project config can only add protections, never disable them.
-
 - [Security] **`coi run` now protects per-worktree git config (#542)** — `.git/worktrees/<name>/config.worktree` is covered on the `coi run` path too, matching `coi shell`.
 
 ### Added
 
 - [Feature] **The base image can install only the AI agents you use (#454)** — `[container.build] agents = [...]` installs just the listed agents.
-
 - [Feature] **Git worktrees / bare-repo checkouts now work inside the container, securely (#533)** — COI mounts the worktree's external gitdir while keeping hook/config RCE-sink files read-only.
 
 ### Bug Fixes
 
 - [Bug Fix] **`coi file pull` no longer recursively deletes an existing destination directory** — it now places the pulled entry inside an existing directory, like `cp`/`scp`.
-
 - [Bug Fix] **Container boot no longer hangs when IPv6 is disabled (#548)** — restricted/allowlist mode no longer wedges `network-online.target`.
-
 - [Bug Fix] **Profile schema accepts every field the code supports** — `stale_base_check` and the two monitoring thresholds now validate.
-
 - [Bug Fix] **Profile inheritance no longer drops the parent's `sockets` and `env_commands`**.
-
 - [Bug Fix] **Container git identity is set from your host git config, configurable via `[git]` (#556)** — every tool gets the same commit author; `[git] name`/`email` pin an explicit identity.
-
 - [Bug Fix] **OrbStack is no longer misdetected as Colima/Lima (#553, thanks @technicalpickles)** — fixes an unwritable `/workspace` on OrbStack.
-
 - [Bug Fix] **Virtiofs-backed workspaces no longer break `coi run` (#534)** — disk devices attach before start so the isolation fallback covers them.
-
 - [Bug Fix] **Workspace writes work under Colima/Lima and any host-UID ≠ 1000 (#530)** — `raw.idmap` is set on a UID mismatch so the code user can write `/workspace`.
-
 - [Bug Fix] **Log-rotation threat detection no longer permanently disables itself after a transient read blip**.
-
 - [Bug Fix] **Auto-killed containers no longer leak their per-IP firewall rules**.
-
 - [Bug Fix] **Background monitoring/network diagnostics no longer leak onto the attached terminal (#372)** — diagnostic output goes to the session log instead of corrupting the TUI.
-
 - [Bug Fix] **Monitoring no longer crashes at session start when the GTFOBins detection DB is present (#505)**.
-
 - [Bug Fix] **opencode is installed for the host CPU architecture instead of always x86_64 (#506)** — fixes arm64 hosts.
 
 ## 0.9.0 (2026-06-17)
@@ -295,91 +201,56 @@
 ### Security
 
 - [Security] **Out-of-workspace mounts from an untrusted project config now require `coi trust`** — such mounts are dropped unless approved with `coi trust`.
-
 - [Security] **`coi file pull` / session-state save no longer recreate container symlinks or special files on the host** — closes a symlink-extraction host-tampering vector.
-
 - [Security] **Stale per-IP firewall rules are purged before applying policy** — closes a DHCP-lease-reuse egress bypass.
-
 - [Security] **`coi clean --orphans` now also removes orphaned IPv6 drop rules**.
-
 - [Security] **Allowlist mode scopes egress to TCP/UDP + rate-limited ICMP** — closes ICMP-tunnel and raw-IP covert channels to allowed hosts.
-
 - [Security] **The remaining git config/attribute sinks are now read-only** — `.git/info/attributes`, `.git/config.worktree`, and per-worktree config are locked (they could run host commands).
-
 - [Security] **Workspace `.coi/` is now read-only inside the container** — an agent can no longer plant project config or profiles applied on the next launch.
-
 - [Security] **An untrusted project config can no longer weaken network isolation** — settings that would expose metadata or private networks are dropped; only strengthening values honored.
-
 - [Security] **The default `coi` image builds from the embedded build script, not the workspace copy** — an agent can't poison `coi-default` by editing `build.sh` in the workspace.
-
 - [Security] **Bridge NIC anti-spoofing and port isolation** — blocks source IP/MAC spoofing and container-to-container lateral movement.
-
 - [Security] **IPv6 egress is now enforced host-side** — replaces a container-reversible in-container sysctl; fails closed in restricted/allowlist mode.
-
 - [Security] **Boot-time network block now fails closed in restricted/allowlist mode**, and covers persistent-container restarts so planted startup scripts can't get an unrestricted boot window.
 
 ### Features
 
 - [Feature] **Mint short-lived secrets at session start with `[defaults.env_commands]`** — maps an env var to a host command whose stdout is injected at launch. Trusted-scope only.
-
 - [Feature] **Forward arbitrary host Unix sockets into the container with `[[sockets]]`** — generalizes SSH agent forwarding to any host socket. Untrusted sockets require `coi trust`.
 
 ### Bug Fixes
 
 - [Bug Fix] **`coi update` on a dev build no longer fails or hides its `--force` guidance when the GitHub API is unavailable** — it refuses offline-safely before any network call.
-
 - [Bug Fix] **`DirExists`/`FileExists`/`Chown` now handle container paths with spaces or shell metacharacters** — args are passed verbatim instead of through the shell.
-
 - [Bug Fix] **Bridge firewall rules are no longer removed when `incus list` output can't be parsed** — the default is now to keep rules.
-
 - [Bug Fix] **`coi run` network setup now respects Ctrl+C** — SIGINT is honored during network setup.
-
 - [Bug Fix] **`max_duration` remaining-time now reports the actual time left** instead of always the full duration.
-
 - [Bug Fix] **Suspicious-exec pattern matching is now case-insensitive**.
-
 - [Bug Fix] **Allowlist firewall rules no longer momentarily drop to zero during a DNS refresh** — the rule set is never empty mid-transition, closing a brief unrestricted window.
-
 - [Bug Fix] **Session metadata no longer corrupts on paths or profile names with special characters** — fixes broken `coi list` / `--resume` for such workspaces.
 
 ### Security
 
 - [Security] **Sigma `linux/process_creation` rules as a second detection source** — `coi update sigma` sparse-clones community Sigma rules the exec monitor loads.
-
 - [Security] **Runtime-loadable exec pattern database** — the exec watcher loads GTFOBins patterns from `~/.coi/gtfobins/` via `coi update patterns`.
-
 - [Security] **Unified `coi update`** — updates the binary and the pattern database together; `coi update core` / `coi update patterns` for granular control.
-
 - [Security] **Sensitive-file access monitored host-side via fanotify** — credential reads and persistence writes raise HIGH/CRITICAL threats, tamper-resistant from inside the container.
-
 - [Security] **Network, UDP, and process monitoring read host-side from the container's namespace/cgroup** — an attacker inside can no longer hide connections or processes (#430, #432, #428).
-
 - [Security] **Fork-bomb and process-spawn-rate detection** — raises CRITICAL when process count or spawn rate exceeds a configurable threshold.
-
 - [Security] **Host-side auth.log / syslog monitoring** — detects failed logins, invalid users, and sudo/su privilege-escalation attempts (WARNING/HIGH threats).
-
 - [Security] **Real-time process-exec monitoring via PROC_EVENTS** — flags reverse shells, netcat `-e`, socket one-liners, and root privilege escalation at exec time.
-
 - [Security] **UID-namespace isolation per container** (`security.idmap.isolated`) — eliminates cross-container UID overlap on shared hosts.
-
 - [Security] **Docker bridge CIDR isolation** — moves the docker0 bridge and network pool to `172.30/172.31` to avoid conflicts with corporate VPNs/cloud subnets.
 
 ### Improvements
 
 - [Enhancement] **`coi profile create default` scaffolds a documented starter config** — writes a fully-commented `config.toml` with every value commented out. Never overwrites an existing config.
-
 - [Enhancement] **Stale base image detection** — `coi shell`/`coi run` warn when a custom image predates its rebuilt base. Resolves #456.
-
 - [Enhancement] **`coi build --all`** — builds every profile with a `[container.build]` section, base image first. Resolves #455.
-
 - [Enhancement] **`coi version --format json`** — machine-readable version output.
-
 - [Enhancement] **`use_tmux` config option** — set `use_tmux = false` in `[shell]` instead of passing `--tmux=false` every time. Resolves #399.
-
 - [Enhancement] **Base image downloaded directly from Canonical's CDN (#388)** — `coi build` fetches Ubuntu from `cloud-images.ubuntu.com`; override via `[container.build] base`.
-
 - [Enhancement] **Interactive build prompt when the image is missing** — `coi shell`/`coi run` offer to build inline instead of failing; non-interactive use is unchanged.
-
 - [Enhancement] **Sudo ownership guidance in SANDBOX_CONTEXT.md (#368)** — tells the tool to `chown` workspace files after `sudo`, which otherwise leaves them root-owned.
 
 **Note:** `coi health --format json` renamed several keys in this release (`firewall`→`nft`, `orphaned_firewall_rules`→`orphaned_nft_rules`, `bridge_firewalld_zone`→`bridge_forward_rules`) as part of the firewalld→nftables naming cleanup — update any consumers.
@@ -387,31 +258,18 @@
 ### Bug Fixes
 
 - [Bug Fix] **Disk I/O limits now work** — applied as device-level keys on the root disk (the correct Incus API) instead of container-level config.
-
 - [Bug Fix] **Negative and zero `max_duration` values are now rejected**.
-
 - [Bug Fix] **`coi run` now enforces `max_duration` at runtime** — previously only `coi shell` honored it.
-
 - [Bug Fix] **`coi shell --resume` now works when the container is already Running (#413)** — fixes a post-reboot "slot already in use" failure.
-
 - [Bug Fix] **Error messages no longer suggest removed CLI flags** — they now point at the `config.toml` settings that replaced them (#398).
-
 - [Bug Fix] **Allowlist IP-refresh logs no longer pollute the terminal** — background refresh output goes to a log file (#372).
-
 - [Bug Fix] **`poweroff` / `close` now work cleanly in Ubuntu 24.04 containers** — bypasses a systemd-logind transaction conflict; also fixes the `unable to resolve host` warning before sudo.
-
 - [Bug Fix] **Clearer error when the incus-admin group isn't active yet** — tells you to log out/in or run `newgrp incus-admin` (#383).
-
 - [Bug Fix] **Escape key now works in nested tmux sessions** — ships `escape-time 10` so Esc reaches opencode/vim promptly (#378).
-
 - [Bug Fix] **Effort level no longer locked when not configured** — COI only injects `CLAUDE_CODE_EFFORT_LEVEL` when `effort_level` is set, so you can change it mid-session (#376).
-
 - [Bug Fix] **`coi run` now applies network isolation and SSH agent forwarding from config** — previously it ignored `[network]`/`[ssh]` (#373).
-
 - [Bug Fix] **Fixed a double `v` prefix (`vv0.8.x`) in the version display**.
-
 - [Bug Fix] **Session data no longer lost on `sudo poweroff`** — the session-state save retries once the container has stopped instead of failing on a transient SFTP error (#397).
-
 - [Bug Fix] **Incus errors now surface stderr** — e.g. `Error: Instance not found` instead of a bare `exit status 1` (#276).
 
 ### Features
@@ -443,57 +301,33 @@
 ### Breaking Changes
 
 - [Breaking] **Host-side immutable protection for protected paths** — COI `chattr +i`'s protected paths on the host before start, closing the `unshare -m` + `umount` bypass.
-
 - [Breaking] **Default image renamed `coi` → `coi-default`** — run `coi build` after updating.
-
 - [Breaking] **Removed `coi build custom`** — build custom images through profiles instead.
-
 - [Breaking] **Auto-build on missing image removed** — `coi shell`/`coi run` now error and tell you to `coi build` first.
-
 - [Breaking] **Many CLI flags removed in favor of config/profiles** — `--mount`, `--env`, `--network`, `--ssh-agent`, all `--limit-*`, and others now live in `config.toml`.
-
 - [Breaking] **Project config moved from `.coi.toml` to `.coi/config.toml`** (#251) — only `~/.coi/` and `./.coi/` are scanned now.
-
 - [Breaking] **New `[container]` config section** consolidates image, persistence, storage pool, and build settings (#302).
-
 - [Breaking] **Health check `incus_storage_pool` → `incus_storage_pools`** — now a per-pool map in JSON output.
-
 - [Breaking] **`coi resume` renamed to `coi unfreeze`** — avoids confusion with `coi shell --resume`.
 
 ### Features
 
 - [Feature] **Container aliases** — `[container] alias = "myproject"` lets you `coi shell/attach/kill/unfreeze myproject` from any directory (#304).
-
 - [Feature] **Per-profile storage pool** — `[container] storage_pool` routes a project to a specific Incus pool (#302).
-
 - [Feature] **Storage-pool visibility** — `coi list` shows POOL, `coi health` reports per-pool usage, and `coi clean --pools` removes containers in unreferenced pools.
-
 - [Feature] **Guest API disabled by default** (`security.guestapi=false`) — stops containers querying host source paths.
-
 - [Feature] **Profiles** — self-contained profile directories with an embedded built-in `default` and inheritance via `inherits`. Part of #114.
-
 - [Feature] **Read-only mount support** — `readonly = true` on a mount entry shares host dirs without letting the container modify them (#260).
-
 - [Feature] **Self-update command (`coi update`)** — downloads the latest release, verifies its SHA256, and atomically replaces the binary.
-
 - [Feature] **Build configuration in project config** — `[container.build]` defines how to build a custom image so `coi build` builds it automatically (#251).
-
 - [Feature] **Host timezone inheritance** — containers inherit the host timezone by default; configurable via `[timezone]` (`host`/`fixed`/`utc`) (#236).
-
 - [Feature] **Auto-inject sandbox context into AI tool sessions** — `~/SANDBOX_CONTEXT.md` is loaded into each tool's native context. Opt out with `[tool] auto_context = false` (#243).
-
 - [Feature] **Expanded container toolset with mise-managed runtimes** — adds `fd`, `bat`, `tree`, `strace`, `lsof`, `sqlite3`, DB clients, and mise-managed Python/pnpm/TypeScript/tsx.
-
 - [Feature] **SSH agent forwarding** — `[ssh] forward_agent = true` bridges the host `SSH_AUTH_SOCK` into the container.
-
 - [Feature] **Environment variable forwarding** — `forward_env = [...]` reads named host vars at session start without storing them in config.
-
 - [Feature] **TTL-aware DNS refresh for allowlist mode** — re-resolves allowed domains on their actual DNS TTL (60s floor) so rotating CDN/cloud IPs stay reachable.
-
 - [Feature] **Safety guards and version checks** — a privileged-container hard block, security-posture health check, and minimum-version checks for Incus and nftables (#237, #212, #214).
-
 - [Feature] **Image compression flag** — `--compression` on `coi build` / `coi image publish` (thanks @rominf, #233).
-
 - [Feature] **Auto-trust mise config files in the workspace** — no manual `mise trust` needed inside the container (#328).
 
 ### Bug Fixes
