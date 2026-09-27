@@ -31,16 +31,21 @@ prompt_continue() {
         echo "  Re-run the script directly (not piped) or fix the issue above."
         exit 1
     fi
-    read -p "$message [y/N] " -n 1 -r </dev/tty
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    # Read a FULL line (not a single char). A single-char read leaves the rest
+    # of what the user typed (e.g. the "es" of "yes") in the tty buffer, which
+    # the NEXT prompt then mis-reads as its answer. Line reads keep prompts from
+    # cross-contaminating.
+    read -r -p "$message [y/N] " REPLY </dev/tty || REPLY=""
+    if [[ ! $REPLY =~ ^[Yy]([Ee][Ss])?$ ]]; then
         exit 1
     fi
 }
 
-# Prompt user for a choice (single character).
+# Prompt user for a choice, returning it in REPLY.
 # In non-interactive mode, returns the default value.
-# In interactive mode, reads from /dev/tty.
+# In interactive mode, reads a full line from /dev/tty (see prompt_continue for
+# why a full line rather than a single char — leftover input corrupts the next
+# prompt). Empty input falls back to the default.
 prompt_choice() {
     local message="$1"
     local default="$2"
@@ -49,8 +54,7 @@ prompt_choice() {
         REPLY="$default"
         return
     fi
-    read -p "$message" -n 1 -r </dev/tty
-    echo ""
+    read -r -p "$message" REPLY </dev/tty || REPLY=""
     if [ -z "$REPLY" ]; then
         REPLY="$default"
     fi
@@ -355,13 +359,9 @@ check_nft() {
         if [ "$NONINTERACTIVE" = "1" ]; then
             echo -e "${BLUE}→ Non-interactive mode: installing nftables...${NC}"
             pkg_install nftables
-        else
-            read -p "  Install nftables now? [Y/n] " -n 1 -r </dev/tty
-            echo ""
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                echo -e "${BLUE}→ Installing nftables...${NC}"
-                pkg_install nftables
-            fi
+        elif user_agrees "  Install nftables now? [Y/n]: "; then
+            echo -e "${BLUE}→ Installing nftables...${NC}"
+            pkg_install nftables
         fi
     else
         echo -e "${GREEN}✓ nft is installed${NC}"
@@ -548,9 +548,7 @@ ensure_idmap() {
     if [ "$NONINTERACTIVE" = "1" ]; then
         echo -e "${BLUE}→ Non-interactive mode: configuring idmap...${NC}"
     else
-        read -p "  Configure subordinate UID/GID ranges now? [Y/n] " -n 1 -r </dev/tty
-        echo ""
-        if [[ $REPLY =~ ^[Nn]$ ]]; then
+        if ! user_agrees "  Configure subordinate UID/GID ranges now? [Y/n]: "; then
             return
         fi
     fi
