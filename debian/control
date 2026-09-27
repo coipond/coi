@@ -1,0 +1,58 @@
+Source: code-on-incus
+Section: devel
+Priority: optional
+# The code-on-incus team has no Launchpad mailing list, so an address there
+# would bounce silently. Bug reports are routed to GitHub via XB-Bugs below
+# rather than to this inbox.
+Maintainer: Maciej Mensfeld <maciej@mensfeld.pl>
+Build-Depends: debhelper-compat (= 13),
+               golang-1.25-go,
+               pkg-config,
+               libsystemd-dev
+Standards-Version: 4.7.0
+Homepage: https://github.com/mensfeld/code-on-incus
+Vcs-Git: https://github.com/mensfeld/code-on-incus.git
+Vcs-Browser: https://github.com/mensfeld/code-on-incus
+Rules-Requires-Root: no
+
+Package: code-on-incus
+Architecture: any
+# Bugs go to GitHub, not Launchpad's tracker and not the Maintainer's inbox.
+# The XB- prefix is required: dpkg rejects a bare "Bugs:" here ("unknown
+# information field") and only XB-* fields propagate into the binary control,
+# where it lands as "Bugs:" for reportbug/apt to surface.
+XB-Bugs: https://github.com/mensfeld/code-on-incus/issues
+# libsystemd0 is NOT redundant with ${shlibs:Depends}: the NFT monitor reads the
+# journal via go-systemd's sdjournal, which dlopen()s libsystemd.so.0 at runtime
+# instead of linking it. dpkg-shlibdeps only sees link-time NEEDED entries, so it
+# cannot infer this dependency and it has to be declared by hand.
+# sudo is a hard dependency, not a convenience: the default network mode is
+# "restricted", whose setup fails closed when passwordless `sudo -n nft` is
+# unavailable, and that error aborts session setup outright. Running without
+# sudo requires deliberately turning the isolation off ([network] mode = "open"
+# or use_sudo = false), so a default-configured install needs it present.
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libsystemd0,
+         libcap2-bin,
+         incus,
+         sudo
+# git is not required to start a session, but without it the host git-identity
+# read comes back empty and COI keeps the fail-closed user.useConfigOnly guard,
+# so commits inside the container fail; `[git] name`/`email` recovers that
+# without the package. Its only other user is `coi update patterns` — threat
+# detection falls back to a compiled-in pattern set.
+Recommends: git
+# coi never executes an OpenSSH binary. Agent forwarding just reads
+# $SSH_AUTH_SOCK and proxies that socket into the container, so openssh-client
+# is only relevant as the thing that would provide the agent in the first place.
+Suggests: openssh-client
+Description: isolated machines for AI coding agents, with active defense
+ Code on Incus (the "coi" command) gives each AI coding agent its own machine:
+ a full Incus system container with root access, systemd, Docker, and the
+ ability to install anything. Agents work as they would on a real server -
+ run services, manage packages, use cron - without touching the host.
+ .
+ Host credentials (SSH keys, environment variables, Git tokens) are never
+ exposed to the agent unless explicitly mounted. coi watches each container
+ and can pause or kill it automatically on suspicious activity such as reverse
+ shells, credential scanning, or data exfiltration.

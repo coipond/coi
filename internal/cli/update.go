@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,7 +48,12 @@ Examples:
 		// Propagate --force from parent to the core update.
 		updateForce = updateAllForce
 
-		if err := updateCoreCommand(updateCoreCmd, args); err != nil {
+		// The detection databases live outside the package and can still be
+		// refreshed, so a packaged install skips only the binary step rather
+		// than failing the whole command.
+		if installedFromPackage() {
+			fmt.Println(packagedUpdateHint())
+		} else if err := updateCoreCommand(updateCoreCmd, args); err != nil {
 			return err
 		}
 		fmt.Println()
@@ -98,7 +104,50 @@ type githubAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
+// installedFromPackage reports whether a system package manager owns this
+// binary (stamped via ldflags by the packaging, e.g. debian/rules). Such a
+// build must not self-update: the installed path belongs to the package
+// manager's file database, so overwriting it in place desyncs that database
+// and the next system upgrade silently reverts the update. Every package
+// format has this property, so anything other than a plain source build counts.
+func installedFromPackage() bool { return InstallSource != "source" }
+
+// packageUpdateCommands maps an InstallSource stamp to the command that updates
+// that kind of install. A packaging target only has to set InstallSource to be
+// refused correctly; adding an entry here upgrades the advice from generic to
+// exact. Keys are the values passed to -X internal/cli.InstallSource.
+var packageUpdateCommands = map[string]string{
+	"deb":    "sudo apt update && sudo apt upgrade code-on-incus",
+	"rpm":    "sudo dnf upgrade code-on-incus",
+	"arch":   "sudo pacman -Syu code-on-incus",
+	"alpine": "sudo apk upgrade code-on-incus",
+	"nix":    "nix profile upgrade code-on-incus",
+	"brew":   "brew upgrade code-on-incus",
+}
+
+// packagedUpdateHint tells the user how to actually get the update, so the
+// refusal is never a dead end. Unknown-but-stamped sources still get the
+// refusal plus generic guidance rather than advice for the wrong tool.
+func packagedUpdateHint() string {
+	const intro = "This coi was installed from a system package, which owns the binary.\n" +
+		"Update it with your package manager instead:"
+
+	if cmd := packageUpdateCommands[InstallSource]; cmd != "" {
+		return intro + "\n\n    " + cmd
+	}
+	return intro + "\n\n    (use whichever package manager installed coi)"
+}
+
 func updateCoreCommand(cmd *cobra.Command, args []string) error {
+	// Refuse before anything else — before the dev-build check and before any
+	// GitHub query — so no code path can reach the in-place overwrite. --check
+	// only reads, so it stays available; --force is deliberately NOT an escape
+	// hatch, since the damage is to the package manager's state rather than to
+	// this process.
+	if installedFromPackage() && !updateCheck {
+		return errors.New(packagedUpdateHint())
+	}
+
 	currentVersion := normalizeVersion(Version)
 	isDev := currentVersion == "dev"
 

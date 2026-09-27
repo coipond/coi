@@ -1,0 +1,8 @@
+# debhelper / dpkg build artifacts
+/files
+/*.substvars
+/*.debhelper.log
+/.debhelper/
+/debhelper-build-stamp
+/code-on-incus/
+/tmp/

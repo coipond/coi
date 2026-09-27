@@ -64,6 +64,9 @@ test-config.toml
 *.bck.yml
 *.backup
 
+# Go build cache/GOPATH used by debian/rules
+/_build/
+
 # Documentation lives in the GitHub wiki, not in-repo. This guards against
 # accidentally committing local docs or process artifacts (e.g. plan/spec
 # scratch from tooling) under docs/.

@@ -1,0 +1,7 @@
+code-on-incus (0.10.2~git20260718) UNRELEASED; urgency=medium
+
+  * Initial PPA packaging.
+  * Build with Go 1.25 from ppa:longsleep/golang-backports.
+  * Vendor Go modules for offline (network-less) Launchpad builders.
+
+ -- William Black <william@williamblack.dev>  Sat, 18 Jul 2026 19:35:37 -0700

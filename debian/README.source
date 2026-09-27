@@ -1,0 +1,40 @@
+Packaging notes for code-on-incus
+=================================
+
+Go 1.25 toolchain
+-----------------
+go.mod requires Go 1.25. Availability of `golang-1.25-go` differs per series:
+
+  * resolute (26.04)  - in the archive (universe). No PPA needed.
+  * noble   (24.04)   - NOT in the archive; needs the backports PPA.
+  * jammy   (22.04)   - NOT in the archive; needs the backports PPA.
+
+For the two LTS series that lack it, the toolchain comes from:
+
+    ppa:longsleep/golang-backports   (package: golang-1.25-go)
+
+Launchpad's builders have no internet access, so the toolchain cannot be
+downloaded at build time. Instead, this PPA must declare the backports PPA as
+an *archive dependency* so the builders can resolve `golang-1.25-go`:
+
+  1. Open your PPA on Launchpad -> "View package details" -> "Edit dependencies".
+  2. Add "PPA for Simon Eisenmann - Golang Backports"
+     (ppa:longsleep/golang-backports).
+  3. Save. Re-trigger any failed builds.
+
+Vendored modules
+----------------
+The builders also cannot fetch Go modules, so they are vendored. Regenerate
+before building a source package:
+
+    go mod vendor
+
+vendor/ is intentionally NOT committed to git (see .gitignore); it is produced
+as a build prerequisite locally and in CI, and dpkg-source includes it in the
+(native-format) source tarball that is uploaded.
+
+Source format
+-------------
+This uses "3.0 (native)" for simplicity on a personal PPA: one tarball, no
+orig/patch split. If this is ever submitted to the Debian archive, switch to
+"3.0 (quilt)" with a separate upstream orig tarball.

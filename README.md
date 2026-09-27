@@ -45,6 +45,8 @@ That's it. Your agent is now running in an isolated container with your project 
 
 > Requires Linux with [Incus](https://linuxcontainers.org/incus/docs/main/installing/) (macOS works too, via Colima/Lima - see [macOS Setup](https://github.com/mensfeld/code-on-incus/wiki/macOS-Setup-Guide)).
 
+> **Ubuntu:** prefer a system package? Install from the Launchpad PPA — `sudo add-apt-repository ppa:code-on-incus/ppa && sudo apt update && sudo apt install code-on-incus` (series 22.04/24.04/26.04; pulls in `incus` on 24.04+). Update via `apt`, not `coi update`. Packaging details: [`docs/packaging-launchpad.md`](docs/packaging-launchpad.md).
+
 ## Who it's for
 
 - You run AI coding agents and want them to have **full machine access** - root, Docker, package managers, services - without risking your host.

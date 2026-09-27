@@ -1,0 +1,155 @@
+name: Publish to Launchpad PPA
+
+# Builds a signed Debian *source* package per Ubuntu series and uploads it to a
+# Launchpad PPA. Launchpad then compiles the binaries on its build farm.
+#
+# Runs on the same v*.*.* release tags as release.yml, so every release also
+# publishes to the PPA. The dput target is hardcoded to ppa:code-on-incus/ppa.
+# The whole job no-ops unless the DEB_EMAIL variable is set, so forks/upstream
+# without PPA credentials configured are not failed.
+#
+# Relationship to release.yml — deliberately INDEPENDENT, not chained:
+#   * Both fire on the same tag push and run in parallel. Neither gates the
+#     other, so a PPA failure cannot block the GitHub release and vice versa.
+#   * Chaining via `workflow_run` would BREAK the version: that trigger runs in
+#     the default-branch context, so GITHUB_REF_NAME would be "master" and the
+#     tag-derived version below would silently fall back to the committed
+#     changelog version instead of the release version.
+#   * Consequence to know: if release.yml fails, this may still have uploaded.
+#     Launchpad uploads are IRREVERSIBLE — a version number can never be reused,
+#     so recovering means bumping the trailing .N (0.10.2~ubuntu24.04.2), not
+#     deleting and re-uploading.
+#   * release.yml force-pushes a `latest` tag at the end. That does not match
+#     the v*.*.* filter here, so it does not retrigger this workflow. Keep the
+#     filter specific if that tag scheme ever changes.
+#
+# Requirements (configure once in the GitHub repo settings):
+#   Secrets:
+#     GPG_PRIVATE_KEY  - ASCII-armored private key, passphrase-less (see docs/packaging-launchpad.md)
+#   Variables:
+#     GPG_KEY_ID       - the key's fingerprint or long key id, used to sign. A
+#                        variable, not a secret: key ids are public, and masking
+#                        it only makes signing failures harder to read in logs.
+#     DEB_EMAIL        - changelog Changed-By email (required; also the CI toggle)
+#     DEB_FULLNAME     - changelog Changed-By name (optional, defaults to "Code on Incus")
+#
+# The signing key must have upload rights to ppa:code-on-incus/ppa. It does NOT
+# need to match debian/changelog's Maintainer or DEB_EMAIL — Launchpad validates
+# the signature, not those fields (see docs/packaging-launchpad.md). The PPA must have
+# ppa:longsleep/golang-backports added as an archive dependency so its builders
+# can resolve golang-1.25-go (see debian/README.source).
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Upload source (${{ matrix.series.name }})
+    # Skip entirely when unconfigured (e.g. forks without credentials).
+    if: ${{ vars.DEB_EMAIL != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with (a) the series longsleep/golang-backports publishes
+        # golang-1.25-go for, and (b) series Launchpad still builds (non-EOL).
+        # Interim (non-LTS) releases get 9 months of support: drop each past its
+        # EOL (a dead series fails every release), add new interims once the Go
+        # backport lands. EOL below = end of standard support.
+        # `ver` is the numeric series version, used to build a version string
+        # that sorts correctly across series (see the build step).
+        series:
+          - { name: jammy,    ver: '22.04' }  # LTS — EOL Apr 2027 (ESM to 2032)
+          - { name: noble,    ver: '24.04' }  # LTS — EOL Apr 2029 (ESM to 2036)
+          - { name: resolute, ver: '26.04' }  # LTS — EOL Apr 2031 (ESM to 2036)
+        # Dropped once EOL: plucky (25.04, EOL Jan 2026),
+        # questing (25.10, EOL Jul 2026).
+    steps:
+      # Actions pinned by commit SHA, matching ci.yml/release.yml.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          # This job never pushes; don't leave the token in .git/config
+          # (zizmor: artipacked).
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          # Only used for `go mod vendor`; Launchpad does the real build.
+          go-version-file: go.mod
+          # No Go module cache here. `go mod vendor` output is shipped inside
+          # the source tarball that Launchpad compiles, so a poisoned cache
+          # written by another workflow would be baked into the published
+          # package rather than just a local build (zizmor: cache-poisoning).
+          cache: false
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            devscripts debhelper dput dpkg-dev lintian
+
+      - name: Import signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: Vendor Go modules (offline-buildable source)
+        run: go mod vendor
+
+      - name: Build signed source package for ${{ matrix.series.name }}
+        env:
+          DEBEMAIL: ${{ vars.DEB_EMAIL }}
+          DEBFULLNAME: ${{ vars.DEB_FULLNAME || 'Code on Incus' }}
+          GPG_KEY_ID: ${{ vars.GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+          BASE="$(dpkg-parsechangelog -SVersion | sed 's/[~-].*//')"
+          # For a tag push, prefer the tag as the base version.
+          case "${GITHUB_REF_NAME:-}" in v*) BASE="${GITHUB_REF_NAME#v}";; esac
+          # ~ubuntuXX.YY.N, not ~<codename>N: codenames sort alphabetically and
+          # Ubuntu restarts the alphabet (zesty -> artful), which would make the
+          # next cycle's series look like a DOWNGRADE to apt and block the
+          # upgrade after do-release-upgrade. The numeric form always sorts
+          # forward. No Debian revision (`-1`): 3.0 (native) forbids a hyphen.
+          VER="${BASE}~ubuntu${{ matrix.series.ver }}.1"
+          dch -b -v "$VER" -D "${{ matrix.series.name }}" \
+            "Automated PPA build of ${BASE} for ${{ matrix.series.name }}."
+          # --no-lintian is a debuild option and must precede dpkg-buildpackage
+          # args. lintian runs as its own advisory step below instead, so its
+          # output is visible without a packaging tag failing the release.
+          # -d skips the build-dep check: this is a source-only build (Launchpad
+          # compiles), so golang-1.25-go/libsystemd-dev need not be installed here.
+          debuild --no-lintian -S -sa -d -k"$GPG_KEY_ID"
+
+      # Resolve the .changes once: the build step produced exactly one for this
+      # series, and reading it back beats reconstructing the version string.
+      - name: Locate source .changes
+        id: changes
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          found=(../code-on-incus_*~ubuntu${{ matrix.series.ver }}.1_source.changes)
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "expected exactly 1 source .changes, found ${#found[@]}: ${found[*]:-none}" >&2
+            exit 1
+          fi
+          echo "path=${found[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Lintian (advisory)
+        # Never fatal. Packaging tags belong in the log where they can be acted
+        # on, but a new lintian release inventing a tag must not block a
+        # published release. Review this output when touching debian/.
+        run: lintian --display-info --pedantic "${{ steps.changes.outputs.path }}" || true
+
+      - name: Upload to PPA
+        run: dput ppa:code-on-incus/ppa "${{ steps.changes.outputs.path }}"

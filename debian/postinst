@@ -1,0 +1,21 @@
+#!/bin/sh
+# Grant CAP_LINUX_IMMUTABLE so coi can chattr +i host-side protected paths
+# (defense-in-depth against the unshare+umount bypass of read-only bind
+# mounts — see internal/session/immutable.go). .deb archives cannot carry
+# file capabilities, and dpkg replaces the binary on every upgrade, so this
+# has to be (re-)applied here on each configure. Mirrors install.sh's
+# grant_immutable_capability, including its non-fatal behavior: coi degrades
+# to read-only bind mounts rather than refusing to run, so a host that cannot
+# hold the capability must not be left with a half-configured package.
+set -e
+
+if [ "$1" = configure ]; then
+    if ! setcap cap_linux_immutable=ep /usr/bin/coi 2>/dev/null; then
+        echo "Warning: could not set cap_linux_immutable on /usr/bin/coi." >&2
+        echo "  Protected paths fall back to read-only bind mounts only" >&2
+        echo "  (bypassable with root in container)." >&2
+        echo "  To enable: sudo setcap cap_linux_immutable=ep /usr/bin/coi" >&2
+    fi
+fi
+
+#DEBHELPER#

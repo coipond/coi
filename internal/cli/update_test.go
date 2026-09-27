@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -140,5 +141,81 @@ func TestRestoreCapability(t *testing.T) {
 			// Just verify it completes without error.
 			restoreCapability("/nonexistent/path")
 		})
+	}
+}
+
+func TestInstalledFromPackage(t *testing.T) {
+	orig := InstallSource
+	defer func() { InstallSource = orig }()
+
+	// Only a plain source build may self-update. Every package format owns its
+	// installed files, so anything else must be treated as packaged — including
+	// formats with no entry in packageUpdateCommands.
+	cases := map[string]bool{
+		"source":  false,
+		"deb":     true,
+		"rpm":     true,
+		"arch":    true,
+		"brew":    true,
+		"portage": true, // deliberately unmapped
+	}
+	for src, want := range cases {
+		InstallSource = src
+		if got := installedFromPackage(); got != want {
+			t.Errorf("InstallSource=%q: got %v, want %v", src, got, want)
+		}
+	}
+}
+
+func TestPackagedUpdateHint(t *testing.T) {
+	orig := InstallSource
+	defer func() { InstallSource = orig }()
+
+	// A mapped format names its own tool and no other.
+	for src, want := range map[string]string{"deb": "apt", "rpm": "dnf", "arch": "pacman"} {
+		InstallSource = src
+		hint := packagedUpdateHint()
+		if !strings.Contains(hint, want) {
+			t.Errorf("InstallSource=%q: hint should name %q, got: %s", src, want, hint)
+		}
+		for other, tool := range map[string]string{"deb": "apt ", "rpm": "dnf ", "arch": "pacman "} {
+			if other != src && strings.Contains(hint, tool) {
+				t.Errorf("InstallSource=%q: hint wrongly suggests %q: %s", src, tool, hint)
+			}
+		}
+	}
+
+	// An unmapped format must still get guidance, not advice for the wrong tool.
+	InstallSource = "portage"
+	hint := packagedUpdateHint()
+	if strings.Contains(hint, "apt") || strings.Contains(hint, "dnf") {
+		t.Errorf("unmapped source must not name a specific tool, got: %s", hint)
+	}
+	if !strings.Contains(hint, "package manager") {
+		t.Errorf("unmapped source must still give guidance, got: %s", hint)
+	}
+}
+
+// A package-managed binary must never be overwritten in place: that desyncs the
+// package manager's file database and the next system upgrade reverts it. The
+// refusal has to happen before any network call, and --force must not bypass it.
+func TestUpdateCoreRefusesPackagedInstall(t *testing.T) {
+	origSource, origCheck, origForce := InstallSource, updateCheck, updateForce
+	defer func() {
+		InstallSource, updateCheck, updateForce = origSource, origCheck, origForce
+	}()
+
+	for _, src := range []string{"deb", "rpm", "portage"} {
+		InstallSource = src
+		updateCheck = false
+		updateForce = true // deliberately not an escape hatch
+
+		err := updateCoreCommand(updateCoreCmd, nil)
+		if err == nil {
+			t.Fatalf("InstallSource=%q self-updated; must refuse even with --force", src)
+		}
+		if !strings.Contains(err.Error(), "package manager") {
+			t.Errorf("InstallSource=%q: refusal must point at the package manager, got: %v", src, err)
+		}
 	}
 }

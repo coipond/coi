@@ -15,6 +15,13 @@ import (
 // Version is the current version of coi (injected via ldflags at build time)
 var Version = "dev"
 
+// InstallSource records how this binary was installed (injected via ldflags at
+// build time). Packaging sets it to the package format that owns the binary —
+// "deb", "rpm", "arch", ... — while plain source builds leave it "source". Any
+// non-"source" value disables the self-updater; see installedFromPackage and
+// packageUpdateCommands in update.go.
+var InstallSource = "source"
+
 // rootVersionTemplate is the text/template cobra renders for `coi --version`.
 // It mirrors the first line the `coi version` subcommand prints so both surfaces
 // agree; {{.Version}} is rootCmd.Version, which is normalizeVersion(Version).
