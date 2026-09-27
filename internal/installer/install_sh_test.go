@@ -1151,3 +1151,213 @@ func TestInstallSh_NMUnmanagedVeths(t *testing.T) {
 		t.Error("COI_SKIP_NM_UNMANAGED=1 must prevent the drop-in")
 	}
 }
+
+// --- P2: unit coverage for the install-flow functions added recently ---------
+// These source the real install.sh (main/ERR-trap stripped) and mock system
+// commands via PATH stubs, the same idiom as the tests above. No Incus/root.
+
+// pool_size_gib: half the disk backing /var/lib/incus, with a 50GiB floor.
+func TestInstallSh_PoolSizeGib_HalfWithFloor(t *testing.T) {
+	script := installShPath(t)
+	run := func(totalKiB string) string {
+		snippet := `
+			tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+			cat > "$tmpdir/df" <<'STUB'
+#!/bin/bash
+echo "Filesystem 1024-blocks Used Available Capacity Mounted"
+echo "/dev/x $FAKE_TOTAL_KIB 0 $FAKE_TOTAL_KIB 0% /"
+STUB
+			chmod +x "$tmpdir/df"
+			export PATH="$tmpdir:$PATH"
+			export NONINTERACTIVE=1
+			source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+			pool_size_gib
+		`
+		out, _, code := runBashSnippet(t, snippet, "NONINTERACTIVE=1", "FAKE_TOTAL_KIB="+totalKiB)
+		if code != 0 {
+			t.Fatalf("pool_size_gib exited %d; out: %s", code, out)
+		}
+		return strings.TrimSpace(out)
+	}
+	// 200 GiB -> 100; 500 GiB -> 250; 80 GiB -> 50 (floor); unknown -> 50.
+	cases := map[string]string{
+		"209715200": "100",
+		"524288000": "250",
+		"83886080":  "50",
+		"":          "50",
+	}
+	for kib, want := range cases {
+		if got := run(kib); got != want {
+			t.Errorf("total=%qKiB: pool_size_gib=%q, want %q", kib, got, want)
+		}
+	}
+}
+
+// install_incus_zabbly: writes the Zabbly apt source (with the host codename)
+// and installs incus. All privileged calls go through a recording sudo shim.
+func TestInstallSh_InstallIncusZabbly_WritesSourceAndInstalls(t *testing.T) {
+	script := installShPath(t)
+	snippet := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		export SUDO_LOG="$tmpdir/sudo.log"; : > "$SUDO_LOG"
+		export SOURCES_OUT="$tmpdir/sources.out"
+		# sudo shim: record args; for a tee call, capture stdin; curl/apt succeed.
+		cat > "$tmpdir/sudo" <<'STUB'
+#!/bin/bash
+echo "$*" >> "$SUDO_LOG"
+case "$1" in
+  tee)  cat > "$SOURCES_OUT" ;;   # capture the .sources body
+  *)    : ;;                      # curl / mkdir / apt-get -> no-op success
+esac
+exit 0
+STUB
+		chmod +x "$tmpdir/sudo"
+		# dpkg stub so arch resolves deterministically
+		printf '#!/bin/bash\necho amd64\n' > "$tmpdir/dpkg"; chmod +x "$tmpdir/dpkg"
+		export PATH="$tmpdir:$PATH"
+		export NONINTERACTIVE=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		install_incus_zabbly
+		echo "===RC=$?==="
+		echo "===SOURCES==="; cat "$SOURCES_OUT"
+		echo "===SUDO==="; cat "$SUDO_LOG"
+	`
+	out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+	if !strings.Contains(out, "===RC=0===") {
+		t.Fatalf("install_incus_zabbly should succeed; out:\n%s", out)
+	}
+	if !strings.Contains(out, "URIs: https://pkgs.zabbly.com/incus/stable") {
+		t.Errorf("Zabbly source not written correctly; out:\n%s", out)
+	}
+	if !strings.Contains(out, "apt-get install -y incus") {
+		t.Errorf("expected `apt-get install -y incus`; out:\n%s", out)
+	}
+}
+
+// check_group: with consent (COI_ASSUME_YES in non-interactive), a user not in
+// the group is added via usermod; declining prints the manual instruction.
+func TestInstallSh_CheckGroup_AddsOnConsent(t *testing.T) {
+	script := installShPath(t)
+	base := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		export SUDO_LOG="$tmpdir/sudo.log"; : > "$SUDO_LOG"
+		printf '#!/bin/bash\necho "$*" >> "$SUDO_LOG"; exit 0\n' > "$tmpdir/sudo"; chmod +x "$tmpdir/sudo"
+		# groups stub: user is NOT in incus-admin
+		printf '#!/bin/bash\necho "user sudo"\n' > "$tmpdir/groups"; chmod +x "$tmpdir/groups"
+		export PATH="$tmpdir:$PATH"
+		export NONINTERACTIVE=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		check_group
+		echo "===SUDO==="; cat "$SUDO_LOG"
+	`
+	// Consent granted.
+	out, _, _ := runBashSnippet(t, base, "NONINTERACTIVE=1", "COI_ASSUME_YES=1")
+	if !strings.Contains(out, "usermod -aG incus-admin") {
+		t.Errorf("with consent, check_group should run usermod; out:\n%s", out)
+	}
+	// Consent withheld (no COI_ASSUME_YES): no usermod runs, manual guidance shown.
+	out, _, _ = runBashSnippet(t, base, "NONINTERACTIVE=1")
+	sudoLog := out
+	if i := strings.Index(out, "===SUDO==="); i >= 0 {
+		sudoLog = out[i:]
+	}
+	if strings.Contains(sudoLog, "usermod") {
+		t.Errorf("without consent, check_group must not run usermod; out:\n%s", out)
+	}
+	if !strings.Contains(out, "Add yourself with") {
+		t.Errorf("without consent, expected manual guidance; out:\n%s", out)
+	}
+}
+
+// setup_nft_sudoers: with consent, writes /etc/sudoers.d/coi-nft; declining
+// skips it and prints how to enable it later.
+func TestInstallSh_SetupNftSudoers_ConsentAndDecline(t *testing.T) {
+	script := installShPath(t)
+	base := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		export SUDO_LOG="$tmpdir/sudo.log"; : > "$SUDO_LOG"
+		export NFT_LINE="$tmpdir/nft.line"
+		cat > "$tmpdir/sudo" <<'STUB'
+#!/bin/bash
+echo "$*" >> "$SUDO_LOG"
+case "$1" in
+  tee)  cat > "$NFT_LINE" ;;
+  *)    : ;;
+esac
+exit 0
+STUB
+		chmod +x "$tmpdir/sudo"
+		# nft present, and the coi-nft drop-in absent (checked by absolute path)
+		printf '#!/bin/bash\nexit 0\n' > "$tmpdir/nft"; chmod +x "$tmpdir/nft"
+		export PATH="$tmpdir:$PATH"
+		export NONINTERACTIVE=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		setup_nft_sudoers
+		echo "===NFT==="; cat "$NFT_LINE" 2>/dev/null
+	`
+	// Consent: writes the NOPASSWD line for nft.
+	out, _, _ := runBashSnippet(t, base, "NONINTERACTIVE=1", "COI_ASSUME_YES=1")
+	if !strings.Contains(out, "NOPASSWD:") || !strings.Contains(out, "nft") {
+		t.Errorf("with consent, setup_nft_sudoers should write the NOPASSWD nft rule; out:\n%s", out)
+	}
+	// Decline: skip + guidance, no drop-in written.
+	out, _, _ = runBashSnippet(t, base, "NONINTERACTIVE=1")
+	if !strings.Contains(out, "Skipped") {
+		t.Errorf("without consent, setup_nft_sudoers should skip with a message; out:\n%s", out)
+	}
+}
+
+// restore_incus_config_ownership: chowns ~/.config/incus back to the user when
+// present, and is a no-op when it isn't.
+func TestInstallSh_RestoreIncusConfigOwnership(t *testing.T) {
+	script := installShPath(t)
+	snippet := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		export SUDO_LOG="$tmpdir/sudo.log"; : > "$SUDO_LOG"
+		printf '#!/bin/bash\necho "$*" >> "$SUDO_LOG"; exit 0\n' > "$tmpdir/sudo"; chmod +x "$tmpdir/sudo"
+		export HOME="$tmpdir/home"; export USER="tester"
+		mkdir -p "$HOME/.config/incus"
+		echo "x" > "$HOME/.config/incus/config.yml"
+		# getent/id stubs so the fake user resolves to our temp home + a group
+		printf '#!/bin/bash\necho "tester:x:1000:1000::%s:/bin/bash"\n' "$HOME" > "$tmpdir/getent"; chmod +x "$tmpdir/getent"
+		printf '#!/bin/bash\necho tester\n' > "$tmpdir/id"; chmod +x "$tmpdir/id"
+		export PATH="$tmpdir:$PATH"
+		export NONINTERACTIVE=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		restore_incus_config_ownership
+		echo "===SUDO==="; cat "$SUDO_LOG"
+	`
+	out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+	if !strings.Contains(out, "chown -R tester:") || !strings.Contains(out, ".config/incus") {
+		t.Errorf("expected chown of ~/.config/incus back to the user; out:\n%s", out)
+	}
+}
+
+// ensure_build_deps: no-op when git+make+gcc are present; declining consent
+// exits non-zero with a clear message.
+func TestInstallSh_EnsureBuildDeps_PresentIsNoop(t *testing.T) {
+	script := installShPath(t)
+	snippet := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		export SUDO_LOG="$tmpdir/sudo.log"; : > "$SUDO_LOG"
+		printf '#!/bin/bash\necho "$*" >> "$SUDO_LOG"; exit 0\n' > "$tmpdir/sudo"; chmod +x "$tmpdir/sudo"
+		# all three tools present
+		for t in git make gcc cc; do printf '#!/bin/bash\nexit 0\n' > "$tmpdir/$t"; chmod +x "$tmpdir/$t"; done
+		export PATH="$tmpdir:$PATH"
+		export NONINTERACTIVE=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		declare -f ensure_build_deps >/dev/null || { echo "===SKIP==="; exit 0; }
+		ensure_build_deps
+		echo "===RC=$?==="; echo "===SUDO==="; cat "$SUDO_LOG"
+	`
+	out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+	if strings.Contains(out, "===SKIP===") {
+		t.Skip("ensure_build_deps not present on this branch (lands with the build-deps PR)")
+	}
+	if !strings.Contains(out, "===RC=0===") {
+		t.Fatalf("ensure_build_deps should be a no-op when tools present; out:\n%s", out)
+	}
+	if strings.Contains(out, "install") {
+		t.Errorf("no install expected when tools present; out:\n%s", out)
+	}
+}
