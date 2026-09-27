@@ -268,3 +268,18 @@ func TestDefaultRegistryIsWellFormed(t *testing.T) {
 		}
 	}
 }
+
+// Tripwire coupling the registry to the Python dry-run read-only contract:
+// tests/health/health_fix_flag.py::_snapshot_fix_targets hardcodes the durable
+// write targets of the CURRENT remediations (the coi-nft sudoers drop-in and
+// the incus-admin /etc/group line). A new remediation's writes would silently
+// escape that contract, so growing the registry must fail here until the
+// snapshot (and this pin) are updated together.
+func TestRegistrySizeIsPinnedToDryRunSnapshot(t *testing.T) {
+	const pinned = 3 // permissions, ip_forwarding, nft
+	if got := len(remediations()); got != pinned {
+		t.Fatalf("remediation registry has %d entries (pinned: %d) — extend "+
+			"_snapshot_fix_targets in tests/health/health_fix_flag.py to cover the "+
+			"new remediation's write target, then bump this pin", got, pinned)
+	}
+}

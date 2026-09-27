@@ -1,34 +1,28 @@
-"""Test that the --json shorthand on coi list matches --format=json.
+"""Test that the --json shorthand on coi list emits the JSON document at runtime.
 
-The 0.12 release added --json as an alias for --format json on every command
-that supports formats; the alias itself had no coverage on `coi list`. Runs
-against whatever container state exists (works on an empty host too, like
-list_format_json_empty.py).
+Help-level alias recognition across commands (including list) is covered by
+tests/cli/test_json_alias.py; this pins the runtime half for `coi list`. A
+comparison against --format=json would be vacuous here: without --all the
+document always has exactly one top-level key (saved_sessions is emitted only
+when sessions exist), so a single invocation asserting the real shape is the
+honest invariant. Works on an empty host, like list_format_json_empty.py.
 """
 
 import json
 import subprocess
 
 
-def _list(coi_binary, *args):
+def test_list_json_alias_emits_json_document(coi_binary):
+    """--json must produce the list JSON document (alias routes at runtime)."""
     result = subprocess.run(
-        [coi_binary, "list", *args],
+        [coi_binary, "list", "--json"],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    assert result.returncode == 0, f"coi list {args} failed: {result.stderr}"
-    return json.loads(result.stdout)
+    assert result.returncode == 0, f"coi list --json failed: {result.stderr}"
 
-
-def test_list_json_alias_matches_format_json(coi_binary):
-    """--json must produce the same JSON document shape as --format=json."""
-    alias = _list(coi_binary, "--json")
-    explicit = _list(coi_binary, "--format=json")
-
-    assert isinstance(alias, dict), f"--json should emit a JSON object, got {type(alias)}"
-    assert "active_containers" in alias, f"missing active_containers: {list(alias)}"
-    assert set(alias.keys()) == set(explicit.keys()), (
-        f"--json and --format=json disagree on top-level keys: "
-        f"{sorted(alias)} vs {sorted(explicit)}"
-    )
+    data = json.loads(result.stdout)
+    assert isinstance(data, dict), f"--json should emit a JSON object, got {type(data)}"
+    assert "active_containers" in data, f"missing active_containers: {list(data)}"
+    assert isinstance(data["active_containers"], list), "active_containers should be a list"
