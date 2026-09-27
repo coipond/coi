@@ -57,6 +57,18 @@ export SUDO_LOG="$shim/sudo.log"
 cat > "$shim/sudo" <<'SHIM'
 #!/usr/bin/env bash
 echo "$*" >> "$SUDO_LOG"
+# Record the privileged init attempt but never actually run it (a nested
+# `admin init` is flaky under nesting -- we only assert the DECISION).
+if [[ "$*" == *"admin init"* ]]; then
+    exit 0
+fi
+# install.sh now sudo-runs its Incus *reads* too (network/storage list) so a
+# freshly-added-to-group session works (#823). Forward those to the REAL incus
+# so detection reflects the daemon's actual state; the shim dir has no `incus`,
+# so this resolves the genuine binary.
+if [ "$1" = "incus" ]; then
+    exec incus "${@:2}"
+fi
 exit 0
 SHIM
 chmod +x "$shim/sudo"
