@@ -25,6 +25,42 @@ func TestMaybeReexec_GuardShortCircuits(t *testing.T) {
 	}
 }
 
+// The re-exec command line must be exactly:
+//
+//	sudo -n -u <user> env COI_INCUS_GROUP_REEXEC=1 <exe> <original args...>
+//
+// -n (no prompt), same-user (initgroups activates the group), guard set to
+// prevent recursion, and the user's original args preserved verbatim.
+func TestBuildReexecArgv(t *testing.T) {
+	got := buildReexecArgv("/usr/bin/sudo", "ubuntu", "/usr/local/bin/coi", []string{"build", "--slot", "2"})
+	want := []string{
+		"/usr/bin/sudo", "-n", "-u", "ubuntu",
+		"env", "COI_INCUS_GROUP_REEXEC=1",
+		"/usr/local/bin/coi", "build", "--slot", "2",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("argv length: got %d %v, want %d %v", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("argv[%d]: got %q, want %q", i, got[i], want[i])
+		}
+	}
+	// The guard token must match the constant the short-circuit checks.
+	if want[5] != incusGroupReexecGuard+"=1" {
+		t.Errorf("guard token %q does not match const %q", want[5], incusGroupReexecGuard)
+	}
+}
+
+// With no args (bare `coi`), argv is just the sudo/env preamble plus the exe.
+func TestBuildReexecArgv_NoArgs(t *testing.T) {
+	got := buildReexecArgv("/usr/bin/sudo", "me", "/opt/coi", nil)
+	want := []string{"/usr/bin/sudo", "-n", "-u", "me", "env", "COI_INCUS_GROUP_REEXEC=1", "/opt/coi"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 // On a host without Incus / the incus-admin group / an active membership (the
 // case in this test environment), MaybeReexec must be a best-effort no-op: it
 // must never re-exec. This guards the "never make things worse" contract.

@@ -104,13 +104,23 @@ func MaybeReexecUnderIncusGroup() {
 		return
 	}
 
-	// sudo -n -u <user> env <guard>=1 <exe> <original args...>
-	//   -n            never prompt (we already probed; fail fast otherwise)
-	//   -u <user>     run as the same user -> initgroups activates incus-admin
-	//   env <guard>=1 survives sudo's env_reset and stops any re-exec recursion
-	argv := []string{sudoPath, "-n", "-u", cur.Username, "env", incusGroupReexecGuard + "=1", exe}
-	argv = append(argv, os.Args[1:]...)
+	argv := buildReexecArgv(sudoPath, cur.Username, exe, os.Args[1:])
 
 	// If exec fails for any reason, just return and let normal flow continue.
 	_ = reexecExec(sudoPath, argv, os.Environ())
+}
+
+// buildReexecArgv assembles the sudo command line that re-runs coi under the
+// user's full group set:
+//
+//		sudo -n -u <user> env <guard>=1 <exe> <original args...>
+//
+//	  - -n            never prompt (callers probe passwordless sudo first)
+//	  - -u <user>     run as the SAME user -> initgroups activates incus-admin
+//	  - env <guard>=1 survives sudo's env_reset and stops any re-exec recursion
+//
+// Kept as a pure function so the exact form is unit-tested without shelling out.
+func buildReexecArgv(sudoPath, username, exe string, args []string) []string {
+	argv := []string{sudoPath, "-n", "-u", username, "env", incusGroupReexecGuard + "=1", exe}
+	return append(argv, args...)
 }

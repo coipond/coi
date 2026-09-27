@@ -52,6 +52,11 @@ jobs:
           # Test THIS tree's coi (with the sudo group re-exec), not the last
           # release. install.sh installs a released coi; we overwrite it after.
           sudo apt-get update -qq && sudo apt-get install -y -qq libsystemd-dev
+          # Stub assets the go:embed directives require (not tracked in git;
+          # mirrors the main CI's "Prepare embedded build assets" step).
+          mkdir -p internal/image/embedded internal/config/embedded
+          cp testdata/dummy/dummy internal/image/embedded/dummy
+          cp profiles/default/config.toml internal/config/embedded/default_config.toml
           go build -o /tmp/coi ./cmd/coi
           /tmp/coi version
 
@@ -134,6 +139,31 @@ jobs:
             exit 1
           fi
           echo "OK: coi reached Incus in a stale-group session (sudo re-exec worked)."
+
+      - name: Assert the re-exec is guarded and does not hide diagnostics
+        run: |
+          set -x
+          # Loop guard: with the guard env already set, coi must NOT re-exec again
+          # (it would recurse). It should instead hit the daemon directly and, in a
+          # stale-group session, fail with the clear "session does not have it
+          # active yet" message — proving no infinite sudo loop.
+          out="$(COI_INCUS_GROUP_REEXEC=1 coi list 2>&1 || true)"
+          echo "$out"
+          if ! echo "$out" | grep -qi "does not have it active"; then
+            echo "::error::guarded run should surface the stale-group message (no re-exec, no loop)"
+            exit 1
+          fi
+
+          # health is deliberately excluded from the re-exec so it can DIAGNOSE the
+          # stale-group state rather than silently working around it. It must still
+          # report the incus-admin session warning here.
+          hout="$(coi health 2>&1 || true)"
+          echo "$hout"
+          if ! echo "$hout" | grep -qiE "incus-admin|not reloaded|log out"; then
+            echo "::error::coi health should still diagnose the stale incus-admin session"
+            exit 1
+          fi
+          echo "OK: re-exec is loop-guarded and coi health still diagnoses the state."
 
       - name: Diagnostics (on failure)
         if: failure()
