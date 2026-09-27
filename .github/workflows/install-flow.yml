@@ -1,0 +1,180 @@
+name: Install Flow (clean Ubuntu)
+
+# Exercises the REAL end-to-end install experience on a clean Ubuntu host:
+# `install.sh` sets EVERYTHING up from scratch — installs Incus, adds the user
+# to incus-admin, initialises Incus, sizes storage, installs coi — and a
+# container then actually launches. This is the "curl | bash, then it works"
+# contract (the goal behind #823).
+#
+# Unlike the main and Lima lanes (which hand-write `incus admin init --preseed`
+# and so never run install.sh's own setup), this lane starts from a machine with
+# NO Incus at all and lets install.sh install and configure it unattended
+# (COI_ASSUME_YES=1 grants consent for the install/group steps; CI=true makes it
+# non-interactive). Assertions use `sudo incus` because the runner's shell isn't
+# in the freshly-added incus-admin group yet — the same reason install.sh uses
+# sudo internally.
+#
+# Not a required check (branch protection is review-based) and path-filtered, so
+# it only runs when the install/setup surface changes.
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - install.sh
+      - internal/installer/**
+      - profiles/**
+      - .github/workflows/install-flow.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-flow-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-ubuntu:
+    name: install.sh end-to-end on clean Ubuntu 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Build coi from this checkout
+        run: |
+          # Test THIS tree's coi (with the sudo group re-exec), not the last
+          # release. install.sh installs a released coi; we overwrite it after.
+          sudo apt-get update -qq && sudo apt-get install -y -qq libsystemd-dev
+          # Stub assets the go:embed directives require (not tracked in git;
+          # mirrors the main CI's "Prepare embedded build assets" step).
+          mkdir -p internal/image/embedded internal/config/embedded
+          cp testdata/dummy/dummy internal/image/embedded/dummy
+          cp profiles/default/config.toml internal/config/embedded/default_config.toml
+          go build -o /tmp/coi ./cmd/coi
+          /tmp/coi version
+
+      - name: Confirm the starting state is EMPTY (no Incus)
+        run: |
+          if command -v incus >/dev/null 2>&1; then
+            echo "FATAL: Incus is already installed on the runner — this lane must"
+            echo "start from an empty machine so install.sh does the installing."
+            exit 1
+          fi
+          echo "OK: no Incus present — install.sh will install and configure it."
+
+      - name: Run install.sh unattended (the curl | bash path)
+        run: |
+          # CI=true  -> non-interactive; COI_ASSUME_YES=1 -> consent to the
+          # Incus install and the incus-admin group add. install.sh downloads
+          # the released coi binary, exactly as a user's `curl … | bash` does.
+          COI_ASSUME_YES=1 CI=true bash ./install.sh
+
+      - name: Use this checkout's coi binary (for the re-exec assertion)
+        run: sudo install -m 0755 /tmp/coi "$(command -v coi || echo /usr/local/bin/coi)"
+
+      - name: Assert the host is READY — the north star (#823)
+        run: |
+          set -x
+          fail=0
+
+          # Incus must now be installed by install.sh.
+          if ! command -v incus >/dev/null 2>&1; then
+            echo "::error::install.sh did not install Incus"
+            exit 1
+          fi
+
+          # 1) default profile must have a root disk on a real storage pool
+          if ! pool=$(sudo incus profile device get default root pool) || [ -z "$pool" ]; then
+            echo "::error::default profile has no root disk — install.sh did not initialise storage"
+            fail=1
+          fi
+
+          # 2) default profile must have a NIC on a managed network
+          if ! sudo incus profile show default | grep -qE '^\s*type: nic'; then
+            echo "::error::default profile has no NIC — install.sh did not initialise networking"
+            fail=1
+          fi
+
+          # 3) the real proof: a throwaway container actually launches and stops
+          if ! sudo incus launch images:ubuntu/24.04 coi-selftest; then
+            echo "::error::container failed to launch — the host is not usable after install"
+            fail=1
+          fi
+          sudo incus delete -f coi-selftest 2>/dev/null || true
+
+          # 4) the coi binary was installed and runs
+          if ! command -v coi >/dev/null 2>&1; then
+            echo "::error::coi binary was not installed"
+            fail=1
+          fi
+
+          exit "$fail"
+
+      - name: Confirm the incus-admin group is NOT active in this shell
+        run: |
+          # install.sh added this user to incus-admin, but usermod never affects
+          # a running session — so the group must be inactive here. This is what
+          # makes the next steps a real test of the sudo re-exec rather than an
+          # already-active group.
+          if id -nG | tr ' ' '\n' | grep -qx incus-admin; then
+            echo "::error::incus-admin already active in this shell — the re-exec path is not being exercised"
+            exit 1
+          fi
+          echo "OK: incus-admin present in /etc/group but not active in this session (stale-group state)."
+
+      - name: Assert `coi build` works WITHOUT re-login — frictionless (#823)
+        run: |
+          set -x
+          # THE north-star command, run exactly as a user would right after
+          # install: as the stale-group user, no sudo prefix, no re-login. Before
+          # this PR it failed with "session does not have it active yet"; now coi
+          # transparently re-execs under the group via sudo and the build runs.
+          coi build
+          coi image list
+
+      - name: Assert the re-exec is guarded and does not hide diagnostics
+        run: |
+          set -x
+          # Loop guard: with the guard env already set, coi must NOT re-exec again
+          # (it would recurse). It should instead hit the daemon directly and, in a
+          # stale-group session, fail with the clear "session does not have it
+          # active yet" message — proving no infinite sudo loop.
+          out="$(COI_INCUS_GROUP_REEXEC=1 coi list 2>&1 || true)"
+          echo "$out"
+          # With the guard set, coi must NOT re-exec — it hits the socket directly
+          # as the stale-group user and fails fast with a permission error (either
+          # coi's friendly "does not have it active yet" or incus's raw "needed
+          # permissions to talk to the incus daemon"). Either proves no re-exec /
+          # no infinite sudo loop.
+          if ! echo "$out" | grep -qiE "does not have it active|needed permissions|permission denied"; then
+            echo "::error::guarded run should fail fast with a permission error (no re-exec, no loop)"
+            exit 1
+          fi
+
+          # health is deliberately excluded from the re-exec so it can DIAGNOSE the
+          # stale-group state rather than silently working around it. It must still
+          # report the incus-admin session warning here.
+          hout="$(coi health 2>&1 || true)"
+          echo "$hout"
+          if ! echo "$hout" | grep -qiE "incus-admin|not reloaded|log out"; then
+            echo "::error::coi health should still diagnose the stale incus-admin session"
+            exit 1
+          fi
+          echo "OK: re-exec is loop-guarded and coi health still diagnoses the state."
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "===== incus version =====";        sudo incus version || true
+          echo "===== incus profile show default ====="; sudo incus profile show default || true
+          echo "===== incus storage list =====";   sudo incus storage list || true
+          echo "===== incus network list =====";   sudo incus network list || true
+          echo "===== groups =====";                groups || true
+          echo "===== coi health =====";            sudo incus admin waitready --timeout=5 || true; coi health || true

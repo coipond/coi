@@ -126,6 +126,17 @@ Examples:
 		return shellCmd.RunE(cmd, args)
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Frictionless post-install: if the user was just added to incus-admin
+		// (in /etc/group) but this session hasn't activated it yet, transparently
+		// re-exec via sudo so incus works without a logout/login. No-op unless
+		// that exact state holds and passwordless sudo is available. Skipped for
+		// commands that don't need Incus or must observe the real session state
+		// (e.g. `coi health` diagnoses the stale-group condition; completion must
+		// never fork a sudo). On success the process is replaced here.
+		if commandUsesIncusGroup(cmd.Name()) {
+			container.MaybeReexecUnderIncusGroup()
+		}
+
 		// Load config
 		var err error
 		app.cfg, err = config.Load()
@@ -172,6 +183,24 @@ Examples:
 
 		return nil
 	},
+}
+
+// commandUsesIncusGroup reports whether a command should trigger the
+// incus-admin group re-exec (MaybeReexecUnderIncusGroup). It excludes commands
+// that either don't touch Incus or must observe the real session state:
+//   - completion / __complete: must never fork a sudo (breaks shell completion)
+//   - health: diagnoses the stale-group condition, so it must see it, not hide it
+//   - version / help: no Incus access
+//
+// Everything else (shell, build, run, list, kill, clean, attach, images, …)
+// benefits from a transparent re-exec when the group isn't active yet.
+func commandUsesIncusGroup(name string) bool {
+	switch name {
+	case "completion", "__complete", "__completeNoDesc", "health", "version", "help":
+		return false
+	default:
+		return true
+	}
 }
 
 // applyDefaultProfileFallback applies [defaults] profile as the lowest-priority

@@ -129,18 +129,97 @@ detect_platform() {
     echo -e "${BLUE}→ Detected platform: ${OS}/${ARCH}${NC}"
 }
 
+# Install Incus from the Zabbly stable repository (apt only).
+#
+# Ubuntu ships Incus 6.0.x, which is below coi's 6.1 minimum, so a plain
+# `apt install incus` is a trap on Ubuntu — Zabbly provides a current Incus.
+# Also used to UPGRADE an existing too-old Incus (apt-get install pulls the
+# newer Zabbly build). Returns non-zero if Incus could not be installed.
+install_incus_zabbly() {
+    echo -e "${BLUE}→ Adding the Zabbly stable repository and installing Incus...${NC}"
+
+    sudo mkdir -p /etc/apt/keyrings
+    if ! sudo curl -fsSL --connect-timeout 10 --retry 3 --retry-delay 5 \
+            https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc; then
+        echo -e "${YELLOW}⚠ Could not download the Zabbly signing key${NC}"
+        return 1
+    fi
+
+    local codename arch
+    # shellcheck source=/dev/null  # /etc/os-release is a system file, not in-repo
+    codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-}")"
+    arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+
+    if ! sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.sources >/dev/null <<SOURCES
+Enabled: yes
+Types: deb
+URIs: https://pkgs.zabbly.com/incus/stable
+Suites: ${codename}
+Components: main
+Architectures: ${arch}
+Signed-By: /etc/apt/keyrings/zabbly.asc
+SOURCES
+    then
+        echo -e "${YELLOW}⚠ Could not write the Zabbly apt source${NC}"
+        return 1
+    fi
+
+    sudo apt-get update -qq || return 1
+    sudo apt-get install -y incus || return 1
+    return 0
+}
+
+# Decide whether the user agrees to a system-changing step (install Incus, add
+# to a group, ...). Interactive: ask (default yes). Non-interactive: only
+# proceed when explicitly authorised via COI_ASSUME_YES=1, so an unattended run
+# never silently modifies the system without consent.
+user_agrees() {
+    local prompt="$1"
+    if [ "$NONINTERACTIVE" = "1" ]; then
+        [ "${COI_ASSUME_YES:-0}" = "1" ]
+        return
+    fi
+    # Read a FULL line (not a single char) from the terminal. With several
+    # prompts in one `curl | bash` run, single-char reads leave the trailing
+    # newline in the tty buffer, which the next prompt then consumes as a stray
+    # answer — so a later prompt (e.g. nft) could be silently "declined". A
+    # line-oriented read avoids that. Empty (just Enter) defaults to yes.
+    local reply
+    # EOF / no readable tty must NOT be read as consent — treat it as a decline
+    # so a closed terminal can't silently approve a system-changing step.
+    if ! read -r -p "$prompt" reply </dev/tty; then
+        return 1
+    fi
+    reply="${reply:-y}" # a bare Enter defaults to yes
+    [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
 # Check if Incus is installed
 check_incus() {
     echo -e "${BLUE}→ Checking Incus installation...${NC}"
 
     if ! command -v incus &> /dev/null; then
-        echo -e "${YELLOW}⚠ Incus not found${NC}"
+        echo -e "${YELLOW}⚠ Incus is not installed${NC}"
+
+        # On apt-based systems (Ubuntu/Debian) we can install it directly so a
+        # `curl | bash` on an empty machine works end-to-end. Other distros keep
+        # the guided path below (Incus setup there is out of scope for now).
+        if [ "$PKG_MANAGER" = "apt" ] && user_agrees "  Install Incus now from the Zabbly repo (recommended)? [Y/n]: "; then
+            if install_incus_zabbly && command -v incus &> /dev/null; then
+                echo -e "${GREEN}✓ Incus installed${NC}"
+                sudo systemctl enable --now incus 2>/dev/null || true
+                sudo incus admin waitready --timeout=60 2>/dev/null || true
+                return 0
+            fi
+            echo -e "${YELLOW}⚠ Automatic Incus install did not complete${NC}"
+        fi
+
         echo ""
-        echo "  code-on-incus requires Incus to be installed."
+        echo "  code-on-incus requires Incus (>= 6.1) to be installed."
         echo "  Install Incus: https://linuxcontainers.org/incus/docs/main/installing/"
         echo ""
         echo "  Quick install examples:"
-        echo "    Ubuntu/Debian: sudo apt install -y incus"
+        echo "    Ubuntu/Debian: from the Zabbly repo (https://github.com/zabbly/incus)"
         echo "    Arch Linux:    sudo pacman -S incus"
         echo "    Fedora:        sudo dnf install incus"
         echo ""
@@ -149,8 +228,12 @@ check_incus() {
         echo ""
         prompt_continue "Continue installation anyway?"
     else
+        # Use sudo: a non-root user who isn't in incus-admin yet (or whose
+        # current session predates the membership) cannot reach the daemon
+        # socket, so a plain `incus version` returns non-zero and — under
+        # `set -e` — would abort the whole installer here. root always can.
         local incus_version_output
-        incus_version_output="$(incus version 2>/dev/null)"
+        incus_version_output="$(sudo incus version 2>/dev/null || true)"
         echo -e "${GREEN}✓ Incus found: ${incus_version_output}${NC}"
 
         # Check minimum version (>= 6.1)
@@ -175,10 +258,23 @@ check_incus() {
                     echo "  You may see errors like:"
                     echo "    'Failed to setup device mount: idmapping abilities are required'"
                     echo ""
-                    echo "  Please install Incus >= 6.1 from the Zabbly repository:"
-                    echo "    https://github.com/zabbly/incus"
-                    echo ""
-                    prompt_continue "Continue installation anyway?"
+
+                    # On apt we can upgrade in place from Zabbly; elsewhere, guide.
+                    if [ "$PKG_MANAGER" = "apt" ] && user_agrees "  Upgrade Incus from the Zabbly repo now? [Y/n]: "; then
+                        if install_incus_zabbly; then
+                            sudo systemctl restart incus 2>/dev/null || true
+                            sudo incus admin waitready --timeout=60 2>/dev/null || true
+                            echo -e "${GREEN}✓ Incus upgraded ($(sudo incus version 2>/dev/null | grep -i '^Server version:' | cut -d: -f2 | tr -d ' '))${NC}"
+                        else
+                            echo -e "${YELLOW}⚠ Incus upgrade did not complete${NC}"
+                            prompt_continue "Continue with the current Incus anyway?"
+                        fi
+                    else
+                        echo "  Install Incus >= 6.1 from the Zabbly repository:"
+                        echo "    https://github.com/zabbly/incus"
+                        echo ""
+                        prompt_continue "Continue installation anyway?"
+                    fi
                 fi
             fi
         fi
@@ -187,25 +283,41 @@ check_incus() {
 
 # Check if user is in incus-admin group
 check_group() {
-    if groups | grep -q incus-admin; then
+    local user="${USER:-$(id -un)}"
+
+    if groups | grep -qw incus-admin; then
         echo -e "${GREEN}✓ User is in incus-admin group${NC}"
-    else
-        echo -e "${YELLOW}⚠ User is not in incus-admin group${NC}"
-        echo ""
-        echo "  You need to be in the incus-admin group to use code-on-incus."
-        echo "  Run: sudo usermod -aG incus-admin \$USER"
-        echo "  Then log out and back in for changes to take effect."
-        echo ""
+        return
     fi
+
+    # Not in the group yet. Add the user (with consent) so `coi` works without a
+    # manual step. Group membership only takes effect in a NEW login session, so
+    # we still tell them to re-login — but the installer's own Incus setup uses
+    # sudo and does not depend on this session's groups, so setup still completes.
+    if user_agrees "  Add '$user' to the incus-admin group now (needed to run coi)? [Y/n]: "; then
+        if sudo usermod -aG incus-admin "$user"; then
+            echo -e "${GREEN}✓ Added '$user' to the incus-admin group${NC}"
+            echo -e "${YELLOW}  Log out and back in (or run: newgrp incus-admin) for it to take effect.${NC}"
+            return
+        fi
+        echo -e "${YELLOW}⚠ Could not add '$user' to incus-admin${NC}"
+    fi
+
+    echo -e "${YELLOW}⚠ Not in the incus-admin group${NC}"
+    echo "  Add yourself with: sudo usermod -aG incus-admin $user"
+    echo "  Then log out and back in for changes to take effect."
 }
 
 # Set up passwordless sudo for nft (required for network isolation)
 setup_nft_sudoers() {
-    local nft_path
+    local nft_path user
     nft_path="$(command -v nft 2>/dev/null)"
     if [ -z "$nft_path" ]; then
         return
     fi
+    # Resolve the user robustly: an empty $USER would write a malformed sudoers
+    # line (" ALL=(ALL) ...") that makes sudo reject the whole drop-in.
+    user="${USER:-$(id -un)}"
 
     # Already configured? Check for the sudoers drop-in directly so we don't
     # get a false positive from a cached sudo timestamp.
@@ -214,8 +326,17 @@ setup_nft_sudoers() {
         return
     fi
 
+    # Ask before adding a passwordless-sudo rule (a security-relevant change).
+    # It is what lets COI apply network isolation (restricted/allowlist modes)
+    # without a password prompt; declining leaves open mode working.
+    if ! user_agrees "  Configure passwordless sudo for nft — needed for network isolation? [Y/n]: "; then
+        echo -e "${YELLOW}⚠ Skipped: without passwordless nft, restricted/allowlist network modes won't work (open mode still does).${NC}"
+        echo -e "   Enable later: ${BLUE}echo \"$user ALL=(ALL) NOPASSWD: $nft_path\" | sudo tee /etc/sudoers.d/coi-nft && sudo chmod 0440 /etc/sudoers.d/coi-nft${NC}"
+        return
+    fi
+
     echo -e "${BLUE}→ Configuring passwordless sudo for nft...${NC}"
-    echo "$USER ALL=(ALL) NOPASSWD: $nft_path" | sudo tee /etc/sudoers.d/coi-nft > /dev/null
+    echo "$user ALL=(ALL) NOPASSWD: $nft_path" | sudo tee /etc/sudoers.d/coi-nft > /dev/null
     sudo chmod 0440 /etc/sudoers.d/coi-nft
     echo -e "${GREEN}✓ Passwordless sudo configured for nft${NC}"
 }
@@ -458,6 +579,13 @@ ensure_incus_initialized() {
         return
     fi
 
+    # Wait for the daemon to accept the API before probing. A just-installed or
+    # just-restarted Incus may not be ready yet; without this, the detection
+    # queries below fail, look like "cannot determine", and init is silently
+    # skipped — the half-configured-host failure (#823) this function guards
+    # against. Bounded and best-effort.
+    sudo incus admin waitready --timeout=90 2>/dev/null || true
+
     # Decide whether Incus has been initialized without being fooled by the
     # unmanaged physical/loopback interfaces that appear on every real host: a
     # bare "is the network list non-empty?" check is never empty and falsely
@@ -465,15 +593,22 @@ ensure_incus_initialized() {
     # (incusbr0) and a storage pool, so treat either as proof of initialization -
     # a host set up with an existing/custom network and no managed bridge still
     # has a pool, which is the reliable signal.
-    # If the network query itself fails (daemon down, no permissions), warn and
-    # bail out rather than incorrectly triggering init.
+    # If the network query itself fails (daemon down), warn and bail out rather
+    # than incorrectly triggering init.
+    #
+    # Use `sudo incus` for these queries: during a fresh install the user was
+    # only just added to incus-admin and this same shell is not in the group
+    # yet, so a non-sudo `incus network list` would fail with a permission error
+    # — which the old code mistook for "cannot determine" and skipped init,
+    # leaving a half-configured host (#823). root can always reach the socket,
+    # so sudo gives a reliable answer regardless of the current session's groups.
     local networks pools
-    if ! networks="$(incus network list --format=csv 2>/dev/null)"; then
+    if ! networks="$(sudo incus network list --format=csv 2>/dev/null)"; then
         echo -e "${YELLOW}⚠ Unable to determine whether Incus has been initialized${NC}"
-        echo "  Could not query Incus networks. Ensure the Incus daemon is running and your user has access."
+        echo "  Could not query Incus networks. Ensure the Incus daemon is running."
         return 1
     fi
-    pools="$(incus storage list --format=csv 2>/dev/null)"
+    pools="$(sudo incus storage list --format=csv 2>/dev/null)"
     # MANAGED is CSV column 3 (YES/NO); awk avoids the cut|grep -q pipe whose
     # early exit trips `set -o pipefail`.
     if printf '%s\n' "$networks" | awk -F, '$3 == "YES" { found=1 } END { exit !found }' \
@@ -514,6 +649,34 @@ is_orbstack() {
         *orbstack*) return 0 ;;
         *)          return 1 ;;
     esac
+}
+
+# Decide the size (in GiB) for the container storage pool.
+#
+# 50GiB is often not enough once a few images and containers pile up, so scale
+# with the machine: half of the total disk backing /var/lib/incus, with a 50GiB
+# floor. The zfs/btrfs pool is a sparse loop-backed file, so this size is a
+# CAP, not an upfront reservation — it does not consume the space until used,
+# which is why a generous cap (and the floor even on smaller disks) is safe.
+# Falls back to the 50GiB floor whenever the disk size can't be determined.
+pool_size_gib() {
+    local target="/var/lib/incus"
+    [ -d "$target" ] || target="/"
+
+    # df -Pk: POSIX format (no line-wrap), 1024-byte blocks; column 2 is total.
+    local total_kib
+    total_kib="$(df -Pk "$target" 2>/dev/null | awk 'NR==2 {print $2}')"
+
+    local half_gib=0
+    if [ -n "$total_kib" ] && [ "$total_kib" -gt 0 ] 2>/dev/null; then
+        half_gib=$(( total_kib / 2 / 1024 / 1024 ))
+    fi
+
+    if [ "$half_gib" -lt 50 ]; then
+        echo 50
+    else
+        echo "$half_gib"
+    fi
 }
 
 # Set up fast copy-on-write storage for containers.
@@ -575,21 +738,23 @@ setup_zfs_storage() {
     fi
 
     # Check if ZFS pool already exists
-    if incus storage list --format=csv 2>/dev/null | grep -q "^zfs-pool,"; then
+    if sudo incus storage list --format=csv 2>/dev/null | grep -q "^zfs-pool,"; then
         echo -e "${GREEN}✓ ZFS storage pool already configured${NC}"
         return 0
     fi
 
     # Create ZFS storage pool
-    echo -e "${BLUE}→ Creating ZFS storage pool (50GiB)...${NC}"
+    local pool_size
+    pool_size="$(pool_size_gib)"
+    echo -e "${BLUE}→ Creating ZFS storage pool (${pool_size}GiB)...${NC}"
     local storage_output
-    if storage_output="$(sudo incus storage create zfs-pool zfs size=50GiB 2>&1)"; then
+    if storage_output="$(sudo incus storage create zfs-pool zfs "size=${pool_size}GiB" 2>&1)"; then
         echo -e "${GREEN}✓ ZFS storage pool created${NC}"
 
         # Configure default profile to use ZFS
         echo -e "${BLUE}→ Configuring default profile to use ZFS...${NC}"
         local profile_output
-        if profile_output="$(incus profile device set default root pool=zfs-pool 2>&1)"; then
+        if profile_output="$(sudo incus profile device set default root pool=zfs-pool 2>&1)"; then
             echo -e "${GREEN}✓ Default profile configured for ZFS${NC}"
             echo -e "${GREEN}✓ Containers will now start instantly (~50ms vs 5-10s)${NC}"
         else
@@ -635,21 +800,23 @@ setup_btrfs_storage() {
     fi
 
     # Check if btrfs pool already exists
-    if incus storage list --format=csv 2>/dev/null | grep -q "^btrfs-pool,"; then
+    if sudo incus storage list --format=csv 2>/dev/null | grep -q "^btrfs-pool,"; then
         echo -e "${GREEN}✓ btrfs storage pool already configured${NC}"
         return 0
     fi
 
     # Create btrfs storage pool
-    echo -e "${BLUE}→ Creating btrfs storage pool (50GiB)...${NC}"
+    local pool_size
+    pool_size="$(pool_size_gib)"
+    echo -e "${BLUE}→ Creating btrfs storage pool (${pool_size}GiB)...${NC}"
     local storage_output
-    if storage_output="$(sudo incus storage create btrfs-pool btrfs size=50GiB 2>&1)"; then
+    if storage_output="$(sudo incus storage create btrfs-pool btrfs "size=${pool_size}GiB" 2>&1)"; then
         echo -e "${GREEN}✓ btrfs storage pool created${NC}"
 
         # Configure default profile to use btrfs
         echo -e "${BLUE}→ Configuring default profile to use btrfs...${NC}"
         local profile_output
-        if profile_output="$(incus profile device set default root pool=btrfs-pool 2>&1)"; then
+        if profile_output="$(sudo incus profile device set default root pool=btrfs-pool 2>&1)"; then
             echo -e "${GREEN}✓ Default profile configured for btrfs${NC}"
             echo -e "${GREEN}✓ Containers will now start much faster (~0.2s vs 1-5s)${NC}"
         else
@@ -680,6 +847,15 @@ fetch_detection_databases() {
     echo "  This clones the GTFOBins reverse-shell database and Sigma linux/process_creation"
     echo "  rules used by the monitoring daemon. The Sigma clone is sparse (~300 KB)."
     echo ""
+
+    # `coi update patterns` clones these over git, so git must be present. A
+    # clean Ubuntu image has no git, which made this step fail with
+    # "git: executable file not found". Install it first (best-effort).
+    if ! command -v git &> /dev/null; then
+        echo -e "${BLUE}→ Installing git (required to fetch detection databases)...${NC}"
+        pkg_install git || true
+    fi
+
     if coi update patterns; then
         echo -e "${GREEN}✓ Detection databases fetched${NC}"
     else
@@ -689,6 +865,20 @@ fetch_detection_databases() {
 }
 
 # Post-install setup
+# Hand any root-owned Incus client config back to the invoking user. `sudo incus`
+# calls during setup run as root but keep the user's HOME, so Incus can create
+# ~/.config/incus owned by root, which then fails the user's own commands with a
+# permission error. Best-effort and idempotent.
+restore_incus_config_ownership() {
+    local user home group
+    user="${USER:-$(id -un)}"
+    home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
+    [ -n "$home" ] || home="$HOME"
+    [ -d "$home/.config/incus" ] || return 0
+    group="$(id -gn "$user" 2>/dev/null || echo "$user")"
+    sudo chown -R "$user:$group" "$home/.config/incus" 2>/dev/null || true
+}
+
 post_install() {
     setup_nm_unmanaged_veths
     ensure_incus_service || true
@@ -697,6 +887,13 @@ post_install() {
 
     # Try to set up fast storage (best-effort, don't abort installer on failure)
     setup_fast_storage || true
+
+    # The `sudo incus` reads/writes above run as root but keep the invoking
+    # user's HOME, so Incus can leave a root-owned client config at
+    # ~/.config/incus — which then blocks the user's own `coi`/`incus` with
+    # "permission denied". Hand it back to the user so the very next command
+    # works. Best-effort; no-op if nothing was created.
+    restore_incus_config_ownership || true
 
     # Fetch GTFOBins and Sigma detection databases
     fetch_detection_databases || true
@@ -716,9 +913,18 @@ post_install() {
     echo -e "     ${BLUE}coi --help${NC}"
     echo ""
 
-    if ! groups | grep -q incus-admin; then
-        echo -e "${YELLOW}⚠ Remember to add yourself to incus-admin group:${NC}"
-        echo -e "   ${BLUE}sudo usermod -aG incus-admin \$USER${NC}"
+    local admin_user="${USER:-$(id -un)}"
+    if groups | grep -qw incus-admin; then
+        : # already active in this session — nothing to say
+    elif id -nG "$admin_user" 2>/dev/null | grep -qw incus-admin; then
+        # We added them (or they were already a member), but this shell hasn't
+        # activated the group. Say so accurately instead of "remember to add".
+        echo -e "${GREEN}✓ You're in the incus-admin group.${NC}"
+        echo -e "   Open a new shell (or log out and back in) to activate it, then: ${BLUE}coi build${NC}"
+        echo ""
+    else
+        echo -e "${YELLOW}⚠ Add yourself to the incus-admin group:${NC}"
+        echo -e "   ${BLUE}sudo usermod -aG incus-admin $admin_user${NC}"
         echo "   Then log out and back in."
         echo ""
     fi
