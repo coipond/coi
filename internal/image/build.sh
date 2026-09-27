@@ -411,6 +411,16 @@ exec sudo systemctl --force poweroff
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/close"
 
+    # Create "stop" as another poweroff alias
+    # Same rationale as "close": it does not exist on the host, so typing it
+    # outside the container is harmless. Provided because the two names are
+    # easy to confuse and are used interchangeably.
+    cat > "/usr/local/bin/stop" << 'WRAPPER_EOF'
+#!/bin/bash
+exec sudo systemctl --force poweroff
+WRAPPER_EOF
+    chmod 755 "/usr/local/bin/stop"
+
     log "Power management wrappers configured"
 }
 
