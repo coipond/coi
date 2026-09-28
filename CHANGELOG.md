@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased
+## 0.13.0 (2026-09-28)
 
 ### Changed
 
@@ -8,12 +8,20 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Clean install no longer leaves a half-configured host (#823, #830)** — Incus setup and detection run via sudo, so a fresh session's not-yet-active group can't silently skip initialization; the Incus client config is handed back to the user afterwards.
+- [Bug Fix] **Installer prompts read full answers (#831)** — typing "YES" no longer bleeds leftover characters into the next prompt and silently declines it.
 - [Bug Fix] **macOS: hint how to bring a Keychain-stored login into the container (#818)** — `coi shell` prints how to bridge a macOS Keychain OAuth token into the container.
 - [Bug Fix] **macOS/Colima: tool credentials now seed from the shared Mac home (#817)** — seeds credentials and config from the Mac's shared home when the guest home has none.
 - [Bug Fix] **Image build no longer hangs on broken container IPv6** — `coi build` forces IPv4 with bounded apt timeouts so base-dependency installs no longer stall.
 
 ### Features
 
+- [Feature] **Frictionless clean-Ubuntu install (#823, #830)** — `curl | bash` on an empty machine now installs Incus from the Zabbly repo, adds you to `incus-admin`, and initializes storage and networking end-to-end, each step consent-gated (`COI_ASSUME_YES=1` for unattended runs).
+- [Feature] **`coi build`/`coi shell` work right after install — no re-login (#830)** — coi transparently re-execs under the fresh `incus-admin` group via sudo when the group isn't active yet.
+- [Feature] **`coi health --fix` (#826, #832)** — applies safe remediations for failing checks (incus-admin membership, IPv4 forwarding, passwordless nft sudo), with `--dry-run` to preview.
+- [Feature] **Storage pool sized to half the disk (#830)** — the installer creates the zfs/btrfs pool at 50% of disk (50GiB floor) instead of a fixed 50GiB.
+- [Feature] **`stop` poweroff alias inside containers (#825)** — `stop` now works alongside `close` and `shutdown`.
+- [Feature] **Source builds install their own toolchain (#834)** — the installer offers to install git/make/gcc when building from source, with consent.
 - [Feature] **Per-mount UID/GID shifting: `shift` on `[[mounts]]` (#604)** — a bind mount can set `shift = true`/`false` to override the session-wide UID-shifting decision.
 - [Feature] **Forensics survive an auto-kill: `[monitoring] forensics_on_kill`** — preserves a forensic copy of a container before an auto-kill deletes it. Opt-in.
 - [Feature] **Health probes honor the kernel-surface policy** — `coi health` probes boot with the user's `docker`/`reduce_kernel_surface` policy instead of the full surface.
