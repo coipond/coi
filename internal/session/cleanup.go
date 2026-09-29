@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/logger"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/logger"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/tool"
 )
 
 // CleanupOptions contains options for cleaning up a session

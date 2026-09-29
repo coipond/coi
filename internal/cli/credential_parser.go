@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/session"
-	"github.com/mensfeld/code-on-incus/internal/tool/credentials"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/session"
+	"github.com/mensfeld/coi/internal/tool/credentials"
 )
 
 // ParseCredentialConfig creates a CredentialConfig from config file

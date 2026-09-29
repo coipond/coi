@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mensfeld/code-on-incus/internal/session"
+	"github.com/mensfeld/coi/internal/session"
 	"github.com/spf13/cobra"
 )
 

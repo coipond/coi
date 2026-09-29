@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/tool"
 )
 
 // readContainerFile reads a file from inside the container via cat

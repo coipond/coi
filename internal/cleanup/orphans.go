@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/network"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/network"
 )
 
 // OrphanedResources holds information about orphaned system resources

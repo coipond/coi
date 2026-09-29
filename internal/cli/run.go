@@ -10,13 +10,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mensfeld/code-on-incus/internal/alias"
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/limits"
-	"github.com/mensfeld/code-on-incus/internal/logger"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/session"
+	"github.com/mensfeld/coi/internal/alias"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/limits"
+	"github.com/mensfeld/coi/internal/logger"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/session"
 	"github.com/spf13/cobra"
 )
 

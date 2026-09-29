@@ -3,7 +3,7 @@ package schema_test
 import (
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/schema"
+	"github.com/mensfeld/coi/schema"
 )
 
 // A [network] block using the egress keys (dns_servers, allowed_ports) must

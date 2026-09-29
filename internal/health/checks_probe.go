@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/monitor"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/session"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/monitor"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/session"
 )
 
 // waitProbeReady waits up to 30s for a just-launched probe container via the

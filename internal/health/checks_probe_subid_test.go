@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // When the host UID can't be idmapped (#838), the mount/idmap probes must skip

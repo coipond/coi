@@ -3,7 +3,7 @@ package image
 import (
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // TestImageFingerprintListArgs_UsesConfiguredProject is the regression guard for

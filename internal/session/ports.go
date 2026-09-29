@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/tool"
 )
 
 // Auto-allocation layout for published host ports (#558): each workspace gets

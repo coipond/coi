@@ -1,7 +1,7 @@
 """
 Integration tests: allowlist network diagnostics must never reach the terminal.
 
-Regression tests for https://github.com/mensfeld/code-on-incus/issues/372.
+Regression tests for https://github.com/mensfeld/coi/issues/372.
 
 In allowlist mode coi resolves the allowed domains at setup and a background
 goroutine periodically re-resolves them (TTL-aware) and updates the nft rules.

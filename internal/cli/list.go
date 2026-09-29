@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/session"
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/session"
+	"github.com/mensfeld/coi/internal/tool"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +29,7 @@ var (
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List active containers and saved sessions",
-	Long: `List active code-on-incus containers and saved sessions.
+	Long: `List active Coi containers and saved sessions.
 
 By default, shows only active containers. Use --all to also show saved sessions.
 
@@ -165,7 +165,7 @@ type SessionInfo struct {
 	Workspace string
 }
 
-// listActiveContainers lists all active code-on-incus containers
+// listActiveContainers lists all active Coi containers
 func listActiveContainers() ([]ContainerInfo, error) {
 	// Use the configured container prefix (respects COI_CONTAINER_PREFIX env var)
 	prefix := session.GetContainerPrefix()

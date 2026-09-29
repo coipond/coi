@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // fakeExec implements container.ContainerExecution with a canned

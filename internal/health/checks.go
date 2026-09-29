@@ -1,7 +1,7 @@
 package health
 
 import (
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // gatherPoolUsage queries `incus storage info <pool>` and parses out the

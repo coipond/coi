@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/cleanup"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/session"
+	"github.com/mensfeld/coi/internal/cleanup"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -151,7 +151,7 @@ func (a *App) cleanCommand(cmd *cobra.Command, args []string) error {
 // cleanStoppedContainers finds and removes stopped containers.
 // Returns (count cleaned, was cancelled, error).
 func cleanStoppedContainers() (int, bool, error) {
-	fmt.Println("Checking for stopped code-on-incus containers...")
+	fmt.Println("Checking for stopped Coi containers...")
 
 	containers, err := listActiveContainers()
 	if err != nil {

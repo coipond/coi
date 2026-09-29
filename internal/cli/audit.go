@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/audit"
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/audit"
+	"github.com/mensfeld/coi/internal/container"
 	"github.com/spf13/cobra"
 )
 

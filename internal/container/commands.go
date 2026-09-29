@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/timing"
+	"github.com/mensfeld/coi/internal/timing"
 	"golang.org/x/sys/unix"
 )
 

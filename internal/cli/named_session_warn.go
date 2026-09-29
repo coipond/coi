@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/session"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/session"
 )
 
 // warnNamedSessionFork tells the user when a launch of a NAMED session lands

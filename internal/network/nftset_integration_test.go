@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
+	"github.com/mensfeld/coi/internal/config"
 )
 
 // These tests drive the real nft binary. They do not need Incus or a live

@@ -5,10 +5,10 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/timing"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/timing"
 	"github.com/spf13/cobra"
 )
 
@@ -363,11 +363,11 @@ var versionCmd = &cobra.Command{
 			return &ExitCodeError{Code: 2, Message: fmt.Sprintf("invalid format %q: must be 'text' or 'json'", format)}
 		}
 		if format == "json" {
-			fmt.Printf(`{"version":%q,"url":"https://github.com/mensfeld/code-on-incus"}`+"\n", "v"+normalizeVersion(Version))
+			fmt.Printf(`{"version":%q,"url":"https://github.com/mensfeld/coi"}`+"\n", "v"+normalizeVersion(Version))
 			return nil
 		}
 		fmt.Printf("Coi (Code on Incus) v%s\n", normalizeVersion(Version))
-		fmt.Println("https://github.com/mensfeld/code-on-incus")
+		fmt.Println("https://github.com/mensfeld/coi")
 		return nil
 	},
 }

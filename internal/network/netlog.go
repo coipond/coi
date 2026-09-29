@@ -4,7 +4,7 @@ import (
 	"log"
 	"sync/atomic"
 
-	"github.com/mensfeld/code-on-incus/internal/logger"
+	"github.com/mensfeld/coi/internal/logger"
 )
 
 // pkgLogger optionally redirects this package's diagnostic output to a

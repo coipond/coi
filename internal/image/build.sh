@@ -45,7 +45,7 @@ configure_dns_if_needed() {
     rm -f /etc/resolv.conf
     cat > /etc/resolv.conf << 'EOF'
 # Static DNS configuration (auto-configured due to DNS misconfiguration)
-# See: https://github.com/mensfeld/code-on-incus#troubleshooting
+# See: https://github.com/mensfeld/coi#troubleshooting
 nameserver 8.8.8.8
 nameserver 8.8.4.4
 nameserver 1.1.1.1

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/logger"
+	"github.com/mensfeld/coi/internal/logger"
 )
 
 // TestStopGracefulTrue verifies that StopGraceful=true maps to force=false

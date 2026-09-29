@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/session"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/session"
 )
 
 // warnDroppedMounts prints a per-mount warning for untrusted, unapproved mounts.

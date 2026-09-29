@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/network"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/network"
 )
 
 // Responder handles automated responses to threats

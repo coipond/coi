@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/logger"
+	"github.com/mensfeld/coi/internal/logger"
 )
 
 // Regression tests for the issue #372 class: COI_NFT_DEBUG output (debugf) must

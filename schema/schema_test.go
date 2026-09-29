@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/schema"
+	"github.com/mensfeld/coi/schema"
 )
 
 func mustGetSchema(t *testing.T) []byte {

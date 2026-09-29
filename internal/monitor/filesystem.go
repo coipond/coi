@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // FilesystemMonitor tracks filesystem I/O statistics with delta calculation

@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/mensfeld/code-on-incus/internal/monitor"
+	"github.com/mensfeld/coi/internal/monitor"
 )
 
 // Daemon orchestrates nftables-based network monitoring

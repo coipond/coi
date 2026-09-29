@@ -108,7 +108,7 @@ jobs:
           # makes any stray 'v' (or missing one) fail the release.
           EXPECTED_VERSION=${EXPECTED_VERSION#v}
           BUILT_LINE=$(./coi-${{ matrix.os }}-${{ matrix.arch }} version | head -n1)
-          EXPECTED_LINE="code-on-incus (coi) v${EXPECTED_VERSION}"
+          EXPECTED_LINE="Coi (Code on Incus) v${EXPECTED_VERSION}"
           echo "Built version line:    $BUILT_LINE"
           echo "Expected version line: $EXPECTED_LINE"
           if [ "$BUILT_LINE" != "$EXPECTED_LINE" ]; then
@@ -177,7 +177,7 @@ jobs:
           ### Quick Install (Linux)
           ```bash
           # Install latest version
-          curl -fsSL https://raw.githubusercontent.com/mensfeld/code-on-incus/master/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/mensfeld/coi/master/install.sh | bash
           ```
 
           ### Manual Installation
@@ -186,14 +186,14 @@ jobs:
 
           #### Linux AMD64 (x86_64)
           ```bash
-          wget https://github.com/mensfeld/code-on-incus/releases/download/__VERSION__/coi-linux-amd64
+          wget https://github.com/mensfeld/coi/releases/download/__VERSION__/coi-linux-amd64
           chmod +x coi-linux-amd64
           sudo mv coi-linux-amd64 /usr/local/bin/coi
           ```
 
           #### Linux ARM64 (aarch64)
           ```bash
-          wget https://github.com/mensfeld/code-on-incus/releases/download/__VERSION__/coi-linux-arm64
+          wget https://github.com/mensfeld/coi/releases/download/__VERSION__/coi-linux-arm64
           chmod +x coi-linux-arm64
           sudo mv coi-linux-arm64 /usr/local/bin/coi
           ```
@@ -207,7 +207,7 @@ jobs:
 
           ## What's Changed
 
-          See [CHANGELOG.md](https://github.com/mensfeld/code-on-incus/blob/master/CHANGELOG.md) for full changes.
+          See [CHANGELOG.md](https://github.com/mensfeld/coi/blob/master/CHANGELOG.md) for full changes.
 
           ## Requirements
 
@@ -217,9 +217,9 @@ jobs:
 
           ## Documentation
 
-          - [README](https://github.com/mensfeld/code-on-incus/blob/master/README.md)
-          - [Wiki](https://github.com/mensfeld/code-on-incus/wiki)
-          - [CHANGELOG](https://github.com/mensfeld/code-on-incus/blob/master/CHANGELOG.md)
+          - [README](https://github.com/mensfeld/coi/blob/master/README.md)
+          - [Wiki](https://github.com/mensfeld/coi/wiki)
+          - [CHANGELOG](https://github.com/mensfeld/coi/blob/master/CHANGELOG.md)
           EOF
           sed -i "s|__VERSION__|$VERSION|g" release-notes.md
 

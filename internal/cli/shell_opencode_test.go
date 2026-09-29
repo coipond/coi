@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/tool"
 )
 
 // TestBuildCLICommand_Opencode_NewSession verifies that opencode gets a bare
