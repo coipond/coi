@@ -475,10 +475,13 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 			stripAttribution := a.cfg.Git.IsStripAttributionEnabled()
 			readonlyLock := a.cfg.Git.IsReadonlyEnabled() && gitID.Complete()
 			identityLock := readonlyLock
-			// core.hooksPath must be installed when EITHER the strip hook or the
-			// identity re-stamp hook is active (they share the one hook dir).
+			guardBranches := a.cfg.Git.EffectiveProtectedBranches()
+			guardOn := len(guardBranches) > 0
+			// core.hooksPath must be installed when ANY hook policy is active: the
+			// strip hook, the identity re-stamp hook, or the branch guard (they
+			// share the one hook dir).
 			hooksPath := ""
-			if stripAttribution || identityLock {
+			if stripAttribution || identityLock || guardOn {
 				hooksPath = session.GitHooksDir
 			}
 			if readonlyLock {
@@ -493,11 +496,11 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 				session.SetupGitIdentityGuard(s.mgr, homeDir, logFn)
 				session.SetupGitIdentity(s.mgr, homeDir, gitID, logFn)
 			}
-			// Git hooks (#788 strip + identity re-stamp), mirroring the shell path:
-			// the hook dir is needed on both identity paths; core.hooksPath is
-			// written live only when the gitconfig is writable.
-			if stripAttribution || identityLock {
-				session.SetupGitHooks(s.mgr, homeDir, gitID, stripAttribution, a.cfg.Git.StripAttributionPatterns, identityLock, !readonlyLock, logFn)
+			// Git hooks (strip #788 + identity re-stamp + branch guard), mirroring
+			// the shell path: the hook dir is needed on every path; core.hooksPath
+			// is written live only when the gitconfig is writable.
+			if stripAttribution || identityLock || guardOn {
+				session.SetupGitHooks(s.mgr, homeDir, gitID, stripAttribution, a.cfg.Git.StripAttributionPatterns, identityLock, !readonlyLock, guardBranches, logFn)
 			} else if !readonlyLock {
 				session.RemoveGitAttributionHookConfig(s.mgr, homeDir)
 			}
@@ -742,6 +745,12 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 				},
 				Network: session.NetworkOptions{
 					Config: &a.cfg.Network,
+				},
+				// The branch guard is active on this run (installed earlier via
+				// SetupGitHooks); surface it in the generated context so a headless
+				// agent knows from startup not to commit/push to a protected branch.
+				Git: session.GitOptions{
+					ProtectedBranches: a.cfg.Git.EffectiveProtectedBranches(),
 				},
 				Security: session.SecurityOptions{
 					// The kernel-surface flags feed injectSandboxContext's Docker

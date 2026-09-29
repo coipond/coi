@@ -437,6 +437,7 @@ type ContextInfo struct {
 	OSName             string      // OS name (e.g., "Ubuntu 22.04")
 	Architecture       string      // CPU architecture (e.g., "amd64", "arm64")
 	ProtectedPaths     []string    // Paths mounted read-only for security
+	ProtectedBranches  []string    // [git] protected_branches: branches the agent must not commit to / push to (empty = guard off)
 	GHCLIAuthenticated bool        // Whether GitHub CLI auth is available (GH_TOKEN or GITHUB_TOKEN forwarded)
 	ForwardedEnvVars   []string    // Names of host environment variables forwarded into the container
 	Timezone           string      // IANA timezone (e.g., "America/New_York"), empty = UTC
@@ -491,41 +492,43 @@ func (info ContextInfo) domainsEnforced() bool {
 
 // contextTemplateData holds the resolved values passed to the context file template.
 type contextTemplateData struct {
-	WorkspacePath       string
-	HomeDir             string
-	OSDesc              string
-	ArchDesc            string
-	PersistenceDesc     string
-	NetworkDesc         string
-	NetworkLimitation   string
-	SSHDesc             string
-	GitHubCLIDesc       string
-	DockerDesc          string
-	UserDesc            string
-	SudoDesc            string
-	ProtectedPaths      string
-	Persistent          bool
-	ForwardedEnvVars    string
-	HasForwardedEnvVars bool
-	TimezoneDesc        string
-	ExtraMounts         string // Comma-joined container paths
-	HasExtraMounts      bool
-	HasPorts            bool
-	PoolPortsDesc       string // e.g. "23410, 23411, 23412" (identity-mapped)
-	FirstPoolPort       string // first pool port, for the concrete usage example
-	NamedPortsDesc      string // one line per named mapping
-	ResourceLimits      string // e.g., "2 CPUs, 2GiB memory"
-	HasResourceLimits   bool
-	MaxDuration         string
-	HasMaxDuration      bool
-	ToolName            string
-	ContainerName       string
-	ProfileContext      string
-	HasProfileContext   bool
-	HasGitAuth          bool
-	SSHAgentForwarded   bool
-	GHCLIAuthenticated  bool
-	DockerAvailable     bool
+	WorkspacePath         string
+	HomeDir               string
+	OSDesc                string
+	ArchDesc              string
+	PersistenceDesc       string
+	NetworkDesc           string
+	NetworkLimitation     string
+	SSHDesc               string
+	GitHubCLIDesc         string
+	DockerDesc            string
+	UserDesc              string
+	SudoDesc              string
+	ProtectedPaths        string
+	ProtectedBranchesDesc string // e.g. "main, master"
+	HasProtectedBranches  bool
+	Persistent            bool
+	ForwardedEnvVars      string
+	HasForwardedEnvVars   bool
+	TimezoneDesc          string
+	ExtraMounts           string // Comma-joined container paths
+	HasExtraMounts        bool
+	HasPorts              bool
+	PoolPortsDesc         string // e.g. "23410, 23411, 23412" (identity-mapped)
+	FirstPoolPort         string // first pool port, for the concrete usage example
+	NamedPortsDesc        string // one line per named mapping
+	ResourceLimits        string // e.g., "2 CPUs, 2GiB memory"
+	HasResourceLimits     bool
+	MaxDuration           string
+	HasMaxDuration        bool
+	ToolName              string
+	ContainerName         string
+	ProfileContext        string
+	HasProfileContext     bool
+	HasGitAuth            bool
+	SSHAgentForwarded     bool
+	GHCLIAuthenticated    bool
+	DockerAvailable       bool
 }
 
 // RenderContextFileContent renders the embedded sandbox context template with
@@ -631,6 +634,11 @@ func RenderContextFileContent(info ContextInfo) string {
 
 	if len(info.ProtectedPaths) > 0 {
 		data.ProtectedPaths = strings.Join(info.ProtectedPaths, ", ")
+	}
+
+	if len(info.ProtectedBranches) > 0 {
+		data.HasProtectedBranches = true
+		data.ProtectedBranchesDesc = strings.Join(info.ProtectedBranches, ", ")
 	}
 
 	// Timezone
@@ -753,6 +761,7 @@ type SandboxContextJSON struct {
 	DockerAvailable    bool              `json:"docker_available"`
 	ForwardedEnvVars   []string          `json:"forwarded_env_vars"`
 	ProtectedPaths     []string          `json:"protected_paths"`
+	ProtectedBranches  []string          `json:"protected_branches"`
 	ExtraMounts        []string          `json:"extra_mounts"` // container paths
 	PublishedPorts     []SandboxPortJSON `json:"published_ports"`
 
@@ -833,6 +842,7 @@ func RenderContextFileJSON(info ContextInfo) (string, error) {
 		SSHAgentForwarded:  info.SSHAgentForwarded,
 		GHCLIAuthenticated: info.GHCLIAuthenticated,
 		DockerAvailable:    !info.DockerUnavailable,
+		ProtectedBranches:  nonNilStrings(info.ProtectedBranches),
 		ForwardedEnvVars:   nonNilStrings(info.ForwardedEnvVars),
 		ProtectedPaths:     nonNilStrings(info.ProtectedPaths),
 		ExtraMounts:        mounts,

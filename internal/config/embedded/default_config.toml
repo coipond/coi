@@ -75,6 +75,10 @@ writable_hooks = false
 # AI attribution (Co-Authored-By trailers / "Generated with" footers) from every
 # commit. Set false to keep tool attribution. Trusted-scope only.
 # strip_attribution = true
+# protected_branches defaults to ["main", "master"]: root-owned git hooks refuse
+# committing on, and pushing to, these branches so the agent works on feature
+# branches. Set to [] to disable, or list your own. Trusted-scope only.
+# protected_branches = ["main", "master"]
 
 [ssh]
 forward_agent = false

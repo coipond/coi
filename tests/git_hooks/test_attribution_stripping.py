@@ -31,8 +31,10 @@ BOT_EMAIL = "bot@coi.test"
 HOME = "/home/code"
 
 # Identity so commits pass the useConfigOnly guard; strip_attribution stays at
-# its default (on) unless a test overrides it.
-IDENTITY_TOML = f'[git]\nname = "{BOT_NAME}"\nemail = "{BOT_EMAIL}"\n'
+# its default (on) unless a test overrides it. protected_branches is disabled so
+# the on-by-default branch guard doesn't block these commits on master (these
+# tests exercise attribution stripping, not branch protection).
+IDENTITY_TOML = f'[git]\nname = "{BOT_NAME}"\nemail = "{BOT_EMAIL}"\nprotected_branches = []\n'
 
 TRAILER_MSG = (
     "'subject line\\n\\nbody text\\n\\n"

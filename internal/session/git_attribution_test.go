@@ -112,7 +112,7 @@ func TestGitHookScripts(t *testing.T) {
 func TestSetupGitAttributionHook(t *testing.T) {
 	rec := &managedSettingsRecorder{}
 	// strip on, identity NOT locked: post-commit stays a delegation symlink.
-	SetupGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, true, func(string) {})
+	SetupGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, true, nil, func(string) {})
 
 	// Three root-owned files: the two scripts (0755) and the pattern file (0644).
 	wantModes := map[string]string{
@@ -160,7 +160,7 @@ func TestSetupGitAttributionHook(t *testing.T) {
 func TestSetupGitHooks_IdentityLock(t *testing.T) {
 	rec := &managedSettingsRecorder{}
 	id := GitIdentity{Name: testBotName, Email: testBotEmail}
-	SetupGitHooks(rec, "/home/code", id, false, nil, true, true, func(string) {})
+	SetupGitHooks(rec, "/home/code", id, false, nil, true, true, nil, func(string) {})
 
 	var post *createWithOwnerCall
 	for i := range rec.creates {
@@ -222,7 +222,7 @@ func TestRenderPostCommitRestampScript_Escaping(t *testing.T) {
 // mount and log a spurious warning).
 func TestSetupGitAttributionHookSkipsConfigWhenReadonly(t *testing.T) {
 	rec := &managedSettingsRecorder{}
-	SetupGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, false, func(string) {})
+	SetupGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, false, nil, func(string) {})
 	for _, cmd := range rec.commands {
 		if strings.Contains(cmd, "core.hooksPath") {
 			t.Errorf("setHooksPath=false must not write git config, got %q", cmd)

@@ -296,7 +296,27 @@ type GitConfig struct {
 	// extended regexes, matched per message line) when non-empty. Trusted-scope
 	// only, together with StripAttribution.
 	StripAttributionPatterns []string `toml:"strip_attribution_patterns"`
+	// ProtectedBranches installs root-owned pre-commit/pre-push hooks that refuse
+	// committing on, and pushing to, any listed branch — so an autonomous agent
+	// works on feature branches, never main. A POINTER so the config can express
+	// three states that a plain slice cannot: nil (field absent) → the default
+	// []{"main","master"}; a non-empty slice → that exact set; an explicit empty
+	// slice (`protected_branches = []`) → the guard is disabled. Resolve via
+	// EffectiveProtectedBranches, never by reading the field directly.
+	//
+	// Trusted-scope only: an untrusted project config cannot shrink or empty the
+	// list (sanitizeUntrustedGit nils it, falling back to the default so the
+	// guard stays on). Accepted limitations, same as the other git hooks:
+	// `--no-verify` bypasses client hooks, and a repo-local core.hooksPath (husky)
+	// overrides the global one — server-side branch protection is the real backstop.
+	ProtectedBranches *[]string `toml:"protected_branches"`
 }
+
+// defaultProtectedBranches is the branch set guarded when [git]
+// protected_branches is not configured. Kept here (not in the embedded TOML) so
+// the nil-vs-empty tri-state survives: a live TOML default could not be
+// distinguished from an explicit `protected_branches = []` that disables it.
+var defaultProtectedBranches = []string{"main", "master"}
 
 // IsSeedHostIdentityEnabled reports whether host-global git identity seeding is
 // enabled. Defaults to true when the field is not explicitly set (nil receiver
@@ -322,6 +342,17 @@ func (g *GitConfig) IsStripAttributionEnabled() bool {
 		return true
 	}
 	return *g.StripAttribution
+}
+
+// EffectiveProtectedBranches resolves the branch guard set. A nil field (config
+// absent) yields the default []{"main","master"}; a configured slice — including
+// an explicit empty one that disables the guard — is returned verbatim. The
+// returned slice is a copy, so callers can retain it safely.
+func (g *GitConfig) EffectiveProtectedBranches() []string {
+	if g == nil || g.ProtectedBranches == nil {
+		return append([]string(nil), defaultProtectedBranches...)
+	}
+	return append([]string(nil), (*g.ProtectedBranches)...)
 }
 
 // SecurityConfig contains security-related settings for workspace protection
