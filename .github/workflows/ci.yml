@@ -146,7 +146,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build
     # 90 (not 60): the build-heavy lanes (core-build especially) run ~15 tests
-    # that each build a full COI image. On a cold image cache — which happens
+    # that each build a full Coi image. On a cold image cache — which happens
     # whenever internal/image/**, profiles/default/**, or the build script
     # change — those rebuild from scratch (a slim build alone can take ~10min on
     # a slow runner), and the suite legitimately exceeds 60min. The IPv4 apt fix
@@ -418,7 +418,7 @@ jobs:
 
           # Set FORWARD chain policy to ACCEPT
           # This allows containers without explicit firewall rules to have full network access
-          # COI's firewall rules use REJECT (not DROP) so they explicitly block traffic
+          # Coi's firewall rules use REJECT (not DROP) so they explicitly block traffic
           # regardless of the default policy
           sudo iptables -P FORWARD ACCEPT
 
@@ -483,14 +483,14 @@ jobs:
           # Disable swap limit in the embedded default so tests can run.
           sed -i 's/^swap = "true"/swap = ""/' internal/config/embedded/default_config.toml
 
-      - name: Build COI binary
+      - name: Build Coi binary
         run: |
           go build -o coi ./cmd/coi
           # Grant CAP_LINUX_IMMUTABLE for host-side immutable protection tests
           sudo setcap cap_linux_immutable=ep ./coi
           ./coi version
 
-      - name: Configure COI for CI (use open network mode for builds)
+      - name: Configure Coi for CI (use open network mode for builds)
         run: |
           # Use open mode by default so image builds can access internet
           # Tests will explicitly use restricted/allowlist modes when testing network isolation
@@ -500,7 +500,7 @@ jobs:
           [network]
           mode = "open"
           EOF
-          echo "Created COI config with network.mode = open"
+          echo "Created Coi config with network.mode = open"
 
       - name: Test bind mount functionality
         continue-on-error: true
@@ -548,24 +548,24 @@ jobs:
           incus delete test-bind-mount-container --force
           rm -rf /tmp/test-bind-mount
 
-      - name: Restore COI image from cache
+      - name: Restore Coi image from cache
         id: cache-coi-image
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/coi-image.tar.gz
           key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**') }}
 
-      - name: Import COI image from cache
+      - name: Import Coi image from cache
         if: steps.cache-coi-image.outputs.cache-hit == 'true'
         run: |
-          echo "Restoring COI image from cache..."
+          echo "Restoring Coi image from cache..."
           incus image import /tmp/coi-image.tar.gz --alias coi-default
           ./coi image list
 
-      - name: Build COI image
+      - name: Build Coi image
         if: steps.cache-coi-image.outputs.cache-hit != 'true'
         run: |
-          echo "Building COI image (not cached)..."
+          echo "Building Coi image (not cached)..."
           # The build script apt/curls external mirrors; those occasionally reset
           # ("curl: (35) Recv failure: Connection reset by peer"). The old 3x/10s
           # loop (~20s total) was too tight to ride out a blip. Widen to 5 attempts
@@ -579,7 +579,7 @@ jobs:
               break
             fi
             if [ "$attempt" -eq "$max_attempts" ]; then
-              echo "Failed to build COI image after $max_attempts attempts"
+              echo "Failed to build Coi image after $max_attempts attempts"
               exit 1
             fi
             backoff=$((attempt * 15))
@@ -590,7 +590,7 @@ jobs:
           # Export image for caching
           incus image export coi-default /tmp/coi-image
 
-      - name: Save COI image to cache
+      - name: Save Coi image to cache
         if: steps.cache-coi-image.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -643,8 +643,8 @@ jobs:
           ./coi kill --all --force || true
           ./coi clean --force || true
 
-  # COI inside a Lima VM (issue #543): runner -> Lima/QEMU-KVM Ubuntu guest with a
-  # virtiofs $HOME mount -> Incus -> COI containers. This is the only lane where
+  # Coi inside a Lima VM (issue #543): runner -> Lima/QEMU-KVM Ubuntu guest with a
+  # virtiofs $HOME mount -> Incus -> Coi containers. This is the only lane where
   # isColimaOrLimaEnvironment() is genuinely TRUE (it keys on virtiofs in
   # /proc/mounts), reproducing the macOS Colima/Lima environment class (#530,
   # #534, #221, #45) that hosted macOS runners cannot cover (Colima needs Intel
@@ -653,7 +653,7 @@ jobs:
   # deliberately puts its workspace ON the virtiofs mount to prove the
   # isolation fallback covers idmap-incompatible device filesystems.
   lima-smoke:
-    name: Lima Smoke (COI inside a Lima VM, virtiofs)
+    name: Lima Smoke (Coi inside a Lima VM, virtiofs)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     needs: build
@@ -716,7 +716,7 @@ jobs:
           # Disable swap limit in the embedded default so tests can run.
           sed -i 's/^swap = "true"/swap = ""/' internal/config/embedded/default_config.toml
 
-      - name: Build COI binary (on the runner; go.mod needs Go 1.26)
+      - name: Build Coi binary (on the runner; go.mod needs Go 1.26)
         run: |
           # The guest is the same distro/arch (Ubuntu 24.04 amd64), so the binary
           # runs there as-is. setcap happens in the guest on a native-fs copy —
@@ -738,7 +738,7 @@ jobs:
           path: ~/.cache/lima
           key: ${{ runner.os }}-lima-guest-${{ hashFiles('scripts/lima-coi.yaml') }}
 
-      - name: Restore COI image from cache (restore-only; core-build owns saves)
+      - name: Restore Coi image from cache (restore-only; core-build owns saves)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/coi-image.tar.gz
