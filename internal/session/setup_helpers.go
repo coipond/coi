@@ -36,7 +36,7 @@ import (
 // (workspace first, then any configured mounts). Their filesystems decide
 // whether an idmapped (shift=true) mount is possible at all, which is a
 // property of the paths rather than of the VM around them (#683).
-func ConfigureUIDMapping(containerName string, sources []string, disableShift bool, logger func(string)) (useShift, idmapApplied bool) {
+func ConfigureUIDMapping(containerName string, sources []string, disableShift bool, logger func(string)) (useShift, idmapApplied bool, err error) {
 	if logger == nil {
 		logger = func(string) {}
 	}
@@ -63,11 +63,18 @@ func ConfigureUIDMapping(containerName string, sources []string, disableShift bo
 			logger(fmt.Sprintf("Host UID %d matches container code UID but shift is off and the guest doesn't map it, using raw.idmap: %s",
 				os.Getuid(), idmap))
 		}
-		if err := container.IncusExec("config", "set", containerName, "raw.idmap", idmap); err != nil {
-			logger(fmt.Sprintf("Warning: Failed to set raw.idmap (%v) — the workspace will be mounted with NO UID mapping and may be unwritable in the container; retry, or set `[incus] disable_shift = true` and relaunch", err))
-			return useShift, false
+		if setErr := container.IncusExec("config", "set", containerName, "raw.idmap", idmap); setErr != nil {
+			// Fail fast (#838): without this map the workspace mounts with no UID
+			// mapping and is unwritable — silently continuing hands an agent a
+			// broken /workspace. Abort with a cause the caller surfaces; when the
+			// host UID is subordinate, also print the copy-paste fix.
+			line, inRange := HostUIDSubordinateRange()
+			if inRange {
+				logger(rawIdmapGuidance())
+			}
+			return useShift, false, rawIdmapFailure(setErr, os.Getuid(), line)
 		}
-		return useShift, true
+		return useShift, true, nil
 	}
 
 	if !useShift {
@@ -76,7 +83,32 @@ func ConfigureUIDMapping(containerName string, sources []string, disableShift bo
 		// Colima/Lima was detected but host UID happens to equal code UID.
 		logger("Auto-detected Colima/Lima environment - disabling UID shifting")
 	}
-	return useShift, false
+	return useShift, false, nil
+}
+
+// rawIdmapFailure builds the fatal error for a rejected `raw.idmap` set — terse
+// and staticcheck-clean (ST1005: no capital, no trailing punctuation/newline).
+// The actionable multi-line fix is emitted separately via rawIdmapGuidance (a
+// log line, not an error string). `line` is the offending /etc/subuid range, ""
+// when the host UID isn't subordinate. Extracted (pure) so it is unit-testable.
+func rawIdmapFailure(setErr error, hostUID int, line string) error {
+	if line != "" {
+		return fmt.Errorf("host UID %d is inside a subordinate ID range in /etc/subuid (%s), so Incus "+
+			"cannot map it and the workspace would be unwritable (raw.idmap: %w)", hostUID, line, setErr)
+	}
+	return fmt.Errorf("cannot UID-map the workspace; it would be unwritable (raw.idmap: %w)", setErr)
+}
+
+// rawIdmapGuidance is the actionable, copy-paste fix printed (via the logger, so
+// ST1005 doesn't apply) when the host UID is subordinate and can't be mapped
+// (#838). Returned as a string so it's unit-testable.
+func rawIdmapGuidance() string {
+	return "To fix the UID mapping, pick one:\n" +
+		"  1. Give Incus a dedicated delegation for your UID and restart it, then relaunch:\n" +
+		"       echo \"root:$(id -u):1\" | sudo tee -a /etc/subuid /etc/subgid\n" +
+		"       sudo systemctl restart incus\n" +
+		fmt.Sprintf("  2. Or run coi as a user whose UID is below the subuid range (e.g. the image's uid-%d user).\n", container.CodeUID) +
+		"Run `coi health` for a diagnosis."
 }
 
 // MountSources lists the HOST paths a session's disk devices are sourced from:
@@ -127,7 +159,12 @@ func ResolveReuseUIDMapping(containerName string, sources []string, disableShift
 		logger = func(string) {}
 	}
 	hadRawIdmap := container.ContainerUsesRawIdmap(containerName)
-	configuredShift, idmapApplied := ConfigureUIDMapping(containerName, sources, disableShift, logger)
+	configuredShift, idmapApplied, err := ConfigureUIDMapping(containerName, sources, disableShift, logger)
+	if err != nil {
+		// Reuse heals an EXISTING container (fresh creation already fails fast on
+		// this); log and carry on rather than block a reused session.
+		logger(fmt.Sprintf("Warning: %v", err))
+	}
 	useShift := reuseShiftDecision(configuredShift, hadRawIdmap || idmapApplied)
 	convertCreationTimeShiftDevices(containerName, idmapApplied, hadRawIdmap, logger)
 	return useShift
@@ -190,7 +227,12 @@ func ResolveStartUIDMapping(containerName string, disableShift bool, logger func
 		return
 	}
 	hadRawIdmap := container.ContainerUsesRawIdmap(containerName)
-	_, idmapApplied := ConfigureUIDMapping(containerName, sources, disableShift, logger)
+	_, idmapApplied, err := ConfigureUIDMapping(containerName, sources, disableShift, logger)
+	if err != nil {
+		// Best-effort heal of an arbitrary container on `coi container start`; log
+		// and continue rather than abort the start.
+		logger(fmt.Sprintf("Warning: %v", err))
+	}
 	convertCreationTimeShiftDevices(containerName, idmapApplied, hadRawIdmap, logger)
 }
 

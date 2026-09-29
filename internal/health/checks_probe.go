@@ -34,6 +34,30 @@ func waitProbeReady(containerName string) bool {
 // value: the real policy-honoring launcher.
 var probeLaunch = container.LaunchContainerWithPreStartPolicy
 
+// hostUIDInSubidRange reports whether the current host UID sits in a multi-ID
+// subordinate range in /etc/subuid — the condition under which the workspace
+// can't be idmapped (#838). Indirected so tests can simulate it without touching
+// /etc/subuid.
+var hostUIDInSubidRange = session.HostUIDSubordinateRange
+
+// subidSkip returns a WARNING "skipped" result (and true) for a probe that mounts
+// and idmaps a temp workspace when the host UID can't be mapped, so the probe
+// reports an honest, named skip instead of a cryptic mount/forkmount [FAIL]
+// (#838). Returns (_, false) when the UID is mappable, so the caller proceeds.
+func subidSkip(name string) (HealthCheck, bool) {
+	line, inRange := hostUIDInSubidRange()
+	if !inRange {
+		return HealthCheck{}, false
+	}
+	return HealthCheck{
+		Name:   name,
+		Status: StatusWarning,
+		Message: fmt.Sprintf("Skipped — host UID %d is inside /etc/subuid range %s, so the probe "+
+			"workspace can't be idmapped; run coi as a uid-%d user to verify. (not a masking failure)",
+			os.Getuid(), line, container.CodeUID),
+	}, true
+}
+
 func CheckContainerConnectivity(imageName string, policy container.HardeningPolicy) HealthCheck {
 	// Skip if no image available
 	if imageName == "" {
@@ -415,6 +439,11 @@ func CheckSecretMasking(imageName string, policy container.HardeningPolicy) Heal
 	if imageName == "" {
 		imageName = "coi-default"
 	}
+	// The probe idmaps a temp workspace (shift=true); if the host UID can't be
+	// mapped, skip with a named cause instead of a cryptic forkmount [FAIL] (#838).
+	if skip, ok := subidSkip(name); ok {
+		return skip
+	}
 	if exists, err := container.ImageExists(imageName); err != nil || !exists {
 		return HealthCheck{Name: name, Status: StatusWarning, Message: "Skipped (image not available)"}
 	}
@@ -517,6 +546,11 @@ func CheckHostCredentialIsolation(imageName string, policy container.HardeningPo
 
 	if imageName == "" {
 		imageName = "coi-default"
+	}
+	// Same idmap constraint as CheckSecretMasking: skip with a named cause when
+	// the host UID can't be mapped, rather than a cryptic mount [FAIL] (#838).
+	if skip, ok := subidSkip(name); ok {
+		return skip
 	}
 	if exists, err := container.ImageExists(imageName); err != nil || !exists {
 		return HealthCheck{Name: name, Status: StatusWarning, Message: "Skipped (image not available)"}
