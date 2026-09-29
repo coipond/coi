@@ -48,7 +48,7 @@ func evaluateKernelMitigations(cmdline string) HealthCheck {
 		Name:   "kernel_mitigations",
 		Status: StatusWarning,
 		Message: fmt.Sprintf(
-			"CPU side-channel mitigations disabled on the kernel command line (%s) — COI containers share the host kernel, so this hands sandboxed code hardware privilege-escalation surface that software patching cannot fix; remove the flag(s) from the bootloader config and reboot",
+			"CPU side-channel mitigations disabled on the kernel command line (%s) — Coi containers share the host kernel, so this hands sandboxed code hardware privilege-escalation surface that software patching cannot fix; remove the flag(s) from the bootloader config and reboot",
 			strings.Join(found, ", ")),
 		Details: map[string]interface{}{
 			"flags": found,
@@ -58,7 +58,7 @@ func evaluateKernelMitigations(cmdline string) HealthCheck {
 
 // CheckKernelMitigations warns when CPU side-channel mitigations are disabled
 // on the host kernel command line. The performance win of mitigations=off is
-// real, but so is the cost: COI containers share the host kernel, and Trail of
+// real, but so is the cost: Coi containers share the host kernel, and Trail of
 // Bits' agent-escape report ("VMs won't contain cyber-capable agents") ran its
 // escapes on exactly such a host — hardware bugs become exploitable again the
 // moment the software mitigations are off. Degrades to OK when the command

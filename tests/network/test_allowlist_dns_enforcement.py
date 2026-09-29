@@ -1,7 +1,7 @@
 """
 Integration tests for allowlist mode's deterministic name resolution.
 
-Allowlist mode does not let the container resolve names itself. COI resolves the
+Allowlist mode does not let the container resolve names itself. Coi resolves the
 allowlisted hostnames on the host, installs those addresses in the firewall, and
 writes the SAME addresses into the container's /etc/hosts. All DNS egress is then
 blocked, so that hosts file is the container's only route from a name to an
@@ -154,7 +154,7 @@ def test_every_address_the_container_can_resolve_is_already_allowed(
 ):
     """The core invariant: the container cannot resolve to an address the firewall lacks.
 
-    It resolves through /etc/hosts, which COI wrote from the same answer it fed the
+    It resolves through /etc/hosts, which Coi wrote from the same answer it fed the
     firewall. There is no second source of addresses, so the two cannot disagree.
     """
     name = start_ready_container(coi_binary, workspace_dir)
@@ -174,7 +174,7 @@ def test_every_address_the_container_can_resolve_is_already_allowed(
 def test_hosts_file_holds_every_address_and_is_delimited(
     coi_binary, workspace_dir, cleanup_containers
 ):
-    """COI's managed block must carry every address, without clobbering the rest of /etc/hosts.
+    """Coi's managed block must carry every address, without clobbering the rest of /etc/hosts.
 
     A rotating frontend answers with several addresses and the container may pick
     any of them; writing only the first would leave it working until that one
@@ -185,8 +185,8 @@ def test_hosts_file_holds_every_address_and_is_delimited(
     rc, content = container_exec(coi_binary, name, "cat /etc/hosts")
     assert rc == 0, f"could not read /etc/hosts: {content}"
 
-    assert "BEGIN coi allowlist" in content, f"COI's managed block is missing:\n{content}"
-    assert "END coi allowlist" in content, f"COI's managed block is unterminated:\n{content}"
+    assert "BEGIN coi allowlist" in content, f"Coi's managed block is missing:\n{content}"
+    assert "END coi allowlist" in content, f"Coi's managed block is unterminated:\n{content}"
 
     # Everything outside the markers must survive — the container needs localhost.
     assert "localhost" in content, f"the pre-existing hosts entries were clobbered:\n{content}"
@@ -480,7 +480,7 @@ def test_allowlist_etc_hosts_overwrite_is_rejected_by_firewall(
     )
     name = start_ready_container(coi_binary, workspace_dir, config)
 
-    # Baseline: the allowlisted name is reachable via COI's /etc/hosts -> set IP.
+    # Baseline: the allowlisted name is reachable via Coi's /etc/hosts -> set IP.
     rc, out = container_exec(
         coi_binary,
         name,
@@ -491,7 +491,7 @@ def test_allowlist_etc_hosts_overwrite_is_rejected_by_firewall(
 
     # Hijack: OVERWRITE /etc/hosts so the name resolves ONLY to 1.1.1.1 (live, not in
     # the set). Overwriting — not prepending — is essential: getaddrinfo (what curl
-    # uses) returns EVERY matching entry, so leaving COI's managed entry in place lets
+    # uses) returns EVERY matching entry, so leaving Coi's managed entry in place lets
     # curl try 1.1.1.1, get rejected, and then FALL BACK to the still-listed real IP
     # (which IS in the set) and succeed. getent ahostsv4 shows what curl will try.
     rc, out = container_exec(

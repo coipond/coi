@@ -76,7 +76,7 @@ func compileSigmaFile(data []byte) (sigmaPattern, bool) {
 		return sigmaPattern{}, false
 	}
 
-	// Only linux/process_creation rules map to what COI collects.
+	// Only linux/process_creation rules map to what Coi collects.
 	if raw.Logsource["product"] != "linux" || raw.Logsource["category"] != "process_creation" {
 		return sigmaPattern{}, false
 	}

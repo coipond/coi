@@ -3,7 +3,7 @@ not wedge a persistent container on restart, and protection must be re-establish
 
 Background
 ----------
-COI protects security-sensitive paths by attaching one read-only Incus disk
+Coi protects security-sensitive paths by attaching one read-only Incus disk
 device per path (``protect-husky``, ``protect-claude-settingsjson``, secret-mask
 ``mask-*`` and worktree ``gitc-*`` families) whose ``source=`` is a host path.
 Incus validates every disk device's source at container **start**: a missing

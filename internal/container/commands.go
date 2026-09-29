@@ -731,7 +731,7 @@ func initConfigureAndStart(imageAlias, containerName, pool string, ephemeral boo
 // DisableGuestAPI prevents the Incus guest API (/dev/incus) from being
 // accessible inside the container. The guest API exposes host source paths
 // in the device topology, leaking the host username and workspace layout
-// (see FLAWS.md Finding 3). COI communicates with containers via the host
+// (see FLAWS.md Finding 3). Coi communicates with containers via the host
 // admin socket and does not need the guest API.
 func DisableGuestAPI(containerName string) error {
 	return IncusExec("config", "set", containerName, "security.guestapi=false")
@@ -752,7 +752,7 @@ func IsolateUIDNamespace(containerName string) error {
 // network-isolation bypass. It MUST be applied before the container's first boot
 // — Incus wires the bridge-port filters when the NIC is brought up.
 //
-// COI's egress allowlist is enforced by host nftables rules that match the
+// Coi's egress allowlist is enforced by host nftables rules that match the
 // container's source IP (`ip saddr <containerIP>`) in a chain whose default
 // policy is accept. Without anti-spoofing, in-container root (which holds
 // CAP_NET_ADMIN over its own netns) can add a second source IP or spoof its
@@ -764,7 +764,7 @@ func IsolateUIDNamespace(containerName string) error {
 //   - security.mac_filtering=true  : same for the source MAC (implied by
 //     ipv4_filtering but set explicitly for clarity/robustness).
 //   - security.port_isolation=true : the bridge blocks this port from talking to
-//     OTHER ports on the same bridge (sibling COI containers), preventing L2
+//     OTHER ports on the same bridge (sibling Coi containers), preventing L2
 //     lateral movement that the routed-path nft rules never observe.
 //
 // eth0 is inherited from the default profile, so it is first overridden onto the

@@ -18,7 +18,7 @@ var Version = "dev"
 // rootVersionTemplate is the text/template cobra renders for `coi --version`.
 // It mirrors the first line the `coi version` subcommand prints so both surfaces
 // agree; {{.Version}} is rootCmd.Version, which is normalizeVersion(Version).
-const rootVersionTemplate = "code-on-incus (coi) v{{.Version}}\n"
+const rootVersionTemplate = "Coi (Code on Incus) v{{.Version}}\n"
 
 // App holds the shared CLI state that is populated from persistent flags and
 // config loading in PersistentPreRunE. Grouping this in a struct rather than
@@ -104,8 +104,8 @@ var app = &App{}
 // rootCmd represents the base command
 var rootCmd = &cobra.Command{
 	Use:   "coi",
-	Short: "Code on Incus - Run AI coding tools in isolated Incus containers",
-	Long: `code-on-incus (coi) is a CLI tool for running AI coding assistants in Incus containers
+	Short: "Coi (Code on Incus) - Run AI coding tools in isolated Incus containers",
+	Long: `Coi (Code on Incus) is a CLI tool for running AI coding assistants in Incus containers
 with session persistence, workspace isolation, and multi-slot support.
 
 By default runs Claude Code. Other tools can be configured via the tool.name config option.
@@ -300,7 +300,7 @@ func Execute() error {
 
 func init() {
 	// Keep `coi --version` (cobra's version flag) consistent with the `coi
-	// version` subcommand: same "code-on-incus (coi) v<semver>" line, and the
+	// version` subcommand: same "Coi (Code on Incus) v<semver>" line, and the
 	// version already normalized (rootCmd.Version above) so a stray/doubled 'v'
 	// from a mis-tagged build can't leak here either.
 	rootCmd.SetVersionTemplate(rootVersionTemplate)
@@ -366,7 +366,7 @@ var versionCmd = &cobra.Command{
 			fmt.Printf(`{"version":%q,"url":"https://github.com/mensfeld/code-on-incus"}`+"\n", "v"+normalizeVersion(Version))
 			return nil
 		}
-		fmt.Printf("code-on-incus (coi) v%s\n", normalizeVersion(Version))
+		fmt.Printf("Coi (Code on Incus) v%s\n", normalizeVersion(Version))
 		fmt.Println("https://github.com/mensfeld/code-on-incus")
 		return nil
 	},

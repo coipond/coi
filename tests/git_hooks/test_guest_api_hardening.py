@@ -1,11 +1,11 @@
-"""Test that the Incus guest API is disabled inside COI containers.
+"""Test that the Incus guest API is disabled inside Coi containers.
 
 The Incus guest API (/dev/incus) exposes the full device topology including
 host source paths (username, workspace location, which paths are RO-protected).
 This is a reconnaissance aid for mount namespace bypass attacks.
 
-COI does NOT use the guest agent internally — it communicates with containers
-via the host admin socket. Disabling the guest API has zero impact on COI
+Coi does NOT use the guest agent internally — it communicates with containers
+via the host admin socket. Disabling the guest API has zero impact on Coi
 functionality.
 
 See FLAWS.md Finding 3.
@@ -15,7 +15,7 @@ import subprocess
 
 
 class TestGuestAPIHardening:
-    """Verify that /dev/incus is not accessible inside COI containers."""
+    """Verify that /dev/incus is not accessible inside Coi containers."""
 
     def test_dev_incus_not_accessible(self, coi_binary, workspace_dir, cleanup_containers):
         """Test that /dev/incus does not exist inside the container.
@@ -124,7 +124,7 @@ class TestGuestAPIHardening:
         )
 
         # Only check stdout (the in-container command output). stderr contains
-        # COI's own setup logs which naturally reference the workspace path.
+        # Coi's own setup logs which naturally reference the workspace path.
         cmd_output = result.stdout
 
         # The guest API should be blocked entirely — verify we got the expected

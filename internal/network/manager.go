@@ -224,7 +224,7 @@ func (m *Manager) setupRestricted(ctx context.Context, containerName string) err
 	}
 
 	// Enforce the IPv6 egress boundary on the host: drop all forwarded IPv6 from
-	// the container's veth. The COI filter table is IPv4-only, so without this an
+	// the container's veth. The Coi filter table is IPv4-only, so without this an
 	// agent that re-enables IPv6 escapes the firewall entirely. Fail closed — if
 	// the drop cannot be installed the boot block stays in place and setup aborts.
 	if err := ApplyIPv6BlockForContainer(containerName); err != nil {
@@ -255,11 +255,11 @@ func (m *Manager) setupRestricted(ctx context.Context, containerName string) err
 
 // setupAllowlist configures allowlist mode.
 //
-// Name resolution is made deterministic instead of live: COI resolves the
+// Name resolution is made deterministic instead of live: Coi resolves the
 // allowed hostnames on the host, installs those addresses in the container's nft
 // set, writes the SAME addresses into the container's /etc/hosts (see hosts.go),
 // and blocks all DNS egress (see dnsblock.go). With no route to a nameserver, the
-// hosts file COI wrote is the container's only way to turn a name into an address
+// hosts file Coi wrote is the container's only way to turn a name into an address
 // — so it cannot learn about an address the firewall does not already trust, and
 // the host/container divergence this mode exists to prevent has nowhere to occur.
 //
@@ -324,7 +324,7 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 	}
 
 	// Enforce the IPv6 egress boundary on the host: drop all forwarded IPv6 from
-	// the container's veth. The COI filter table is IPv4-only, so without this an
+	// the container's veth. The Coi filter table is IPv4-only, so without this an
 	// agent that re-enables IPv6 escapes the allowlist entirely. Fail closed — if
 	// the drop cannot be installed the boot block stays in place and setup aborts.
 	if err := ApplyIPv6BlockForContainer(containerName); err != nil {

@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "description": "Filesystem path overrides for COI data directories",
+  "description": "Filesystem path overrides for Coi data directories",
   "properties": {
     "sessions_dir": {
       "type": "string",

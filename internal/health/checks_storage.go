@@ -13,7 +13,7 @@ import (
 	"github.com/mensfeld/code-on-incus/internal/tool"
 )
 
-// CheckCOIDirectory verifies the COI directory exists and is writable
+// CheckCOIDirectory verifies the Coi directory exists and is writable
 func CheckCOIDirectory() HealthCheck {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

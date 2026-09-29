@@ -1,5 +1,5 @@
 """
-End-to-end regression test for #674: the COI sandbox context block must not
+End-to-end regression test for #674: the Coi sandbox context block must not
 accumulate in ~/.claude/CLAUDE.md across sessions on a persistent container.
 
 Background: coi injects a sandbox context block into the tool's native
@@ -132,7 +132,7 @@ def test_claude_md_does_not_grow_across_persistent_sessions(
 
         copies = content.count("# COI Sandbox Environment")
         assert copies == 1, (
-            f"#674: the COI sandbox context block must appear exactly once in "
+            f"#674: the Coi sandbox context block must appear exactly once in "
             f"{claude_md} after {total_sessions} sessions on one persistent container, "
             f"but found {copies} copies ({len(content)} chars). It is being appended on "
             f"every session instead of replaced, so the file grows without bound."

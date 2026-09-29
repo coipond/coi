@@ -2,7 +2,7 @@
 Regression test for issue #398: error messages referenced the non-existent
 '--network=open' flag, causing users to follow broken instructions.
 
-Root cause: when firewalld is unavailable, COI printed:
+Root cause: when firewalld is unavailable, Coi printed:
   "Alternatively, run with unrestricted network access: coi shell --network=open"
 But '--network' was removed as a CLI flag in an earlier refactor and is
 now configured via config.toml. Following the suggestion produced:

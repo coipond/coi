@@ -2,13 +2,13 @@
 End-to-end tests for `[git] strip_attribution` (#788).
 
 AI agents auto-inject attribution into commit messages (a `Co-Authored-By:
-<tool bot>` trailer and/or a "Generated with ..." footer). COI installs a
+<tool bot>` trailer and/or a "Generated with ..." footer). Coi installs a
 global commit-msg hook (core.hooksPath -> /etc/coi/git-hooks, root-owned)
 that strips those lines from every commit, regardless of which tool made it.
 
 Covered:
 1. Default-on: a commit made in-container loses the Claude-style trailer and
-   footer; core.hooksPath points at the COI hook dir; the hook files are
+   footer; core.hooksPath points at the Coi hook dir; the hook files are
    root-owned.
 2. Delegation: a repo's own hooks (pre-commit, commit-msg) still run — the
    global hooksPath would otherwise silently disable them.
@@ -59,7 +59,7 @@ def _start_background_shell(coi_binary, workspace_dir, env):
 
 def _exec(coi_binary, name, script):
     """Run a shell snippet with the code user's HOME so global git config is
-    the one COI configured. `export` (not a `HOME=x cmd` prefix) so the value
+    the one Coi configured. `export` (not a `HOME=x cmd` prefix) so the value
     survives across the script's `&&` chains — a prefix assignment only applies
     to the first command. Returns (exit code, combined output)."""
     result = subprocess.run(
@@ -97,7 +97,7 @@ def test_strip_attribution_default_on(coi_binary, workspace_dir, cleanup_contain
 
     rc, out = _exec(coi_binary, name, "git config --global --get core.hooksPath")
     assert rc == 0 and "/etc/coi/git-hooks" in out, (
-        f"core.hooksPath should point at the COI hook dir, got rc={rc}: {out}"
+        f"core.hooksPath should point at the Coi hook dir, got rc={rc}: {out}"
     )
 
     rc, out = _make_repo_and_commit(coi_binary, name, "/tmp/strip-repo")

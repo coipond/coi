@@ -83,7 +83,7 @@ func evaluateIncusVersion(versionOutput string) HealthCheck {
 	}
 
 	if !container.MeetsRecommendedVersion(v) {
-		// Advisory only — NOT a warning. The version meets COI's hard minimum
+		// Advisory only — NOT a warning. The version meets Coi's hard minimum
 		// (6.1) and works, so this must not flip the overall status to degraded
 		// or the exit code to 1: scripts that gate on `coi health` exit 0 run on
 		// supported hosts and would break. The recommendation rides along in the
@@ -266,7 +266,7 @@ func CheckTool(toolName string) HealthCheck {
 	}
 }
 
-// CheckImageAge checks if the COI image is outdated
+// CheckImageAge checks if the Coi image is outdated
 func CheckImageAge(imageName string) HealthCheck {
 	if imageName == "" {
 		imageName = "coi-default"

@@ -51,7 +51,7 @@ func (p HardeningPolicy) DockerEnabled() bool { return p.Docker && !p.reducesKer
 // required by a typical agent workflow. Denied syscalls fail with EPERM (see
 // kernelSurfaceDenyAction); libuv (Node >= 20.3) probes io_uring at startup and
 // silently falls back to its thread pool, so Node/npm keep working. Incus >= 6.1
-// (COI's hard floor) always supports the key. This is the canonical NAME list;
+// (Coi's hard floor) always supports the key. This is the canonical NAME list;
 // the actual config value is built by kernelSurfaceDenyValue.
 const KernelSurfaceDenySyscalls = "io_uring_setup io_uring_enter io_uring_register bpf userfaultfd keyctl add_key request_key"
 
@@ -87,7 +87,7 @@ func kernelSurfaceDenySyscallNames(p HardeningPolicy) []string {
 	return names
 }
 
-// kernelSurfaceDenyValue is the exact security.syscalls.deny value COI writes:
+// kernelSurfaceDenyValue is the exact security.syscalls.deny value Coi writes:
 // each syscall on its OWN line with an explicit "errno 1" action. Two hard-won
 // format requirements are encoded here:
 //   - Incus wants a \n-separated list; a space-separated value is parsed as one
@@ -110,7 +110,7 @@ func kernelSurfaceDenyValue(p HardeningPolicy) string {
 
 // kernelSurfaceDenySyscallSet extracts the set of syscall NAMES from a stored
 // security.syscalls.deny value, ignoring per-entry actions ("add_key errno 1")
-// and blank lines. Entries are newline-separated (COI's own format); the name
+// and blank lines. Entries are newline-separated (Coi's own format); the name
 // is the first field of each entry. Comparing by name set keeps convergence
 // stable regardless of how Incus echoes actions/whitespace back.
 func kernelSurfaceDenySyscallSet(value string) map[string]bool {
@@ -176,7 +176,7 @@ func ApplyKernelSurfacePolicy(containerName string, p HardeningPolicy) error {
 }
 
 // ReadKernelSurfaceConfig returns the INSTANCE-LOCAL values of the keys
-// ApplyKernelSurfacePolicy owns — the layer COI actually writes, so the
+// ApplyKernelSurfacePolicy owns — the layer Coi actually writes, so the
 // convergence check compares like with like and reaches a stable state in one
 // write even when an attached Incus profile also supplies these keys (profile
 // values are invisible here on purpose; whether they DEFEAT the policy is the

@@ -11,7 +11,7 @@ import (
 // `Co-Authored-By: <tool bot>` trailer and/or a "Generated with …" footer —
 // polluting authorship in the repos they work on (#788). Git has no setting
 // that forbids a trailer, and per-tool opt-outs are easy to miss, so the
-// tool-agnostic enforcement point is a global commit-msg hook: COI writes a
+// tool-agnostic enforcement point is a global commit-msg hook: Coi writes a
 // root-owned hook directory at /etc/coi/git-hooks inside the container and
 // points core.hooksPath at it. The hook STRIPS matching lines (never rejects —
 // a rejected commit would break autonomous sessions over a cosmetic issue) and
@@ -19,7 +19,7 @@ import (
 //
 // Known limitations (documented, accepted):
 //   - A repo whose LOCAL git config sets core.hooksPath (husky writes
-//     `core.hooksPath = .husky` into .git/config, which COI mounts read-only
+//     `core.hooksPath = .husky` into .git/config, which Coi mounts read-only
 //     from the host) overrides the global hooksPath — the strip does not run
 //     in such repos.
 //   - `git commit --no-verify` skips commit-msg hooks entirely.
@@ -273,7 +273,7 @@ func effectiveAttributionPatterns(configured []string) []string {
 	return DefaultAttributionPatterns
 }
 
-// SetupGitHooks installs COI's root-owned global git hooks inside the container
+// SetupGitHooks installs Coi's root-owned global git hooks inside the container
 // and (for a writable global gitconfig) points core.hooksPath at them. Two
 // independent policies share the one hook directory, because core.hooksPath can
 // point at only one place:

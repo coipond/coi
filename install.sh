@@ -331,7 +331,7 @@ setup_nft_sudoers() {
     fi
 
     # Ask before adding a passwordless-sudo rule (a security-relevant change).
-    # It is what lets COI apply network isolation (restricted/allowlist modes)
+    # It is what lets Coi apply network isolation (restricted/allowlist modes)
     # without a password prompt; declining leaves open mode working.
     if ! user_agrees "  Configure passwordless sudo for nft — needed for network isolation? [Y/n]: "; then
         echo -e "${YELLOW}⚠ Skipped: without passwordless nft, restricted/allowlist network modes won't work (open mode still does).${NC}"
@@ -513,7 +513,7 @@ build_from_source() {
     grant_immutable_capability
 }
 
-# Grant CAP_LINUX_IMMUTABLE on the installed binary so COI can apply
+# Grant CAP_LINUX_IMMUTABLE on the installed binary so Coi can apply
 # chattr +i on host-side protected paths (defense-in-depth against
 # unshare+umount bypass of read-only bind mounts).
 grant_immutable_capability() {
@@ -946,7 +946,7 @@ post_install() {
     echo ""
     echo "Next steps:"
     echo ""
-    echo "  1. Build the COI image:"
+    echo "  1. Build the Coi image:"
     echo -e "     ${BLUE}coi build${NC}"
     echo ""
     echo "  2. Start your first session:"

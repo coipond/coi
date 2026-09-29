@@ -281,7 +281,7 @@ def test_restricted_allow_local_without_cap_is_blanket(
 
 def test_restricted_host_entry_respects_port_cap(coi_binary, workspace_dir, cleanup_containers):
     """restricted + allowed_ports=[443] + a private [[network.hosts]] entry: the
-    targeted accept COI inserts for that LAN host must be port-scoped (carry a
+    targeted accept Coi inserts for that LAN host must be port-scoped (carry a
     dport match for 443), so a host entry cannot silently reopen the full port
     range (SSH/DBs/admin) on a LAN box — the guarantee allowed_ports makes for
     every other destination.

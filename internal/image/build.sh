@@ -216,7 +216,7 @@ MISE_EOF
     fi
 
     # Add a system-wide profile hook so shells that source /etc/profile
-    # (including non-interactive shells started by COI tooling via bash -c
+    # (including non-interactive shells started by Coi tooling via bash -c
     # inside tmux) get mise-managed shims on PATH as well.
     if [ ! -f /etc/profile.d/mise.sh ]; then
         cat > /etc/profile.d/mise.sh << 'MISE_PROFILE_EOF'
@@ -381,7 +381,7 @@ UNIT_EOF
     # In Ubuntu 24.04 containers systemd-logind can be mid-start when a shutdown
     # is requested, producing a D-Bus transaction conflict.  One --force flag
     # makes systemctl talk directly to systemd (bypassing logind) without
-    # resorting to a hard reboot() syscall, which lets COI clean up the session.
+    # resorting to a hard reboot() syscall, which lets Coi clean up the session.
     for cmd in poweroff halt; do
         cat > "/usr/local/bin/${cmd}" << 'WRAPPER_EOF'
 #!/bin/bash
@@ -770,7 +770,7 @@ install_github_cli() {
 #   2. Run the cleanup timer every 15 minutes instead of daily so recovery
 #      happens automatically between heavy operations.
 #
-# This complements the hard tmpfs size cap set by COI at container start.
+# This complements the hard tmpfs size cap set by Coi at container start.
 #######################################
 configure_tmp_cleanup() {
     log "Configuring /tmp auto-cleanup..."
@@ -778,7 +778,7 @@ configure_tmp_cleanup() {
     # Age threshold: remove files in /tmp not accessed for more than 1 hour.
     # The 'D' type removes the directory contents but keeps /tmp itself.
     cat > /etc/tmpfiles.d/coi-tmp-cleanup.conf << 'EOF'
-# COI: clean files in /tmp that have not been accessed for 1 hour.
+# Coi: clean files in /tmp that have not been accessed for 1 hour.
 # This prevents abandoned build artefacts from exhausting the tmpfs.
 D /tmp 1777 root root 1h
 EOF
@@ -818,7 +818,7 @@ configure_tmux() {
     log "Configuring tmux..."
 
     cat > /etc/tmux.conf << 'EOF'
-# COI default: large scrollback so long build outputs (bin/setup, npm ci,
+# Coi default: large scrollback so long build outputs (bin/setup, npm ci,
 # cargo build, etc.) are fully retrievable. Override in ~/.tmux.conf —
 # tmux loads the per-user file after this one, so your value wins.
 set -g history-limit 50000

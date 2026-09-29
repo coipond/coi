@@ -233,7 +233,7 @@ func TestHostFirewallPerHostPorts(t *testing.T) {
 
 // TestApplyAllowlist_BlocksDNSInBothChains is the guard for the invariant the
 // whole mode rests on: the container has no route to a nameserver, so the
-// /etc/hosts file COI writes is its only way to turn a name into an address. Give
+// /etc/hosts file Coi writes is its only way to turn a name into an address. Give
 // it any resolver and it can learn an address the firewall has never seen — the
 // exact host/container divergence that made allowlist mode flap against rotating
 // cloud frontends.

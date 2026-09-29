@@ -115,7 +115,7 @@ func RunAllChecks(cfg *config.Config, verbose bool) *HealthResult {
 	checks["secret_masking"] = CheckSecretMasking(cfg.Container.Image, probePolicy)
 
 	// Runtime isolation proof: verify host home/credentials are not reachable
-	// inside the container (COI's "credentials never exposed" guarantee).
+	// inside the container (Coi's "credentials never exposed" guarantee).
 	checks["host_credential_isolation"] = CheckHostCredentialIsolation(cfg.Container.Image, probePolicy)
 
 	// NFT monitoring checks (only if enabled in config)

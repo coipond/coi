@@ -75,7 +75,7 @@ By default, lists snapshots for the current workspace's container.
 Examples:
   coi snapshot list                       # Current workspace container
   coi snapshot list -c coi-abc-1          # Specific container
-  coi snapshot list --all                 # All COI containers
+  coi snapshot list --all                 # All Coi containers
   coi snapshot list --format json         # JSON output
 `,
 	RunE: snapshotListCommand,
@@ -137,7 +137,7 @@ func init() {
 	snapshotListCmd.Flags().StringVarP(&snapshotContainer, "container", "c", "", "Container name (default: auto-detect from workspace)")
 	snapshotListCmd.Flags().StringVar(&snapshotFormat, "format", "text", "Output format: text or json")
 	snapshotListCmd.Flags().Bool("json", false, "Alias for --format json")
-	snapshotListCmd.Flags().BoolVarP(&snapshotAll, "all", "a", false, "List snapshots for all COI containers")
+	snapshotListCmd.Flags().BoolVarP(&snapshotAll, "all", "a", false, "List snapshots for all Coi containers")
 
 	// Add flags to restore command
 	snapshotRestoreCmd.Flags().StringVarP(&snapshotContainer, "container", "c", "", "Container name (default: auto-detect from workspace)")
@@ -210,7 +210,7 @@ func resolveContainer() (string, error) {
 	}
 
 	if len(sessions) == 0 {
-		return "", fmt.Errorf("no COI containers found for current workspace - use --container to specify")
+		return "", fmt.Errorf("no Coi containers found for current workspace - use --container to specify")
 	}
 
 	if len(sessions) > 1 {
@@ -219,7 +219,7 @@ func resolveContainer() (string, error) {
 		for _, name := range sessions {
 			names = append(names, name)
 		}
-		return "", fmt.Errorf("multiple COI containers found for workspace, use --container to specify: %s", strings.Join(names, ", "))
+		return "", fmt.Errorf("multiple Coi containers found for workspace, use --container to specify: %s", strings.Join(names, ", "))
 	}
 
 	// Exactly one container
@@ -227,7 +227,7 @@ func resolveContainer() (string, error) {
 		return name, nil
 	}
 
-	return "", fmt.Errorf("no COI containers found for current workspace")
+	return "", fmt.Errorf("no Coi containers found for current workspace")
 }
 
 // generateSnapshotName generates an auto-named snapshot
@@ -318,7 +318,7 @@ func snapshotListCommand(cmd *cobra.Command, args []string) error {
 }
 
 func listAllSnapshots() error {
-	// Get all COI containers
+	// Get all Coi containers
 	prefix := session.GetContainerPrefix()
 	pattern := fmt.Sprintf("^%s", prefix)
 
@@ -328,7 +328,7 @@ func listAllSnapshots() error {
 	}
 
 	if len(containers) == 0 {
-		fmt.Fprintf(os.Stderr, "No COI containers found\n")
+		fmt.Fprintf(os.Stderr, "No Coi containers found\n")
 		return nil
 	}
 

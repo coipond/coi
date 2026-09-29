@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="misc/logo.png" alt="Code on Incus Logo" width="350">
+  <img src="misc/logo.png" alt="Coi (Code on Incus) logo" width="350">
 </p>
 
-# code-on-incus (`coi`)
+# Coi (Code on Incus)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/mensfeld/code-on-incus)](https://golang.org/)
@@ -67,7 +67,7 @@ That's it. Your agent is now running in an isolated container with your project 
 
 ### `coi` vs. the alternatives
 
-| Capability | **code-on-incus** | Docker Sandbox | Bare Metal |
+| Capability | **Coi** | Docker Sandbox | Bare Metal |
 |------------|-------------------|----------------|------------|
 | Credential isolation | Default (never exposed) | Partial | None |
 | Real-time threat detection | Kernel-level (nftables) | No | No |
@@ -194,6 +194,6 @@ Incus (a modern LXD fork) gives you **system containers** - which behave like li
 
 ## Getting help
 
-- **Slack**: [Join the COI community](https://slack.karafka.io) - ask questions, report issues, share feedback
+- **Slack**: [Join the Coi community](https://slack.karafka.io) - ask questions, report issues, share feedback
 - **GitHub Issues**: [Open an issue](https://github.com/mensfeld/code-on-incus/issues) for bugs and feature requests
 - **Wiki**: [Browse the documentation](https://github.com/mensfeld/code-on-incus/wiki)

@@ -295,7 +295,7 @@ otherwise creates in ~/.coi/profiles/. Use --user or --project to override.
 The special name "default" scaffolds the MAIN config (the file that backs the
 built-in default profile) instead of a profile directory: ~/.coi/config.toml,
 or ./.coi/config.toml with --project. It writes a documented starter only when
-no config exists there (it never overwrites), and rejects --inherits. COI runs
+no config exists there (it never overwrites), and rejects --inherits. Coi runs
 fine without any config — this just gives you a commented starting point to
 customize.
 

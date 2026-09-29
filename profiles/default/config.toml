@@ -1,4 +1,4 @@
-# COI Default Profile — Single Source of Truth for All Defaults
+# Coi Default Profile — Single Source of Truth for All Defaults
 # This file is embedded into the binary and parsed by GetDefaultConfig().
 # All values here define the system defaults.
 
@@ -35,7 +35,7 @@ code_user = "code"
 mode = "restricted"
 block_private_networks = true
 block_metadata_endpoint = true
-# In allowlist mode COI resolves each hostname on the host, installs the addresses
+# In allowlist mode Coi resolves each hostname on the host, installs the addresses
 # in the firewall, and writes the SAME addresses into the container's /etc/hosts.
 # DNS egress is then blocked, so that file is the container's only way to turn a
 # name into an address -- it cannot reach an address the firewall was not given.

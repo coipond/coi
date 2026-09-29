@@ -13,7 +13,7 @@ import (
 )
 
 // NftManager manages nftables rules for container network isolation.
-// Rules live in the dedicated "ip coi" table, forward chain, keeping COI
+// Rules live in the dedicated "ip coi" table, forward chain, keeping Coi
 // rules isolated from Docker, ufw, and other tools.
 type NftManager struct {
 	containerIP string
@@ -262,7 +262,7 @@ func (f *NftManager) ApplyAllowlist(cfg *config.NetworkConfig, _ []string) error
 	return nil
 }
 
-// RemoveRules removes every host-side artefact COI installed for this container:
+// RemoveRules removes every host-side artefact Coi installed for this container:
 // forward rules, allowlist sets and the input-chain DNS block. See
 // DeleteCOIFilterRulesForIP, which is the shared implementation and the same path
 // kill and orphan cleanup take.
@@ -438,7 +438,7 @@ func bootBlockComment(containerName string) string {
 }
 
 // DisableIPv6ForContainer disables IPv6 in the container to prevent firewall bypass.
-// All COI IPv4 nft rules are IPv4-only; IPv6 would circumvent them entirely.
+// All Coi IPv4 nft rules are IPv4-only; IPv6 would circumvent them entirely.
 //
 // NOTE: this runs an in-container sysctl, which in-container root can simply set
 // back to 0 (it owns CAP_NET_ADMIN over its own netns). It is therefore
@@ -453,7 +453,7 @@ func DisableIPv6ForContainer(containerName string) error {
 
 // ensureCOIIP6TableAndChain creates the ip6 coi table and forward chain if absent,
 // mirroring ensureCOITableAndChain for IPv6. The chain hooks the forward path at
-// priority 10 with a default-accept policy; the only rules COI adds are
+// priority 10 with a default-accept policy; the only rules Coi adds are
 // per-container iifname drops, so unrelated IPv6 traffic on the host is unaffected.
 func ensureCOIIP6TableAndChain() error {
 	if _, err := runNFTCommand("add", "table", "ip6", "coi"); err != nil {
@@ -479,7 +479,7 @@ func ipv6BlockComment(containerName string) string {
 // forwarded IPv6 traffic originating from the container's host-side veth.
 //
 // This is the enforced IPv6 egress boundary. Because the rule lives in the
-// host's ip6 table keyed on the veth interface name (COI never assigns the
+// host's ip6 table keyed on the veth interface name (Coi never assigns the
 // container an IPv6 address, so address-based matching is impossible anyway),
 // in-container root cannot remove it or bypass it by re-enabling IPv6. It must
 // be called after the container is running so its veth exists. Used in
@@ -708,7 +708,7 @@ func ListCOIFilterRuleIPs() (map[string][]string, error) {
 	return result, nil
 }
 
-// DeleteCOIFilterRulesForIP removes every host-side artefact COI installed for a
+// DeleteCOIFilterRulesForIP removes every host-side artefact Coi installed for a
 // container IP: its forward rules, then its input-chain DNS block, then its
 // allowlist sets.
 //
@@ -816,10 +816,10 @@ func NftAvailable() bool {
 	return cmd.Run() == nil
 }
 
-// NftUsable reports whether COI can actually use nft for the given config:
+// NftUsable reports whether Coi can actually use nft for the given config:
 // config must permit sudo (`[network] use_sudo` != false) AND the passwordless
 // sudo probe must succeed. When use_sudo=false this returns false without ever
-// invoking sudo, so COI behaves as if passwordless sudo were unavailable.
+// invoking sudo, so Coi behaves as if passwordless sudo were unavailable.
 func NftUsable(cfg *config.NetworkConfig) bool {
 	return cfg.SudoAllowed() && NftAvailable()
 }

@@ -332,7 +332,7 @@ class TestThreatDetection:
         stderr_fd.close()
 
         # Print debug log for CI visibility (BEFORE assertions so we see it even on failure)
-        print("\n=== COI Debug Log ===")
+        print("\n=== Coi Debug Log ===")
         if stderr_file.exists():
             print(stderr_file.read_text())
         print("=== End Debug Log ===\n")
@@ -2178,7 +2178,7 @@ class TestReverseShellPatterns:
         proc.terminate()
         stderr_fd.close()
 
-        print("\n=== COI Perl Test Debug Log ===")
+        print("\n=== Coi Perl Test Debug Log ===")
         if stderr_file.exists():
             print(stderr_file.read_text())
         print("=== End Debug Log ===\n")
@@ -3535,7 +3535,7 @@ class TestThresholdBoundaries:
         proc.terminate()
         stderr_fd.close()
 
-        print("\n=== COI 75MB Read Debug Log ===")
+        print("\n=== Coi 75MB Read Debug Log ===")
         if stderr_file.exists():
             print(stderr_file.read_text())
         print("=== End Debug Log ===\n")
@@ -3638,7 +3638,7 @@ class TestThresholdBoundaries:
         proc.terminate()
         stderr_fd.close()
 
-        print("\n=== COI 250MB Above-Threshold Read Debug Log ===")
+        print("\n=== Coi 250MB Above-Threshold Read Debug Log ===")
         if stderr_file.exists():
             print(stderr_file.read_text())
         print("=== End Debug Log ===\n")

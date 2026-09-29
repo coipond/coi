@@ -3,7 +3,7 @@ Protect the git config/attribute sinks that can drive host code execution.
 
 git runs filter/diff/textconv driver commands (and core.hooksPath) defined in
 git *config* files, named via *attributes* files, during routine operations
-(checkout/status/diff). COI already mounts .git/config and .git/hooks read-only;
+(checkout/status/diff). Coi already mounts .git/config and .git/hooks read-only;
 these tests cover the remaining sinks:
 
 - .git/info/attributes  — names drivers

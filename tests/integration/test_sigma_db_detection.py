@@ -24,7 +24,7 @@ import pytest
 # compileSigmaFile, which only keeps high/critical). The distinctive token
 # "coi-sigma-canary-zzz" in CommandLine is what we trigger below.
 _CANARY_RULE = """\
-title: COI Sigma Canary
+title: Coi Sigma Canary
 id: 00000000-0000-0000-0000-0000000005a1
 logsource:
     category: process_creation
@@ -160,7 +160,7 @@ process_spawn_rate_threshold = 9999
                 if "level" not in ev:
                     continue
                 text = ev.get("description", "") + ev.get("title", "")
-                if "COI Sigma Canary" in text or "Sigma rule matched" in text:
+                if "Coi Sigma Canary" in text or "Sigma rule matched" in text:
                     detected = True
                     break
         if detected:

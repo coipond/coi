@@ -1,5 +1,5 @@
 """
-Test for Docker Compose functionality inside COI containers.
+Test for Docker Compose functionality inside Coi containers.
 
 Tests that Docker Compose can start services with port mappings without
 sysctl permission errors (e.g., "open sysctl net.ipv4.ip_unprivileged_port_start

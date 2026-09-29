@@ -127,7 +127,7 @@ func loadProjectAlias(dir string) string {
 	return cfg.Container.Alias
 }
 
-// FindContainersByAlias queries Incus for COI containers whose user.coi.alias
+// FindContainersByAlias queries Incus for Coi containers whose user.coi.alias
 // config key matches the given alias.
 func FindContainersByAlias(alias string) ([]string, error) {
 	prefix := session.GetContainerPrefix()

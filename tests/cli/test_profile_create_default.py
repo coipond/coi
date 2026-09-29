@@ -4,7 +4,7 @@ Integration tests for `coi profile create default` (issue #482).
 `coi profile create default` scaffolds the MAIN config (the file backing the
 built-in default profile): ~/.coi/config.toml by default, ./.coi/config.toml with
 --project. It writes a documented starter only when no config exists there (never
-overwrites), and rejects profile-only flags. COI needs no config to run, so this
+overwrites), and rejects profile-only flags. Coi needs no config to run, so this
 is onboarding convenience.
 
 No container/incus needed — these only exercise the file-scaffolding command.

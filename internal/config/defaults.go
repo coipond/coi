@@ -131,7 +131,7 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 }
 
 // synthesizeHardenedProfile returns the built-in "hardened" profile: a hardened
-// preset for opening untrusted / freshly-cloned repositories. It bundles COI's
+// preset for opening untrusted / freshly-cloned repositories. It bundles Coi's
 // strongest controls (no in-shell policing) so `coi shell --profile hardened`
 // is a one-flag, maximally-safe way to inspect code you don't trust.
 //
@@ -190,7 +190,7 @@ func synthesizeHardenedProfile() ProfileConfig {
 }
 
 // GetConfigPaths returns the list of config file paths to check (in order).
-// COI looks for configuration in two places:
+// Coi looks for configuration in two places:
 //  1. ~/.coi/config.toml        (user, co-located with sessions/storage/logs)
 //  2. ./.coi/config.toml        (current project)
 //

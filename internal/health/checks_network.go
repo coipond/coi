@@ -110,7 +110,7 @@ func CheckNft(netCfg config.NetworkConfig) HealthCheck {
 	sudoAllowed := netCfg.SudoAllowed()
 	installed := network.NftInstalled()
 	// NftUsable returns false (without probing sudo) when use_sudo=false — a user
-	// who opted out of COI invoking sudo at all.
+	// who opted out of Coi invoking sudo at all.
 	available := network.NftUsable(&netCfg)
 	masquerade := network.MasqueradeEnabled()
 	isColima := vmhost.Detect() == vmhost.KindLimaLike
@@ -189,7 +189,7 @@ func CheckNft(netCfg config.NetworkConfig) HealthCheck {
 }
 
 // CheckUFWConflict checks if ufw is active with a DROP FORWARD policy that
-// would block container traffic. With nft-based COI, ufw and COI can coexist
+// would block container traffic. With nft-based Coi, ufw and Coi can coexist
 // as long as bridge forwarding rules are in place.
 func CheckUFWConflict() HealthCheck {
 	ufwInstalled := network.UfwInstalled()
@@ -223,7 +223,7 @@ func CheckUFWConflict() HealthCheck {
 	return HealthCheck{
 		Name:    "ufw_conflict",
 		Status:  StatusOK,
-		Message: "ufw is active but FORWARD policy is not DROP — no conflict with COI",
+		Message: "ufw is active but FORWARD policy is not DROP — no conflict with Coi",
 		Details: details,
 	}
 }
@@ -267,7 +267,7 @@ func CheckBridgeForwardRules() HealthCheck {
 	}
 }
 
-// CheckIptablesSudo verifies passwordless sudo for iptables, which COI uses
+// CheckIptablesSudo verifies passwordless sudo for iptables, which Coi uses
 // for bridge FORWARD rule inspection and management regardless of whether nft
 // is also available.
 func CheckIptablesSudo() HealthCheck {
@@ -283,7 +283,7 @@ func CheckIptablesSudo() HealthCheck {
 		return HealthCheck{
 			Name:    "iptables_sudo",
 			Status:  StatusOK,
-			Message: "skipped — [network] use_sudo = false (COI does not invoke sudo)",
+			Message: "skipped — [network] use_sudo = false (Coi does not invoke sudo)",
 		}
 	}
 

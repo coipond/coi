@@ -8,7 +8,7 @@ import (
 )
 
 // TestRootVersionFlagOutput guards the `coi --version` (cobra version flag)
-// display path: it must render the same "code-on-incus (coi) v<semver>" line as
+// display path: it must render the same "Coi (Code on Incus) v<semver>" line as
 // the `coi version` subcommand and be normalized, so a stray or doubled 'v' from
 // a mis-tagged release build (e.g. "vv0.10.1") can't leak here either. It renders
 // through the real shared template (rootVersionTemplate) + normalizeVersion.
@@ -17,9 +17,9 @@ func TestRootVersionFlagOutput(t *testing.T) {
 		in       string
 		wantLine string
 	}{
-		{"0.11.0", "code-on-incus (coi) v0.11.0\n"},
-		{"v0.11.0", "code-on-incus (coi) v0.11.0\n"},
-		{"vv0.10.1", "code-on-incus (coi) v0.10.1\n"}, // the doubled-prefix build artifact
+		{"0.11.0", "Coi (Code on Incus) v0.11.0\n"},
+		{"v0.11.0", "Coi (Code on Incus) v0.11.0\n"},
+		{"vv0.10.1", "Coi (Code on Incus) v0.10.1\n"}, // the doubled-prefix build artifact
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {

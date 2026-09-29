@@ -1,6 +1,6 @@
-# COI configuration — starter template
+# Coi configuration — starter template
 #
-# COI works with NO config file at all: every setting below has a built-in
+# Coi works with NO config file at all: every setting below has a built-in
 # default, and this file only *overrides* those defaults. Uncomment a line and
 # change its value to override; leave it commented to keep the built-in default
 # (and to automatically pick up future default changes).
@@ -11,7 +11,7 @@
 # Named profiles live under <dir>/profiles/<name>/config.toml and are opt-in via
 # `--profile <name>`. See `coi profile list` / `coi profile create`.
 #
-# The commented values shown below are COI's current defaults.
+# The commented values shown below are Coi's current defaults.
 
 [container]
 # image = "coi-default"          # base image to launch (built by `coi build`)
@@ -65,7 +65,7 @@
 # allowed_domains = ["github.com:443", "192.168.1.50:8080", "10.0.0.0/8:22", "svc:8000-8100"]
 
 # Pin the DNS resolvers the container may reach on port 53 (restricted mode).
-# COI accepts :53 only to these IPs and rejects all other off-box DNS, so a
+# Coi accepts :53 only to these IPs and rejects all other off-box DNS, so a
 # compromised container cannot bypass your resolver (e.g. hit 8.8.8.8 directly).
 # The bridge's own resolver keeps working, so this is safe to enable as-is.
 # IPv4 only; trusted-scope only; not valid in allowlist mode (which blocks all

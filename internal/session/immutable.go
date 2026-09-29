@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ioctl constants for Linux 64-bit (the only platform COI targets).
+// ioctl constants for Linux 64-bit (the only platform Coi targets).
 const (
 	fsIOCGetFlags uintptr = 0x80086601 // _IOR('f', 1, long)
 	fsIOCSetFlags uintptr = 0x40086602 // _IOW('f', 2, long)
@@ -23,7 +23,7 @@ const (
 )
 
 // ImmutableManifest records which paths had the immutable attribute applied,
-// enabling crash recovery: if COI is killed mid-session, `coi clean` can
+// enabling crash recovery: if Coi is killed mid-session, `coi clean` can
 // find the manifest and clear the bits.
 type ImmutableManifest struct {
 	ContainerName string   `json:"container_name"`

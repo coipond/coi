@@ -1,8 +1,8 @@
 """
-Non-sudoers mode: `[network] use_sudo = false` lets COI run without the
+Non-sudoers mode: `[network] use_sudo = false` lets Coi run without the
 installer's passwordless-sudo rule (/etc/sudoers.d/coi-nft). Issue #508.
 
-When use_sudo=false COI never invokes sudo for network ops, so it behaves as if
+When use_sudo=false Coi never invokes sudo for network ops, so it behaves as if
 passwordless sudo were unavailable — regardless of whether the host actually has
 sudo. That makes these tests real even on CI runners that DO have blanket sudo:
 the config flag (not the environment) drives the behavior.

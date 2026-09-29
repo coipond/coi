@@ -6,7 +6,7 @@ import (
 	"github.com/mensfeld/code-on-incus/internal/config"
 )
 
-// When use_sudo=false, NftUsable must return false WITHOUT invoking sudo, so COI
+// When use_sudo=false, NftUsable must return false WITHOUT invoking sudo, so Coi
 // behaves as if passwordless sudo were unavailable regardless of the real env
 // (this is what makes the no-sudoers path testable on CI runners that do have
 // blanket sudo).

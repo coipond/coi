@@ -136,7 +136,7 @@ def test_fix_dry_run_prints_plan_and_changes_nothing(coi_binary):
     result = _run_health(coi_binary, "--fix", "--dry-run")
 
     assert "Remediation plan (--dry-run" in result.stdout, result.stdout
-    assert "Code on Incus Health Check" in result.stdout, (
+    assert "Coi Health Check" in result.stdout, (
         f"dry-run should still print the health table:\n{result.stdout}"
     )
     assert result.returncode in (0, 1, 2), (

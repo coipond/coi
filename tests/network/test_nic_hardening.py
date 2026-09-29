@@ -1,11 +1,11 @@
 """
 Integration tests for bridge-NIC hardening (anti-spoofing + port isolation).
 
-COI's egress rules match the container's source IP in an accept-policy nft chain,
+Coi's egress rules match the container's source IP in an accept-policy nft chain,
 so without NIC anti-spoofing an in-container root could add a second source IP
 (or spoof its MAC) and bypass restricted/allowlist filtering. Separately,
 same-bridge traffic to sibling containers is L2-switched and never traverses the
-firewall, so it needs L2 port isolation. COI sets security.ipv4_filtering,
+firewall, so it needs L2 port isolation. Coi sets security.ipv4_filtering,
 security.mac_filtering and security.port_isolation on eth0 before first boot
 (container.EnableNICSecurity).
 """

@@ -211,7 +211,7 @@ func runInlineBuild(cfg *config.Config, imageName string) error {
 	return nil
 }
 
-// coiDataDir returns the path to the ~/.coi directory used for COI state files.
+// coiDataDir returns the path to the ~/.coi directory used for Coi state files.
 func coiDataDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

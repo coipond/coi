@@ -15,7 +15,7 @@ import (
 	"github.com/mensfeld/code-on-incus/internal/tool"
 )
 
-// CheckActiveContainers counts running COI containers
+// CheckActiveContainers counts running Coi containers
 func CheckActiveContainers() HealthCheck {
 	prefix := session.GetContainerPrefix()
 	pattern := fmt.Sprintf("^%s", prefix)

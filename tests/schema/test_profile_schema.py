@@ -866,7 +866,7 @@ def test_schema_command_output_is_deterministic(coi_binary):
 
 
 def test_schema_command_exits_zero_without_config(tmp_path, coi_binary):
-    """schema profile must work even when there is no COI config in the workspace."""
+    """schema profile must work even when there is no Coi config in the workspace."""
     result = subprocess.run(
         [coi_binary, "schema", "profile", "--workspace", str(tmp_path)],
         capture_output=True,

@@ -7,7 +7,7 @@ Verifies that with [tool] name = "codex":
 2. config.toml arrives BYTE-IDENTICAL — codex config is TOML, and coi's
    sandbox-settings merge is JSON-only, so codex deliberately has no
    sandbox_settings_file and the host file must never be rewritten.
-3. The COI sandbox context block is injected into ~/.codex/AGENTS.md
+3. The Coi sandbox context block is injected into ~/.codex/AGENTS.md
    (codex's native global-instructions file), preserving the host content,
    exactly once.
 
@@ -106,13 +106,13 @@ def test_codex_config_seeded_verbatim_and_agents_md_context(
         f"the JSON settings merge):\n got: {toml_content!r}\nwant: {CONFIG_TOML!r}"
     )
 
-    # Auto-context: host AGENTS.md content preserved + exactly one COI block.
+    # Auto-context: host AGENTS.md content preserved + exactly one Coi block.
     assert agents_ok, "~/.codex/AGENTS.md should exist (seeded + auto-context)"
     assert agents_content.count("USER-CODEX-AGENTS-CONTENT") == 1, (
         f"host AGENTS.md content must be preserved exactly once:\n{agents_content[:500]}"
     )
     assert agents_content.count("# COI Sandbox Environment") == 1, (
-        f"AGENTS.md should contain exactly one COI sandbox block:\n{agents_content[:500]}"
+        f"AGENTS.md should contain exactly one Coi sandbox block:\n{agents_content[:500]}"
     )
 
     # No sibling state file may be synthesized (codex has no ~/.codex.json).

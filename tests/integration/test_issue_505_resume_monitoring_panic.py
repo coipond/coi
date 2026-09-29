@@ -152,7 +152,7 @@ def test_monitoring_gtfobins_load_does_not_panic(
         restore()
 
     stderr = stderr_file.read_text(errors="replace")
-    print("\n=== COI stderr ===\n" + stderr + "\n=== end COI stderr ===\n")
+    print("\n=== Coi stderr ===\n" + stderr + "\n=== end Coi stderr ===\n")
     lowered = stderr.lower()
 
     # The test only proves something if monitoring actually engaged.

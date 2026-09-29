@@ -1,7 +1,7 @@
 """
 End-to-end tests for command-sourced env vars (`[defaults.env_commands]`).
 
-COI runs a host command at session start and injects its trimmed stdout as an
+Coi runs a host command at session start and injects its trimmed stdout as an
 env var inside the container — for minting short-lived secrets without parking
 them in the host env or static config. Running a host command is host code
 execution, so env_commands is honored ONLY from trusted-scope config

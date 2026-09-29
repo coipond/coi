@@ -1,7 +1,7 @@
 """Test readonly mount of a subdirectory inside a writable parent mount.
 
 This tests the real-world scenario from issue #260: mounting ~/.claude/skills
-(readonly) inside the writable ~/.claude directory that COI manages. The readonly
+(readonly) inside the writable ~/.claude directory that Coi manages. The readonly
 subdirectory mount must overlay the parent writable mount correctly — reads should
 work, writes should fail on the subdir, and the parent should remain writable.
 """

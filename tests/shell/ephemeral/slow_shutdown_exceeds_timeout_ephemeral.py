@@ -3,7 +3,7 @@ Test for coi shell (ephemeral) - a guest shutdown that OUTLASTS the graceful
 window must be force-stopped and removed, not relabeled "kept running".
 
 Stock systemd gives service stops a 90s budget (DefaultTimeoutStopSec) while
-COI's [container] shutdown_timeout defaults to 60s, so "detected shutdown
+Coi's [container] shutdown_timeout defaults to 60s, so "detected shutdown
 outlives the wait" is reachable with completely ordinary units. When that
 happens the cleanup must escalate exactly like `coi shutdown` does after its
 graceful window — force the stop and honor the ephemeral contract (delete) —

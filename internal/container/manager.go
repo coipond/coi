@@ -147,7 +147,7 @@ func (m *Manager) AddProxyDevice(name, connect, listen string, uid, gid int) err
 // device: it listens on listenAddr:hostPort in the HOST namespace and
 // connects to 127.0.0.1:containerPort inside the container (bind=host), so
 // even dev servers bound to container-localhost are reachable. NAT mode is
-// deliberately not used — the userspace forkproxy keeps COI's nft isolation
+// deliberately not used — the userspace forkproxy keeps Coi's nft isolation
 // rules untouched (#558).
 func (m *Manager) AddHostPortDevice(name, listenAddr string, hostPort, containerPort int) error {
 	// net.JoinHostPort brackets IPv6 addresses ([::1]:8080) — Incus's proxy

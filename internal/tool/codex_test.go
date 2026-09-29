@@ -47,8 +47,8 @@ func TestCodexTool_Basics(t *testing.T) {
 	}
 }
 
-// The COI session ID is never forwarded: codex has no flag to set a session ID
-// on a fresh launch, so COI UUIDs stay metadata-only (like pi).
+// The Coi session ID is never forwarded: codex has no flag to set a session ID
+// on a fresh launch, so Coi UUIDs stay metadata-only (like pi).
 func TestCodexTool_BuildCommand_NewSession_Bypass(t *testing.T) {
 	c := NewCodex()
 	cmd := c.BuildCommand("coi-session-uuid", false, "")

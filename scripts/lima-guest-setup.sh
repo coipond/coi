@@ -8,7 +8,7 @@
 # image tarballs are visible here.
 #
 # Mirrors the runner-side setup in .github/workflows/ci.yml (Zabbly install
-# block, incus preseed, COI open-mode config, image import-or-build) so the
+# block, incus preseed, Coi open-mode config, image import-or-build) so the
 # guest environment cannot drift from what the native lanes test.
 #
 # Args:
@@ -140,7 +140,7 @@ sudo setcap cap_linux_immutable=ep /usr/local/bin/coi || echo "WARNING: setcap f
 getcap /usr/local/bin/coi || true
 /usr/local/bin/coi version
 
-echo "=== COI config + python venv in the guest-native \$HOME (not the mount) ==="
+echo "=== Coi config + python venv in the guest-native \$HOME (not the mount) ==="
 mkdir -p "$HOME/.coi"
 printf '[network]\nmode = "open"\n' > "$HOME/.coi/config.toml"
 python3 -m venv "$HOME/venv"

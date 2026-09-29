@@ -8,7 +8,7 @@ Profile scan locations (also dirname($COI_CONFIG) when set, but not tested here)
   - ./.coi/profiles/  (project-local)
 
 Profiles from all discovered locations are merged together. If the same profile
-name is defined in more than one location, COI refuses to start and asks the
+name is defined in more than one location, Coi refuses to start and asks the
 user to rename one.
 
 Tests verify:
@@ -164,7 +164,7 @@ def test_profile_merges_home_and_project_locations(coi_binary, tmp_path):
 def test_profile_duplicate_name_project_vs_home_fails(coi_binary, tmp_path):
     """
     Defining the same profile name in both a project-local .coi/profiles/
-    and ~/.coi/profiles/ should cause COI to exit with an error referencing
+    and ~/.coi/profiles/ should cause Coi to exit with an error referencing
     both paths.
     """
     fake_home = tmp_path / "fake_home"

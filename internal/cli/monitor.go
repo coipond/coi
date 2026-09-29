@@ -173,7 +173,7 @@ func (a *App) resolveMonitorContainer(args []string) (string, error) {
 	}
 
 	if len(sessions) == 0 {
-		return "", fmt.Errorf("no COI containers found for current workspace - pass container name as argument")
+		return "", fmt.Errorf("no Coi containers found for current workspace - pass container name as argument")
 	}
 
 	if len(sessions) > 1 {
@@ -181,7 +181,7 @@ func (a *App) resolveMonitorContainer(args []string) (string, error) {
 		for _, name := range sessions {
 			names = append(names, name)
 		}
-		return "", fmt.Errorf("multiple COI containers found for workspace, pass container name as argument: %s", strings.Join(names, ", "))
+		return "", fmt.Errorf("multiple Coi containers found for workspace, pass container name as argument: %s", strings.Join(names, ", "))
 	}
 
 	// Exactly one container
@@ -189,7 +189,7 @@ func (a *App) resolveMonitorContainer(args []string) (string, error) {
 		return name, nil
 	}
 
-	return "", fmt.Errorf("no COI containers found for current workspace")
+	return "", fmt.Errorf("no Coi containers found for current workspace")
 }
 
 func runMonitorWatch(ctx context.Context, collector *monitor.Collector, detector *monitor.Detector, intervalSec int) error {

@@ -398,7 +398,7 @@ func (b *Builder) runBuildSteps() error {
 //
 // The default coi image is built from the EMBEDDED build script (compiled into
 // the binary) by default — NOT from profiles/default/build.sh on disk, which
-// lives in the agent-writable workspace when COI is run against its own source
+// lives in the agent-writable workspace when Coi is run against its own source
 // tree. Preferring the embedded copy means a tampered on-disk build.sh cannot
 // poison the coi-default image that every future container uses. Opt back into
 // the on-disk copy with COI_BUILD_SCRIPT_FROM_DISK=1 (e.g. iterating on build.sh

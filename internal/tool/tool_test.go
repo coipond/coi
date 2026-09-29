@@ -603,7 +603,7 @@ func TestRenderContextFileContent(t *testing.T) {
 		{"network limitation", "local/private networks are blocked"},
 		{"ssh forwarded", "Forwarded from host"},
 		{"non-root user", "Non-root user"},
-		{"COI header", "COI Sandbox Environment"},
+		{"Coi header", "COI Sandbox Environment"},
 		{"full root access", "full root"},
 		{"docker available", "Docker (Docker-in-Docker)"},
 		{"OS info", "Ubuntu"},

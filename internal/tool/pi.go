@@ -33,7 +33,7 @@ func (p *PiTool) BuildCommand(sessionID string, resume bool, resumeSessionID str
 	if resume {
 		// Always use --continue; pi manages its own session discovery
 		// in .pi-sessions/ (redirected via PI_CODING_AGENT_SESSION_DIR).
-		// COI session UUIDs are only used for metadata (slot/profile/persistent).
+		// Coi session UUIDs are only used for metadata (slot/profile/persistent).
 		cmd = append(cmd, "--continue")
 	}
 	return cmd

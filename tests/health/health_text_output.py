@@ -40,7 +40,7 @@ def test_health_text_output(coi_binary):
     output = result.stdout
 
     # Verify header
-    assert "Code on Incus Health Check" in output, "Should have header"
+    assert "Coi Health Check" in output, "Should have header"
 
     # Verify key sections exist
     assert "SYSTEM:" in output, "Should have SYSTEM section"

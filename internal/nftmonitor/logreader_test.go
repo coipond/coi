@@ -24,7 +24,7 @@ func TestParseNFTLog(t *testing.T) {
 		expectedPort int
 	}{
 		{
-			name:         "COI log with matching IP",
+			name:         "Coi log with matching IP",
 			logLine:      "NFT_COI[10.47.62.50]: IN=incusbr0 OUT=eth0 SRC=10.47.62.50 DST=8.8.8.8 PROTO=TCP SPT=54321 DPT=53",
 			expectEvent:  true,
 			expectedIP:   "10.47.62.50",
@@ -144,7 +144,7 @@ func TestExtractIPFromPrefix(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "standard COI prefix",
+			name:     "standard Coi prefix",
 			line:     "NFT_COI[10.47.62.50]: some message",
 			prefix:   "NFT_COI[",
 			expected: "10.47.62.50",

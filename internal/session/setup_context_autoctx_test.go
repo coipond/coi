@@ -80,7 +80,7 @@ type fakeAutoCtxTool struct {
 func (fakeAutoCtxTool) AutoContextFile() string { return ".claude/CLAUDE.md" }
 
 // TestInjectAutoContextFile_DoesNotAccumulateAcrossSessions reproduces #674:
-// on a persistent container reused across sessions, the COI sandbox context block
+// on a persistent container reused across sessions, the Coi sandbox context block
 // (headed "# COI Sandbox Environment") is appended to ~/.claude/CLAUDE.md on every
 // session instead of replacing the previous copy, so the file grows without bound
 // (the reporter observed 16 copies / 108k chars, over Claude Code's 40k limit).
@@ -131,7 +131,7 @@ func TestInjectAutoContextFile_DoesNotAccumulateAcrossSessions(t *testing.T) {
 	claudeMD := mgr.files["/home/code/.claude/CLAUDE.md"]
 	copies := strings.Count(claudeMD, "# COI Sandbox Environment")
 	if copies != 1 {
-		t.Errorf("#674: the COI sandbox context block must appear exactly once in "+
+		t.Errorf("#674: the Coi sandbox context block must appear exactly once in "+
 			"~/.claude/CLAUDE.md after %d sessions, but found %d copies (%d chars) — it is being "+
 			"appended on every session instead of replaced, so the file grows without bound.",
 			sessions, copies, len(claudeMD))
@@ -141,7 +141,7 @@ func TestInjectAutoContextFile_DoesNotAccumulateAcrossSessions(t *testing.T) {
 // TestInjectAutoContextFile_PreservesHostContent verifies that when the tool's
 // auto-context file already contains user/host content (e.g. a CLAUDE.md copied
 // from the host), injecting the sandbox context preserves that content and still
-// keeps exactly one managed COI block across repeated sessions.
+// keeps exactly one managed Coi block across repeated sessions.
 func TestInjectAutoContextFile_PreservesHostContent(t *testing.T) {
 	mgr := newFakeAutoCtxManager()
 	acf := fakeAutoCtxTool{}
@@ -168,7 +168,7 @@ func TestInjectAutoContextFile_PreservesHostContent(t *testing.T) {
 		t.Errorf("host/user content must be preserved exactly once, found %d occurrences of %q", n, userMarker)
 	}
 	if n := strings.Count(got, "# COI Sandbox Environment"); n != 1 {
-		t.Errorf("expected exactly one COI sandbox block alongside preserved content, found %d", n)
+		t.Errorf("expected exactly one Coi sandbox block alongside preserved content, found %d", n)
 	}
 }
 
@@ -274,7 +274,7 @@ func TestInjectAutoContextFile_CodexAgentsMD(t *testing.T) {
 		t.Errorf("host AGENTS.md content must be preserved exactly once, found %d occurrences", n)
 	}
 	if n := strings.Count(got, "# COI Sandbox Environment"); n != 1 {
-		t.Errorf("expected exactly one COI sandbox block in ~/.codex/AGENTS.md, found %d", n)
+		t.Errorf("expected exactly one Coi sandbox block in ~/.codex/AGENTS.md, found %d", n)
 	}
 	// The workspace AGENTS.md must not be touched.
 	if _, ok := mgr.files["/workspace/AGENTS.md"]; ok {
