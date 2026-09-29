@@ -46,11 +46,13 @@ def _start_background_shell(coi_binary, workspace_dir, env):
 
 
 def _exec(coi_binary, name, script):
-    """Run a shell snippet as the code user. HOME=/home/code so the global
-    core.hooksPath (where coi installed the guard) applies. coi container exec
-    writes command output to stderr, so return combined text + exit code."""
+    """Run a shell snippet as the code user. `export HOME` (not a `HOME=x cmd`
+    prefix) so the value survives the script's `&&` chains — a prefix assignment
+    only applies to the first command, which would leave `git commit` reading the
+    wrong HOME and missing the global core.hooksPath the guard lives at. coi
+    container exec writes command output to stderr, so return combined + rc."""
     result = subprocess.run(
-        [coi_binary, "container", "exec", name, "--", "sh", "-c", f"HOME={HOME} {script}"],
+        [coi_binary, "container", "exec", name, "--", "sh", "-c", f"export HOME={HOME}; {script}"],
         capture_output=True,
         text=True,
         timeout=60,

@@ -159,7 +159,7 @@ func outputHealthText(result *health.HealthResult) error {
 		"NETWORKING":    {"network_bridge", "ip_forwarding", "nft", "bridge_forward_rules", "iptables_sudo", "docker_forward_policy", "ufw_conflict", "container_connectivity", "network_restriction", "firewalld_veth_bloat"},
 		"MONITORING":    {"nftables", "systemd_journal", "libsystemd", "monitoring_configuration", "audit_log_directory", "cgroup_availability"},
 		"STORAGE":       {"coi_directory", "sessions_directory", "disk_space", "incus_storage_pools"},
-		"CONFIGURATION": {"config", "network_mode", "tool"},
+		"CONFIGURATION": {"config", "network_mode", "tool", "git_branch_guard"},
 		"STATUS":        {"active_containers", "saved_sessions", "orphaned_resources"},
 		"OPTIONAL":      {"dns_resolution", "process_monitoring"},
 	}
@@ -297,6 +297,7 @@ func formatCheckName(name string) string {
 		"config":                    "Config loaded",
 		"network_mode":              "Network mode",
 		"tool":                      "Tool",
+		"git_branch_guard":          "Git branch guard",
 		"active_containers":         "Containers",
 		"saved_sessions":            "Saved sessions",
 		"dns_resolution":            "DNS resolution",

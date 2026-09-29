@@ -26,8 +26,11 @@ REPO = "/tmp/idlock"
 
 
 def _start_locked_shell(coi_binary, workspace_dir):
+    # protected_branches = [] disables the on-by-default branch guard: these tests
+    # commit on the repo's default branch (master) to exercise the identity lock,
+    # not branch protection, so the guard must not block those commits.
     env = write_trusted_coi_config(
-        f'[git]\nname = "{BOT_NAME}"\nemail = "{BOT_EMAIL}"\nreadonly = true\n'
+        f'[git]\nname = "{BOT_NAME}"\nemail = "{BOT_EMAIL}"\nreadonly = true\nprotected_branches = []\n'
     )
     result = subprocess.run(
         [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
