@@ -28,7 +28,12 @@ func TestRawIdmapFailure_NamesSubuidCause(t *testing.T) {
 	err := rawIdmapFailure(errors.New("exit status 1"), uid)
 	msg := err.Error()
 
-	for _, want := range []string{"/etc/subuid", "root:0:2000000000", "coi health", "uid-1000"} {
+	for _, want := range []string{
+		"/etc/subuid", "root:0:2000000000", "coi health", "uid-1000",
+		// Self-serve copy-paste guidance (option B).
+		`echo "root:$(id -u):1" | sudo tee -a /etc/subuid /etc/subgid`,
+		"sudo systemctl restart incus",
+	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q:\n%s", want, msg)
 		}

@@ -90,8 +90,12 @@ func rawIdmapFailure(err error, hostUID int) error {
 	if line, inRange := HostUIDSubordinateRange(); inRange {
 		return fmt.Errorf("failed to set raw.idmap (%v): host UID %d is inside a subordinate ID "+
 			"range in /etc/subuid (%s), so Incus cannot map it into the container and /workspace "+
-			"would be unwritable. Run coi as a user whose UID is not subordinate (e.g. the image's "+
-			"uid-%d user), or move root's /etc/subuid range off your login UID. See `coi health`",
+			"would be unwritable.\n\nTo fix, pick one:\n"+
+			"  1. Give Incus a dedicated delegation for your UID and restart it, then relaunch:\n"+
+			"       echo \"root:$(id -u):1\" | sudo tee -a /etc/subuid /etc/subgid\n"+
+			"       sudo systemctl restart incus\n"+
+			"  2. Or run coi as a user whose UID is below the subuid range (e.g. the image's uid-%d user).\n\n"+
+			"Run `coi health` for a diagnosis.",
 			err, hostUID, line, container.CodeUID)
 	}
 	return fmt.Errorf("failed to set raw.idmap (%v): the workspace cannot be UID-mapped into the "+
