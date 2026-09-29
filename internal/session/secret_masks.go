@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // secretMask is an expanded secret path to mask, with whether it is a directory.

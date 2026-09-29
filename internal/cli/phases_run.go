@@ -7,17 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/limits"
-	"github.com/mensfeld/code-on-incus/internal/logger"
-	"github.com/mensfeld/code-on-incus/internal/monitor"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/nftmonitor"
-	"github.com/mensfeld/code-on-incus/internal/session"
-	"github.com/mensfeld/code-on-incus/internal/timing"
-	"github.com/mensfeld/code-on-incus/internal/tool"
-	"github.com/mensfeld/code-on-incus/internal/vmhost"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/limits"
+	"github.com/mensfeld/coi/internal/logger"
+	"github.com/mensfeld/coi/internal/monitor"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/nftmonitor"
+	"github.com/mensfeld/coi/internal/session"
+	"github.com/mensfeld/coi/internal/timing"
+	"github.com/mensfeld/coi/internal/tool"
+	"github.com/mensfeld/coi/internal/vmhost"
 )
 
 // runState is the mutable state accumulated across run pipeline phases.

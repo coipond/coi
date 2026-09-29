@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/timing"
+	"github.com/mensfeld/coi/internal/timing"
 )
 
 // NFTCommandTimeout is the maximum time to wait for nft commands

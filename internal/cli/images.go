@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/image"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/image"
 	"github.com/spf13/cobra"
 )
 

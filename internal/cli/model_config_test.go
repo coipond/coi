@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
+	"github.com/mensfeld/coi/internal/config"
 )
 
 // sandboxEnvForProjectConfig writes a project .coi/config.toml with the given

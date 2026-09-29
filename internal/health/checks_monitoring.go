@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/nftmonitor"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/nftmonitor"
 )
 
 // CheckNFTables checks if nftables is available and properly configured

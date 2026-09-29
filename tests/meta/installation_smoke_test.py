@@ -181,7 +181,7 @@ def test_full_installation_process(meta_container, coi_binary):
     # - Fork PRs (branch doesn't exist in main repo)
     # - Deleted branches (branch was deleted after PR merged)
     github_branch = os.environ.get("GITHUB_HEAD_REF", "")
-    github_repo = os.environ.get("GITHUB_REPOSITORY", "mensfeld/code-on-incus")
+    github_repo = os.environ.get("GITHUB_REPOSITORY", "mensfeld/coi")
     github_server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     repo_url = f"{github_server}/{github_repo}.git"
 
@@ -204,7 +204,7 @@ def test_full_installation_process(meta_container, coi_binary):
         set -e
         cd /root
         {clone_script}
-        cd code-on-incus
+        cd coi
         export PATH=$PATH:/usr/local/go/bin
         make build
         ./coi version
@@ -220,7 +220,7 @@ def test_full_installation_process(meta_container, coi_binary):
     result = exec_in_container(
         container_name,
         """
-        cd /root/code-on-incus
+        cd /root/coi
         ./coi --help
         """,
         timeout=30,
@@ -235,7 +235,7 @@ def test_full_installation_process(meta_container, coi_binary):
     result = exec_in_container(
         container_name,
         """
-        cd /root/code-on-incus
+        cd /root/coi
         ./coi image list --help
         ./coi list --help
         ./coi shell --help

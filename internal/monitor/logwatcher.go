@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 	"golang.org/x/sys/unix"
 )
 

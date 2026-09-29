@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/limits"
-	"github.com/mensfeld/code-on-incus/internal/logger"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/timing"
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/limits"
+	"github.com/mensfeld/coi/internal/logger"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/timing"
+	"github.com/mensfeld/coi/internal/tool"
 )
 
 const (

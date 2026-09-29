@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")

@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/mensfeld/code-on-incus/internal/alias"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/session"
-	"github.com/mensfeld/code-on-incus/internal/terminal"
+	"github.com/mensfeld/coi/internal/alias"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/session"
+	"github.com/mensfeld/coi/internal/terminal"
 	"github.com/spf13/cobra"
 )
 

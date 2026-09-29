@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
+	"github.com/mensfeld/coi/internal/config"
 )
 
 // TestApplyAllowlist_RequiresGateway pins that allowlist mode treats a missing

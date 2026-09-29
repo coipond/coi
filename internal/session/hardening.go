@@ -1,7 +1,7 @@
 package session
 
 import (
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // hardeningPolicyFrom builds the container-level kernel-surface policy from

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 	"github.com/spf13/cobra"
 )
 

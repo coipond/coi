@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
+	"github.com/mensfeld/coi/internal/config"
 )
 
 // TestCollectReferencedPools walks through the scenarios that the storage

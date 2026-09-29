@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/tool"
 )
 
 func TestBuildToolSpecCommand_ClaudeNative(t *testing.T) {

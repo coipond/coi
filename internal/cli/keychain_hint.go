@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mensfeld/code-on-incus/internal/tool"
-	"github.com/mensfeld/code-on-incus/internal/vmhost"
+	"github.com/mensfeld/coi/internal/tool"
+	"github.com/mensfeld/coi/internal/vmhost"
 )
 
 // macKeychainHint returns a user-facing hint (or "") advising how to bring a

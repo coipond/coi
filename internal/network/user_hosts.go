@@ -5,8 +5,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // hostIPClass classifies a host-entry address for reachability decisions.

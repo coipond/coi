@@ -3,7 +3,7 @@ package network
 import (
 	"context"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
+	"github.com/mensfeld/coi/internal/config"
 )
 
 // NetworkManager is the interface implemented by *Manager.

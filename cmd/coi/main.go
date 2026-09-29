@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mensfeld/code-on-incus/internal/cli"
+	"github.com/mensfeld/coi/internal/cli"
 )
 
 func main() {

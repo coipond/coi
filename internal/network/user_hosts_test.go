@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
+	"github.com/mensfeld/coi/internal/config"
 )
 
 // TestCheckHostPortsEnforceable pins that a per-host ports scope is refused
@@ -118,7 +118,7 @@ func TestCheckHostReachable(t *testing.T) {
 
 	// allowlist, allow_local_network_access=true: RFC1918 becomes reachable
 	// (nft installs an RFC1918 accept), so a private host entry must be allowed —
-	// regression test for mensfeld/code-on-incus#605 (pbarnes-tibco).
+	// regression test for mensfeld/coi#605 (pbarnes-tibco).
 	if err := checkHostReachable(config.NetworkModeAllowlist, withLocal, "192.168.1.50"); err != nil {
 		t.Errorf("allowlist private WITH allow_local_network_access should be reachable: %v", err)
 	}

@@ -140,7 +140,7 @@ def test_network_hosts_allowlist_with_local_access_private_entry_applies(
     """In allowlist mode with allow_local_network_access=true, a private
     [[network.hosts]] entry must be accepted and resolve.
 
-    Regression for mensfeld/code-on-incus#605 (reported by pbarnes-tibco): setup
+    Regression for mensfeld/coi#605 (reported by pbarnes-tibco): setup
     aborted with "... is a private (RFC1918) address, which allowlist mode always
     blocks" even though allow_local_network_access=true installs RFC1918 accept
     rules, so the private target is in fact reachable (adding the /etc/hosts entry
@@ -174,7 +174,7 @@ def test_network_hosts_allowlist_with_local_access_private_entry_applies(
         "getent must resolve db.local -> 192.168.1.50 in allowlist mode with "
         "allow_local_network_access=true; before the fix, setup aborted and only the "
         "IP (never the hostname) appeared in the RFC1918 rejection error "
-        f"(regression mensfeld/code-on-incus#605). Got:\n{combined}"
+        f"(regression mensfeld/coi#605). Got:\n{combined}"
     )
 
 

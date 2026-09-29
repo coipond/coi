@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // TestUnfreezeCommand_FrozenContainer tests unfreezing a frozen container

@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/cleanup"
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/session"
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/cleanup"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/session"
+	"github.com/mensfeld/coi/internal/tool"
 )
 
 // CheckActiveContainers counts running Coi containers

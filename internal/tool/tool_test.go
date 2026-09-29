@@ -172,7 +172,7 @@ func TestClaudeGetSandboxSettings(t *testing.T) {
 	}
 
 	// skipDangerousModePermissionPrompt must be top-level: Claude Code only reads it
-	// there, not nested under "permissions" (mensfeld/code-on-incus#649).
+	// there, not nested under "permissions" (mensfeld/coi#649).
 	if settings["skipDangerousModePermissionPrompt"] != true {
 		t.Errorf("Expected top-level skipDangerousModePermissionPrompt true, got '%v'", settings["skipDangerousModePermissionPrompt"])
 	}

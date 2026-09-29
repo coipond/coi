@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mensfeld/code-on-incus/internal/bedrock"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/logger"
-	"github.com/mensfeld/code-on-incus/internal/network"
-	"github.com/mensfeld/code-on-incus/internal/vmhost"
+	"github.com/mensfeld/coi/internal/bedrock"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/logger"
+	"github.com/mensfeld/coi/internal/network"
+	"github.com/mensfeld/coi/internal/vmhost"
 )
 
 // 1. Generate or use existing container name, create the manager and session

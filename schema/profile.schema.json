@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mensfeld/code-on-incus/schema/profile.schema.json",
+  "$id": "https://github.com/mensfeld/coi/schema/profile.schema.json",
   "title": "Coi Profile Configuration",
   "description": "Schema for Coi (Code on Incus) profile config.toml files",
   "type": "object",

@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/alias"
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/monitor"
-	"github.com/mensfeld/code-on-incus/internal/nftmonitor"
-	"github.com/mensfeld/code-on-incus/internal/session"
-	"github.com/mensfeld/code-on-incus/internal/tool"
-	"github.com/mensfeld/code-on-incus/internal/vmhost"
+	"github.com/mensfeld/coi/internal/alias"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/monitor"
+	"github.com/mensfeld/coi/internal/nftmonitor"
+	"github.com/mensfeld/coi/internal/session"
+	"github.com/mensfeld/coi/internal/tool"
+	"github.com/mensfeld/coi/internal/vmhost"
 	"github.com/spf13/cobra"
 )
 

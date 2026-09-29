@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
+	"github.com/mensfeld/coi/internal/container"
 )
 
 // secondStoragePoolForTest returns a storage pool other than "default" so the

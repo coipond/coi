@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/limits"
-	"github.com/mensfeld/code-on-incus/internal/network"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/limits"
+	"github.com/mensfeld/coi/internal/network"
 )
 
 // 6.6 Forward host sockets (SSH agent built-in entry plus configured

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mensfeld/code-on-incus/internal/network"
+	"github.com/mensfeld/coi/internal/network"
 )
 
 // cleanupContainerFirewall removes every host-side firewall artefact for one

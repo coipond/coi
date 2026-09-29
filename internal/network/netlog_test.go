@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/code-on-incus/internal/logger"
+	"github.com/mensfeld/coi/internal/logger"
 )
 
 // Regression test for issue #372: network diagnostics (the background IP-refresh

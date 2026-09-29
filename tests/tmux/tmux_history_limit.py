@@ -1,7 +1,7 @@
 """
 Test for tmux history-limit default in the coi-default image.
 
-Regression for https://github.com/mensfeld/code-on-incus/issues/312:
+Regression for https://github.com/mensfeld/coi/issues/312:
 `coi shell` wraps the interactive session in tmux, and tmux's stock
 default history-limit of 2000 lines silently truncated the start of long
 command outputs (e.g. `bin/setup` in a Rails app). The fix ships

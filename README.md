@@ -5,8 +5,8 @@
 # Coi (Code on Incus)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/mensfeld/code-on-incus)](https://golang.org/)
-[![Latest Release](https://img.shields.io/github/v/release/mensfeld/code-on-incus)](https://github.com/mensfeld/code-on-incus/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/mensfeld/coi)](https://golang.org/)
+[![Latest Release](https://img.shields.io/github/v/release/mensfeld/coi)](https://github.com/mensfeld/coi/releases)
 [![Join the chat at https://slack.karafka.io](https://raw.githubusercontent.com/karafka/misc/master/slack.svg)](https://slack.karafka.io)
 
 **Give the agent a machine. Just not yours.**
@@ -31,7 +31,7 @@ Built by developers, for developers who run AI agents and want to know what thos
 
 ```bash
 # 1. Install
-curl -fsSL https://raw.githubusercontent.com/mensfeld/code-on-incus/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mensfeld/coi/master/install.sh | bash
 
 # 2. Build the base image (first time only, ~5-10 min)
 coi build
@@ -43,7 +43,7 @@ coi shell
 
 That's it. Your agent is now running in an isolated container with your project at `/workspace`, correct file ownership (no more `chown`), Docker and `gh` available inside, every workspace change saved back to the host - and **no** access to your host SSH keys, env vars, or credentials.
 
-> Requires Linux with [Incus](https://linuxcontainers.org/incus/docs/main/installing/) (macOS works too, via Colima/Lima - see [macOS Setup](https://github.com/mensfeld/code-on-incus/wiki/macOS-Setup-Guide)).
+> Requires Linux with [Incus](https://linuxcontainers.org/incus/docs/main/installing/) (macOS works too, via Colima/Lima - see [macOS Setup](https://github.com/mensfeld/coi/wiki/macOS-Setup-Guide)).
 
 ## Who it's for
 
@@ -96,7 +96,7 @@ coi shell --profile hardened        # inspect untrusted code safely
 coi profile info hardened           # see exactly what it locks down
 ```
 
-It overrides a weaker global config (a global `mode = "open"` still becomes restricted) and needs zero setup. See the [Profiles wiki page](https://github.com/mensfeld/code-on-incus/wiki/Profiles) for the full reference and schema.
+It overrides a weaker global config (a global `mode = "open"` still becomes restricted) and needs zero setup. See the [Profiles wiki page](https://github.com/mensfeld/coi/wiki/Profiles) for the full reference and schema.
 
 ## Supported AI tools
 
@@ -126,7 +126,7 @@ coi shell --profile box-codex     # re-enter the SAME box running codex
 
 On reuse, coi seeds the re-entering tool's credentials/config the first time that tool is used in the box (without disturbing the other tool's config or history). Session history is per-tool (`~/.coi/sessions-<tool>`), so `--resume`/`--continue` resume that tool's own conversations.
 
-_Aider and Cursor are on the way._ See the [Supported Tools wiki page](https://github.com/mensfeld/code-on-incus/wiki/Supported-Tools) for per-tool auth and configuration.
+_Aider and Cursor are on the way._ See the [Supported Tools wiki page](https://github.com/mensfeld/coi/wiki/Supported-Tools) for per-tool auth and configuration.
 
 ## Everyday commands
 
@@ -177,23 +177,23 @@ Each fire is a fresh ephemeral session by default, and prompt mode currently sup
 
 The README is the pitch; the wiki is the manual. Everything below lives there in full:
 
-- **[Configuration](https://github.com/mensfeld/code-on-incus/wiki/Configuration)** - the complete config reference, precedence, and per-repo setup
-- **[Profiles](https://github.com/mensfeld/code-on-incus/wiki/Profiles)** - reusable setups, inheritance, and the JSON schema
-- **[Network Isolation](https://github.com/mensfeld/code-on-incus/wiki/Network-Isolation)** - restricted/allowlist/open modes, DNS pinning, egress and per-host port controls
-- **[Security Monitoring](https://github.com/mensfeld/code-on-incus/wiki/Security-Monitoring)** & **[Audit Log](https://github.com/mensfeld/code-on-incus/wiki/Audit-Log)** - threat detection, automated response, and the event format
-- **[Security Best Practices](https://github.com/mensfeld/code-on-incus/wiki/Security-Best-Practices)** - protected paths, the trust model, hardening
-- **[Container Lifecycle & Sessions](https://github.com/mensfeld/code-on-incus/wiki/Container-Lifecycle-and-Sessions)** - ephemeral vs. persistent, resume, aliases
-- **[Resource & Time Limits](https://github.com/mensfeld/code-on-incus/wiki/Resource-and-Time-Limits)** · **[Snapshot Management](https://github.com/mensfeld/code-on-incus/wiki/Snapshot-Management)** · **[Image Management](https://github.com/mensfeld/code-on-incus/wiki/Image-Management)**
-- **[File Transfer](https://github.com/mensfeld/code-on-incus/wiki/File-Transfer)** · **[Tmux Automation](https://github.com/mensfeld/code-on-incus/wiki/Tmux-Automation)** · **[Container Operations](https://github.com/mensfeld/code-on-incus/wiki/Container-Operations)**
-- **[System Health Check](https://github.com/mensfeld/code-on-incus/wiki/System-Health-Check)** - `coi health` diagnoses your setup end-to-end
-- **[Troubleshooting](https://github.com/mensfeld/code-on-incus/wiki/Troubleshooting)** · **[FAQ](https://github.com/mensfeld/code-on-incus/wiki/FAQ)** · **[Migration Guide](https://github.com/mensfeld/code-on-incus/wiki/Migration-Guide)**
+- **[Configuration](https://github.com/mensfeld/coi/wiki/Configuration)** - the complete config reference, precedence, and per-repo setup
+- **[Profiles](https://github.com/mensfeld/coi/wiki/Profiles)** - reusable setups, inheritance, and the JSON schema
+- **[Network Isolation](https://github.com/mensfeld/coi/wiki/Network-Isolation)** - restricted/allowlist/open modes, DNS pinning, egress and per-host port controls
+- **[Security Monitoring](https://github.com/mensfeld/coi/wiki/Security-Monitoring)** & **[Audit Log](https://github.com/mensfeld/coi/wiki/Audit-Log)** - threat detection, automated response, and the event format
+- **[Security Best Practices](https://github.com/mensfeld/coi/wiki/Security-Best-Practices)** - protected paths, the trust model, hardening
+- **[Container Lifecycle & Sessions](https://github.com/mensfeld/coi/wiki/Container-Lifecycle-and-Sessions)** - ephemeral vs. persistent, resume, aliases
+- **[Resource & Time Limits](https://github.com/mensfeld/coi/wiki/Resource-and-Time-Limits)** · **[Snapshot Management](https://github.com/mensfeld/coi/wiki/Snapshot-Management)** · **[Image Management](https://github.com/mensfeld/coi/wiki/Image-Management)**
+- **[File Transfer](https://github.com/mensfeld/coi/wiki/File-Transfer)** · **[Tmux Automation](https://github.com/mensfeld/coi/wiki/Tmux-Automation)** · **[Container Operations](https://github.com/mensfeld/coi/wiki/Container-Operations)**
+- **[System Health Check](https://github.com/mensfeld/coi/wiki/System-Health-Check)** - `coi health` diagnoses your setup end-to-end
+- **[Troubleshooting](https://github.com/mensfeld/coi/wiki/Troubleshooting)** · **[FAQ](https://github.com/mensfeld/coi/wiki/FAQ)** · **[Migration Guide](https://github.com/mensfeld/coi/wiki/Migration-Guide)**
 
 ## Why Incus, not Docker?
 
-Incus (a modern LXD fork) gives you **system containers** - which behave like lightweight VMs (a real init system and full OS userspace) while sharing the host kernel, so they start in seconds - instead of Docker's application containers. That means one clean isolation layer running a full OS with native Docker inside, correct file ownership on the host by default, and no Docker Desktop, no vendor lock-in, no opaque VM nesting. It's Linux-native and fully open source. (More in the [FAQ](https://github.com/mensfeld/code-on-incus/wiki/FAQ).)
+Incus (a modern LXD fork) gives you **system containers** - which behave like lightweight VMs (a real init system and full OS userspace) while sharing the host kernel, so they start in seconds - instead of Docker's application containers. That means one clean isolation layer running a full OS with native Docker inside, correct file ownership on the host by default, and no Docker Desktop, no vendor lock-in, no opaque VM nesting. It's Linux-native and fully open source. (More in the [FAQ](https://github.com/mensfeld/coi/wiki/FAQ).)
 
 ## Getting help
 
 - **Slack**: [Join the Coi community](https://slack.karafka.io) - ask questions, report issues, share feedback
-- **GitHub Issues**: [Open an issue](https://github.com/mensfeld/code-on-incus/issues) for bugs and feature requests
-- **Wiki**: [Browse the documentation](https://github.com/mensfeld/code-on-incus/wiki)
+- **GitHub Issues**: [Open an issue](https://github.com/mensfeld/coi/issues) for bugs and feature requests
+- **Wiki**: [Browse the documentation](https://github.com/mensfeld/coi/wiki)

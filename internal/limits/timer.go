@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/logger"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/logger"
 )
 
 // TimeoutMonitor monitors a container's runtime and stops it when max duration is reached

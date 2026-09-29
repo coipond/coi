@@ -1,4 +1,4 @@
-module github.com/mensfeld/code-on-incus
+module github.com/mensfeld/coi
 
 go 1.26.0
 

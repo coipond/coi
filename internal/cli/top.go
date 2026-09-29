@@ -13,9 +13,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/monitor"
-	"github.com/mensfeld/code-on-incus/internal/session"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/monitor"
+	"github.com/mensfeld/coi/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +36,7 @@ const userHZ = 100.0
 var topCmd = &cobra.Command{
 	Use:   "top [container]",
 	Short: "Show per-container (or per-process) CPU/memory/IO usage",
-	Long: `Show live resource usage for code-on-incus containers, resolved to their
+	Long: `Show live resource usage for Coi containers, resolved to their
 friendly context (alias + workspace) so you can tell which container — or which
 process inside one — is loading your machine, without mapping PIDs by hand.
 

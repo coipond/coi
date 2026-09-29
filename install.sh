@@ -9,7 +9,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-REPO="mensfeld/code-on-incus"
+REPO="mensfeld/coi"
 BINARY_NAME="coi"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 VERSION="${VERSION:-latest}"
@@ -110,9 +110,9 @@ detect_platform() {
             ;;
         *)
             echo -e "${RED}✗ Unsupported OS: $os${NC}"
-            echo "  code-on-incus requires Linux (Incus is Linux-only)"
+            echo "  Coi requires Linux (Incus is Linux-only)"
             echo "  On macOS: Run inside a Colima or Lima VM"
-            echo "  See: https://github.com/mensfeld/code-on-incus/wiki/macOS-Setup-Guide"
+            echo "  See: https://github.com/mensfeld/coi/wiki/macOS-Setup-Guide"
             exit 1
             ;;
     esac
@@ -219,7 +219,7 @@ check_incus() {
         fi
 
         echo ""
-        echo "  code-on-incus requires Incus (>= 6.1) to be installed."
+        echo "  Coi requires Incus (>= 6.1) to be installed."
         echo "  Install Incus: https://linuxcontainers.org/incus/docs/main/installing/"
         echo ""
         echo "  Quick install examples:"
@@ -390,7 +390,7 @@ download_binary() {
     local tmp_dir
     local binary_path
 
-    echo -e "${BLUE}→ Downloading code-on-incus...${NC}"
+    echo -e "${BLUE}→ Downloading Coi...${NC}"
 
     tmp_dir="$(mktemp -d)"
     trap "rm -rf '$tmp_dir'" EXIT
@@ -1017,9 +1017,9 @@ setup_nm_unmanaged_veths() {
     # unmanaged-devices+= APPENDS to any list set elsewhere; plain '=' would
     # REPLACE a user's own exclusions under NM's last-file-wins semantics.
     if ! sudo tee "$conf_file" > /dev/null 2>&1 <<'NMEOF'
-# Installed by code-on-incus (coi): container veths must not be enrolled in
+# Installed by Coi (Code on Incus): container veths must not be enrolled in
 # firewalld zones — leaked registrations grow the firewall ruleset
-# quadratically. See https://github.com/mensfeld/code-on-incus/issues/695
+# quadratically. See https://github.com/mensfeld/coi/issues/695
 # Remove this file (and reload NetworkManager) to undo.
 [keyfile]
 unmanaged-devices+=interface-name:veth*
@@ -1035,7 +1035,7 @@ NMEOF
 main() {
     echo ""
     echo -e "${BLUE}════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  code-on-incus (coi) installer${NC}"
+    echo -e "${BLUE}  Coi (Code on Incus) installer${NC}"
     echo -e "${BLUE}════════════════════════════════════════${NC}"
     echo ""
 

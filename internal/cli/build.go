@@ -6,10 +6,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mensfeld/code-on-incus/internal/config"
-	"github.com/mensfeld/code-on-incus/internal/container"
-	"github.com/mensfeld/code-on-incus/internal/image"
-	"github.com/mensfeld/code-on-incus/internal/tool"
+	"github.com/mensfeld/coi/internal/config"
+	"github.com/mensfeld/coi/internal/container"
+	"github.com/mensfeld/coi/internal/image"
+	"github.com/mensfeld/coi/internal/tool"
 	"github.com/spf13/cobra"
 )
 
