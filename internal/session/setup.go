@@ -549,7 +549,12 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 	// idmapApplied signal is not needed for the workspace mount itself — but it
 	// gates a per-mount shift=true override, which is mutually exclusive with
 	// raw.idmap (#604).
-	useShift, rawIdmapActive := ConfigureUIDMapping(result.ContainerName, MountSources(opts.WorkspacePath, opts.MountConfig, WorktreeSources(worktreeLayout)...), opts.DisableShift, opts.Logger)
+	useShift, rawIdmapActive, err := ConfigureUIDMapping(result.ContainerName, MountSources(opts.WorkspacePath, opts.MountConfig, WorktreeSources(worktreeLayout)...), opts.DisableShift, opts.Logger)
+	if err != nil {
+		// Fail fast (#838): the workspace can't be UID-mapped and would be
+		// unwritable — better a clear error than a silently broken session.
+		return err
+	}
 
 	// Determine container mount path - either /workspace (default) or same as host path
 	preserveWorkspace := opts.PreserveWorkspacePath || worktreeLayout != nil

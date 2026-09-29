@@ -232,7 +232,13 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 					logFn(fmt.Sprintf("Warning: git worktree not mounted (%v); git commands may fail in the container", wtErr))
 				}
 				s.gitWorktree = layout
-				s.useShift, s.rawIdmapActive = session.ConfigureUIDMapping(s.containerName, session.MountSources(s.absWorkspace, s.mountConfig, session.WorktreeSources(layout)...), a.cfg.Incus.DisableShift, logFn)
+				var idmapErr error
+				s.useShift, s.rawIdmapActive, idmapErr = session.ConfigureUIDMapping(s.containerName, session.MountSources(s.absWorkspace, s.mountConfig, session.WorktreeSources(layout)...), a.cfg.Incus.DisableShift, logFn)
+				if idmapErr != nil {
+					// Fail fast (#838): abort the launch rather than boot an agent
+					// against a workspace it cannot write.
+					return idmapErr
+				}
 				// Harden the bridge NIC against egress-isolation bypass: anti-spoof
 				// the source IP/MAC (so saddr-keyed nft rules can't be dodged) and
 				// isolate the bridge port (no L2 reach to sibling containers). The
