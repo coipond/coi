@@ -89,6 +89,7 @@ func RunAllChecks(cfg *config.Config, verbose bool) *HealthResult {
 	checks["config"] = CheckConfiguration(cfg)
 	checks["network_mode"] = CheckNetworkMode(cfg.Network.Mode)
 	checks["tool"] = CheckTool(cfg.Tool.Name)
+	checks["git_branch_guard"] = CheckGitBranchGuard(cfg)
 
 	// Status checks
 	checks["active_containers"] = CheckActiveContainers()

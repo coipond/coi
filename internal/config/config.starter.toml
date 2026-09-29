@@ -153,6 +153,12 @@
                                  # and `git commit --no-verify` skips commit-msg hooks.
 # strip_attribution_patterns = ["^Co-[Aa]uthored-[Bb]y:"]  # replace the default strip patterns
                                  # (grep -E, per message line; trusted-scope only, like the flag)
+# protected_branches = ["main", "master"]  # default: root-owned pre-commit/pre-push hooks refuse
+                                 # committing on, and pushing to, these branches (work on a feature
+                                 # branch instead). Set to [] to disable, or list your own.
+                                 # Trusted-scope only. Limitations: `--no-verify` and a repo-local
+                                 # core.hooksPath (husky) bypass it — server-side branch protection
+                                 # is the real backstop.
 
 [ssh]
 # forward_agent = false          # forward the host SSH agent into the container

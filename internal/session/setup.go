@@ -32,6 +32,7 @@ type GitOptions struct {
 	Readonly                 bool        // Identity is provided by a read-only ~/.gitconfig mount; skip the in-container git config writes
 	StripAttribution         bool        // [git] strip_attribution: install the global commit-msg hook stripping AI co-author/footer lines
 	StripAttributionPatterns []string    // [git] strip_attribution_patterns: override the default strip patterns (grep -E, per line)
+	ProtectedBranches        []string    // [git] protected_branches (already resolved): pre-commit/pre-push guard set; empty = guard off
 }
 
 // SecurityOptions groups the container's security posture: which host paths are
@@ -792,6 +793,7 @@ func injectSandboxContext(result *SetupResult, opts SetupOptions) string {
 		SSHAgentForwarded:  result.SSHAgentSocketPath != "",
 		RunAsRoot:          result.RunAsRoot,
 		ProtectedPaths:     opts.Security.ProtectedPaths,
+		ProtectedBranches:  opts.Git.ProtectedBranches,
 		GHCLIAuthenticated: ghAuthenticated,
 		ForwardedEnvVars:   opts.Context.ForwardedEnvVars,
 		Timezone:           result.Timezone,
@@ -878,10 +880,13 @@ func configureGitIdentity(ctx context.Context, result *SetupResult, opts SetupOp
 	// WITHOUT the heavyweight whole-gitconfig read-only mount is a one-line change.
 	readonlyLock := opts.Git.Readonly && opts.Git.Identity.Complete()
 	identityLock := readonlyLock
-	// core.hooksPath must be installed whenever EITHER the strip hook or the
-	// identity re-stamp hook is active (both share the one hook directory).
+	guardBranches := opts.Git.ProtectedBranches
+	guardOn := len(guardBranches) > 0
+	// core.hooksPath must be installed whenever ANY hook policy is active: the
+	// strip hook, the identity re-stamp hook, or the branch guard (all share the
+	// one hook directory).
 	hooksPath := ""
-	if opts.Git.StripAttribution || identityLock {
+	if opts.Git.StripAttribution || identityLock || guardOn {
 		hooksPath = GitHooksDir
 	}
 	if readonlyLock {
@@ -896,13 +901,13 @@ func configureGitIdentity(ctx context.Context, result *SetupResult, opts SetupOp
 		SetupGitIdentityGuard(result.Manager, result.HomeDir, opts.Logger)
 		SetupGitIdentity(result.Manager, result.HomeDir, opts.Git.Identity, opts.Logger)
 	}
-	if opts.Git.StripAttribution || identityLock {
-		// The hook dir is needed on both identity paths; core.hooksPath is written
+	if opts.Git.StripAttribution || identityLock || guardOn {
+		// The hook dir is needed on every hook path; core.hooksPath is written
 		// live only on the writable path (the readonly mount already carries it).
-		SetupGitHooks(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, !readonlyLock, opts.Logger)
+		SetupGitHooks(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, !readonlyLock, guardBranches, opts.Logger)
 	} else if !readonlyLock {
-		// Converge a reused persistent container after both were turned off: drop
-		// the stale core.hooksPath (best-effort).
+		// Converge a reused persistent container after every hook policy was turned
+		// off: drop the stale core.hooksPath (best-effort).
 		RemoveGitAttributionHookConfig(result.Manager, result.HomeDir)
 	}
 	// Layer 1: pin GIT_AUTHOR_*/GIT_COMMITTER_* as container-level env so `-c

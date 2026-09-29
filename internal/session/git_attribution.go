@@ -47,17 +47,18 @@ var DefaultAttributionPatterns = []string{
 
 // delegatedHookNames are the client-side hooks that get a pure-delegation
 // wrapper: core.hooksPath REPLACES the repository hooks directory (git looks
-// only there), so without these the repo's own pre-commit/pre-push/... would
-// silently stop running in-container. Deliberately excludes high-frequency
-// plumbing hooks (reference-transaction, post-index-change) — a fork+exec on
-// every ref update is not worth delegating hooks repos rarely use.
-// post-commit is intentionally absent: it is handled explicitly by SetupGitHooks
-// (a root-owned re-stamp script when the identity is locked, a plain delegation
-// symlink otherwise), so it must not be blanket-symlinked here.
+// only there), so without these the repo's own hooks would silently stop
+// running in-container. Deliberately excludes high-frequency plumbing hooks
+// (reference-transaction, post-index-change) — a fork+exec on every ref update
+// is not worth delegating hooks repos rarely use.
+// post-commit, pre-commit and pre-push are intentionally absent: SetupGitHooks
+// handles each explicitly (a root-owned enforcement script — identity re-stamp
+// or branch guard — when active, a plain delegation symlink otherwise), so they
+// must not be blanket-symlinked here.
 var delegatedHookNames = []string{
 	"applypatch-msg", "pre-applypatch", "post-applypatch",
-	"pre-commit", "pre-merge-commit", "prepare-commit-msg",
-	"pre-rebase", "post-checkout", "post-merge", "pre-push",
+	"pre-merge-commit", "prepare-commit-msg",
+	"pre-rebase", "post-checkout", "post-merge",
 	"post-rewrite", "pre-auto-gc",
 }
 
@@ -159,6 +160,80 @@ func renderPostCommitRestampScript(id GitIdentity) string {
 		gitPostCommitRestampBody
 }
 
+// Branch guard ([git] protected_branches): root-owned pre-commit and pre-push
+// hooks that REJECT (never strip) a commit on, or a push to, a protected branch,
+// then delegate to the repository's own hook of the same name. Reject-don't-strip
+// is deliberate here — blocking the protected-branch write is the whole point,
+// unlike the cosmetic attribution strip. Accepted bypasses (same as every client
+// hook): `--no-verify` skips the hook, and a repo-local core.hooksPath (husky)
+// overrides the global one; server-side branch protection is the real backstop.
+
+const gitPreCommitGuardHead = `#!/bin/sh
+# Managed by coi ([git] protected_branches): refuse a commit while HEAD is on a
+# protected branch, then run the repository's own pre-commit hook.
+branch="$(git symbolic-ref --short -q HEAD 2>/dev/null)"
+`
+
+const gitPreCommitGuardTail = `hook="$(git rev-parse --git-dir 2>/dev/null)/hooks/pre-commit"
+[ -x "$hook" ] && exec "$hook" "$@"
+exit 0
+`
+
+const gitPrePushGuardHead = `#!/bin/sh
+# Managed by coi ([git] protected_branches): refuse a push whose destination is a
+# protected branch, then run the repository's own pre-push hook. Git feeds the
+# pushed refs on stdin as "<local ref> <local sha> <remote ref> <remote sha>".
+input="$(cat)"
+while read -r lref lsha rref rsha; do
+	case "$rref" in
+		refs/heads/*) rb=${rref#refs/heads/} ;;
+		*) continue ;;
+	esac
+`
+
+// gitPrePushGuardTail closes the read loop with a here-doc (NOT a pipe: a piped
+// `while` runs in a subshell whose `exit 1` cannot fail the hook), then delegates
+// with the buffered refs replayed on the repo hook's stdin.
+const gitPrePushGuardTail = `done <<COI_PROTECTED_REFS
+$input
+COI_PROTECTED_REFS
+hook="$(git rev-parse --git-dir 2>/dev/null)/hooks/pre-push"
+if [ -x "$hook" ]; then
+	printf '%s\n' "$input" | "$hook" "$@"
+	exit $?
+fi
+exit 0
+`
+
+// renderBranchGuardScript bakes the protected-branch checks into the pre-commit
+// or pre-push hook. Each branch becomes its own string-equality `if` (NOT a
+// `case` glob or a shared list) so a name containing a shell/glob metacharacter
+// can neither be mis-matched nor injected — shellEscape single-quotes every
+// value. kind is "pre-commit" or "pre-push".
+func renderBranchGuardScript(kind string, branches []string) string {
+	var b strings.Builder
+	switch kind {
+	case "pre-push":
+		b.WriteString(gitPrePushGuardHead)
+		for _, br := range branches {
+			b.WriteString("\tif [ \"$rb\" = " + shellEscape(br) + " ]; then\n")
+			b.WriteString("\t\techo \"coi: refusing to push to protected branch '$rb' (git.protected_branches).\" >&2\n")
+			b.WriteString("\t\texit 1\n\tfi\n")
+		}
+		b.WriteString(gitPrePushGuardTail)
+	default: // pre-commit
+		b.WriteString(gitPreCommitGuardHead)
+		for _, br := range branches {
+			b.WriteString("if [ \"$branch\" = " + shellEscape(br) + " ]; then\n")
+			b.WriteString("\techo \"coi: refusing to commit on protected branch '$branch' (git.protected_branches).\" >&2\n")
+			b.WriteString("\techo \"     Work on a feature branch first: git switch -c <name>\" >&2\n")
+			b.WriteString("\texit 1\nfi\n")
+		}
+		b.WriteString(gitPreCommitGuardTail)
+	}
+	return b.String()
+}
+
 // renderAttributionPatternsFile joins the pattern list into the grep -f file
 // content. Blank/whitespace-only entries are dropped: an empty pattern line
 // matches EVERY line, which with grep -v would delete the whole message.
@@ -192,13 +267,19 @@ func effectiveAttributionPatterns(configured []string) []string {
 //     commit whose author/committer isn't the locked identity — the enforcement
 //     that makes -c user.*, --author=, and agent GIT_* overrides lose.
 //
+// A third policy, the branch guard ([git] protected_branches), rides the same
+// hook dir: when protectedBranches is non-empty, root-owned pre-commit/pre-push
+// scripts reject commits on / pushes to those branches (else a plain delegation
+// symlink). The guard installs independently of the two identity policies, so a
+// session with only protected_branches set still gets hooks + core.hooksPath.
+//
 // The delegation wrappers (so a repo's own hooks keep running under the replaced
 // hooks dir) are always installed. With [git] readonly the caller bakes
 // core.hooksPath into the mounted gitconfig (renderReadonlyGitConfig) and passes
 // setHooksPath=false. Root ownership (uid/gid 0) keeps the sandboxed non-root
 // agent from editing its own policy. Non-fatal: logs a warning on failure and
 // never blocks a session.
-func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentity, stripAttribution bool, patterns []string, lockIdentity, setHooksPath bool, logger func(string)) {
+func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentity, stripAttribution bool, patterns []string, lockIdentity, setHooksPath bool, protectedBranches []string, logger func(string)) {
 	files := []struct {
 		path, content, mode string
 	}{
@@ -248,6 +329,27 @@ func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentit
 		logger(fmt.Sprintf("Warning: failed to link post-commit delegation hook: %v", err))
 		return
 	}
+	// pre-commit / pre-push: a real branch-guard script when protectedBranches is
+	// non-empty, else a delegation symlink (like post-commit above). rm -f first so
+	// CreateFileWithOwner can't follow a stale symlink and a guard->off switch on a
+	// reused container converges.
+	guardOn := len(protectedBranches) > 0
+	for _, name := range []string{"pre-commit", "pre-push"} {
+		hookPath := GitHooksDir + "/" + name
+		if _, err := mgr.ExecCommand("rm -f "+hookPath, container.ExecCommandOptions{Capture: true}); err != nil {
+			logger(fmt.Sprintf("Warning: failed to reset %s: %v", hookPath, err))
+			return
+		}
+		if guardOn {
+			if err := mgr.CreateFileWithOwner(hookPath, renderBranchGuardScript(name, protectedBranches), 0, 0, "0755"); err != nil {
+				logger(fmt.Sprintf("Warning: failed to write %s: %v", hookPath, err))
+				return
+			}
+		} else if _, err := mgr.ExecCommand("ln -sf delegate "+hookPath, container.ExecCommandOptions{Capture: true}); err != nil {
+			logger(fmt.Sprintf("Warning: failed to link %s delegation hook: %v", name, err))
+			return
+		}
+	}
 	if setHooksPath {
 		cmd := fmt.Sprintf(`HOME=%s git config --global core.hooksPath %s`,
 			shellEscape(homeDir), shellEscape(GitHooksDir))
@@ -261,8 +363,11 @@ func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentit
 		logger("Installed git hooks: AI-attribution strip + commit-identity re-stamp (identity locked)")
 	case lockIdentity:
 		logger("Installed git commit-identity re-stamp hook (identity locked; overrides cannot change the author)")
-	default:
+	case stripAttribution:
 		logger("Installed AI-attribution strip hook (git commit messages keep only the configured author)")
+	}
+	if guardOn {
+		logger("Installed git branch guard (protected: " + strings.Join(protectedBranches, ", ") + ") — no direct commits/pushes to these branches")
 	}
 }
 

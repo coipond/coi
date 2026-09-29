@@ -631,6 +631,12 @@ func mergeGitInto(dst *GitConfig, src *GitConfig) {
 	if len(src.StripAttributionPatterns) > 0 {
 		dst.StripAttributionPatterns = src.StripAttributionPatterns
 	}
+	// Pointer merge (not len-based) so a later scope can set `protected_branches
+	// = []` to DISABLE the guard — an empty slice is a real value here, distinct
+	// from an absent (nil) field that inherits the default.
+	if src.ProtectedBranches != nil {
+		dst.ProtectedBranches = src.ProtectedBranches
+	}
 }
 
 func mergeSSHInto(dst *SSHConfig, src *SSHConfig) {

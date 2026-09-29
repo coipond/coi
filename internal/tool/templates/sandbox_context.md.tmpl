@@ -120,6 +120,12 @@ Ports NOT listed here are not reachable from the host's localhost.
 {{template "gitIdentityClose" .}}
 {{- end}}
 {{- end}}
+{{- if .HasProtectedBranches}}
+
+## Protected Branches
+
+`{{.ProtectedBranchesDesc}}` are **protected** in this sandbox. Do **not** commit on or push to them directly — coi's git hooks reject it. Work on a feature branch (`git switch -c <name>`), commit there, and open a pull request.
+{{- end}}
 
 ## Limitations
 {{if .NetworkLimitation}}

@@ -407,6 +407,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 					Readonly:                 a.cfg.Git.IsReadonlyEnabled(),
 					StripAttribution:         a.cfg.Git.IsStripAttributionEnabled(),
 					StripAttributionPatterns: a.cfg.Git.StripAttributionPatterns,
+					ProtectedBranches:        a.cfg.Git.EffectiveProtectedBranches(),
 				},
 				Security: session.SecurityOptions{
 					ProtectedPaths:            protectedPaths,

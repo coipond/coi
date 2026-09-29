@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Breaking
+
+- [Breaking] **Direct commits/pushes to `main` and `master` are now blocked by default** — agents work on a feature branch and open a PR instead. Configure or turn it off with `[git] protected_branches` (set to `[]` to disable).
+
 ## 0.13.0 (2026-09-28)
 
 ### Changed

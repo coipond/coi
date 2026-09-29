@@ -84,6 +84,14 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 	paths := cfg.Paths
 	incus := cfg.Incus
 	git := cfg.Git
+	git.StripAttributionPatterns = cloneSlice(cfg.Git.StripAttributionPatterns)
+	// ProtectedBranches is a *[]string: copy the pointer to a freshly cloned slice
+	// so the synthesized profile never shares backing storage with the original
+	// (nil stays nil, preserving the "use default" tri-state).
+	if cfg.Git.ProtectedBranches != nil {
+		pb := cloneSlice(*cfg.Git.ProtectedBranches)
+		git.ProtectedBranches = &pb
+	}
 	ssh := cfg.SSH
 	security := cfg.Security
 	security.ProtectedPaths = cloneSlice(cfg.Security.ProtectedPaths)

@@ -199,6 +199,30 @@ func CheckConfiguration(cfg *config.Config) HealthCheck {
 	}
 }
 
+// CheckGitBranchGuard reports whether the [git] protected_branches guard is
+// active and which branches it covers. Purely config-driven — no remediation
+// (there is no host state to fix; the guard is installed per-session).
+func CheckGitBranchGuard(cfg *config.Config) HealthCheck {
+	var branches []string
+	if cfg != nil {
+		branches = cfg.Git.EffectiveProtectedBranches()
+	}
+	if len(branches) == 0 {
+		return HealthCheck{
+			Name:    "git_branch_guard",
+			Status:  StatusWarning,
+			Message: "Disabled (protected_branches = []) — commits/pushes to any branch are allowed",
+			Details: map[string]interface{}{"protected_branches": []string{}},
+		}
+	}
+	return HealthCheck{
+		Name:    "git_branch_guard",
+		Status:  StatusOK,
+		Message: "Protecting " + strings.Join(branches, ", ") + " (no direct commits/pushes)",
+		Details: map[string]interface{}{"protected_branches": branches},
+	}
+}
+
 // CheckNetworkMode reports the configured network mode
 func CheckNetworkMode(mode config.NetworkMode) HealthCheck {
 	if mode == "" {

@@ -32,6 +32,7 @@ type ConfigureOptions struct {
 	GitIdentity                 GitIdentity           // Optional pre-resolved identity to configure when GitGuard is true
 	GitStripAttribution         bool                  // Install the AI-attribution strip hook (#788)
 	GitStripAttributionPatterns []string              // Override default strip patterns (grep -E, per line)
+	GitProtectedBranches        []string              // [git] protected_branches (resolved): pre-commit/pre-push guard set; empty = off
 
 	Logger func(string)
 }
@@ -103,12 +104,14 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 		SetupGitIdentity(mgr, homeDir, opts.GitIdentity, opts.Logger)
 	}
 
-	// 2.1. AI-attribution strip hook (#788): global commit-msg hook removing
-	// co-author/tool-footer lines from every commit message.
-	if opts.GitStripAttribution {
-		// coi-pond lightweight path: strip only (no [git] readonly branch here,
-		// so identity is not locked/enforced — a pre-existing gap, out of scope).
-		SetupGitHooks(mgr, homeDir, opts.GitIdentity, true, opts.GitStripAttributionPatterns, false, true, opts.Logger)
+	// 2.1. AI-attribution strip hook (#788) + branch guard (protected_branches):
+	// global commit-msg strip and/or pre-commit/pre-push guard. Installed whenever
+	// either is active.
+	if opts.GitStripAttribution || len(opts.GitProtectedBranches) > 0 {
+		// coi-pond lightweight path: strip/guard only (no [git] readonly branch
+		// here, so identity is not locked/enforced — a pre-existing gap, out of
+		// scope).
+		SetupGitHooks(mgr, homeDir, opts.GitIdentity, opts.GitStripAttribution, opts.GitStripAttributionPatterns, false, true, opts.GitProtectedBranches, opts.Logger)
 	}
 
 	// 3. Claude managed settings: auto-mode suppression (skipped under

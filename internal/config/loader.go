@@ -394,6 +394,14 @@ func sanitizeUntrustedGit(g *GitConfig, path string) {
 	}
 	g.StripAttribution = nil
 	g.StripAttributionPatterns = nil
+	// The branch guard is an enforcement control: a cloned/agent-planted repo must
+	// not be able to shrink or empty it to unlock pushes to main. Nil it out —
+	// falling back to the default set — so the guard stays on. A non-nil value
+	// (including an explicit `[]` disabling attempt) is a downgrade; warn.
+	if g.ProtectedBranches != nil {
+		warnUntrustedDowngrade(path, "git.protected_branches")
+		g.ProtectedBranches = nil
+	}
 }
 
 // sanitizeUntrustedEnvCommands strips env_commands (and their timeout) from an
