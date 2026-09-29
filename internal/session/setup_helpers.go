@@ -36,23 +36,6 @@ import (
 // (workspace first, then any configured mounts). Their filesystems decide
 // whether an idmapped (shift=true) mount is possible at all, which is a
 // property of the paths rather than of the VM around them (#683).
-// rawIdmapFailure builds the fatal error for a rejected `raw.idmap` set. When the
-// host UID sits inside a multi-ID subordinate range in /etc/subuid — the reason
-// Incus rejects the map (#838, e.g. Google Cloud OS Login UIDs inside root's
-// delegation block) — it names that cause and the fix. Extracted (pure) so the
-// message is unit-testable.
-func rawIdmapFailure(err error, hostUID int) error {
-	if line, inRange := HostUIDSubordinateRange(); inRange {
-		return fmt.Errorf("failed to set raw.idmap (%v): host UID %d is inside a subordinate ID "+
-			"range in /etc/subuid (%s), so Incus cannot map it into the container and /workspace "+
-			"would be unwritable. Run coi as a user whose UID is not subordinate (e.g. the image's "+
-			"uid-1000 user), or move root's /etc/subuid range off your login UID. See `coi health`",
-			err, hostUID, line)
-	}
-	return fmt.Errorf("failed to set raw.idmap (%v): the workspace cannot be UID-mapped into the "+
-		"container and would be unwritable", err)
-}
-
 func ConfigureUIDMapping(containerName string, sources []string, disableShift bool, logger func(string)) (useShift, idmapApplied bool, err error) {
 	if logger == nil {
 		logger = func(string) {}
@@ -96,6 +79,23 @@ func ConfigureUIDMapping(containerName string, sources []string, disableShift bo
 		logger("Auto-detected Colima/Lima environment - disabling UID shifting")
 	}
 	return useShift, false, nil
+}
+
+// rawIdmapFailure builds the fatal error for a rejected `raw.idmap` set. When the
+// host UID sits inside a multi-ID subordinate range in /etc/subuid — the reason
+// Incus rejects the map (#838, e.g. Google Cloud OS Login UIDs inside root's
+// delegation block) — it names that cause and the fix. Extracted (pure) so the
+// message is unit-testable.
+func rawIdmapFailure(err error, hostUID int) error {
+	if line, inRange := HostUIDSubordinateRange(); inRange {
+		return fmt.Errorf("failed to set raw.idmap (%v): host UID %d is inside a subordinate ID "+
+			"range in /etc/subuid (%s), so Incus cannot map it into the container and /workspace "+
+			"would be unwritable. Run coi as a user whose UID is not subordinate (e.g. the image's "+
+			"uid-%d user), or move root's /etc/subuid range off your login UID. See `coi health`",
+			err, hostUID, line, container.CodeUID)
+	}
+	return fmt.Errorf("failed to set raw.idmap (%v): the workspace cannot be UID-mapped into the "+
+		"container and would be unwritable", err)
 }
 
 // MountSources lists the HOST paths a session's disk devices are sourced from:

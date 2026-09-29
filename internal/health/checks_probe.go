@@ -53,8 +53,8 @@ func subidSkip(name string) (HealthCheck, bool) {
 		Name:   name,
 		Status: StatusWarning,
 		Message: fmt.Sprintf("Skipped — host UID %d is inside /etc/subuid range %s, so the probe "+
-			"workspace can't be idmapped; run coi as a uid-1000 user to verify. (not a masking failure)",
-			os.Getuid(), line),
+			"workspace can't be idmapped; run coi as a uid-%d user to verify. (not a masking failure)",
+			os.Getuid(), line, container.CodeUID),
 	}, true
 }
 

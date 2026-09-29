@@ -20,9 +20,7 @@ import pytest
 
 
 def _sudo_ok():
-    return subprocess.run(
-        ["sudo", "-n", "true"], capture_output=True, text=True
-    ).returncode == 0
+    return subprocess.run(["sudo", "-n", "true"], capture_output=True, text=True).returncode == 0
 
 
 def _read_subuid():
@@ -32,8 +30,9 @@ def _read_subuid():
 
 
 def _write_subuid(content: bytes):
-    subprocess.run(["sudo", "-n", "tee", "/etc/subuid"], input=content,
-                   capture_output=True, check=True)
+    subprocess.run(
+        ["sudo", "-n", "tee", "/etc/subuid"], input=content, capture_output=True, check=True
+    )
 
 
 def _restore_subuid(original):
@@ -58,7 +57,9 @@ def test_idmap_probes_skip_when_uid_in_subuid_range(coi_binary):
         _write_subuid(injected)
         result = subprocess.run(
             [coi_binary, "health", "--format", "json"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
     finally:
         _restore_subuid(original)
