@@ -2,7 +2,7 @@
 Built-in "hardened" profile: a one-flag hardened preset for opening untrusted /
 freshly-cloned repos (`coi shell --profile hardened`). Issue #496.
 
-It bundles COI's strongest EXISTING controls (no new enforcement): restricted
+It bundles Coi's strongest EXISTING controls (no new enforcement): restricted
 network, secret masking, host immutability, ephemeral container, no SSH-agent
 forwarding, and threat monitoring. It ships built-in (no disk profile needed),
 so these checks need neither incus nor sudo — they assert the preset is present

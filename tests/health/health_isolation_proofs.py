@@ -1,6 +1,6 @@
 """
 Runtime isolation proofs in `coi health` — the adversarial checks that verify
-COI's guarantees actually hold inside a container, not just that config parses:
+Coi's guarantees actually hold inside a container, not just that config parses:
 
   - secret_masking: plant a decoy secret in a workspace, mask it via secret_paths,
     and confirm it reads EMPTY inside the container (a leak is a hard failure).
@@ -69,7 +69,7 @@ def test_host_credential_isolation_check_present(health_json):
 
 def test_host_credentials_not_leaked(health_json):
     """When the probe ran, a decoy planted in the host home must NOT be readable
-    inside the container (COI's 'credentials never exposed' guarantee)."""
+    inside the container (Coi's 'credentials never exposed' guarantee)."""
     c = _check(health_json, "host_credential_isolation")
     status = c.get("status")
     if status not in ("ok", "failed"):

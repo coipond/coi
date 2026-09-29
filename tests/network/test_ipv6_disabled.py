@@ -1,7 +1,7 @@
 """
 Integration tests for IPv6 disabling in network-isolated modes.
 
-All firewall rules are IPv4-only. IPv6 would bypass them entirely, so COI
+All firewall rules are IPv4-only. IPv6 would bypass them entirely, so Coi
 disables IPv6 inside the container for restricted and allowlist modes.
 Open mode does not apply firewall rules, so IPv6 is left enabled.
 """

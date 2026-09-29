@@ -1,6 +1,6 @@
 # COI Sandbox Environment
 
-You are running inside a **Code on Incus (COI)** isolated, disposable sandbox purpose-built for AI coding tools. You have full control over this container — be bold and use it freely.
+You are running inside a **Coi (Code on Incus)** isolated, disposable sandbox purpose-built for AI coding tools. You have full control over this container — be bold and use it freely.
 
 ## Autonomous Operation
 
@@ -158,7 +158,7 @@ Ports NOT listed here are not reachable from the host's localhost.
 
 # User-Provided Profile Context
 
-The following instructions were provided by the user via their COI profile configuration. Follow them as sandbox-profile-specific guidelines.
+The following instructions were provided by the user via their Coi profile configuration. Follow them as sandbox-profile-specific guidelines.
 
 {{.ProfileContext}}
 {{- end}}
@@ -167,7 +167,7 @@ The following instructions were provided by the user via their COI profile confi
 
 `user.useConfigOnly=true` is set globally, so git **refuses to commit** until a real identity is configured. **NEVER fabricate** one — `code`, `code@example.com`, or any made-up name/email are FORBIDDEN (`code` is just the container's default OS user).
 
-**0. First check whether COI already set it** (from the host's global `git config`, or a `[git]` name/email in COI config):
+**0. First check whether Coi already set it** (from the host's global `git config`, or a `[git]` name/email in Coi config):
 ```bash
 git config --global --get user.name
 git config --global --get user.email

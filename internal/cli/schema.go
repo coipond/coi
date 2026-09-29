@@ -10,16 +10,16 @@ import (
 // schemaCmd is the parent command for schema operations
 var schemaCmd = &cobra.Command{
 	Use:   "schema",
-	Short: "Print machine-readable schemas for COI configuration formats",
-	Long: `Print JSON Schema documents that describe COI configuration formats.
+	Short: "Print machine-readable schemas for Coi configuration formats",
+	Long: `Print JSON Schema documents that describe Coi configuration formats.
 
 These schemas can be consumed by external tools (e.g. a web UI or editor
-plugin) to validate configuration files without duplicating COI's own
+plugin) to validate configuration files without duplicating Coi's own
 validation logic.`,
 	// Cobra walks up from the leaf command and stops at the first
 	// PersistentPreRunE it finds, so defining one here prevents
 	// rootCmd.PersistentPreRunE from running for this subtree.
-	// Schema output requires no local COI setup.
+	// Schema output requires no local Coi setup.
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		return nil
 	},
@@ -29,11 +29,11 @@ validation logic.`,
 var schemaProfileCmd = &cobra.Command{
 	Use:   "profile",
 	Short: "Print the JSON Schema for profile config.toml files",
-	Long: `Print the JSON Schema (2020-12) that describes a COI profile config.toml.
+	Long: `Print the JSON Schema (2020-12) that describes a Coi profile config.toml.
 
 The schema covers every field accepted by a profile configuration file and
 can be used with any JSON Schema validator. Because TOML and JSON share the
-same data model for the types COI uses, you can validate a parsed TOML
+same data model for the types Coi uses, you can validate a parsed TOML
 document directly against this schema.
 
 Examples:

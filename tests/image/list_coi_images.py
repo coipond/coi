@@ -1,9 +1,9 @@
 """
-Test for coi image list - list COI images (default behavior).
+Test for coi image list - list Coi images (default behavior).
 
 Tests that:
 1. Run coi image list
-2. Verify it shows COI images section
+2. Verify it shows Coi images section
 3. Verify output format is correct
 """
 
@@ -12,11 +12,11 @@ import subprocess
 
 def test_list_coi_images(coi_binary, cleanup_containers):
     """
-    Test listing COI images (default behavior).
+    Test listing Coi images (default behavior).
 
     Flow:
     1. Run coi image list
-    2. Verify output contains COI Images section
+    2. Verify output contains Coi Images section
     3. Verify coi image is shown (exists or not built)
     """
     # === Phase 1: Run image list ===
@@ -33,8 +33,8 @@ def test_list_coi_images(coi_binary, cleanup_containers):
     # === Phase 2: Verify output format ===
 
     combined_output = result.stdout + result.stderr
-    assert "COI Images:" in combined_output or "Available Images:" in combined_output, (
-        f"Should show COI Images section. Got:\n{combined_output}"
+    assert "Coi Images:" in combined_output or "Available Images:" in combined_output, (
+        f"Should show Coi Images section. Got:\n{combined_output}"
     )
 
     # Should mention the coi image (either built or not)

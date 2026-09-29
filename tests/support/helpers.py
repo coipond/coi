@@ -1304,7 +1304,7 @@ def wait_for_container_started(coi_binary, container_name, timeout=90):
     "Failed to connect to bus".
 
     Gate on `systemctl is-system-running` reporting any *live* state. We
-    deliberately do NOT require a fully-booted `running`/`degraded`: a COI
+    deliberately do NOT require a fully-booted `running`/`degraded`: a Coi
     container can sit in `starting`/`initializing` for a long time under CI's
     restricted network (waiting on network units), but the systemd bus is already
     up in those states — which is all `poweroff`/`close` need. `offline` (no

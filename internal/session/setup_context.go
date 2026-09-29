@@ -133,10 +133,15 @@ const (
 	legacyAutoCtxSeparator = "# COI Sandbox Context"
 
 	// coiContextHeader is the first line of a rendered sandbox context block, and
-	// coiContextFingerprint is a stable, distinctive sentence from its body. A
+	// coiContextFingerprint is a stable, distinctive substring from its body. A
 	// segment matching both is a coi-generated block (not user content).
+	// The fingerprint is deliberately just "Code on Incus" (no "(COI)"/"(Coi)"
+	// suffix) so it keeps matching blocks written by BOTH the pre-rebrand coi
+	// ("Code on Incus (COI)") and the current one ("Coi (Code on Incus)") — a
+	// persistent container upgraded across the rename must still have its old
+	// managed block recognized and replaced, not duplicated (#674).
 	coiContextHeader      = "# COI Sandbox Environment"
-	coiContextFingerprint = "Code on Incus (COI)"
+	coiContextFingerprint = "Code on Incus"
 )
 
 // lineIndex returns the index of the first element of lines at or after `from`

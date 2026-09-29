@@ -13,8 +13,8 @@ import (
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
-	Short: "Validate COI configuration files",
-	Long: `Validate COI configuration files and report any errors.
+	Short: "Validate Coi configuration files",
+	Long: `Validate Coi configuration files and report any errors.
 
 Use --format json for machine-readable output (e.g. from a web UI or script).
 Exit code 0 = valid, 1 = invalid.`,
@@ -28,8 +28,8 @@ Exit code 0 = valid, 1 = invalid.`,
 
 var validateProfileCmd = &cobra.Command{
 	Use:   "profile <path>",
-	Short: "Validate a profile config.toml against the COI JSON Schema",
-	Long: `Validate a profile config.toml against the COI JSON Schema.
+	Short: "Validate a profile config.toml against the Coi JSON Schema",
+	Long: `Validate a profile config.toml against the Coi JSON Schema.
 
 Text output (default):
   Profile is valid.

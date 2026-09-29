@@ -10,10 +10,10 @@ import (
 )
 
 // Allowlist mode makes the container's name resolution deterministic instead of
-// live: COI resolves the allowed domains on the host, installs those addresses in
+// live: Coi resolves the allowed domains on the host, installs those addresses in
 // the firewall, and writes the SAME addresses into the container's /etc/hosts.
 // All DNS egress is then blocked (see the port-53 rules in nft_filter.go), so the
-// hosts file COI wrote is the container's only way to turn a name into an address.
+// hosts file Coi wrote is the container's only way to turn a name into an address.
 //
 // This is what kills the original bug at the root. The old design resolved on the
 // host, pinned the result, and left the container to resolve the same name
@@ -74,7 +74,7 @@ func renderHostsBlock(domainIPs map[string][]string) string {
 	return b.String()
 }
 
-// WriteAllowlistHosts replaces the COI-managed block in the container's
+// WriteAllowlistHosts replaces the Coi-managed block in the container's
 // /etc/hosts with the given name→address mappings, leaving everything outside the
 // markers (localhost, the container's own name) untouched.
 //
@@ -106,7 +106,7 @@ func renderUserHostsBlock(entries []config.HostEntry) string {
 	return b.String()
 }
 
-// WriteUserHosts replaces the COI user-hosts block in the container's /etc/hosts
+// WriteUserHosts replaces the Coi user-hosts block in the container's /etc/hosts
 // with the given entries (an empty slice clears the block), leaving the allowlist
 // block and everything else untouched. Works on a running container.
 func WriteUserHosts(containerName string, entries []config.HostEntry) error {
@@ -123,7 +123,7 @@ func WriteUserHosts(containerName string, entries []config.HostEntry) error {
 // swapping the inode under them is how you get a container that resolves nothing
 // until it is restarted.
 func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block string) error {
-	// Strip the previous COI-managed block, then append a fresh one. awk is used
+	// Strip the previous Coi-managed block, then append a fresh one. awk is used
 	// deliberately instead of a sed '/BEGIN/,/END/d' range: a sed range deletes
 	// through to end-of-file when the END marker is missing, so a truncated or
 	// hand-mangled block would take every line after it — including the user's own

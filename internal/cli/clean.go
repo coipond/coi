@@ -35,9 +35,9 @@ Orphaned resources include:
 - Orphaned nft rules (ip coi forward chain rules for container IPs that no longer exist)
 - Orphaned iptables bridge rules (coi-bridge-forward rules with no containers running)
 
-The --pools flag detects COI containers in storage pools that are not
+The --pools flag detects Coi containers in storage pools that are not
 referenced by any profile loaded in the current directory and offers to
-remove them. The pool itself is never deleted. Note that COI can only see
+remove them. The pool itself is never deleted. Note that Coi can only see
 profiles in ~/.coi/ and the current ./.coi/ — pools may still be in use by
 other projects on this machine.
 
@@ -45,7 +45,7 @@ Examples:
   coi clean                    # Clean stopped containers
   coi clean --sessions         # Clean saved session data
   coi clean --orphans          # Clean orphaned veths and nft rules
-  coi clean --pools            # Clean COI containers in unreferenced pools
+  coi clean --pools            # Clean Coi containers in unreferenced pools
   coi clean --all              # Clean everything
   coi clean --all --force      # Clean without confirmation
   coi clean --orphans --dry-run # Show what orphans would be cleaned
@@ -58,7 +58,7 @@ func init() {
 	cleanCmd.Flags().BoolVarP(&cleanForce, "force", "f", false, "Skip confirmation prompts")
 	cleanCmd.Flags().BoolVar(&cleanSessions, "sessions", false, "Clean saved session data")
 	cleanCmd.Flags().BoolVar(&cleanOrphans, "orphans", false, "Clean orphaned veths and nft rules")
-	cleanCmd.Flags().BoolVar(&cleanPools, "pools", false, "Clean COI containers in unreferenced storage pools")
+	cleanCmd.Flags().BoolVar(&cleanPools, "pools", false, "Clean Coi containers in unreferenced storage pools")
 	cleanCmd.Flags().BoolVar(&cleanDryRun, "dry-run", false, "Show what would be cleaned without making changes")
 }
 
@@ -112,7 +112,7 @@ func (a *App) cleanCommand(cmd *cobra.Command, args []string) error {
 		cleaned += count
 	}
 
-	// Clean COI containers in unreferenced storage pools
+	// Clean Coi containers in unreferenced storage pools
 	if cleanAll || cleanPools {
 		count, cancelled, err := a.cleanUnreferencedPools()
 		if err != nil {
@@ -381,17 +381,17 @@ func doCleanOrphanedResources(orphans *cleanup.OrphanedResources) int {
 	return cleaned
 }
 
-// cleanUnreferencedPools detects COI containers in storage pools that are not
+// cleanUnreferencedPools detects Coi containers in storage pools that are not
 // referenced by any profile loaded in the current context, and offers to remove
 // the containers. The pool itself is never deleted.
 //
-// "COI containers" are identified by name prefix (the configured container
+// "Coi containers" are identified by name prefix (the configured container
 // prefix, default "coi-") AND verified via the container's expanded_devices
 // root pool.
 //
 // Returns (count cleaned, was cancelled, error).
 func (a *App) cleanUnreferencedPools() (int, bool, error) {
-	fmt.Println("\nScanning storage pools for unreferenced COI containers...")
+	fmt.Println("\nScanning storage pools for unreferenced Coi containers...")
 
 	// Build referenced pool set from the loaded config + profiles.
 	referenced := a.referencedPoolSet()
@@ -448,20 +448,20 @@ func (a *App) cleanUnreferencedPools() (int, bool, error) {
 	}
 
 	if len(plans) == 0 {
-		fmt.Println("  (no unreferenced pools contain COI containers)")
+		fmt.Println("  (no unreferenced pools contain Coi containers)")
 		return 0, false, nil
 	}
 
 	// Print the loud cross-project warning once, then per-pool details.
 	fmt.Println()
 	fmt.Println("WARNING: these pools may still be referenced by profiles in other")
-	fmt.Println("projects on this machine that COI cannot see right now. Cleaning")
+	fmt.Println("projects on this machine that Coi cannot see right now. Cleaning")
 	fmt.Println("them will affect any project whose profile points here.")
 	fmt.Println()
 
 	for _, plan := range plans {
 		fmt.Printf("Pool %q is not referenced by any profile loaded in this directory.\n", plan.pool)
-		fmt.Printf("  COI containers in %q (%d):\n", plan.pool, len(plan.containers))
+		fmt.Printf("  Coi containers in %q (%d):\n", plan.pool, len(plan.containers))
 		for _, name := range plan.containers {
 			fmt.Printf("    - %s\n", name)
 		}

@@ -208,7 +208,7 @@ func CheckKernelVersionHealth() HealthCheck {
 	}
 }
 
-// CheckImmutableCapability checks whether the COI binary has CAP_LINUX_IMMUTABLE,
+// CheckImmutableCapability checks whether the Coi binary has CAP_LINUX_IMMUTABLE,
 // which is needed to apply chattr +i on protected paths as defense-in-depth against
 // the unshare+umount bypass of read-only bind mounts.
 func CheckImmutableCapability() HealthCheck {

@@ -353,7 +353,7 @@ func sanitizeUntrustedSecurity(s *SecurityConfig, path string) {
 //     (filterWritableGitHooks removes it from the read-only set).
 //   - git.name / git.email choose the commit author installed in the container;
 //     a cloned/agent-planted repo must not decide who its commits appear to be
-//     authored by (the whole reason COI reads only the host's *global* git
+//     authored by (the whole reason Coi reads only the host's *global* git
 //     config, never project-local). Stripped so the field is honored only from
 //     ~/.coi/config.toml / $COI_CONFIG.
 //   - git.seed_host_identity governs reading the host identity; git-identity

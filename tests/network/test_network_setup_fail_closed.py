@@ -2,7 +2,7 @@
 A network-isolation setup failure must fail CLOSED: the session aborts rather
 than running the command with an un-isolated (potentially open) network.
 
-COI applies a boot block (zero egress) right after the container starts and lifts
+Coi applies a boot block (zero egress) right after the container starts and lifts
 it only once the mode's firewall rules are in place; on a `setupRestricted` /
 `setupAllowlist` error it deliberately keeps the block and returns the error
 (`internal/network/manager.go`). If a refactor lifted the block on the error path

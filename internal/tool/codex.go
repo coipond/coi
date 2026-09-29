@@ -59,8 +59,8 @@ func ValidateCodexFlagValue(key, value string) error {
 // nested inside it, and the flag also skips the first-run folder-trust prompt.
 // In interactive mode codex keeps its approval prompts with a writable workspace.
 //
-// The COI sessionID is unused — codex has no flag to set a session ID on a fresh
-// launch (sessions get a rollout UUID internally); COI UUIDs are metadata-only,
+// The Coi sessionID is unused — codex has no flag to set a session ID on a fresh
+// launch (sessions get a rollout UUID internally); Coi UUIDs are metadata-only,
 // as with pi. On resume, `codex resume <uuid>` pins the session discovered by
 // DiscoverSessionID, falling back to `codex resume --last` when discovery fails.
 // The resume subcommand is assumed to accept the same mode/model flags as the

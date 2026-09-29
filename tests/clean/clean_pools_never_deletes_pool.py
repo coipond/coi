@@ -1,6 +1,6 @@
 """
 Test that `coi clean --pools` never deletes the storage pool itself,
-only the COI containers within it.
+only the Coi containers within it.
 """
 
 import os

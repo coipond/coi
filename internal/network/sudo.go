@@ -2,7 +2,7 @@ package network
 
 import "sync/atomic"
 
-// sudoAllowed gates whether COI may invoke `sudo` for network operations
+// sudoAllowed gates whether Coi may invoke `sudo` for network operations
 // (nft/iptables). It defaults to true and is set once at startup from
 // `[network] use_sudo` (via SetSudoAllowed in the CLI's PersistentPreRunE), so
 // EVERY network sudo entry point honors the config without threading it through
@@ -18,9 +18,9 @@ var sudoAllowed atomic.Bool
 
 func init() { sudoAllowed.Store(true) }
 
-// SetSudoAllowed configures whether COI may invoke sudo for network operations.
+// SetSudoAllowed configures whether Coi may invoke sudo for network operations.
 // Call once at startup from the resolved `[network] use_sudo` value.
 func SetSudoAllowed(allowed bool) { sudoAllowed.Store(allowed) }
 
-// SudoEnabled reports whether COI may invoke sudo for network operations.
+// SudoEnabled reports whether Coi may invoke sudo for network operations.
 func SudoEnabled() bool { return sudoAllowed.Load() }

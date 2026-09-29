@@ -6,8 +6,8 @@ import (
 )
 
 // In allowlist mode the container has no DNS at all. Its only way to turn a name
-// into an address is the /etc/hosts block COI writes (see hosts.go), which holds
-// exactly the addresses COI also installed in the firewall.
+// into an address is the /etc/hosts block Coi writes (see hosts.go), which holds
+// exactly the addresses Coi also installed in the firewall.
 //
 // That equality is the whole design. Leave the container any route to a
 // nameserver and it can resolve a name to an address the firewall has never seen

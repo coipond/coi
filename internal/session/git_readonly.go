@@ -11,7 +11,7 @@ import (
 
 // git.readonly locks the container commit identity so the agent cannot overwrite
 // it. `git config --global` writes ~/.gitconfig via lock-file + rename, and the
-// container home is writable, so file permissions alone don't stop it. Instead COI
+// container home is writable, so file permissions alone don't stop it. Instead Coi
 // generates a host-side gitconfig holding the identity and mounts it READ-ONLY at
 // the container's ~/.gitconfig — a rename over a mount point fails, so the write is
 // blocked at the filesystem layer.
@@ -54,7 +54,7 @@ func gitConfigQuote(s string) string {
 
 // renderReadonlyGitConfig produces the full ~/.gitconfig content for a locked
 // identity: the author fields plus user.useConfigOnly=true (the same fail-closed
-// guard COI would otherwise set live), so nothing else needs writing in-container.
+// guard Coi would otherwise set live), so nothing else needs writing in-container.
 // A non-empty hooksPath additionally bakes in core.hooksPath — the readonly mount
 // blocks `git config --global`, so the attribution strip hook's config has to
 // ride in the mounted file itself.
@@ -71,7 +71,7 @@ func renderReadonlyGitConfig(id GitIdentity, hooksPath string) string {
 	return cfg
 }
 
-// readonlyGitConfigHostPath returns the host path COI writes the generated config
+// readonlyGitConfigHostPath returns the host path Coi writes the generated config
 // to, keyed on the identity AND the hooksPath so distinct configurations never
 // collide (two parallel slots differing only in strip_attribution must not race
 // on one file with different contents) and the file is stable across sessions.

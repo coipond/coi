@@ -148,7 +148,7 @@ func outputHealthJSON(result *health.HealthResult) error {
 
 // outputHealthText outputs health check results as human-readable text
 func outputHealthText(result *health.HealthResult) error {
-	fmt.Println("Code on Incus Health Check")
+	fmt.Println("Coi Health Check")
 	fmt.Println("==========================")
 	fmt.Println()
 
@@ -290,7 +290,7 @@ func formatCheckName(name string) string {
 		"nftables":                  "nftables",
 		"systemd_journal":           "systemd journal",
 		"libsystemd":                "libsystemd-dev",
-		"coi_directory":             "COI directory",
+		"coi_directory":             "Coi directory",
 		"sessions_directory":        "Sessions dir",
 		"disk_space":                "Disk space",
 		"incus_storage_pools":       "Incus storage pools",

@@ -82,7 +82,7 @@ func TestE2E_RestrictedAllowedPorts_BlocksNonAllowedPort(t *testing.T) {
 
 	mgr, containerIP := launchE2EContainer(t, "coi-e2e-restricted-ports")
 
-	// Baseline (open network, before any COI rules): both ports must be reachable,
+	// Baseline (open network, before any Coi rules): both ports must be reachable,
 	// or there is nothing meaningful to test — skip rather than false-pass.
 	if !containerCanConnect(t, mgr, host, allowedPort) || !containerCanConnect(t, mgr, host, blockedPort) {
 		t.Skipf("no baseline connectivity to %s:%d/%d — skipping", host, allowedPort, blockedPort)

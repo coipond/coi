@@ -89,7 +89,7 @@ func TestExecPatterns_DBAbsent_FallsBackToDefaults(t *testing.T) {
 
 // A loadable linux/process_creation rule (level high) with a distinctive
 // CommandLine token, plus shapes that exercise the condition/selection parsers.
-const sigmaCanaryRule = `title: COI Test Canary
+const sigmaCanaryRule = `title: Coi Test Canary
 id: 00000000-0000-0000-0000-000000000001
 logsource:
     category: process_creation
@@ -101,7 +101,7 @@ detection:
 level: high
 `
 
-const sigmaAndNotRule = `title: COI Test And-Not
+const sigmaAndNotRule = `title: Coi Test And-Not
 id: 00000000-0000-0000-0000-000000000002
 logsource:
     category: process_creation

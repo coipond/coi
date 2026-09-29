@@ -89,7 +89,7 @@ func evaluateKernelBuildTime(built, now time.Time) HealthCheck {
 }
 
 // CheckKernelBuildAge warns when the running kernel's build date is older than
-// kernelBuildMaxAge. The kernel is the shared isolation boundary for every COI
+// kernelBuildMaxAge. The kernel is the shared isolation boundary for every Coi
 // container, so a stale build means months of unpatched kernel fixes.
 func CheckKernelBuildAge() HealthCheck {
 	if runtime.GOOS != "linux" {

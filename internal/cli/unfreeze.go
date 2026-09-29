@@ -20,7 +20,7 @@ Use this command to unfreeze the container after investigating the threat.
 
 Examples:
   coi unfreeze coi-abc123-1    # Unfreeze a specific frozen container
-  coi unfreeze                  # Unfreeze all frozen COI containers`,
+  coi unfreeze                  # Unfreeze all frozen Coi containers`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runUnfreeze,
 }
@@ -37,7 +37,7 @@ func runUnfreeze(cmd *cobra.Command, args []string) error {
 		return unfreezeContainer(containerName)
 	}
 
-	// Unfreeze all frozen COI containers
+	// Unfreeze all frozen Coi containers
 	return unfreezeAllFrozen()
 }
 
@@ -63,7 +63,7 @@ func unfreezeContainer(name string) error {
 }
 
 func unfreezeAllFrozen() error {
-	// List all COI containers
+	// List all Coi containers
 	output, err := container.IncusOutput("list", "--format", "csv", "-c", "ns")
 	if err != nil {
 		return fmt.Errorf("failed to list containers: %w", err)
@@ -84,7 +84,7 @@ func unfreezeAllFrozen() error {
 		name := parts[0]
 		status := parts[1]
 
-		// Only unfreeze frozen COI containers
+		// Only unfreeze frozen Coi containers
 		if !strings.HasPrefix(name, "coi-") {
 			continue
 		}
@@ -99,7 +99,7 @@ func unfreezeAllFrozen() error {
 	}
 
 	if unfrozeCount == 0 {
-		fmt.Fprintln(os.Stderr, "No frozen COI containers found")
+		fmt.Fprintln(os.Stderr, "No frozen Coi containers found")
 	} else {
 		fmt.Fprintf(os.Stderr, "Unfroze %d container(s)\n", unfrozeCount)
 	}

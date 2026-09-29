@@ -247,7 +247,7 @@ type GitConfig struct {
 	// be authored by).
 	Name  string `toml:"name"`
 	Email string `toml:"email"`
-	// SeedHostIdentity controls whether COI reads the host's global
+	// SeedHostIdentity controls whether Coi reads the host's global
 	// `git config --global user.name/user.email` and installs it in the container
 	// when no explicit Name/Email is given. Defaults to true. Set false to keep
 	// the fail-closed guard only (git refuses commits until the tool sets an
@@ -541,8 +541,8 @@ type NetworkConfig struct {
 	AllowedDomains          []string `toml:"allowed_domains"`
 	RefreshIntervalMinutes  int      `toml:"refresh_interval_minutes"`
 	AllowLocalNetworkAccess *bool    `toml:"allow_local_network_access"` // Allow established connections from entire local network (not just gateway)
-	// UseSudo controls whether COI may invoke `sudo` for network operations (nft,
-	// iptables). Defaults to true. When false, COI never shells out to sudo: it
+	// UseSudo controls whether Coi may invoke `sudo` for network operations (nft,
+	// iptables). Defaults to true. When false, Coi never shells out to sudo: it
 	// behaves as if passwordless sudo were unavailable, so `restricted`/`allowlist`
 	// modes error out (no silent downgrade) and `open` mode runs without privileged
 	// rules. For users who decline the installer's /etc/sudoers.d/coi-nft rule.
@@ -555,7 +555,7 @@ type NetworkConfig struct {
 	// untrusted project config's entries are stripped at load time.
 	Hosts []HostEntry `toml:"hosts"`
 	// DNSServers pins the resolvers the container may reach on port 53. In
-	// restricted mode COI accepts :53 only to these addresses and rejects every
+	// restricted mode Coi accepts :53 only to these addresses and rejects every
 	// other off-box DNS query, so a compromised container cannot bypass your
 	// resolver by talking straight to a public one (e.g. 8.8.8.8). The pin applies
 	// to ALL destinations, including the LAN and even when allow_local_network_access
@@ -1003,7 +1003,7 @@ func (m *MonitoringConfig) IsForensicsOnKillEnabled() bool {
 	return m != nil && m.ForensicsOnKill != nil && *m.ForensicsOnKill
 }
 
-// SudoAllowed reports whether COI may invoke `sudo` for network operations.
+// SudoAllowed reports whether Coi may invoke `sudo` for network operations.
 // Defaults to true; set `[network] use_sudo = false` to opt out (no sudoers
 // rule required, at the cost of restricted/allowlist enforcement).
 func (n *NetworkConfig) SudoAllowed() bool {

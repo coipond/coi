@@ -21,7 +21,7 @@
     },
     "readonly": {
       "type": "boolean",
-      "description": "Lock the configured commit identity so the container agent cannot overwrite it: instead of writing ~/.gitconfig (which is writable), COI mounts the identity read-only at ~/.gitconfig. This locks the WHOLE global gitconfig, so ANY `git config --global …` in the container fails read-only (use per-repo --local config for other settings). Only takes effect with a resolvable identity (name/email, or a seeded host identity); if it cannot be applied the session fails closed rather than falling back to writable. Trusted-scope only. Default false."
+      "description": "Lock the configured commit identity so the container agent cannot overwrite it: instead of writing ~/.gitconfig (which is writable), Coi mounts the identity read-only at ~/.gitconfig. This locks the WHOLE global gitconfig, so ANY `git config --global …` in the container fails read-only (use per-repo --local config for other settings). Only takes effect with a resolvable identity (name/email, or a seeded host identity); if it cannot be applied the session fails closed rather than falling back to writable. Trusted-scope only. Default false."
     },
     "strip_attribution": {
       "type": "boolean",

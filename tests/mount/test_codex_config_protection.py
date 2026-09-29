@@ -6,7 +6,7 @@ commands the host would run (e.g. `notify`, MCP server launchers) when a host
 codex session trusts the repo. The workspace is mounted read-write and persists
 to the host, so a contained agent that could write that file could plant a
 command a *later* host codex session would auto-execute — the same containment
-escape `.claude/settings.json` protection closes (#504). COI mounts the file
+escape `.claude/settings.json` protection closes (#504). Coi mounts the file
 read-only (protected_paths) and materializes an empty placeholder when absent
 so it cannot be planted either.
 """
@@ -55,7 +55,7 @@ def test_codex_config_readonly_by_default(coi_binary, cleanup_containers, worksp
 
 def test_codex_config_cannot_be_planted_when_absent(coi_binary, cleanup_containers, workspace_dir):
     """With NO .codex dir at launch, a contained agent must not be able to PLANT
-    .codex/config.toml carrying a command payload — COI materializes the parent
+    .codex/config.toml carrying a command payload — Coi materializes the parent
     dir + an empty read-only placeholder, so the create fails and nothing
     persists to the host (mirrors the .claude/settings.json planting guard)."""
     codex_dir = Path(workspace_dir) / ".codex"
@@ -77,7 +77,7 @@ def test_codex_config_cannot_be_planted_when_absent(coi_binary, cleanup_containe
         f"returncode: {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
 
-    # Nothing malicious persisted to the host — the placeholder COI created is empty.
+    # Nothing malicious persisted to the host — the placeholder Coi created is empty.
     host_file = codex_dir / "config.toml"
     if host_file.exists():
         content = host_file.read_text()

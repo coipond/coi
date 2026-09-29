@@ -43,7 +43,7 @@ This test reproduces the exact conditions:
      (the one from the bug report).
   2. Spawn `coi shell` with `COI_USE_DUMMY=1` so the inner CLI is the
      scripted dummy (no real opencode, no real API calls).
-  3. Exit the dummy to bash and `rm -rf ~/.config/opencode` — COI
+  3. Exit the dummy to bash and `rm -rf ~/.config/opencode` — Coi
      auto-injects `opencode.json` during setup, so the directory
      would otherwise exist. Deleting it inside the container
      guarantees the `PullDirectory` call in cleanup hits the
@@ -106,7 +106,7 @@ def test_cleanup_silent_when_tool_config_dir_missing(coi_binary, workspace_dir, 
 
         # === Phase 3: drop to bash, nuke .config/opencode ===
         #
-        # COI's setupCLIConfig writes ~/.config/opencode/opencode.json
+        # Coi's setupCLIConfig writes ~/.config/opencode/opencode.json
         # during container bring-up (via ToolWithConfigDirFiles), so
         # the directory exists by default. Delete it so PullDirectory
         # in cleanup hits the "file does not exist" branch.

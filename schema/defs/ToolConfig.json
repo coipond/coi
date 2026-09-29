@@ -22,7 +22,7 @@
     },
     "auto_context": {
       "type": "boolean",
-      "description": "Automatically inject the COI sandbox context into the tool's native system (default: true)"
+      "description": "Automatically inject the Coi sandbox context into the tool's native system (default: true)"
     },
     "context_json": {
       "type": "boolean",

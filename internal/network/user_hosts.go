@@ -145,7 +145,7 @@ func ApplyUserHosts(containerName string, mode config.NetworkMode, allowLocalNet
 	return WriteUserHosts(containerName, entries)
 }
 
-// ReadUserHosts returns the host entries currently in the container's COI
+// ReadUserHosts returns the host entries currently in the container's Coi
 // user-hosts /etc/hosts block (empty if none). Used by `coi hosts list/add/remove`
 // to read-modify-write the block on a running container.
 func ReadUserHosts(containerName string) ([]config.HostEntry, error) {

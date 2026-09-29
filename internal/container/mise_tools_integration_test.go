@@ -10,7 +10,7 @@ import (
 )
 
 // TestMiseTools_AvailableInImage verifies that mise-managed tools (python3, pnpm,
-// tsc, tsx) are installed and accessible in the COI container image via mise.
+// tsc, tsx) are installed and accessible in the Coi container image via mise.
 func TestMiseTools_AvailableInImage(t *testing.T) {
 	if _, err := exec.LookPath("incus"); err != nil {
 		t.Skip("incus not found, skipping integration test")

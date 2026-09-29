@@ -12,7 +12,7 @@ import (
 // rather than in one rule per address:
 //
 //	coi_s_<ip>  static  — literal IPs and CIDRs from allowed_domains. Permanent.
-//	coi_d_<ip>  dynamic — addresses learned from DNS answers COI itself served.
+//	coi_d_<ip>  dynamic — addresses learned from DNS answers Coi itself served.
 //	                      Each element carries a timeout.
 //
 // Four rules reference the sets (an L4 rule and a rate-limited ICMP rule per

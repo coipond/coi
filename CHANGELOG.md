@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- [Change] **Primary name is now `Coi`** — `Coi` (Code on Incus) is the product name and `coi` the command; the old all-caps `COI` styling is gone. `coi version` now prints `Coi (Code on Incus) v…`. Cosmetic only; no behavior change.
+
 ### Breaking
 
 - [Breaking] **Direct commits/pushes to `main` and `master` are now blocked by default** — agents work on a feature branch and open a PR instead. Configure or turn it off with `[git] protected_branches` (set to `[]` to disable).
@@ -176,7 +180,7 @@
 - [Feature] **Persistent `coi run` reuses its stopped container** — state actually persists across runs instead of launching a fresh container each time.
 - [Feature] **Resume can change a session's persistence via config** — an explicit `[container] persistent` now wins over the resumed session's recorded mode.
 - [Feature] **Explicit `--profile` wins over the workspace overlay** — a project `.coi/config.toml` can no longer override the profile's `[container]` settings.
-- [Feature] **Built-in `hardened` profile for untrusted repos (#496)** — `--profile hardened` bundles COI's strongest controls into one preset.
+- [Feature] **Built-in `hardened` profile for untrusted repos (#496)** — `--profile hardened` bundles Coi's strongest controls into one preset.
 - [Feature] **Non-sudoers mode `[network] use_sudo = false` (#508)** — run without the passwordless-sudo nft rule; restricted/allowlist modes fail closed, open mode works.
 
 ### Improvements
@@ -196,7 +200,7 @@
 ### Added
 
 - [Feature] **The base image can install only the AI agents you use (#454)** — `[container.build] agents = [...]` installs just the listed agents.
-- [Feature] **Git worktrees / bare-repo checkouts now work inside the container, securely (#533)** — COI mounts the worktree's external gitdir while keeping hook/config RCE-sink files read-only.
+- [Feature] **Git worktrees / bare-repo checkouts now work inside the container, securely (#533)** — Coi mounts the worktree's external gitdir while keeping hook/config RCE-sink files read-only.
 
 ### Bug Fixes
 
@@ -284,7 +288,7 @@
 - [Bug Fix] **`poweroff` / `close` now work cleanly in Ubuntu 24.04 containers** — bypasses a systemd-logind transaction conflict; also fixes the `unable to resolve host` warning before sudo.
 - [Bug Fix] **Clearer error when the incus-admin group isn't active yet** — tells you to log out/in or run `newgrp incus-admin` (#383).
 - [Bug Fix] **Escape key now works in nested tmux sessions** — ships `escape-time 10` so Esc reaches opencode/vim promptly (#378).
-- [Bug Fix] **Effort level no longer locked when not configured** — COI only injects `CLAUDE_CODE_EFFORT_LEVEL` when `effort_level` is set, so you can change it mid-session (#376).
+- [Bug Fix] **Effort level no longer locked when not configured** — Coi only injects `CLAUDE_CODE_EFFORT_LEVEL` when `effort_level` is set, so you can change it mid-session (#376).
 - [Bug Fix] **`coi run` now applies network isolation and SSH agent forwarding from config** — previously it ignored `[network]`/`[ssh]` (#373).
 - [Bug Fix] **Fixed a double `v` prefix (`vv0.8.x`) in the version display**.
 - [Bug Fix] **Session data no longer lost on `sudo poweroff`** — the session-state save retries once the container has stopped instead of failing on a transient SFTP error (#397).
@@ -318,7 +322,7 @@
 
 ### Breaking Changes
 
-- [Breaking] **Host-side immutable protection for protected paths** — COI `chattr +i`'s protected paths on the host before start, closing the `unshare -m` + `umount` bypass.
+- [Breaking] **Host-side immutable protection for protected paths** — Coi `chattr +i`'s protected paths on the host before start, closing the `unshare -m` + `umount` bypass.
 - [Breaking] **Default image renamed `coi` → `coi-default`** — run `coi build` after updating.
 - [Breaking] **Removed `coi build custom`** — build custom images through profiles instead.
 - [Breaking] **Auto-build on missing image removed** — `coi shell`/`coi run` now error and tell you to `coi build` first.
@@ -415,7 +419,7 @@
 - [Feature] **Configurable protected paths** — `[security]` `protected_paths` / `additional_protected_paths` / `disable_protection` control the read-only set (defaults: `.git/hooks`, `.git/config`, `.husky`, `.vscode`); symlinks rejected.
 - [Feature] **`preserve_workspace_path`** — mount the workspace at its host absolute path instead of `/workspace`, so path-relative session data persists (#108).
 - [Feature] **Claude effort-level config** — `[tool.claude] effort_level` prevents interactive prompts in autonomous sessions.
-- [Feature] **`coi unfreeze`** — unfreeze a security-paused container (or all frozen COI containers).
+- [Feature] **`coi unfreeze`** — unfreeze a security-paused container (or all frozen Coi containers).
 - [Feature] **`--tool` flag for `coi shell`** — override the configured tool for one session.
 - [Feature] **New health checks** — Incus storage pool, container connectivity (real in-container DNS/HTTP test), and network restriction (verifies restricted mode actually blocks private IPs) (#102).
 - [Feature] **`coi container list` and `-t/--tty` for `coi container exec`** — low-level listing and PTY allocation for programmatic/interactive use (#123, #124).
@@ -470,7 +474,7 @@ Version injection implementation:
 
 ### Features
 
-- [Feature] Auto-detect and fix DNS misconfiguration during image build. On Ubuntu systems with systemd-resolved, containers may receive `127.0.0.53` as their DNS server, which doesn't work inside containers. COI now automatically detects this issue and injects working public DNS servers (8.8.8.8, 8.8.4.4, 1.1.1.1) to unblock the build process.
+- [Feature] Auto-detect and fix DNS misconfiguration during image build. On Ubuntu systems with systemd-resolved, containers may receive `127.0.0.53` as their DNS server, which doesn't work inside containers. Coi now automatically detects this issue and injects working public DNS servers (8.8.8.8, 8.8.4.4, 1.1.1.1) to unblock the build process.
 - [Feature] Built images now include conditional DNS fix that activates only when DNS is misconfigured, ensuring containers work regardless of host Incus network configuration.
 - [Feature] Allowlist mode now supports raw IPv4 addresses in addition to domain names. Users can add entries like `8.8.8.8` directly to `allowed_domains` without needing to resolve them.
 

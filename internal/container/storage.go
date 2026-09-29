@@ -6,7 +6,7 @@ import (
 )
 
 // StoragePool is a minimal projection of an Incus storage pool entry.
-// Only the fields COI cares about are decoded — Incus's full schema is
+// Only the fields Coi cares about are decoded — Incus's full schema is
 // significantly larger and changes between releases.
 type StoragePool struct {
 	Name   string            `json:"name"`

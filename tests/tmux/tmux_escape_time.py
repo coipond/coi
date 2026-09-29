@@ -2,7 +2,7 @@
 Behavioral test for tmux escape-time in the coi-default image.
 
 Regression for https://github.com/mensfeld/code-on-incus/issues/378:
-When using nested tmux (e.g. SSH → host tmux → COI tmux), the default
+When using nested tmux (e.g. SSH → host tmux → Coi tmux), the default
 escape-time of 500ms stacks at each nesting level, causing the Escape key to
 feel completely broken in applications like opencode/vim.
 

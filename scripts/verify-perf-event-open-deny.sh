@@ -7,7 +7,7 @@
 set -euo pipefail
 
 INCUS="${INCUS:-incus}"                 # set INCUS="sudo incus" if needed
-# Default to COI's local image (present on any COI host, no network needed).
+# Default to Coi's local image (present on any Coi host, no network needed).
 # Override with IMAGE=images:alpine/edge or IMAGE=ubuntu:24.04 if you prefer.
 IMAGE="${IMAGE:-coi-default}"
 C="coi-perf-verify-$$"
@@ -23,7 +23,7 @@ fi
 cleanup() { $INCUS delete -f "$C" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-# This mirrors exactly what COI writes: a \n-separated list, each entry with an
+# This mirrors exactly what Coi writes: a \n-separated list, each entry with an
 # explicit "errno 1" action. Both matter — a space-separated value is one
 # malformed LXC rule (container won't start), and a bare syscall name inherits
 # LXC's default action, which on current Incus is SIGSYS-KILL (init dies)

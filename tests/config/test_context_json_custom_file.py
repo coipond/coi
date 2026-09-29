@@ -23,7 +23,7 @@ from support.helpers import (
 )
 
 CUSTOM_JSON = json.dumps(
-    {"schema_version": 99, "custom_marker": "COI-CUSTOM-JSON-TEST", "note": "injected verbatim"}
+    {"schema_version": 99, "custom_marker": "Coi-CUSTOM-JSON-TEST", "note": "injected verbatim"}
 )
 
 
@@ -91,7 +91,7 @@ def test_context_json_custom_file_injected_verbatim(
     )
 
     assert exists, "~/SANDBOX_CONTEXT.json should exist when context_json_file is set"
-    assert "COI-CUSTOM-JSON-TEST" in content, (
+    assert "Coi-CUSTOM-JSON-TEST" in content, (
         f"custom JSON should be injected verbatim, got:\n{content[:500]}"
     )
     data = json.loads(content)

@@ -1,6 +1,6 @@
 # Lima template for the CI lima-smoke lane (issue #543).
 #
-# Purpose: run COI's smoke tests INSIDE a Lima VM on a Linux runner so that
+# Purpose: run Coi's smoke tests INSIDE a Lima VM on a Linux runner so that
 # isColimaOrLimaEnvironment() (internal/session/setup_helpers.go) is genuinely
 # true in CI — it keys on "virtiofs" appearing in /proc/mounts, which is why
 # mountType MUST be virtiofs here. This reproduces the macOS Colima/Lima

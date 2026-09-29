@@ -27,7 +27,7 @@ var imageListCmd = &cobra.Command{
 	Long: `List available Incus images with optional filtering.
 
 Examples:
-  coi image list                           # List COI images
+  coi image list                           # List Coi images
   coi image list --all                     # List all local images
   coi image list --prefix claudeyard-      # List images starting with prefix
   coi image list --format json             # Output as JSON`,
@@ -185,7 +185,7 @@ var imageInfoCmd = &cobra.Command{
 
 func init() {
 	// Add flags to list command
-	imageListCmd.Flags().BoolVarP(&showAll, "all", "a", false, "Show all local images, not just COI images")
+	imageListCmd.Flags().BoolVarP(&showAll, "all", "a", false, "Show all local images, not just Coi images")
 	imageListCmd.Flags().String("prefix", "", "Filter images by alias prefix")
 	imageListCmd.Flags().String("format", "text", "Output format: text or json")
 	imageListCmd.Flags().Bool("json", false, "Alias for --format json")
@@ -264,11 +264,11 @@ func imageListCommand(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Default listing (COI images + optional all)
+	// Default listing (Coi images + optional all)
 	fmt.Println("Available Images:")
 	fmt.Println()
 
-	// Check COI images
+	// Check Coi images
 	coiImages := []struct {
 		alias       string
 		description string
@@ -277,7 +277,7 @@ func imageListCommand(cmd *cobra.Command, args []string) error {
 		{"coi-default", "coi image (Claude CLI, Node.js, Docker, GitHub CLI, tmux)", "coi build"},
 	}
 
-	fmt.Println("COI Images:")
+	fmt.Println("Coi Images:")
 	for _, img := range coiImages {
 		exists, err := container.ImageExists(img.alias)
 		if err != nil {

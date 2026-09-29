@@ -4,10 +4,10 @@ In-workspace Claude Code project settings must be read-only inside the container
 `.claude/settings.json` (and `.claude/settings.local.json`) can carry a "hooks"
 key — shell commands Claude auto-executes when it opens the repo. The workspace
 is mounted read-write and persists to the host, so a contained agent that could
-write those files could plant a hook that a *later* session — another COI
+write those files could plant a hook that a *later* session — another Coi
 container, or a native `claude` run on the host — would auto-execute on open. That
 is a containment escape (the contained agent gets code execution in a context it
-should not). COI mounts those files read-only (protected_paths) so the agent
+should not). Coi mounts those files read-only (protected_paths) so the agent
 cannot tamper with them. The protection is opt-out, but only from trusted-scope
 config (`security.writable_paths`) — an untrusted project `.coi/config.toml`
 cannot remove it.
@@ -134,7 +134,7 @@ def test_claude_settings_cannot_be_planted_when_absent(
     not be able to PLANT .claude/settings.json (or .local.json) carrying a hooks
     payload that a later host `claude` session would auto-execute.
 
-    COI materializes the parent .claude dir + an empty read-only placeholder for
+    Coi materializes the parent .claude dir + an empty read-only placeholder for
     each settings file, so the create fails and no payload persists to the host.
     (Regression for the #504 review: every other test seeds .claude first, so this
     absent-file planting case was previously untested — and unprotected.)
@@ -156,7 +156,7 @@ def test_claude_settings_cannot_be_planted_when_absent(
             f"returncode: {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
-    # Crucially: nothing malicious persisted to the host. The placeholders COI
+    # Crucially: nothing malicious persisted to the host. The placeholders Coi
     # created are empty; the planted payload must not be there.
     for name in CLAUDE_FILES:
         host_file = claude_dir / name

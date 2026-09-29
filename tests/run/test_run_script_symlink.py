@@ -2,7 +2,7 @@
 `coi run` (no args) executes a workspace-root `coi-run` script. The 0.10 claim
 (#559 A7): a `coi-run` *symlink* is followed only if it resolves INSIDE the
 workspace — a target outside it passes the host stat but would not exist in the
-container, so COI fails fast host-side with an explanation. Unit-tested
+container, so Coi fails fast host-side with an explanation. Unit-tested
 (run_test.go); these are the missing end-to-end checks.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def _run_noargs(coi_binary, workspace_dir, timeout=120):
-    # No `--` command => run-script mode: COI looks for workspace/coi-run.
+    # No `--` command => run-script mode: Coi looks for workspace/coi-run.
     return subprocess.run(
         [coi_binary, "run", "--workspace", workspace_dir],
         capture_output=True,

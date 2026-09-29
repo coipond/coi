@@ -2,7 +2,7 @@
 Test the interactive auto-build prompt when an image is missing.
 
 When coi shell/run is invoked from a terminal (stdin is a TTY) and the
-requested image does not exist, COI prompts the user to build it instead
+requested image does not exist, Coi prompts the user to build it instead
 of immediately failing.
 
 Tests:
@@ -53,7 +53,7 @@ def _close(child):
 
 def test_prompt_shown_on_tty_for_missing_image(coi_binary, workspace_dir):
     """
-    When stdin is a terminal and the image is missing, COI should ask the
+    When stdin is a terminal and the image is missing, Coi should ask the
     user before failing — not immediately print an error.
     """
     write_workspace_container_config(workspace_dir, image=_FAKE_DEFAULT)
@@ -185,7 +185,7 @@ def test_prompt_yes_triggers_build_attempt_for_custom_image(coi_binary, workspac
 
 def test_no_prompt_when_stdin_not_tty(coi_binary, workspace_dir):
     """
-    When stdin is not a TTY, COI must not show the prompt and must fail
+    When stdin is not a TTY, Coi must not show the prompt and must fail
     immediately with the actionable error message.
 
     stdin=subprocess.DEVNULL guarantees a non-TTY stdin regardless of

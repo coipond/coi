@@ -22,7 +22,7 @@ import (
 // CleanupOptions contains options for cleaning up a session
 type CleanupOptions struct {
 	ContainerName  string
-	SessionID      string    // COI session ID for saving tool config data
+	SessionID      string    // Coi session ID for saving tool config data
 	Persistent     bool      // If true, stop but don't delete container
 	ProfileName    string    // Profile used for this session (saved in metadata for --resume)
 	SessionsDir    string    // e.g., ~/.coi/sessions-claude

@@ -534,7 +534,7 @@ func CheckSecretMasking(imageName string, policy container.HardeningPolicy) Heal
 	}
 }
 
-// CheckHostCredentialIsolation proves COI's headline guarantee — host
+// CheckHostCredentialIsolation proves Coi's headline guarantee — host
 // credentials are not exposed to the container unless explicitly mounted — holds
 // at runtime. It plants a decoy in the host home directory, launches a probe
 // container with its own (separate) temp workspace, and confirms the decoy is
@@ -560,7 +560,7 @@ func CheckHostCredentialIsolation(imageName string, policy container.HardeningPo
 	if err != nil {
 		return HealthCheck{Name: name, Status: StatusWarning, Message: fmt.Sprintf("Skipped (home dir: %v)", err)}
 	}
-	// Decoy in the host home ROOT (not inside .ssh/.aws — non-invasive); if COI
+	// Decoy in the host home ROOT (not inside .ssh/.aws — non-invasive); if Coi
 	// ever mounted the host home into a container it would surface here.
 	decoyPath := filepath.Join(homeDir, fmt.Sprintf(".coi-hostcred-decoy-%d", time.Now().UnixNano()))
 	if err := os.WriteFile(decoyPath, []byte(sentinel+"\n"), 0o600); err != nil {

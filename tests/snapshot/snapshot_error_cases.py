@@ -105,7 +105,7 @@ def test_snapshot_delete_requires_name_or_all(coi_binary):
 
 def test_snapshot_list_all_no_containers(coi_binary):
     """
-    Test listing all snapshots when no COI containers exist.
+    Test listing all snapshots when no Coi containers exist.
     """
     result = subprocess.run(
         [coi_binary, "snapshot", "list", "--all"],

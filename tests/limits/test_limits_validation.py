@@ -154,7 +154,7 @@ read = "10MB"
 def test_incus_accepts_disk_io_formats(coi_binary, workspace_dir, cleanup_containers):
     """Test that Incus itself accepts every disk I/O format class we validate.
 
-    COI's validator is a regex; the real arbiter is Incus's units parser at
+    Coi's validator is a regex; the real arbiter is Incus's units parser at
     `incus config device set root limits.read=...`. Setting the key on a
     STOPPED container still runs Incus's value validation, so this proves
     SI (kB), IEC-free sizes (GB) and iops acceptance without booting anything

@@ -3,7 +3,7 @@ Project (.coi/config.toml) config must not be able to weaken network isolation.
 
 A repo-supplied or agent-planted project config that sets
 block_metadata_endpoint=false / block_private_networks=false / mode=open is a
-silent downgrade of the secure defaults. COI refuses such downgrades from
+silent downgrade of the secure defaults. Coi refuses such downgrades from
 project scope (with a warning); only the user's ~/.coi/config.toml or an
 explicit COI_CONFIG may relax them.
 """

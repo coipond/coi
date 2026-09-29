@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// COI should be able to parse the real nftables version from `nft --version` output
+// Coi should be able to parse the real nftables version from `nft --version` output
 // and the parsed major version should fall within a reasonable range (0-99).
 func TestNFTVersionIntegration(t *testing.T) {
 	if _, err := exec.LookPath("nft"); err != nil {

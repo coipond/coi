@@ -1,4 +1,4 @@
-// Package schema provides access to the COI profile JSON Schema.
+// Package schema provides access to the Coi profile JSON Schema.
 // External tools (e.g. a Rails web UI) can consume the schema via
 // `coi schema profile` and validate profile config.toml data before
 // writing it to disk — no need to duplicate field-level validation.
@@ -28,7 +28,7 @@ var rootSchemaBytes []byte
 var defsFS embed.FS
 
 // GetProfileSchema returns a self-contained JSON Schema 2020-12 document
-// describing the full COI profile config.toml structure.  All sub-type
+// describing the full Coi profile config.toml structure.  All sub-type
 // definitions from defs/ are bundled inline so the output can be used
 // by any validator without additional file resolution.
 func GetProfileSchema() ([]byte, error) {

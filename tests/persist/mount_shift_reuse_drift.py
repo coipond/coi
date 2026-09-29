@@ -3,7 +3,7 @@ Per-mount `shift` reuse-drift warning (#604).
 
 [[mounts]] devices are created once and never re-added on reuse, so changing a
 mount's `shift` in config is a silent no-op until the container is recreated.
-COI must WARN about that drift on reuse instead of silently ignoring it.
+Coi must WARN about that drift on reuse instead of silently ignoring it.
 
 The effective shift depends on the container's UID-mapping regime (an idmapped
 `shift` mount vs a container-wide `raw.idmap`), so the test reads the

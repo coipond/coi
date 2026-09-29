@@ -4,7 +4,7 @@ with no "Warning: Failed to save session data" warnings.
 
 Root cause (fixed in #397):
 
-    When the container shuts down via 'sudo poweroff', COI's cleanup
+    When the container shuts down via 'sudo poweroff', Coi's cleanup
     goroutine immediately attempts to pull the tool config directory via
     incus file pull (SFTP). The container's SFTP subsystem may still be
     mid-teardown at that point, producing transient errors:

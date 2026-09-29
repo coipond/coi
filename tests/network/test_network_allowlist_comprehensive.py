@@ -403,7 +403,7 @@ refresh_interval_minutes = 30
             timeout=15,
         )
 
-        # Allowlist mode blocks DNS outright. COI resolves the allowlisted hostnames
+        # Allowlist mode blocks DNS outright. Coi resolves the allowlisted hostnames
         # on the host, writes the addresses into the container's /etc/hosts, and
         # denies every route to a nameserver — so the hosts file is the container's
         # only way to turn a name into an address, and it holds exactly what the
@@ -415,7 +415,7 @@ refresh_interval_minutes = 30
         # the address is reachable, port 53 is not.
         assert result.returncode != 0, (
             "DNS to a public resolver must be blocked in allowlist mode — otherwise the container "
-            f"can resolve names COI never saw: {result.stdout}{result.stderr}"
+            f"can resolve names Coi never saw: {result.stdout}{result.stderr}"
         )
 
     finally:

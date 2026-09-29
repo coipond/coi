@@ -1,10 +1,10 @@
 """
 The workspace .coi/ directory must be read-only inside the container.
 
-COI reads <workspace>/.coi/config.toml on every launch (host-side). If an
+Coi reads <workspace>/.coi/config.toml on every launch (host-side). If an
 in-container agent could write that directory it could plant a malicious
 config.toml/profile that, on the next launch, mounts arbitrary host paths or
-weakens network isolation — a cross-session sandbox escape. COI mounts .coi/
+weakens network isolation — a cross-session sandbox escape. Coi mounts .coi/
 read-only (protected_paths) so the agent cannot tamper with it.
 """
 

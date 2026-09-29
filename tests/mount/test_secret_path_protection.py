@@ -2,7 +2,7 @@
 Workspace secret-path masking must hide repo-local secrets from the agent.
 
 `security.secret_paths` lists workspace-relative globs (e.g. `.env`, `*.pem`,
-`secrets/**`). COI masks each match inside the container by mounting an empty,
+`secrets/**`). Coi masks each match inside the container by mounting an empty,
 read-only file/dir over it, so the contained agent can neither READ its contents
 (exfil protection) nor MODIFY it (tamper protection). The host file is untouched.
 Issue #494.
@@ -95,7 +95,7 @@ def test_secret_path_symlink_is_resolved_and_masked(coi_binary, cleanup_containe
     """A secret reached through a symlink is masked at its real target.
 
     A repo must not be able to evade masking by making the listed secret a
-    symlink to another in-workspace file. COI resolves the symlink and masks
+    symlink to another in-workspace file. Coi resolves the symlink and masks
     the real target, so reading EITHER the link or its target returns empty.
     """
     ws = Path(workspace_dir)

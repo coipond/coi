@@ -92,7 +92,7 @@ func TestSetupCLIConfig_Codex_Integration(t *testing.T) {
 }
 
 // TestInjectAutoContext_Codex_Integration verifies the auto-context chain in a
-// real container: the COI-managed sandbox block is written into
+// real container: the Coi-managed sandbox block is written into
 // ~/.codex/AGENTS.md, coexists with host-seeded content, and stays a single
 // copy across repeated sessions (the #674 accumulation guard, for codex).
 func TestInjectAutoContext_Codex_Integration(t *testing.T) {
@@ -142,6 +142,6 @@ func TestInjectAutoContext_Codex_Integration(t *testing.T) {
 		t.Errorf("host content must survive exactly once, found %d occurrences", n)
 	}
 	if n := strings.Count(got, "# COI Sandbox Environment"); n != 1 {
-		t.Errorf("expected exactly one COI sandbox block after repeated sessions, found %d", n)
+		t.Errorf("expected exactly one Coi sandbox block after repeated sessions, found %d", n)
 	}
 }
