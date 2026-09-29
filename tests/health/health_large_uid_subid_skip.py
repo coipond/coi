@@ -49,6 +49,11 @@ def test_idmap_probes_skip_when_uid_in_subuid_range(coi_binary):
     uid = os.getuid()
     original = _read_subuid()
     base = original if original is not None else b""
+    # Guarantee a separator: if /etc/subuid has no trailing newline, a bare
+    # concatenation would merge the injected line into the last existing one and
+    # corrupt both (neither would parse), so the probe wouldn't skip.
+    if base and not base.endswith(b"\n"):
+        base += b"\n"
     # A dedicated multi-ID range covering the current UID → reproduces the #838
     # "host UID inside a subordinate range" condition (count>1 is what breaks).
     injected = base + f"coitest838:{uid}:2\n".encode()

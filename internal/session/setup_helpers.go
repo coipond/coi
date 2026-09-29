@@ -66,8 +66,13 @@ func ConfigureUIDMapping(containerName string, sources []string, disableShift bo
 		if setErr := container.IncusExec("config", "set", containerName, "raw.idmap", idmap); setErr != nil {
 			// Fail fast (#838): without this map the workspace mounts with no UID
 			// mapping and is unwritable — silently continuing hands an agent a
-			// broken /workspace. Abort with a cause the caller surfaces.
-			return useShift, false, rawIdmapFailure(setErr, os.Getuid())
+			// broken /workspace. Abort with a cause the caller surfaces; when the
+			// host UID is subordinate, also print the copy-paste fix.
+			line, inRange := HostUIDSubordinateRange()
+			if inRange {
+				logger(rawIdmapGuidance())
+			}
+			return useShift, false, rawIdmapFailure(setErr, os.Getuid(), line)
 		}
 		return useShift, true, nil
 	}
@@ -81,25 +86,29 @@ func ConfigureUIDMapping(containerName string, sources []string, disableShift bo
 	return useShift, false, nil
 }
 
-// rawIdmapFailure builds the fatal error for a rejected `raw.idmap` set. When the
-// host UID sits inside a multi-ID subordinate range in /etc/subuid — the reason
-// Incus rejects the map (#838, e.g. Google Cloud OS Login UIDs inside root's
-// delegation block) — it names that cause and the fix. Extracted (pure) so the
-// message is unit-testable.
-func rawIdmapFailure(err error, hostUID int) error {
-	if line, inRange := HostUIDSubordinateRange(); inRange {
-		return fmt.Errorf("failed to set raw.idmap (%v): host UID %d is inside a subordinate ID "+
-			"range in /etc/subuid (%s), so Incus cannot map it into the container and /workspace "+
-			"would be unwritable.\n\nTo fix, pick one:\n"+
-			"  1. Give Incus a dedicated delegation for your UID and restart it, then relaunch:\n"+
-			"       echo \"root:$(id -u):1\" | sudo tee -a /etc/subuid /etc/subgid\n"+
-			"       sudo systemctl restart incus\n"+
-			"  2. Or run coi as a user whose UID is below the subuid range (e.g. the image's uid-%d user).\n\n"+
-			"Run `coi health` for a diagnosis.",
-			err, hostUID, line, container.CodeUID)
+// rawIdmapFailure builds the fatal error for a rejected `raw.idmap` set — terse
+// and staticcheck-clean (ST1005: no capital, no trailing punctuation/newline).
+// The actionable multi-line fix is emitted separately via rawIdmapGuidance (a
+// log line, not an error string). `line` is the offending /etc/subuid range, ""
+// when the host UID isn't subordinate. Extracted (pure) so it is unit-testable.
+func rawIdmapFailure(setErr error, hostUID int, line string) error {
+	if line != "" {
+		return fmt.Errorf("host UID %d is inside a subordinate ID range in /etc/subuid (%s), so Incus "+
+			"cannot map it and the workspace would be unwritable (raw.idmap: %w)", hostUID, line, setErr)
 	}
-	return fmt.Errorf("failed to set raw.idmap (%v): the workspace cannot be UID-mapped into the "+
-		"container and would be unwritable", err)
+	return fmt.Errorf("cannot UID-map the workspace; it would be unwritable (raw.idmap: %w)", setErr)
+}
+
+// rawIdmapGuidance is the actionable, copy-paste fix printed (via the logger, so
+// ST1005 doesn't apply) when the host UID is subordinate and can't be mapped
+// (#838). Returned as a string so it's unit-testable.
+func rawIdmapGuidance() string {
+	return "To fix the UID mapping, pick one:\n" +
+		"  1. Give Incus a dedicated delegation for your UID and restart it, then relaunch:\n" +
+		"       echo \"root:$(id -u):1\" | sudo tee -a /etc/subuid /etc/subgid\n" +
+		"       sudo systemctl restart incus\n" +
+		fmt.Sprintf("  2. Or run coi as a user whose UID is below the subuid range (e.g. the image's uid-%d user).\n", container.CodeUID) +
+		"Run `coi health` for a diagnosis."
 }
 
 // MountSources lists the HOST paths a session's disk devices are sourced from:
