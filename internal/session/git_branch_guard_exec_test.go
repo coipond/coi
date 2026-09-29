@@ -40,7 +40,7 @@ func installGuards(t *testing.T, repo, hooksDir string, branches []string) {
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"pre-commit", "pre-push"} {
+	for _, name := range branchGuardHooks {
 		p := filepath.Join(hooksDir, name)
 		if err := os.WriteFile(p, []byte(renderBranchGuardScript(name, branches)), 0o755); err != nil {
 			t.Fatal(err)
@@ -81,6 +81,54 @@ func TestBranchGuard_PreCommit_Exec(t *testing.T) {
 	}
 	if out, err := git(t, repo, nil, "commit", "-m", "on feature"); err != nil {
 		t.Fatalf("commit on feature should succeed, got:\n%s", out)
+	}
+}
+
+// A non-fast-forward `git merge` onto a protected branch commits WITHOUT firing
+// pre-commit — only pre-merge-commit runs. This test would pass a merge through
+// if the guard covered pre-commit alone.
+func TestBranchGuard_MergeOntoProtected_Exec(t *testing.T) {
+	requireGit(t)
+	repo := t.TempDir()
+	if out, err := git(t, repo, nil, "init", "-b", "main"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	hooks := filepath.Join(t.TempDir(), "hooks")
+
+	// Seed an initial commit on main BEFORE installing the guard, then branch off
+	// and add a divergent commit so the later merge is a real (non-ff) merge.
+	writeCommit := func(branch, file, content, msg string) {
+		if out, err := git(t, repo, nil, "checkout", "-q", branch); err != nil {
+			// -b when the branch doesn't exist yet
+			if out2, err2 := git(t, repo, nil, "checkout", "-q", "-b", branch); err2 != nil {
+				t.Fatalf("checkout %s: %v / %v\n%s%s", branch, err, err2, out, out2)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(repo, file), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := git(t, repo, nil, "add", file); err != nil {
+			t.Fatalf("add: %v\n%s", err, out)
+		}
+		if out, err := git(t, repo, nil, "commit", "-m", msg); err != nil {
+			t.Fatalf("commit %s: %v\n%s", msg, err, out)
+		}
+	}
+	writeCommit("main", "base.txt", "base", "base")
+	writeCommit("feature", "feat.txt", "feat", "feat") // creates feature off main
+	// A divergent commit on main so `git merge feature` is non-ff (needs a commit).
+	writeCommit("main", "main-only.txt", "mainonly", "main diverge")
+
+	installGuards(t, repo, hooks, []string{"main", "master"})
+
+	// NEGATIVE: merging a feature branch INTO main must be blocked by the guard,
+	// via the pre-merge-commit hook (pre-commit never fires for a merge).
+	out, err := git(t, repo, nil, "merge", "--no-ff", "feature")
+	if err == nil {
+		t.Fatalf("merge onto main should be blocked by the guard, got:\n%s", out)
+	}
+	if !strings.Contains(out, "refusing to commit on protected branch 'main'") {
+		t.Errorf("merge rejection should come from the branch guard, got:\n%s", out)
 	}
 }
 

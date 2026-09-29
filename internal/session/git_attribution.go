@@ -51,13 +51,16 @@ var DefaultAttributionPatterns = []string{
 // running in-container. Deliberately excludes high-frequency plumbing hooks
 // (reference-transaction, post-index-change) — a fork+exec on every ref update
 // is not worth delegating hooks repos rarely use.
-// post-commit, pre-commit and pre-push are intentionally absent: SetupGitHooks
-// handles each explicitly (a root-owned enforcement script — identity re-stamp
-// or branch guard — when active, a plain delegation symlink otherwise), so they
-// must not be blanket-symlinked here.
+// post-commit, pre-commit, pre-merge-commit and pre-push are intentionally
+// absent: SetupGitHooks handles each explicitly (a root-owned enforcement
+// script — identity re-stamp or branch guard — when active, a plain delegation
+// symlink otherwise), so they must not be blanket-symlinked here.
+// pre-merge-commit rides with pre-commit because a non-fast-forward `git merge`
+// creates a commit WITHOUT firing pre-commit — only pre-merge-commit runs — so
+// guarding pre-commit alone would let `git merge` land on a protected branch.
 var delegatedHookNames = []string{
 	"applypatch-msg", "pre-applypatch", "post-applypatch",
-	"pre-merge-commit", "prepare-commit-msg",
+	"prepare-commit-msg",
 	"pre-rebase", "post-checkout", "post-merge",
 	"post-rewrite", "pre-auto-gc",
 }
@@ -170,13 +173,8 @@ func renderPostCommitRestampScript(id GitIdentity) string {
 
 const gitPreCommitGuardHead = `#!/bin/sh
 # Managed by coi ([git] protected_branches): refuse a commit while HEAD is on a
-# protected branch, then run the repository's own pre-commit hook.
+# protected branch, then run the repository's own hook of the same name.
 branch="$(git symbolic-ref --short -q HEAD 2>/dev/null)"
-`
-
-const gitPreCommitGuardTail = `hook="$(git rev-parse --git-dir 2>/dev/null)/hooks/pre-commit"
-[ -x "$hook" ] && exec "$hook" "$@"
-exit 0
 `
 
 const gitPrePushGuardHead = `#!/bin/sh
@@ -199,17 +197,31 @@ $input
 COI_PROTECTED_REFS
 hook="$(git rev-parse --git-dir 2>/dev/null)/hooks/pre-push"
 if [ -x "$hook" ]; then
-	printf '%s\n' "$input" | "$hook" "$@"
+	# Replay the buffered refs faithfully: an empty $input means git sent no ref
+	# lines, so feed the delegate empty stdin rather than a spurious blank line.
+	if [ -n "$input" ]; then
+		printf '%s\n' "$input" | "$hook" "$@"
+	else
+		"$hook" "$@" < /dev/null
+	fi
 	exit $?
 fi
 exit 0
 `
 
-// renderBranchGuardScript bakes the protected-branch checks into the pre-commit
-// or pre-push hook. Each branch becomes its own string-equality `if` (NOT a
-// `case` glob or a shared list) so a name containing a shell/glob metacharacter
-// can neither be mis-matched nor injected — shellEscape single-quotes every
-// value. kind is "pre-commit" or "pre-push".
+// branchGuardHooks are the hook names that get a commit-style branch guard: both
+// refuse a commit while HEAD is on a protected branch. pre-merge-commit is
+// included because a non-fast-forward `git merge` commits WITHOUT firing
+// pre-commit (only pre-merge-commit runs), so guarding pre-commit alone would let
+// a merge land on a protected branch. pre-push is guarded separately (it inspects
+// the pushed refs on stdin, not HEAD).
+var branchGuardHooks = []string{"pre-commit", "pre-merge-commit", "pre-push"}
+
+// renderBranchGuardScript bakes the protected-branch checks into a guard hook.
+// Each branch becomes its own string-equality `if` (NOT a `case` glob or a
+// shared list) so a name containing a shell/glob metacharacter can neither be
+// mis-matched nor injected — shellEscape single-quotes every value. kind is one
+// of branchGuardHooks; every kind delegates to the repo's own hook of that name.
 func renderBranchGuardScript(kind string, branches []string) string {
 	var b strings.Builder
 	switch kind {
@@ -221,7 +233,7 @@ func renderBranchGuardScript(kind string, branches []string) string {
 			b.WriteString("\t\texit 1\n\tfi\n")
 		}
 		b.WriteString(gitPrePushGuardTail)
-	default: // pre-commit
+	default: // pre-commit / pre-merge-commit (both guard on HEAD's branch)
 		b.WriteString(gitPreCommitGuardHead)
 		for _, br := range branches {
 			b.WriteString("if [ \"$branch\" = " + shellEscape(br) + " ]; then\n")
@@ -229,7 +241,10 @@ func renderBranchGuardScript(kind string, branches []string) string {
 			b.WriteString("\techo \"     Work on a feature branch first: git switch -c <name>\" >&2\n")
 			b.WriteString("\texit 1\nfi\n")
 		}
-		b.WriteString(gitPreCommitGuardTail)
+		// Delegate to the repo's own hook of the SAME name (pre-commit or
+		// pre-merge-commit), not a fixed one.
+		b.WriteString("hook=\"$(git rev-parse --git-dir 2>/dev/null)/hooks/" + kind + "\"\n")
+		b.WriteString("[ -x \"$hook\" ] && exec \"$hook\" \"$@\"\nexit 0\n")
 	}
 	return b.String()
 }
@@ -329,12 +344,12 @@ func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentit
 		logger(fmt.Sprintf("Warning: failed to link post-commit delegation hook: %v", err))
 		return
 	}
-	// pre-commit / pre-push: a real branch-guard script when protectedBranches is
-	// non-empty, else a delegation symlink (like post-commit above). rm -f first so
-	// CreateFileWithOwner can't follow a stale symlink and a guard->off switch on a
-	// reused container converges.
+	// Branch-guard hooks (pre-commit / pre-merge-commit / pre-push): a real guard
+	// script when protectedBranches is non-empty, else a delegation symlink (like
+	// post-commit above). rm -f first so CreateFileWithOwner can't follow a stale
+	// symlink and a guard->off switch on a reused container converges.
 	guardOn := len(protectedBranches) > 0
-	for _, name := range []string{"pre-commit", "pre-push"} {
+	for _, name := range branchGuardHooks {
 		hookPath := GitHooksDir + "/" + name
 		if _, err := mgr.ExecCommand("rm -f "+hookPath, container.ExecCommandOptions{Capture: true}); err != nil {
 			logger(fmt.Sprintf("Warning: failed to reset %s: %v", hookPath, err))

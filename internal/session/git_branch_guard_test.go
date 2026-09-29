@@ -33,6 +33,26 @@ func TestRenderBranchGuardScript_PreCommit(t *testing.T) {
 	}
 }
 
+// pre-merge-commit shares the commit-style guard (a non-ff `git merge` commits
+// WITHOUT firing pre-commit), and must delegate to the repo's own
+// pre-merge-commit — not pre-commit.
+func TestRenderBranchGuardScript_PreMergeCommit(t *testing.T) {
+	s := renderBranchGuardScript("pre-merge-commit", []string{"main"})
+
+	if !strings.Contains(s, "git symbolic-ref --short -q HEAD") {
+		t.Error("pre-merge-commit must resolve the current branch (same as pre-commit)")
+	}
+	if !strings.Contains(s, "[ \"$branch\" = 'main' ]") {
+		t.Errorf("missing string-equality check for main:\n%s", s)
+	}
+	if !strings.Contains(s, "/hooks/pre-merge-commit") {
+		t.Errorf("must delegate to the repo's own pre-merge-commit hook, not a fixed one:\n%s", s)
+	}
+	if strings.Contains(s, "/hooks/pre-commit") {
+		t.Errorf("pre-merge-commit guard must not delegate to pre-commit:\n%s", s)
+	}
+}
+
 // The pre-push guard must buffer stdin, parse ref lines, reject pushes whose
 // destination is a protected branch, and replay stdin to the delegated hook.
 func TestRenderBranchGuardScript_PrePush(t *testing.T) {

@@ -208,9 +208,11 @@ func CheckGitBranchGuard(cfg *config.Config) HealthCheck {
 		branches = cfg.Git.EffectiveProtectedBranches()
 	}
 	if len(branches) == 0 {
+		// An explicit opt-out is a valid choice, not a problem to remediate —
+		// report it as informational (OK), like the other config-state checks.
 		return HealthCheck{
 			Name:    "git_branch_guard",
-			Status:  StatusWarning,
+			Status:  StatusOK,
 			Message: "Disabled (protected_branches = []) — commits/pushes to any branch are allowed",
 			Details: map[string]interface{}{"protected_branches": []string{}},
 		}

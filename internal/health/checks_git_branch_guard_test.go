@@ -18,13 +18,18 @@ func TestCheckGitBranchGuard(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit empty disables → warning", func(t *testing.T) {
+	t.Run("explicit empty disables → OK (informational, not a warning)", func(t *testing.T) {
 		cfg := config.GetDefaultConfig()
 		empty := []string{}
 		cfg.Git.ProtectedBranches = &empty
 		hc := CheckGitBranchGuard(cfg)
-		if hc.Status != StatusWarning {
-			t.Errorf("disabled guard should warn, got %s", hc.Status)
+		// An explicit opt-out is a valid choice, reported as OK — not flagged as a
+		// problem to remediate.
+		if hc.Status != StatusOK {
+			t.Errorf("intentionally-disabled guard should be OK, got %s", hc.Status)
+		}
+		if !strings.Contains(hc.Message, "Disabled") {
+			t.Errorf("message should still note the guard is disabled: %q", hc.Message)
 		}
 	})
 

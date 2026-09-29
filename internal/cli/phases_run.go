@@ -746,6 +746,12 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 				Network: session.NetworkOptions{
 					Config: &a.cfg.Network,
 				},
+				// The branch guard is active on this run (installed earlier via
+				// SetupGitHooks); surface it in the generated context so a headless
+				// agent knows from startup not to commit/push to a protected branch.
+				Git: session.GitOptions{
+					ProtectedBranches: a.cfg.Git.EffectiveProtectedBranches(),
+				},
 				Security: session.SecurityOptions{
 					// The kernel-surface flags feed injectSandboxContext's Docker
 					// availability line; omitting them here (zero value = docker
