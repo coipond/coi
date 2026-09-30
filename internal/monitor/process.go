@@ -335,9 +335,14 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 			if !strings.Contains(cmdLower, strings.ToLower(p.pattern)) {
 				continue
 			}
-			// bash -i / sh -i are damning on their own; every other pattern
-			// needs a network indicator.
-			if !networkRelated && p.pattern != "bash -i" && p.pattern != "sh -i" {
+			// The network-indicator gate constrains ONLY the ambiguous
+			// interpreter one-liner class (#842). Strong/unambiguous patterns
+			// (nc -e, socat, EXEC:, /dev/tcp/, an interactive shell,
+			// socket.socket, ...) are self-sufficient evidence and never require
+			// corroboration — a bare `socat EXEC:bash` carries no sock/tcp/IP
+			// token yet is unmistakably a reverse shell (code-review #842: the
+			// removed bare-':' check had been the only thing catching it).
+			if p.class == ReverseShellClassOneLiner && !networkRelated {
 				continue
 			}
 			if matched < 0 {

