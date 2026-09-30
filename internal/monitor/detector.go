@@ -49,10 +49,15 @@ func NewDetector(fileReadThresholdMB, fileReadRateMBPerSec float64) *Detector {
 // Unknown/empty values fall back to the safe default (critical). The unambiguous
 // reverse-shell class is unaffected and always stays CRITICAL.
 func (d *Detector) WithReverseShellOneLinerPolicy(policy string) *Detector {
+	// Accept only the values the JSON schema enum allows ("critical", "warn",
+	// "off") plus the empty string (field unset). Anything else falls through to
+	// the safe default so a typo never silently weakens detection — and does not
+	// diverge from `coi validate profile`, which would reject that same typo
+	// (code-review #842).
 	switch strings.ToLower(strings.TrimSpace(policy)) {
 	case "warn":
 		d.reverseShellOneLinerLevel = ThreatLevelWarning
-	case "off", "disabled", "none":
+	case "off":
 		d.reverseShellOneLinerLevel = "" // do not emit
 	default: // "critical", "", or anything unrecognized → safe default
 		d.reverseShellOneLinerLevel = ThreatLevelCritical

