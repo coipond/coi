@@ -19,10 +19,10 @@ Built by developers, for developers who run AI agents and want to know what thos
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=t78-JUnTK5Q">
-    <img src="https://img.youtube.com/vi/t78-JUnTK5Q/maxresdefault.jpg" alt="BetterStack video about Code on Incus" width="600">
+    <img src="https://img.youtube.com/vi/t78-JUnTK5Q/maxresdefault.jpg" alt="BetterStack video about Coi" width="600">
   </a>
   <br>
-  <em>Watch the BetterStack video about Code on Incus</em>
+  <em>Watch the BetterStack video about Coi</em>
 </p>
 
 ![Demo](misc/demo.gif)
@@ -53,29 +53,18 @@ That's it. Your agent is now running in an isolated container with your project 
 - You want **persistent dev environments** that survive restarts, not throwaway containers that lose your setup every time.
 - You care about your **credentials never ending up** inside an agent-controlled environment.
 
-## What makes it different
+## Features
 
-- **A real machine, not a locked box.** Incus *system* containers run a full OS with systemd and native Docker inside. Agents install packages, run services, use cron - exactly like a server, with none of Docker's permission hell (files come out correctly owned).
-
-- **Your credentials stay home.** SSH keys, `.env` files, Git tokens, and host environment variables are **never** exposed unless you explicitly mount them. Need to give an agent a secret? Forward a host socket or mint a short-lived token per session - the secret itself never enters the container.
-
-- **Active defense, not just a wall.** Kernel-level monitoring catches reverse shells, C2 connections, data exfiltration, DNS tunneling, and credential scanning in real time - and **auto-pauses on HIGH, auto-kills on CRITICAL**. No babysitting.
-
-- **Parallel agents, fully isolated.** Run several sessions on the same project at once; each slot gets its own home directory, so nothing leaks between them.
-
-- **Your work always survives.** Containers can be ephemeral (deleted on exit) or persistent (kept with installed packages) - either way, **workspace files and session history are always saved**. Resume any session later with full conversation history and credentials restored.
-
-### `coi` vs. the alternatives
-
-| Capability | **Coi** | Docker Sandbox | Bare Metal |
-|------------|-------------------|----------------|------------|
-| Credential isolation | Default (never exposed) | Partial | None |
-| Real-time threat detection | Kernel-level (nftables) | No | No |
-| Reverse-shell / exfil response | Auto-kill / auto-pause | No | No |
-| Network isolation | nftables (3 modes) | Basic | No |
-| Supply-chain protection | Git hooks / IDE configs read-only | No | No |
-| Audit logging | JSONL forensics | No | No |
-| Runs on Linux natively | Yes | microVM only on macOS/Windows | - |
+- **A real machine, not a locked box** - Incus *system* containers give the agent a full OS: root, systemd, native Docker, package managers, services.
+- **Correct file ownership** - workspace edits land on the host owned by you, no `chown` dance.
+- **Your credentials stay home** - SSH keys, tokens, `.env`, and host env vars never enter the container unless you explicitly mount or forward them.
+- **Active defense** - kernel-level monitoring catches reverse shells, C2, exfil, and DNS tunneling in real time, and **auto-pauses on HIGH / auto-kills on CRITICAL**.
+- **Network isolation** - nftables egress control in three modes (open / restricted / allowlist), DNS pinning, and per-host port scoping.
+- **Parallel agents, fully isolated** - multiple slots per project, each with its own home; nothing leaks between them.
+- **Persistent or ephemeral** - keep a box with its installed packages, or throw it away on exit; workspace files and session history are always saved, and any session resumes with full history.
+- **Profiles** - reusable named setups (image, tool, limits, network, build scripts, agent instructions) applied with a single flag, with inheritance.
+- **Supply-chain guards** - git hooks and IDE configs mounted read-only, protected paths, and a branch guard that blocks direct commits/pushes to `main`.
+- **Headless + auditable** - run prompts to completion for cron/CI (exit codes propagate), stream a JSONL threat log to your SIEM, and diagnose the whole setup with `coi health`.
 
 ## Profiles: your setups, one flag
 
@@ -87,16 +76,28 @@ coi profile create rust-dev         # scaffold a new profile, then edit its conf
 coi profile list                    # see what you've got
 ```
 
-Profiles support **inheritance** (`inherits = "parent"`), ship AI-agent context files, and can carry their own build scripts - so "my hardened Python box with these limits and these tools" becomes one word.
+A profile is just a `config.toml`:
 
-**The killer preset: `hardened`.** Opening a repo you don't trust? One flag gives you `coi`'s strongest lockdown - restricted network (no exfil path), workspace secret masking, an ephemeral container, **no SSH-agent forwarding**, and live threat monitoring with auto-pause/kill:
+```toml
+# ~/.coi/profiles/rust-dev/config.toml
+inherits = "hardened"        # optional: build on another profile
 
-```bash
-coi shell --profile hardened        # inspect untrusted code safely
-coi profile info hardened           # see exactly what it locks down
+[container]
+image = "coi-default"
+persistent = true            # keep the box (and its installed packages) between sessions
+
+[tool]
+name = "claude"
+
+[limits]
+cpu = "4"
+memory = "8GiB"
+
+[network]
+mode = "restricted"          # open / restricted / allowlist
 ```
 
-It overrides a weaker global config (a global `mode = "open"` still becomes restricted) and needs zero setup. See the [Profiles wiki page](https://github.com/mensfeld/coi/wiki/Profiles) for the full reference and schema.
+Profiles support **inheritance**, ship AI-agent context files, and can carry their own build scripts - so "my hardened Python box with these limits and these tools" becomes one word. A built-in **`hardened`** preset locks a session down for untrusted code. See the [Profiles wiki page](https://github.com/mensfeld/coi/wiki/Profiles) for the full reference, the `hardened` preset, and the schema.
 
 ## Supported AI tools
 
@@ -109,24 +110,7 @@ name = "claude"              # or "codex", "opencode", "pi", "omp"
 permission_mode = "bypass"   # run autonomously ("bypass") or ask first ("interactive")
 ```
 
-**Switching tools on the same container.** Tool choice is config/profile-shaped, not a per-command flag. To re-enter one persistent container (same code, packages, and running services) with a different tool, give two profiles the **same `[container] session_name`** — a container's identity is `hash(workspace, session_name)`, so they resolve to the same box:
-
-```toml
-# ~/.coi/profiles/box-claude/config.toml        # ~/.coi/profiles/box-codex/config.toml
-[container]                                      # [container]
-persistent = true                                # persistent = true
-session_name = "box"                             # session_name = "box"
-[tool]                                           # [tool]
-name = "claude"                                  # name = "codex"
-```
-```bash
-coi shell --profile box-claude    # create/enter the "box" running claude
-coi shell --profile box-codex     # re-enter the SAME box running codex
-```
-
-On reuse, coi seeds the re-entering tool's credentials/config the first time that tool is used in the box (without disturbing the other tool's config or history). Session history is per-tool (`~/.coi/sessions-<tool>`), so `--resume`/`--continue` resume that tool's own conversations.
-
-_Aider and Cursor are on the way._ See the [Supported Tools wiki page](https://github.com/mensfeld/coi/wiki/Supported-Tools) for per-tool auth and configuration.
+_Aider and Cursor are on the way._ See the [Supported Tools wiki page](https://github.com/mensfeld/coi/wiki/Supported-Tools) for per-tool auth, and [Container Lifecycle & Sessions](https://github.com/mensfeld/coi/wiki/Container-Lifecycle-and-Sessions#running-a-different-ai-tool-in-the-same-container-v012) for running two tools in the same persistent container.
 
 ## Everyday commands
 
@@ -143,46 +127,20 @@ coi shutdown / coi kill   # stop or force-kill containers
 coi clean                 # remove stopped containers and orphaned resources
 ```
 
-Drop a `.coi/config.toml` in any repo to auto-configure `coi` for that project - teams share one image, network mode, and limits. Run `coi <command> --help` for any command.
-
-## Fire and forget: headless prompts + cron
-
-`coi run --prompt` runs the AI agent **headlessly** - it executes a prompt to completion, streams output, and exits with the agent's status code. No TTY, no interaction. That makes it a clean building block for automation: a **list of predefined prompts** + a **persistent setup** + your host's **cron**.
-
-```bash
-coi run --prompt "update dependencies, run the tests, and open a PR if green"
-coi run --prompt-file ./task.md --profile hardened
-coi run --prompt-name nightly-maintenance          # from the [prompts] config table
-```
-
-Define reusable prompts once, in your trusted config `~/.coi/config.toml` (or a profile under it):
-
-```toml
-[prompts]
-nightly-maintenance = "Update dependencies, run the tests, and open a PR if green."
-triage = { file = "prompts/triage.md" }            # long prompts can live in a file
-```
-
-Then schedule them with plain host cron - exit codes propagate, so failures show up in your logs:
-
-```cron
-# crontab -e   (runs on the host, which owns cron and drives coi)
-0 3 * * *    cd ~/project && coi run --prompt-name nightly-maintenance >> ~/coi-nightly.log 2>&1
-*/30 * * * * cd ~/project && coi run --profile triage --prompt-name triage >> ~/coi-triage.log 2>&1
-```
-
-Each fire is a fresh ephemeral session by default, and prompt mode currently supports the `claude` tool with `permission_mode = "bypass"` (a headless run has no TTY to approve tool use). **Prompts are honored only from trusted-scope config** (`~/.coi/config.toml` / `$COI_CONFIG`); a `[prompts]` table in an untrusted project `.coi/config.toml` (or a project-scoped profile) is ignored entirely - so a cloned repo can never define or redefine a prompt you invoke by name. This matches how `env_commands` and the default-profile selector are treated.
+Drop a `.coi/config.toml` in any repo to auto-configure `coi` for that project - teams share one image, network mode, and limits. Run `coi <command> --help` for any command. To run agents unattended (headless prompts + cron), see [Headless Orchestration](https://github.com/mensfeld/coi/wiki/Headless-Orchestration).
 
 ## Documentation
 
-The README is the pitch; the wiki is the manual. Everything below lives there in full:
+The README is the pitch; the wiki is the manual. Everything lives there in full:
 
 - **[Configuration](https://github.com/mensfeld/coi/wiki/Configuration)** - the complete config reference, precedence, and per-repo setup
-- **[Profiles](https://github.com/mensfeld/coi/wiki/Profiles)** - reusable setups, inheritance, and the JSON schema
+- **[Profiles](https://github.com/mensfeld/coi/wiki/Profiles)** - reusable setups, the `hardened` preset, inheritance, and the JSON schema
+- **[Supported Tools](https://github.com/mensfeld/coi/wiki/Supported-Tools)** - per-tool auth and configuration
+- **[Headless Orchestration](https://github.com/mensfeld/coi/wiki/Headless-Orchestration)** - `coi run --prompt`, predefined prompts, and cron
 - **[Network Isolation](https://github.com/mensfeld/coi/wiki/Network-Isolation)** - restricted/allowlist/open modes, DNS pinning, egress and per-host port controls
 - **[Security Monitoring](https://github.com/mensfeld/coi/wiki/Security-Monitoring)** & **[Audit Log](https://github.com/mensfeld/coi/wiki/Audit-Log)** - threat detection, automated response, and the event format
 - **[Security Best Practices](https://github.com/mensfeld/coi/wiki/Security-Best-Practices)** - protected paths, the trust model, hardening
-- **[Container Lifecycle & Sessions](https://github.com/mensfeld/coi/wiki/Container-Lifecycle-and-Sessions)** - ephemeral vs. persistent, resume, aliases
+- **[Container Lifecycle & Sessions](https://github.com/mensfeld/coi/wiki/Container-Lifecycle-and-Sessions)** - ephemeral vs. persistent, resume, aliases, running multiple tools in one box
 - **[Resource & Time Limits](https://github.com/mensfeld/coi/wiki/Resource-and-Time-Limits)** · **[Snapshot Management](https://github.com/mensfeld/coi/wiki/Snapshot-Management)** · **[Image Management](https://github.com/mensfeld/coi/wiki/Image-Management)**
 - **[File Transfer](https://github.com/mensfeld/coi/wiki/File-Transfer)** · **[Tmux Automation](https://github.com/mensfeld/coi/wiki/Tmux-Automation)** · **[Container Operations](https://github.com/mensfeld/coi/wiki/Container-Operations)**
 - **[System Health Check](https://github.com/mensfeld/coi/wiki/System-Health-Check)** - `coi health` diagnoses your setup end-to-end
@@ -191,6 +149,18 @@ The README is the pitch; the wiki is the manual. Everything below lives there in
 ## Why Incus, not Docker?
 
 Incus (a modern LXD fork) gives you **system containers** - which behave like lightweight VMs (a real init system and full OS userspace) while sharing the host kernel, so they start in seconds - instead of Docker's application containers. That means one clean isolation layer running a full OS with native Docker inside, correct file ownership on the host by default, and no Docker Desktop, no vendor lock-in, no opaque VM nesting. It's Linux-native and fully open source. (More in the [FAQ](https://github.com/mensfeld/coi/wiki/FAQ).)
+
+## Coi vs. the alternatives
+
+| Capability | **Coi** | Docker Sandbox | Bare Metal |
+|------------|---------|----------------|------------|
+| Credential isolation | Default (never exposed) | Partial | None |
+| Real-time threat detection | Kernel-level (nftables) | No | No |
+| Reverse-shell / exfil response | Auto-kill / auto-pause | No | No |
+| Network isolation | nftables (3 modes) | Basic | No |
+| Supply-chain protection | Git hooks / IDE configs read-only | No | No |
+| Audit logging | JSONL forensics | No | No |
+| Runs on Linux natively | Yes | microVM only on macOS/Windows | - |
 
 ## Getting help
 
