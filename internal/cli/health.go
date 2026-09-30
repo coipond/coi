@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/health"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/health"
 	"github.com/spf13/cobra"
 )
 

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
+	"github.com/coipond/coi/internal/config"
 )
 
 // fakeTmpfsSizer records how ApplyTmpfsSizing drives the container.

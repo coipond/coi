@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // Process exit codes. Codes 1 and 2 predate this list; the named codes let the

@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/network"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
 )
 
 // OrphanedResources holds information about orphaned system resources

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // ResolveMountShift picks the effective UID/GID shift flag for a single

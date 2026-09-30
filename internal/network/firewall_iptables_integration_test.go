@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // TestIptablesAvailable verifies IptablesAvailable returns a bool consistent

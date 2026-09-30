@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/mensfeld/coi/internal/timing"
+	"github.com/coipond/coi/internal/timing"
 )
 
 // Teardown is a cleanup function registered by a Phase. Teardowns run in LIFO

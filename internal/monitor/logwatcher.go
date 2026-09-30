@@ -14,8 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/coipond/coi/internal/container"
 	"github.com/google/uuid"
-	"github.com/mensfeld/coi/internal/container"
 	"golang.org/x/sys/unix"
 )
 

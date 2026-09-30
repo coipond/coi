@@ -7,17 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/limits"
-	"github.com/mensfeld/coi/internal/logger"
-	"github.com/mensfeld/coi/internal/monitor"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/nftmonitor"
-	"github.com/mensfeld/coi/internal/session"
-	"github.com/mensfeld/coi/internal/timing"
-	"github.com/mensfeld/coi/internal/tool"
-	"github.com/mensfeld/coi/internal/vmhost"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/limits"
+	"github.com/coipond/coi/internal/logger"
+	"github.com/coipond/coi/internal/monitor"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/nftmonitor"
+	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/timing"
+	"github.com/coipond/coi/internal/tool"
+	"github.com/coipond/coi/internal/vmhost"
 )
 
 // runState is the mutable state accumulated across run pipeline phases.

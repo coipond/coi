@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mensfeld/coi/internal/timing"
+	"github.com/coipond/coi/internal/timing"
 )
 
 // Manager provides a clean interface for Incus container operations

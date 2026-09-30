@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // TestBuildJSONFromSettings_PiDefault verifies that pi's sandbox

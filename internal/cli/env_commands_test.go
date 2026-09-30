@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
+	"github.com/coipond/coi/internal/config"
 )
 
 func appWithEnvCommands(commands map[string]string, timeout string) *App {

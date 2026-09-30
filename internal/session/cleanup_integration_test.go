@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
-	"github.com/mensfeld/coi/internal/network"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
+	"github.com/coipond/coi/internal/network"
 )
 
 // cleanupTestContainer is a helper that ensures complete cleanup of a test container.

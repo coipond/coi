@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/session"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/session"
 )
 
 // warnDroppedMounts prints a per-mount warning for untrusted, unapproved mounts.

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // Deterministic guarantee for the "probes honor the kernel-surface policy"

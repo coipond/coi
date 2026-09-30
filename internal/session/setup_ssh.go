@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // sshAgentDevice / sshAgentContainerPath are the fixed identifiers for the

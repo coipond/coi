@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/coipond/coi/internal/monitor"
 	"github.com/google/uuid"
-	"github.com/mensfeld/coi/internal/monitor"
 )
 
 // Daemon orchestrates nftables-based network monitoring

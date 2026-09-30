@@ -12,7 +12,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/mensfeld/coi/internal/tool/credentials"
+	"github.com/coipond/coi/internal/tool/credentials"
 )
 
 //go:embed templates/sandbox_context.md.tmpl

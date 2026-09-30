@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/cleanup"
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/session"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/cleanup"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // CheckActiveContainers counts running Coi containers

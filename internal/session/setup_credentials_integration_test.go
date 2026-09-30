@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // TestSetupCredentials_Integration pushes an ad-hoc credential file into a

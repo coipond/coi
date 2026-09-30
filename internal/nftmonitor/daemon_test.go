@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/monitor"
+	"github.com/coipond/coi/internal/monitor"
 )
 
 // TestDaemonErrorsRouteToOnError verifies that daemon errors are routed

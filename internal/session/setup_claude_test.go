@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // TestClaudeSandboxSettings_SkipPermissionPrompt verifies that ClaudeTool's
 // sandbox settings include a top-level skipDangerousModePermissionPrompt: true,
 // both in the raw settings and after mergeJSONSettings. Claude Code only reads
 // this key at the top level of settings.json, not nested under "permissions"
-// (mensfeld/coi#649).
+// (coipond/coi#649).
 func TestClaudeSandboxSettings_SkipPermissionPrompt(t *testing.T) {
 	ct := tool.NewClaude()
 	settings := ct.GetSandboxSettings()

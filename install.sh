@@ -9,7 +9,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-REPO="mensfeld/coi"
+REPO="coipond/coi"
 BINARY_NAME="coi"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 VERSION="${VERSION:-latest}"
@@ -112,7 +112,7 @@ detect_platform() {
             echo -e "${RED}✗ Unsupported OS: $os${NC}"
             echo "  Coi requires Linux (Incus is Linux-only)"
             echo "  On macOS: Run inside a Colima or Lima VM"
-            echo "  See: https://github.com/mensfeld/coi/wiki/macOS-Setup-Guide"
+            echo "  See: https://github.com/coipond/coi/wiki/macOS-Setup-Guide"
             exit 1
             ;;
     esac
@@ -1019,7 +1019,7 @@ setup_nm_unmanaged_veths() {
     if ! sudo tee "$conf_file" > /dev/null 2>&1 <<'NMEOF'
 # Installed by Coi (Code on Incus): container veths must not be enrolled in
 # firewalld zones — leaked registrations grow the firewall ruleset
-# quadratically. See https://github.com/mensfeld/coi/issues/695
+# quadratically. See https://github.com/coipond/coi/issues/695
 # Remove this file (and reload NetworkManager) to undo.
 [keyfile]
 unmanaged-devices+=interface-name:veth*
