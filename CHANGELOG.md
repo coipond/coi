@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **macOS Keychain auth hint no longer shown when `CLAUDE_CODE_OAUTH_TOKEN` is set** — a long-lived token from `claude setup-token` (e.g. via `[defaults.environment]`) needs no Keychain login or `.credentials.json`, so the hint stays quiet, same as for `ANTHROPIC_API_KEY`.
 - [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield a silently unwritable workspace (#838)** — when the login UID sits inside root's `/etc/subuid` range Incus can't map it, so coi now aborts the launch with the cause named instead of continuing with a broken `/workspace`, and `coi health` reports it clearly instead of a cryptic failure.
 
 ## 0.13.0 (2026-09-28)
