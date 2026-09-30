@@ -51,6 +51,11 @@
     "forensics_on_kill": {
       "type": "boolean",
       "description": "Preserve a forensic COPY of the container (incus copy, capped at 3 per container, oldest pruned) before an auto-kill on a critical threat deletes it — the copy is made while the container still runs and survives the kill (the original still auto-deletes as usual); the kill fires exactly when the container's state is most worth investigating. Best-effort: a failed copy never blocks or delays the response. Opt-in; default: false."
+    },
+    "reverse_shell_one_liners": {
+      "type": "string",
+      "enum": ["critical", "warn", "off"],
+      "description": "Severity for interpreter one-liner reverse-shell matches (python -c, python3 -c, perl -e, ruby -e, php -r): 'critical' (default — auto-kills when auto_kill_on_critical is on), 'warn' (logged and audited, never kills or pauses), or 'off' (not flagged at all). Interpreter one-liners only ever match when the command also carries a real network indicator (a socket/tcp/udp/connect keyword, an IP, or a host:port endpoint). The unambiguous reverse-shell patterns (nc -e, /dev/tcp/, socat EXEC:, an interactive shell, ...) always stay critical regardless of this setting. See issue #842."
     }
   }
 }

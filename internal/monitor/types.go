@@ -39,8 +39,9 @@ type ProcessThreat struct {
 	PID        int      `json:"pid"`
 	Command    string   `json:"command"` // Full command line
 	User       string   `json:"user"`
-	Pattern    string   `json:"pattern"`    // "nc -e", "bash -i", etc.
-	Indicators []string `json:"indicators"` // List of suspicious patterns matched
+	Pattern    string   `json:"pattern"`         // "nc -e", "bash -i", etc.
+	Indicators []string `json:"indicators"`      // List of suspicious patterns matched
+	Class      string   `json:"class,omitempty"` // Reverse-shell pattern class (see ReverseShellClass*); "" = strong/unambiguous
 }
 
 // FilesystemThreat represents suspicious file access
@@ -232,6 +233,11 @@ type DaemonConfig struct {
 
 	// Threat detection thresholds (continued)
 	ProcessSpawnRateThreshold int // Max processes spawned per poll interval before alert (0 = disabled)
+
+	// Reverse-shell one-liner policy (#842): "critical" (default), "warn", or
+	// "off". Controls the severity of interpreter one-liner reverse-shell
+	// matches (python -c, perl -e, ...). Empty string = default (critical).
+	ReverseShellOneLinerPolicy string
 
 	// Response configuration
 	AutoPauseOnHigh    bool

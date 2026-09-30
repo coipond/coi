@@ -37,7 +37,8 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 	collector.SetAllowedCIDRsProvider(cfg.AllowedCIDRsProvider)
 	detector := NewDetector(cfg.FileReadThresholdMB, cfg.FileReadRateMBPerSec).
 		WithProcessCountThreshold(cfg.ProcessCountThreshold).
-		WithProcessSpawnRateThreshold(cfg.ProcessSpawnRateThreshold)
+		WithProcessSpawnRateThreshold(cfg.ProcessSpawnRateThreshold).
+		WithReverseShellOneLinerPolicy(cfg.ReverseShellOneLinerPolicy)
 	responder := NewResponder(cfg.ContainerName, cfg.AutoPauseOnHigh, cfg.AutoKillOnCritical,
 		auditLog, cfg.OnThreat)
 	responder.SetForensicsOnKill(cfg.ForensicsOnKill)

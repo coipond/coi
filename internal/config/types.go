@@ -989,6 +989,7 @@ type MonitoringConfig struct {
 	ProcessSpawnRateThreshold *int                `toml:"process_spawn_rate_threshold"` // Max processes spawned per poll interval (0 = disabled, nil = inherit default)
 	AuditLogRetentionDays     int                 `toml:"audit_log_retention_days"`     // How long to keep audit logs
 	ForensicsOnKill           *bool               `toml:"forensics_on_kill"`            // Copy the container for forensics before an auto-kill deletes it (opt-in; default: false)
+	ReverseShellOneLiners     *string             `toml:"reverse_shell_one_liners"`     // Severity for interpreter one-liner reverse-shell matches (python -c, perl -e, ...): "critical" (default, auto-kill), "warn" (audit only), or "off" (do not flag). #842
 	NFT                       NFTMonitoringConfig `toml:"nft"`                          // nftables network monitoring
 }
 

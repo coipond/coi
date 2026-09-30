@@ -139,6 +139,9 @@ func mergeMonitoring(base *MonitoringConfig, other *MonitoringConfig) {
 	if other.ForensicsOnKill != nil {
 		base.ForensicsOnKill = other.ForensicsOnKill
 	}
+	if other.ReverseShellOneLiners != nil {
+		base.ReverseShellOneLiners = other.ReverseShellOneLiners
+	}
 
 	// Merge thresholds
 	if other.PollIntervalSec != 0 {

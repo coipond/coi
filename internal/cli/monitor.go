@@ -94,7 +94,8 @@ func (a *App) monitorCommand(cmd *cobra.Command, args []string) error {
 
 	// Create collector
 	collector := monitor.NewCollector(containerName, "", "", allowedCIDRs)
-	detector := monitor.NewDetector(a.cfg.Monitoring.FileReadThresholdMB, a.cfg.Monitoring.FileReadRateMBPerSec)
+	detector := monitor.NewDetector(a.cfg.Monitoring.FileReadThresholdMB, a.cfg.Monitoring.FileReadRateMBPerSec).
+		WithReverseShellOneLinerPolicy(config.StringVal(a.cfg.Monitoring.ReverseShellOneLiners))
 
 	// Watch mode or one-shot
 	if monitorWatch > 0 {

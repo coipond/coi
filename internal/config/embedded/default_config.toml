@@ -135,6 +135,11 @@ stop_graceful = true
 enabled = false
 auto_pause_on_high = true
 auto_kill_on_critical = true
+# Severity for interpreter one-liner reverse-shell matches (python -c, perl -e,
+# ruby -e, php -r): "critical" (default, auto-kills on critical), "warn" (audit
+# only, never kills), or "off" (do not flag). The unambiguous patterns (nc -e,
+# /dev/tcp/, socat EXEC:, ...) always stay critical. See issue #842.
+reverse_shell_one_liners = "critical"
 poll_interval_sec = 2
 file_read_threshold_mb = 50.0
 file_read_rate_mb_per_sec = 10.0

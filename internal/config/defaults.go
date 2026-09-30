@@ -271,6 +271,14 @@ func IntVal(p *int) int {
 	return *p
 }
 
+// StringVal dereferences a *string config pointer, returning "" if nil.
+func StringVal(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 // ExpandPath expands ~ in paths to home directory
 func ExpandPath(path string) string {
 	if len(path) == 0 {

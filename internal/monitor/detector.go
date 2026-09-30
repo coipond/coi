@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,17 +17,52 @@ type Detector struct {
 	processCountThreshold     int
 	processSpawnRateThreshold int
 	previousProcessCount      int // -1 = first poll (no baseline yet)
+
+	// reverseShellOneLinerLevel is the severity assigned to interpreter
+	// one-liner reverse-shell matches (ReverseShellClassOneLiner: python -c,
+	// perl -e, ruby -e, php -r). Configurable via #842's
+	// [monitoring] reverse_shell_one_liners knob. The empty string means
+	// "off" — do not emit these at all. Defaults to CRITICAL. The unambiguous
+	// class (nc -e, /dev/tcp/, socat EXEC:, bash -i, ...) is always CRITICAL and
+	// unaffected by this setting.
+	reverseShellOneLinerLevel ThreatLevel
 }
 
 // NewDetector creates a new threat detector
 func NewDetector(fileReadThresholdMB, fileReadRateMBPerSec float64) *Detector {
 	return &Detector{
-		fileReadThresholdMB:   fileReadThresholdMB,
-		fileReadRateMBPerSec:  fileReadRateMBPerSec,
-		fileWriteThresholdMB:  fileReadThresholdMB,  // Default: same as read threshold
-		fileWriteRateMBPerSec: fileReadRateMBPerSec, // Default: same as read rate threshold
-		previousProcessCount:  -1,
+		fileReadThresholdMB:       fileReadThresholdMB,
+		fileReadRateMBPerSec:      fileReadRateMBPerSec,
+		fileWriteThresholdMB:      fileReadThresholdMB,  // Default: same as read threshold
+		fileWriteRateMBPerSec:     fileReadRateMBPerSec, // Default: same as read rate threshold
+		previousProcessCount:      -1,
+		reverseShellOneLinerLevel: ThreatLevelCritical, // safe default: kill on critical
 	}
+}
+
+// WithReverseShellOneLinerPolicy sets how interpreter one-liner reverse-shell
+// matches (ReverseShellClassOneLiner) are treated (#842):
+//   - "critical" (default): CRITICAL — auto-kill when auto_kill_on_critical is on.
+//   - "warn":               WARNING  — logged and audited, never auto-kills/pauses.
+//   - "off":                not reported at all.
+//
+// Unknown/empty values fall back to the safe default (critical). The unambiguous
+// reverse-shell class is unaffected and always stays CRITICAL.
+func (d *Detector) WithReverseShellOneLinerPolicy(policy string) *Detector {
+	// Accept only the values the JSON schema enum allows ("critical", "warn",
+	// "off") plus the empty string (field unset). Anything else falls through to
+	// the safe default so a typo never silently weakens detection — and does not
+	// diverge from `coi validate profile`, which would reject that same typo
+	// (code-review #842).
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "warn":
+		d.reverseShellOneLinerLevel = ThreatLevelWarning
+	case "off":
+		d.reverseShellOneLinerLevel = "" // do not emit
+	default: // "critical", "", or anything unrecognized → safe default
+		d.reverseShellOneLinerLevel = ThreatLevelCritical
+	}
+	return d
 }
 
 // WithProcessCountThreshold sets the process count threshold for fork-bomb detection.
@@ -66,7 +102,16 @@ func (d *Detector) Analyze(snapshot MonitorSnapshot) []ThreatEvent {
 	if snapshot.Processes.Available {
 		reverseShells := DetectReverseShells(snapshot.Processes.Processes)
 		for _, rs := range reverseShells {
-			threats = append(threats, newThreatEvent(snapshot.Timestamp, ThreatLevelCritical, "process", "Reverse shell detected", fmt.Sprintf("Process '%s' (PID %d) matches reverse shell pattern '%s'",
+			level := ThreatLevelCritical
+			if rs.Class == ReverseShellClassOneLiner {
+				// Apply the configurable one-liner policy (#842). Empty = "off":
+				// skip emitting entirely.
+				if d.reverseShellOneLinerLevel == "" {
+					continue
+				}
+				level = d.reverseShellOneLinerLevel
+			}
+			threats = append(threats, newThreatEvent(snapshot.Timestamp, level, "process", "Reverse shell detected", fmt.Sprintf("Process '%s' (PID %d) matches reverse shell pattern '%s'",
 				rs.Command, rs.PID, rs.Pattern), Evidence{Process: &rs}))
 		}
 	}

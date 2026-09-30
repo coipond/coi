@@ -1494,3 +1494,24 @@ func TestConfigMerge_CarriesWritablePaths(t *testing.T) {
 		}
 	}
 }
+
+// The #842 reverse_shell_one_liners knob defaults to "critical" (from the
+// embedded default config) and an explicit override survives Merge.
+func TestConfigMerge_ReverseShellOneLiners(t *testing.T) {
+	base := GetDefaultConfig()
+	if got := StringVal(base.Monitoring.ReverseShellOneLiners); got != "critical" {
+		t.Fatalf("default reverse_shell_one_liners = %q, want \"critical\"", got)
+	}
+
+	warn := "warn"
+	base.Merge(&Config{Monitoring: MonitoringConfig{ReverseShellOneLiners: &warn}})
+	if got := StringVal(base.Monitoring.ReverseShellOneLiners); got != "warn" {
+		t.Errorf("after merge reverse_shell_one_liners = %q, want \"warn\"", got)
+	}
+
+	// A nil override (field unset) must NOT clobber the existing value.
+	base.Merge(&Config{Monitoring: MonitoringConfig{ReverseShellOneLiners: nil}})
+	if got := StringVal(base.Monitoring.ReverseShellOneLiners); got != "warn" {
+		t.Errorf("nil override reset reverse_shell_one_liners to %q, want \"warn\"", got)
+	}
+}
