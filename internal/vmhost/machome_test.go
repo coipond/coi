@@ -313,3 +313,25 @@ func TestDirNonEmpty(t *testing.T) {
 		t.Error("dir with an entry should report non-empty=true")
 	}
 }
+
+func TestMacHostGitConfigFiles(t *testing.T) {
+	mounts := "mac /Users/alice virtiofs rw 0 0\n"
+	existing := map[string]bool{
+		"/Users/alice/.gitconfig":         true,
+		"/Users/alice/.config/git/config": true,
+	}
+	exists := func(p string) bool { return existing[p] }
+	noList := func(string) []string { return nil }
+
+	got := macHostGitConfigFiles(KindLimaLike, mounts, noList, exists)
+	want := []string{"/Users/alice/.gitconfig", "/Users/alice/.config/git/config"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got := macHostGitConfigFiles(KindUnknown, mounts, noList, exists); got != nil {
+		t.Errorf("Linux must return nil, got %v", got)
+	}
+	if got := macHostGitConfigFiles(KindLimaLike, mounts, noList, func(string) bool { return false }); len(got) != 0 {
+		t.Errorf("missing files must be skipped, got %v", got)
+	}
+}

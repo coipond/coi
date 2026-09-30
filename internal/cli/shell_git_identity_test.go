@@ -117,3 +117,44 @@ func TestResolveGitIdentitySeedDisabledSkipsHost(t *testing.T) {
 		t.Fatalf("explicit identity should survive seed=false, got %+v", got)
 	}
 }
+
+// Inside a Mac VM the guest's global gitconfig is not the user's; the Mac
+// home's gitconfig must win, and the guest config is only a fallback.
+func TestResolveGitIdentityPrefersMacHostConfig(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	dir := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", dir+"/guest")
+	for k, v := range map[string]string{"user.name": "Guest VM", "user.email": "vm@example.com"} {
+		if err := exec.Command("git", "config", "--global", k, v).Run(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	macCfg := dir + "/mac-gitconfig"
+	for k, v := range map[string]string{"user.name": "Mac User", "user.email": "mac@example.com"} {
+		if err := exec.Command("git", "config", "--file", macCfg, k, v).Run(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	orig := macHostGitConfigFiles
+	t.Cleanup(func() { macHostGitConfigFiles = orig })
+
+	macHostGitConfigFiles = func() []string { return []string{macCfg} }
+	got := resolveGitIdentity(&config.GitConfig{})
+	if got.Name != "Mac User" || got.Email != "mac@example.com" {
+		t.Fatalf("Mac identity should win, got %+v", got)
+	}
+
+	// Incomplete Mac identity (name only) must not be mixed with the guest's email.
+	partial := dir + "/partial"
+	if err := exec.Command("git", "config", "--file", partial, "user.name", "Only Name").Run(); err != nil {
+		t.Fatal(err)
+	}
+	macHostGitConfigFiles = func() []string { return []string{partial} }
+	got = resolveGitIdentity(&config.GitConfig{})
+	if got.Name != "Guest VM" || got.Email != "vm@example.com" {
+		t.Fatalf("incomplete Mac identity should fall back wholly to guest, got %+v", got)
+	}
+}

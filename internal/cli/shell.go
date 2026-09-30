@@ -21,6 +21,7 @@ import (
 	"github.com/mensfeld/coi/internal/session"
 	"github.com/mensfeld/coi/internal/terminal"
 	"github.com/mensfeld/coi/internal/tool"
+	"github.com/mensfeld/coi/internal/vmhost"
 	"github.com/spf13/cobra"
 )
 
@@ -179,22 +180,37 @@ func resolveGitIdentity(gitCfg *config.GitConfig) session.GitIdentity {
 	if !gitCfg.IsSeedHostIdentityEnabled() {
 		return session.GitIdentity{}
 	}
-	identity := session.GitIdentity{
-		Name:  hostGlobalGitConfig("user.name"),
-		Email: hostGlobalGitConfig("user.email"),
+	// Inside a macOS VM, `git config --global` reads the VM's gitconfig, not the
+	// Mac user's; prefer the Mac home's files (shared into the guest), then fall
+	// back to the guest's global config. Each source must yield a complete
+	// identity on its own so name and email never come from different hosts.
+	for _, file := range macHostGitConfigFiles() {
+		if id := gitIdentityFrom("--file", file); id.Complete() {
+			return id
+		}
 	}
-	if !identity.Complete() {
-		return session.GitIdentity{}
+	if id := gitIdentityFrom("--global"); id.Complete() {
+		return id
 	}
-	return identity
+	return session.GitIdentity{}
 }
 
-func hostGlobalGitConfig(key string) string {
-	out, err := exec.Command("git", "config", "--global", "--get", key).Output()
-	if err != nil {
-		return ""
+// macHostGitConfigFiles is a seam for tests.
+var macHostGitConfigFiles = vmhost.MacHostGitConfigFiles
+
+// gitIdentityFrom reads user.name/user.email from the given `git config`
+// scope arguments (e.g. "--global" or "--file", path).
+func gitIdentityFrom(scope ...string) session.GitIdentity {
+	get := func(key string) string {
+		args := append([]string{"config"}, scope...)
+		args = append(args, "--includes", "--get", key)
+		out, err := exec.Command("git", args...).Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
 	}
-	return strings.TrimSpace(string(out))
+	return session.GitIdentity{Name: get("user.name"), Email: get("user.email")}
 }
 
 // buildCLICommand builds the CLI command string to execute in the container.

@@ -211,3 +211,39 @@ func dirNonEmpty(p string) bool {
 	entries, err := os.ReadDir(p)
 	return err == nil && len(entries) > 0
 }
+
+// MacHostGitConfigFiles returns the git config files of the Mac user's real
+// home, when coi runs inside a Colima/Lima/OrbStack Mac VM. There
+// os.UserHomeDir() is the guest home, so `git config --global` reads the VM's
+// gitconfig and misses the Mac user's user.name/user.email. The Mac home is
+// visible under /Users via the shared mount; its ~/.gitconfig and
+// ~/.config/git/config (in git's own precedence order) are returned when they
+// exist. Returns nil on Linux (KindUnknown) or when nothing is found.
+func MacHostGitConfigFiles() []string {
+	mounts, _ := os.ReadFile("/proc/mounts")
+	osRelease, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	kind := detect(string(mounts), os.Getenv("USER"), string(osRelease))
+	return macHostGitConfigFiles(kind, string(mounts), listSubdirs, fileExists)
+}
+
+// macHostGitConfigFiles is the testable core of MacHostGitConfigFiles. Files
+// are returned highest-precedence first (~/.gitconfig beats the XDG file).
+func macHostGitConfigFiles(kind Kind, mounts string, listSubdirs func(string) []string, exists func(string) bool) []string {
+	if kind == KindUnknown {
+		return nil
+	}
+	var out []string
+	for _, name := range []string{".gitconfig", filepath.Join(".config", "git", "config")} {
+		for _, c := range buildMacHostConfigCandidates(mounts, name, listSubdirs) {
+			if exists(c) {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular()
+}
