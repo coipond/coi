@@ -20,7 +20,7 @@ from support.helpers import (
 COMPOSE_YAML = """\
 services:
   web:
-    image: ghcr.io/mensfeld/nginx:alpine
+    image: ghcr.io/coipond/nginx:alpine
     ports:
       - "8080:80"
 """
