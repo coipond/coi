@@ -243,6 +243,22 @@ func checkEnvAccess(command string) bool {
 	return false
 }
 
+// Reverse-shell pattern classes. The class determines how Analyze escalates a
+// match and lets operators downgrade the ambiguous class via the #842
+// `[monitoring] reverse_shell_one_liners` knob without weakening the rest.
+const (
+	// ReverseShellClassStrong is the default: unambiguous reverse-shell
+	// indicators (nc -e, /dev/tcp/, socat EXEC:, fsockopen, an interactive
+	// shell, ...). Always CRITICAL — not affected by the one-liner knob.
+	ReverseShellClassStrong = ""
+	// ReverseShellClassOneLiner is an interpreter one-liner invocation
+	// (python -c, python3 -c, perl -e, ruby -e, php -r). These fire ONLY when
+	// the command also carries a real network indicator (see isNetworkRelated),
+	// but they remain the most false-positive-prone class for coding agents, so
+	// the reverse_shell_one_liners knob can downgrade them to "warn" or "off".
+	ReverseShellClassOneLiner = "oneliner"
+)
+
 // DetectReverseShells checks processes for reverse shell indicators
 func DetectReverseShells(processes []Process) []ProcessThreat {
 	var threats []ProcessThreat
@@ -250,43 +266,45 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 	reverseShellPatterns := []struct {
 		pattern    string
 		indicators []string
+		class      string
 	}{
 		// Netcat reverse shells
-		{"nc -e", []string{"netcat with exec"}},
-		{"nc.traditional -e", []string{"netcat with exec"}},
-		{"ncat -e", []string{"ncat with exec"}},
-		{"nc.openbsd -e", []string{"netcat with exec"}},
+		{"nc -e", []string{"netcat with exec"}, ReverseShellClassStrong},
+		{"nc.traditional -e", []string{"netcat with exec"}, ReverseShellClassStrong},
+		{"ncat -e", []string{"ncat with exec"}, ReverseShellClassStrong},
+		{"nc.openbsd -e", []string{"netcat with exec"}, ReverseShellClassStrong},
 
 		// Bash/sh reverse shells
-		{"bash -i", []string{"interactive bash"}},
-		{"sh -i", []string{"interactive shell"}},
-		{"/dev/tcp/", []string{"bash tcp redirect"}},
-		{"/dev/udp/", []string{"bash udp redirect"}},
+		{"bash -i", []string{"interactive bash"}, ReverseShellClassStrong},
+		{"sh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"/dev/tcp/", []string{"bash tcp redirect"}, ReverseShellClassStrong},
+		{"/dev/udp/", []string{"bash udp redirect"}, ReverseShellClassStrong},
 
-		// Python reverse shells
-		{"python -c", []string{"python one-liner"}},
-		{"python3 -c", []string{"python one-liner"}},
-		{"socket.socket", []string{"python socket"}},
+		// Python reverse shells — `python -c` / `python3 -c` are the ambiguous
+		// one-liner form; `socket.socket` is an unambiguous socket indicator.
+		{"python -c", []string{"python one-liner"}, ReverseShellClassOneLiner},
+		{"python3 -c", []string{"python one-liner"}, ReverseShellClassOneLiner},
+		{"socket.socket", []string{"python socket"}, ReverseShellClassStrong},
 
 		// Perl reverse shells
-		{"perl -e", []string{"perl one-liner"}},
-		{"perl -MIO", []string{"perl IO module"}},
+		{"perl -e", []string{"perl one-liner"}, ReverseShellClassOneLiner},
+		{"perl -MIO", []string{"perl IO module"}, ReverseShellClassStrong},
 
 		// PHP reverse shells
-		{"php -r", []string{"php one-liner"}},
-		{"fsockopen", []string{"php socket"}},
+		{"php -r", []string{"php one-liner"}, ReverseShellClassOneLiner},
+		{"fsockopen", []string{"php socket"}, ReverseShellClassStrong},
 
 		// Ruby reverse shells
-		{"ruby -rsocket", []string{"ruby socket"}},
-		{"ruby -e", []string{"ruby one-liner"}},
+		{"ruby -rsocket", []string{"ruby socket"}, ReverseShellClassStrong},
+		{"ruby -e", []string{"ruby one-liner"}, ReverseShellClassOneLiner},
 
 		// Socat reverse shells
-		{"socat", []string{"socat"}},
-		{"EXEC:", []string{"socat exec"}},
+		{"socat", []string{"socat"}, ReverseShellClassStrong},
+		{"EXEC:", []string{"socat exec"}, ReverseShellClassStrong},
 
 		// PowerShell reverse shells (if Wine/mono present)
-		{"powershell", []string{"powershell"}},
-		{"System.Net.Sockets", []string{"dotnet sockets"}},
+		{"powershell", []string{"powershell"}, ReverseShellClassStrong},
+		{"System.Net.Sockets", []string{"dotnet sockets"}, ReverseShellClassStrong},
 	}
 
 	for _, proc := range processes {
@@ -312,6 +330,7 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 						User:       proc.User,
 						Pattern:    pattern.pattern,
 						Indicators: pattern.indicators,
+						Class:      pattern.class,
 					})
 					break
 				}

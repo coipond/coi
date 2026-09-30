@@ -349,6 +349,9 @@ func CheckMonitoringConfiguration(cfg *config.Config) HealthCheck {
 		"poll_interval_sec":      cfg.Monitoring.PollIntervalSec,
 		"file_read_threshold_mb": cfg.Monitoring.FileReadThresholdMB,
 	}
+	if p := config.StringVal(cfg.Monitoring.ReverseShellOneLiners); p != "" {
+		details["reverse_shell_one_liners"] = p
+	}
 
 	if !config.BoolVal(cfg.Monitoring.Enabled) {
 		return HealthCheck{

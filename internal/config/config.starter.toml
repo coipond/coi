@@ -206,6 +206,7 @@
 # auto_pause_on_high = true
 # auto_kill_on_critical = true
 # forensics_on_kill = true       # keep a forensic copy (*-forensics-*) before an auto-kill deletes the container
+# reverse_shell_one_liners = "critical"  # "critical" (default) | "warn" (audit only) | "off"; python -c/perl -e/ruby -e/php -r class (#842)
 # poll_interval_sec = 2
 # file_read_threshold_mb = 50.0
 # file_read_rate_mb_per_sec = 10.0
