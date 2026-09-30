@@ -16,9 +16,9 @@ jobs:
       matrix:
         image:
           - source: alpine:latest
-            target: ghcr.io/mensfeld/alpine:latest
+            target: ghcr.io/coipond/alpine:latest
           - source: nginx:alpine
-            target: ghcr.io/mensfeld/nginx:alpine
+            target: ghcr.io/coipond/nginx:alpine
     steps:
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
