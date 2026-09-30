@@ -101,7 +101,13 @@ Profiles support **inheritance**, ship AI-agent context files, and can carry the
 
 ## Supported AI tools
 
-**Claude Code** (default) · **Codex CLI** · **opencode** · **pi** · **omp** (Oh My Pi) - pick one in config or a profile:
+- **Claude Code** (default)
+- **Codex CLI**
+- **opencode**
+- **pi**
+- **omp** (Oh My Pi)
+
+Pick one in config or a profile:
 
 ```toml
 # ~/.coi/config.toml or ./.coi/config.toml
