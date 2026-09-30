@@ -1,0 +1,83 @@
+name: Publish to Copr
+
+# Builds a source RPM from rpm/code-on-incus.spec and submits it to a Fedora
+# Copr project, whose build farm compiles the binaries per chroot (fedora-43,
+# fedora-44, fedora-rawhide; x86_64 + aarch64 — configured on the project, see
+# docs/packaging-copr.md).
+#
+# Runs on the same v*.*.* release tags as release.yml, so every release also
+# publishes to Copr. The whole job no-ops unless the COPR_PROJECT variable is
+# set, so forks/upstream without Copr credentials configured are not failed.
+#
+# Requirements (configure once in the GitHub repo settings):
+#   Secrets:
+#     COPR_API_TOKEN - full contents of the ~/.config/copr token file obtained
+#                      from https://copr.fedorainfracloud.org/api/ (see docs)
+#   Variables:
+#     COPR_PROJECT   - copr-cli build target, e.g. "@code-on-incus/code-on-incus"
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Submit source RPM to Copr
+    # Skip entirely when no Copr project is configured (e.g. forks without creds).
+    if: ${{ vars.COPR_PROJECT != '' }}
+    runs-on: ubuntu-24.04
+    container: fedora:latest
+    timeout-minutes: 15
+    steps:
+      # git must exist before actions/checkout runs inside the container.
+      - name: Install packaging tools
+        run: dnf install -y --setopt=install_weak_deps=False copr-cli rpm-build git
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need tags for the version
+
+      - name: Configure Copr API token
+        env:
+          COPR_API_TOKEN: ${{ secrets.COPR_API_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.config"
+          printf '%s' "$COPR_API_TOKEN" > "$HOME/.config/copr"
+          chmod 600 "$HOME/.config/copr"
+
+      - name: Build source RPM
+        run: |
+          set -euo pipefail
+          # The checkout is owned by a different uid than the container user.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Version from the release tag; for manual dispatch, the latest v* tag.
+          case "${GITHUB_REF_NAME:-}" in
+            v*) VERSION="${GITHUB_REF_NAME#v}" ;;
+            *)  VERSION="$(git describe --tags --match 'v*' --abbrev=0 | sed 's/^v//')" ;;
+          esac
+          echo "Building code-on-incus $VERSION"
+
+          RT="$HOME/rpmbuild"
+          mkdir -p "$RT"/{SPECS,SOURCES,SRPMS}
+          # Stamp the version into the spec so the tag drives the package version.
+          sed -E "s/^(Version:[[:space:]]+).*/\1${VERSION}/" \
+            rpm/code-on-incus.spec > "$RT/SPECS/code-on-incus.spec"
+          # Produce the tarball the spec's Source0/%autosetup expect.
+          git archive --format=tar.gz --prefix="code-on-incus-${VERSION}/" \
+            -o "$RT/SOURCES/code-on-incus-${VERSION}.tar.gz" HEAD
+          rpmbuild --define "_topdir $RT" -bs "$RT/SPECS/code-on-incus.spec"
+
+      - name: Submit to Copr
+        env:
+          COPR_PROJECT: ${{ vars.COPR_PROJECT }}
+        # --nowait: submit and let the build farm compile (fire-and-forget).
+        # Drop it to make CI wait on / gate the build.
+        run: copr-cli build --nowait "$COPR_PROJECT" "$HOME"/rpmbuild/SRPMS/code-on-incus-*.src.rpm

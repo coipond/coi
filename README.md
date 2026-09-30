@@ -45,6 +45,8 @@ That's it. Your agent is now running in an isolated container with your project 
 
 > Requires Linux with [Incus](https://linuxcontainers.org/incus/docs/main/installing/) (macOS works too, via Colima/Lima - see [macOS Setup](https://github.com/mensfeld/coi/wiki/macOS-Setup-Guide)).
 
+> **Fedora:** prefer a system package? Install from Copr instead of the script — `sudo dnf copr enable @code-on-incus/code-on-incus && sudo dnf install code-on-incus` (Fedora 43+, x86_64/aarch64; pulls in `incus`). Packaging details: [`docs/packaging-copr.md`](docs/packaging-copr.md).
+
 ## Who it's for
 
 - You run AI coding agents and want them to have **full machine access** - root, Docker, package managers, services - without risking your host.
