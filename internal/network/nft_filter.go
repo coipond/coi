@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // NftManager manages nftables rules for container network isolation.

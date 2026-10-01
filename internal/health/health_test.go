@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
+	"github.com/coipond/coi/internal/config"
 )
 
 // TestCollectReferencedPools walks through the scenarios that the storage

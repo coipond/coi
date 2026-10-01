@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/network"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
 	"github.com/spf13/cobra"
 )
 

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/nftmonitor"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/nftmonitor"
 )
 
 // CheckIncus should return a parseable version string in its details and the status should

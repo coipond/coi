@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // Auto-allocation layout for published host ports (#558): each workspace gets

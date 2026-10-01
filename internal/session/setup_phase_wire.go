@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/limits"
-	"github.com/mensfeld/coi/internal/network"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/limits"
+	"github.com/coipond/coi/internal/network"
 )
 
 // 6.6 Forward host sockets (SSH agent built-in entry plus configured

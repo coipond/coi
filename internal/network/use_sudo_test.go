@@ -3,7 +3,7 @@ package network
 import (
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
+	"github.com/coipond/coi/internal/config"
 )
 
 // When use_sudo=false, NftUsable must return false WITHOUT invoking sudo, so Coi

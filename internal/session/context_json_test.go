@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/tool"
 )
 
 func TestResolveContextJSON(t *testing.T) {

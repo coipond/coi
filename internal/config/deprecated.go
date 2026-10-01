@@ -60,7 +60,7 @@ func (b deprecatedBuildField) isSet() bool {
 
 // migrationDocURL points users to the wiki section that explains the new
 // layout. Surfaced in every migration error so the fix is one click away.
-const migrationDocURL = "https://github.com/mensfeld/coi/wiki/Configuration#container-section"
+const migrationDocURL = "https://github.com/coipond/coi/wiki/Configuration#container-section"
 
 // checkDeprecatedConfigFields decodes a global-config file into the trap
 // struct and returns a non-nil error if any pre-0.8.0 fields are present.

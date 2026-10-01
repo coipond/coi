@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // writeBuildScript materializes the embedded build.sh so bash/sed can read it.

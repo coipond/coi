@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/monitor"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/vmhost"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/monitor"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/vmhost"
 )
 
 // CheckNetworkBridge verifies the network bridge is configured

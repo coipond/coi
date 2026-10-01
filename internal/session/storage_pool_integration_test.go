@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // secondStoragePoolForTest returns a storage pool other than "default" so the

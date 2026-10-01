@@ -24,7 +24,7 @@ GOVET=$(GOCMD) vet
 
 # Version injection
 VERSION ?= $(shell (git describe --tags --always --dirty 2>/dev/null || echo "dev") | sed 's/^v//')
-LDFLAGS=-ldflags "-X github.com/mensfeld/coi/internal/cli.Version=$(VERSION)"
+LDFLAGS=-ldflags "-X github.com/coipond/coi/internal/cli.Version=$(VERSION)"
 
 # Check required system build dependencies.
 # - Go toolchain (coi is written in Go).

@@ -3,7 +3,7 @@ package nftmonitor
 import (
 	"sync/atomic"
 
-	"github.com/mensfeld/coi/internal/logger"
+	"github.com/coipond/coi/internal/logger"
 )
 
 // pkgLogger optionally routes this package's debug diagnostics (COI_NFT_DEBUG)

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
 )
 
 // TimeoutMonitor monitors a container's runtime and stops it when max duration is reached

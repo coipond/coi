@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/network"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
 )
 
 // Responder handles automated responses to threats

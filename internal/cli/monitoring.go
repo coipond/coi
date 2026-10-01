@@ -6,11 +6,11 @@ import (
 	"os"
 	"sync"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/logger"
-	"github.com/mensfeld/coi/internal/monitor"
-	"github.com/mensfeld/coi/internal/nftmonitor"
-	"github.com/mensfeld/coi/internal/session"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/logger"
+	"github.com/coipond/coi/internal/monitor"
+	"github.com/coipond/coi/internal/nftmonitor"
+	"github.com/coipond/coi/internal/session"
 )
 
 // startSessionMonitoring starts the security monitoring daemons

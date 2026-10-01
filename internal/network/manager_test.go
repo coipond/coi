@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/logger"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/logger"
 )
 
 // stubNft records which nftRuler methods are called, in order.

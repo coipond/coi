@@ -7,10 +7,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/session"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // CheckCOIDirectory verifies the Coi directory exists and is writable

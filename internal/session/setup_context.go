@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // injectContextFile creates ~/SANDBOX_CONTEXT.md inside the container.
