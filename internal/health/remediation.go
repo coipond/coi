@@ -168,20 +168,39 @@ func remediations() []Remediation {
 				return installed && !available
 			},
 			Argv: func() ([]string, error) {
-				u, err := user.Current()
-				if err != nil {
-					return nil, fmt.Errorf("could not determine current user: %w", err)
-				}
-				// Write the drop-in and lock its perms in one privileged shell
-				// (the framework prefixes sudo). Username/path are system values
-				// with no quote chars, so single-quoting the line is safe.
-				line := u.Username + " ALL=(ALL) NOPASSWD: " + nftBinaryPath()
-				script := "echo '" + line + "' > /etc/sudoers.d/coi-nft && chmod 0440 /etc/sudoers.d/coi-nft"
-				return []string{"sh", "-c", script}, nil
+				return nftSudoersArgv(os.Getuid(), nftBinaryPath(), nftSudoersPath), nil
 			},
 			Recheck: recheckNftSudo,
 		},
 	}
+}
+
+// nftSudoersPath is the drop-in the nft remediation installs.
+const nftSudoersPath = "/etc/sudoers.d/coi-nft"
+
+// nftSudoersScript installs a sudoers drop-in without ever leaving a broken
+// file where sudo reads it: the rule ($1) goes to a dot-named temp file in the
+// target's directory (sudo's includedir skips names containing '.'), is
+// syntax-checked with visudo, and only then renamed over the target ($2). A
+// syntax error in /etc/sudoers.d makes every sudo on the host fail — including
+// the one needed to repair it — so an unchecked in-place write is a lockout risk.
+// The rule and path are positional args, never spliced into the script.
+const nftSudoersScript = `tmp="$(mktemp "$(dirname "$2")/.coi-nft.XXXXXX")" || exit 1
+if printf '%s\n' "$1" > "$tmp" && chmod 0440 "$tmp" && visudo -cf "$tmp" >/dev/null; then
+	mv -f "$tmp" "$2"
+else
+	rm -f "$tmp"
+	echo "coi: refusing to install an invalid sudoers rule: $1" >&2
+	exit 1
+fi`
+
+// nftSudoersArgv builds the (unprivileged) argv that installs the nft
+// passwordless-sudo rule at path. The user is named by numeric UID (`#1000`),
+// not username: a directory-service name containing a space or quote (SSSD/AD
+// "John Doe") is a sudoers syntax error, while `#uid` is always valid.
+func nftSudoersArgv(uid int, nftPath, path string) []string {
+	rule := fmt.Sprintf("#%d ALL=(ALL) NOPASSWD: %s", uid, nftPath)
+	return []string{"sh", "-c", nftSudoersScript, "sh", rule, path}
 }
 
 // nftBinaryPath resolves the nft binary, falling back to its usual location

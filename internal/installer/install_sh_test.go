@@ -1,6 +1,7 @@
 package installer_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1289,8 +1290,9 @@ func TestInstallSh_SetupNftSudoers_ConsentAndDecline(t *testing.T) {
 		cat > "$tmpdir/sudo" <<'STUB'
 #!/bin/bash
 echo "$*" >> "$SUDO_LOG"
+# install_sudoers_dropin runs: sudo sh -c SCRIPT sh RULE TARGET
 case "$1" in
-  tee)  cat > "$NFT_LINE" ;;
+  sh)   printf '%s\n' "$5" > "$NFT_LINE" ;;
   *)    : ;;
 esac
 exit 0
@@ -1308,6 +1310,11 @@ STUB
 	out, _, _ := runBashSnippet(t, base, "NONINTERACTIVE=1", "COI_ASSUME_YES=1")
 	if !strings.Contains(out, "NOPASSWD:") || !strings.Contains(out, "nft") {
 		t.Errorf("with consent, setup_nft_sudoers should write the NOPASSWD nft rule; out:\n%s", out)
+	}
+	// The user is named by numeric UID: a username with a space is a sudoers
+	// syntax error that would break every sudo on the host.
+	if !strings.Contains(out, fmt.Sprintf("#%d ALL=(ALL) NOPASSWD:", os.Getuid())) {
+		t.Errorf("sudoers rule should name the user by #uid; out:\n%s", out)
 	}
 	// Decline: skip + guidance, no drop-in written.
 	out, _, _ = runBashSnippet(t, base, "NONINTERACTIVE=1")
@@ -1428,5 +1435,57 @@ func TestInstallSh_PkgInstall_AptUpdatesOnce(t *testing.T) {
 	want := "apt-get update -qq\napt-get install -y foo\napt-get install -y bar\n"
 	if out != want {
 		t.Errorf("unexpected sudo calls:\ngot:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// install_sudoers_dropin validates the rule with visudo before it can reach the
+// target: a rejected rule leaves the existing drop-in untouched and no temp file
+// behind (a broken file in /etc/sudoers.d disables sudo host-wide); an accepted
+// one lands with mode 0440.
+func TestInstallSh_InstallSudoersDropin_ValidatesBeforeInstall(t *testing.T) {
+	script := installShPath(t)
+	run := func(visudoExit int) string {
+		snippet := `
+			tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+			mkdir "$tmpdir/bin" "$tmpdir/sudoers.d"
+			# sudo stub runs the command unprivileged; visudo stub accepts/rejects.
+			printf '#!/bin/bash\nexec "$@"\n' > "$tmpdir/bin/sudo"
+			printf '#!/bin/sh\nexit ` + fmt.Sprint(visudoExit) + `\n' > "$tmpdir/bin/visudo"
+			chmod +x "$tmpdir/bin/sudo" "$tmpdir/bin/visudo"
+			export PATH="$tmpdir/bin:$PATH"
+			echo previous > "$tmpdir/sudoers.d/coi-nft"
+			export NONINTERACTIVE=1
+			source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+			set +e
+			install_sudoers_dropin "#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft" "$tmpdir/sudoers.d/coi-nft"
+			echo "===RC=$?==="
+			echo "===CONTENT==="; cat "$tmpdir/sudoers.d/coi-nft"
+			echo "===MODE=$(stat -c %a "$tmpdir/sudoers.d/coi-nft")==="
+			echo "===FILES=$(ls -A "$tmpdir/sudoers.d" | wc -l)==="
+		`
+		out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+		return out
+	}
+
+	out := run(1)
+	if !strings.Contains(out, "===RC=1===") {
+		t.Errorf("rejected rule must fail; out:\n%s", out)
+	}
+	if !strings.Contains(out, "===CONTENT===\nprevious\n") {
+		t.Errorf("rejected rule must leave the existing drop-in untouched; out:\n%s", out)
+	}
+	if !strings.Contains(out, "===FILES=1===") {
+		t.Errorf("rejected rule must not leave a temp file behind; out:\n%s", out)
+	}
+
+	out = run(0)
+	if !strings.Contains(out, "===RC=0===") {
+		t.Errorf("valid rule must install; out:\n%s", out)
+	}
+	if !strings.Contains(out, "===CONTENT===\n#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft\n") {
+		t.Errorf("valid rule not written to target; out:\n%s", out)
+	}
+	if !strings.Contains(out, "===MODE=440===") || !strings.Contains(out, "===FILES=1===") {
+		t.Errorf("valid rule must land with mode 0440 and no temp file; out:\n%s", out)
 	}
 }

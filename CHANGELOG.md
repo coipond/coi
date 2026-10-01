@@ -13,6 +13,8 @@
 ### Bug Fixes
 
 - [Bug Fix] **Installer works on fresh container/minimal images** — refreshes apt package lists before installing, so build-from-source no longer fails with "Unable to locate package"; a failed install now ends with the actionable "Building from source needs: …" message.
+- [Bug Fix] **Passwordless-sudo setup for nft can no longer break sudo** — the installer and `coi health --fix` now name the user by UID and validate the rule with `visudo` before atomically installing it, so a username with a space (e.g. AD/SSSD logins) can't leave an invalid `/etc/sudoers.d` file that disables every `sudo` on the host.
+- [Bug Fix] **`coi health` no longer reports "can't be idmapped" after you apply its suggested fix** — a dedicated `root:<uid>:1` line in `/etc/subuid` now clears the UID, and only root's ranges are considered (Incus allocates from those).
 - [Bug Fix] **`coi health --fix` no longer reports the nft sudo fix as done when it isn't** — the re-check passed on the sudo password just typed for the fix; it now bypasses sudo's credential cache.
 - [Bug Fix] **Security monitor no longer kills the container for installing or mentioning `socat`/`powershell`, or for `rsync -e` / `ssh -i`** — these matched reverse-shell patterns as plain substrings; matching is now word-anchored and bare tool names need a network indicator. Real reverse shells are still caught.
 - [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield a silently unwritable workspace (#838)** — when the login UID sits inside root's `/etc/subuid` range Incus can't map it, so coi now aborts the launch with the cause named instead of continuing with a broken `/workspace`, and `coi health` reports it clearly instead of a cryptic failure.

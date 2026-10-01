@@ -2,6 +2,11 @@ package health
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -306,5 +311,117 @@ func TestRecheckNftSudo_IgnoresCachedCredentials(t *testing.T) {
 	runRecheckCommand = func([]string) error { return errors.New("a password is required") }
 	if c := recheckNftSudo(); c.Status != StatusFailed {
 		t.Errorf("expected FAILED when the probe fails, got %s", c.Status)
+	}
+}
+
+// runNftSudoersScript executes the nft remediation's install script for real,
+// against a temp target, with `visudo` resolved from PATH (stubbed or real).
+func runNftSudoersScript(t *testing.T, pathDir, rule, target string) (string, error) {
+	t.Helper()
+	argv := nftSudoersArgv(1000, "/usr/sbin/nft", target)
+	argv[4] = rule
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func writeStubVisudo(t *testing.T, exitCode int) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)
+	if err := os.WriteFile(filepath.Join(dir, "visudo"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// The rule names the user by numeric UID: a directory-service username with a
+// space ("John Doe") is a sudoers syntax error that would break every sudo.
+func TestNftSudoersArgv_UsesNumericUID(t *testing.T) {
+	argv := nftSudoersArgv(411531718, "/usr/sbin/nft", "/etc/sudoers.d/coi-nft")
+	if len(argv) != 6 || argv[0] != "sh" || argv[1] != "-c" {
+		t.Fatalf("unexpected argv shape: %q", argv)
+	}
+	if want := "#411531718 ALL=(ALL) NOPASSWD: /usr/sbin/nft"; argv[4] != want {
+		t.Errorf("rule = %q, want %q", argv[4], want)
+	}
+	if argv[5] != "/etc/sudoers.d/coi-nft" {
+		t.Errorf("target = %q", argv[5])
+	}
+	if strings.Contains(argv[2], "411531718") || strings.Contains(argv[2], "/usr/sbin/nft") {
+		t.Error("rule/path must be passed as positional args, not spliced into the script")
+	}
+}
+
+// A valid rule is validated, then lands at the target with mode 0440 and no
+// temp file left behind.
+func TestNftSudoersScript_InstallsValidatedRule(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "coi-nft")
+	rule := "#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft"
+	if out, err := runNftSudoersScript(t, writeStubVisudo(t, 0), rule, target); err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != rule+"\n" {
+		t.Errorf("content = %q", got)
+	}
+	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o440 {
+		t.Errorf("mode = %o, want 0440", fi.Mode().Perm())
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("temp file left behind: %v", entries)
+	}
+}
+
+// When visudo rejects the rule, nothing is written over the target (an existing
+// drop-in survives), no temp file remains, and the command fails.
+func TestNftSudoersScript_InvalidRuleLeavesTargetUntouched(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "coi-nft")
+	if err := os.WriteFile(target, []byte("previous\n"), 0o440); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runNftSudoersScript(t, writeStubVisudo(t, 1), "John Doe ALL=(ALL) NOPASSWD: /usr/sbin/nft", target)
+	if err == nil {
+		t.Fatalf("expected failure when visudo rejects the rule; out:\n%s", out)
+	}
+	if !strings.Contains(out, "refusing to install an invalid sudoers rule") {
+		t.Errorf("missing refusal message; out:\n%s", out)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "previous\n" {
+		t.Errorf("target was modified: %q", got)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("temp file left behind: %v", entries)
+	}
+}
+
+// With the real visudo (when installed), the generated #uid rule parses, and the
+// username-with-space form it replaces is rejected.
+func TestNftSudoersRule_RealVisudo(t *testing.T) {
+	visudo, err := exec.LookPath("visudo")
+	if err != nil {
+		if _, statErr := os.Stat("/usr/sbin/visudo"); statErr != nil {
+			t.Skip("visudo not installed")
+		}
+		visudo = "/usr/sbin/visudo"
+	}
+	check := func(rule string) error {
+		f := filepath.Join(t.TempDir(), "rule")
+		if err := os.WriteFile(f, []byte(rule+"\n"), 0o440); err != nil {
+			t.Fatal(err)
+		}
+		return exec.Command(visudo, "-cf", f).Run()
+	}
+	if err := check(nftSudoersArgv(411531718, "/usr/sbin/nft", "")[4]); err != nil {
+		t.Errorf("generated rule rejected by visudo: %v", err)
+	}
+	if err := check("John Doe ALL=(ALL) NOPASSWD: /usr/sbin/nft"); err == nil {
+		t.Error("sanity: visudo should reject a username containing a space")
 	}
 }
