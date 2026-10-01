@@ -181,30 +181,49 @@ func resolveGitIdentity(gitCfg *config.GitConfig) session.GitIdentity {
 		return session.GitIdentity{}
 	}
 	// Inside a macOS VM, `git config --global` reads the VM's gitconfig, not the
-	// Mac user's; prefer the Mac home's files (shared into the guest), then fall
-	// back to the guest's global config. Each source must yield a complete
-	// identity on its own so name and email never come from different hosts.
-	for _, file := range macHostGitConfigFiles() {
-		if id := gitIdentityFrom("--file", file); id.Complete() {
+	// Mac user's. Read the Mac home's config first, the way git itself would for
+	// that user (HOME pointed at it, so ~ in include.path/includeIf resolves to
+	// the Mac home, not the guest's), then fall back to the guest's global
+	// config. Each source must yield a complete identity on its own so name and
+	// email never come from different hosts.
+	if home := macHostHome(); home != "" {
+		if id := gitIdentityFrom(macHomeEnv(home), "--includes"); id.Complete() {
 			return id
 		}
 	}
-	if id := gitIdentityFrom("--global"); id.Complete() {
+	if id := gitIdentityFrom(nil); id.Complete() {
 		return id
 	}
 	return session.GitIdentity{}
 }
 
-// macHostGitConfigFiles is a seam for tests.
-var macHostGitConfigFiles = vmhost.MacHostGitConfigFiles
+// macHostHome is a seam for tests.
+var macHostHome = vmhost.MacHostHome
 
-// gitIdentityFrom reads user.name/user.email from the given `git config`
-// scope arguments (e.g. "--global" or "--file", path).
-func gitIdentityFrom(scope ...string) session.GitIdentity {
+// macHomeEnv returns an environment under which `git config --global` resolves
+// against the Mac home: HOME and XDG_CONFIG_HOME point there, and any
+// GIT_CONFIG_GLOBAL override (which would otherwise win over HOME and belongs to
+// the guest) is dropped.
+func macHomeEnv(home string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "XDG_CONFIG_HOME=") || strings.HasPrefix(kv, "GIT_CONFIG_GLOBAL=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"))
+}
+
+// gitIdentityFrom reads user.name/user.email via `git config --global` under env
+// (nil inherits the process environment), with any extra flags.
+func gitIdentityFrom(env []string, extra ...string) session.GitIdentity {
 	get := func(key string) string {
-		args := append([]string{"config"}, scope...)
-		args = append(args, "--includes", "--get", key)
-		out, err := exec.Command("git", args...).Output()
+		args := append([]string{"config", "--global"}, extra...)
+		args = append(args, "--get", key)
+		cmd := exec.Command("git", args...)
+		cmd.Env = env
+		out, err := cmd.Output()
 		if err != nil {
 			return ""
 		}

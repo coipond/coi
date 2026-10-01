@@ -314,24 +314,40 @@ func TestDirNonEmpty(t *testing.T) {
 	}
 }
 
-func TestMacHostGitConfigFiles(t *testing.T) {
-	mounts := "mac /Users/alice virtiofs rw 0 0\n"
-	existing := map[string]bool{
-		"/Users/alice/.gitconfig":         true,
-		"/Users/alice/.config/git/config": true,
-	}
-	exists := func(p string) bool { return existing[p] }
-	noList := func(string) []string { return nil }
+func TestMacHostHome(t *testing.T) {
+	// "/Users" itself is a directory too, as on a real host: an empty or "."
+	// $USER must never resolve to the parent.
+	dirs := map[string]bool{"/Users": true, "/Users/alice": true, "/Users/bob": true}
+	isDir := func(p string) bool { return dirs[p] }
 
-	got := macHostGitConfigFiles(KindLimaLike, mounts, noList, exists)
-	want := []string{"/Users/alice/.gitconfig", "/Users/alice/.config/git/config"}
-	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Errorf("got %v, want %v", got, want)
+	tests := []struct {
+		name   string
+		kind   Kind
+		mounts string
+		user   string
+		want   string
+	}{
+		{"single home mount", KindLimaLike, "mac /Users/alice virtiofs rw 0 0\n", "alice", "/Users/alice"},
+		{"single home mount, guest user differs", KindLimaLike, "mac /Users/alice virtiofs rw 0 0\n", "lima", "/Users/alice"},
+		{"9p home mount", KindLimaLike, "mac /Users/alice 9p rw 0 0\n", "alice", "/Users/alice"},
+		{"whole /Users shared picks the guest user's home", KindOrbStack, "mac /Users virtiofs rw 0 0\n", "bob", "/Users/bob"},
+		// Multi-user Mac: never fall back to another account's home (alice sorts first).
+		{"whole /Users shared, no home for the guest user", KindOrbStack, "mac /Users virtiofs rw 0 0\n", "carol", ""},
+		{"whole /Users shared, unknown user", KindOrbStack, "mac /Users virtiofs rw 0 0\n", "", ""},
+		{"two home mounts, one matches the user", KindLimaLike, "a /Users/alice virtiofs rw 0 0\nb /Users/bob virtiofs rw 0 0\n", "bob", "/Users/bob"},
+		{"two home mounts, none matches (ambiguous)", KindLimaLike, "a /Users/alice virtiofs rw 0 0\nb /Users/bob virtiofs rw 0 0\n", "carol", ""},
+		{"project mount is not a home", KindLimaLike, "mac /Users/alice/code virtiofs rw 0 0\n", "alice", ""},
+		{"non-virtiofs /Users mount ignored", KindLimaLike, "mac /Users/alice ext4 rw 0 0\n", "alice", ""},
+		{"traversal in $USER is rejected", KindOrbStack, "mac /Users virtiofs rw 0 0\n", "../bob", ""},
+		{"dot $USER is rejected", KindOrbStack, "mac /Users virtiofs rw 0 0\n", ".", ""},
+		{"dot-dot $USER is rejected", KindOrbStack, "mac /Users virtiofs rw 0 0\n", "..", ""},
+		{"Linux host", KindUnknown, "mac /Users/alice virtiofs rw 0 0\n", "alice", ""},
 	}
-	if got := macHostGitConfigFiles(KindUnknown, mounts, noList, exists); got != nil {
-		t.Errorf("Linux must return nil, got %v", got)
-	}
-	if got := macHostGitConfigFiles(KindLimaLike, mounts, noList, func(string) bool { return false }); len(got) != 0 {
-		t.Errorf("missing files must be skipped, got %v", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := macHostHome(tt.kind, tt.mounts, tt.user, isDir); got != tt.want {
+				t.Errorf("macHostHome() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
