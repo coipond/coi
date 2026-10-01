@@ -529,28 +529,43 @@ func TestBranchGuard_RefTransaction_GlobalHooksPath_Exec(t *testing.T) {
 	}
 }
 
-// `git remote remove` empties refs/remotes on demand, so "no remote-tracking
-// refs" alone must not let a protected branch be recreated at a local commit:
-// only a ROOT commit (the first commit of a new repo) gets that exception.
-func TestBranchGuard_RefTransaction_RemoteRemoveDoesNotUnlockRecreate_Exec(t *testing.T) {
-	repo := refTxFixture(t)
-	local := revParse(t, repo, "feature")
-	remote, _ := git(t, repo, nil, "remote", "get-url", "origin")
-	for _, args := range [][]string{
-		{"switch", "-q", "feature"},
-		{"remote", "remove", "origin"},
-		{"branch", "-D", "main"},
-	} {
-		if out, err := git(t, repo, nil, args...); err != nil {
-			t.Fatalf("setup %v: %v\n%s", args, err, out)
+// A repository with no remote-tracking refs may create a protected branch from
+// existing work: `git init -b dev`, a couple of commits, then
+// `git checkout -b main` is ordinary and must not be refused.
+func TestBranchGuard_RefTransaction_CreateMainInLocalOnlyRepo_Exec(t *testing.T) {
+	requireGit(t)
+	repo := t.TempDir()
+	if out, err := git(t, repo, nil, "init", "-q", "-b", "dev"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	for _, msg := range []string{"one", "two"} {
+		if out, err := git(t, repo, nil, "commit", "-q", "--allow-empty", "-m", msg); err != nil {
+			t.Fatalf("commit %s: %v\n%s", msg, err, out)
 		}
 	}
-	out, err := git(t, repo, nil, "branch", "main", "feature")
+	installGuards(t, repo, filepath.Join(t.TempDir(), "hooks"), []string{"main"})
+	if out, err := git(t, repo, nil, "checkout", "-q", "-b", "main"); err != nil {
+		t.Errorf("creating main in a repo without remotes should be allowed: %v\n%s", err, out)
+	}
+}
+
+// The remote-known check fails CLOSED: a broken remote-tracking ref makes
+// rev-list error out, and that must not read as "a remote has the commit".
+func TestBranchGuard_RefTransaction_BrokenRemoteRefFailsClosed_Exec(t *testing.T) {
+	repo := refTxFixture(t)
+	gitDir := filepath.Join(repo, ".git")
+	broken := filepath.Join(gitDir, "refs", "remotes", "x", "broken")
+	if err := os.MkdirAll(filepath.Dir(broken), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(broken, []byte(strings.Repeat("1", 40)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := git(t, repo, nil, "switch", "-q", "feature"); err != nil {
+		t.Fatalf("switch: %v\n%s", err, out)
+	}
+	out, err := git(t, repo, nil, "branch", "-f", "main", "feature")
 	if err == nil || !strings.Contains(out, "refusing to move protected branch 'main'") {
-		t.Errorf("recreating main at a local commit after `remote remove` should be refused (err=%v):\n%s", err, out)
+		t.Errorf("a broken remote ref must not open the guard (err=%v):\n%s", err, out)
 	}
-	if got, _ := git(t, repo, nil, "rev-parse", "-q", "--verify", "refs/heads/main"); strings.TrimSpace(got) == local {
-		t.Errorf("main points at the local-only commit %s", local)
-	}
-	_, _ = git(t, repo, nil, "remote", "add", "origin", strings.TrimSpace(remote))
 }

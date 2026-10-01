@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"regexp"
@@ -420,13 +421,17 @@ var reverseShellNeedsSocat = map[string]bool{
 	"SYSTEM:": true,
 }
 
-// socatNetAddrRe matches a socat network address with a real endpoint:
-// TCP:host:port, TCP4-CONNECT:host:port, OPENSSL:[::1]:443, UDP-SENDTO:h:p,
-// or a listener (TCP-LISTEN:4444). Requiring the host:port shape keeps it off
-// look-alike words — a Kubernetes `tcpSocket:` probe key, or `rg "tcp:|exec:"`.
+// socatNetAddrRe matches a socat network address with a real endpoint — a
+// connecting address (TCP:host:port, TCP4-CONNECT:, UDP-SENDTO:, OPENSSL:,
+// SSL:) or a listening one (TCP-LISTEN:port, TCP-L:, UDP-RECVFROM:,
+// OPENSSL-LISTEN:, SSL-L:), with numeric or service-name ports. Requiring the
+// address shape keeps it off look-alike words — a Kubernetes `tcpSocket:`
+// key, `rg "tcp:|exec:"`, or a URL such as tcp://docker:2375 (socat
+// addresses never contain "//").
 var socatNetAddrRe = regexp.MustCompile(
-	`(?:^|[\s'"])(?:(?:tcp|udp|sctp)[46]?(?:-connect|-sendto)?|openssl(?:-connect)?|ssl):(?:\[[^\]]+\]|[^\s:,'"\[]+):[0-9]+` +
-		`|(?:^|[\s'"])(?:(?:tcp|udp|sctp)[46]?|openssl)-listen:[0-9]+`)
+	`(?:^|[\s'"])(?:(?:tcp|udp|sctp)[46]?(?:-connect|-sendto|-datagram)?|openssl(?:-connect)?|ssl):` +
+		`(?:\[[^\]]+\]|[^\s:,'"\[/]+):[a-z0-9-]+` +
+		`|(?:^|[\s'"])(?:(?:tcp|udp|sctp)[46]?-(?:listen|l|recvfrom|recv)|openssl-listen|ssl-l):[a-z0-9-]+`)
 
 // looksLikeSocat reports whether cmdLower is a socat invocation: the socat
 // binary by name, or — for a copied/renamed binary (`/tmp/x tcp:h:p exec:sh`)
@@ -439,8 +444,8 @@ func looksLikeSocat(cmdLower string) bool {
 // benign commands: the pattern only counts when its predicate holds. Searching
 // for /dev/tcp/ (grep, rg) or loading IO::File must not kill the container.
 var reverseShellRefine = map[string]func(cmdLower string) bool{
-	"/dev/tcp/": devNetEndpointNonLoopback,
-	"/dev/udp/": devNetEndpointNonLoopback,
+	"/dev/tcp/": shellDevNetEndpoint,
+	"/dev/udp/": shellDevNetEndpoint,
 	"perl -MIO": perlLoadsIOSocket,
 }
 
@@ -541,12 +546,54 @@ func isLoopbackHost(host string) bool {
 	if ip := net.ParseIP(host); ip != nil {
 		return ip.IsLoopback() || ip.IsUnspecified()
 	}
-	// inet_aton shorthand: 1-4 all-numeric dotted parts (127.1, 127.0.1, 0).
-	if host == "" || strings.Trim(host, "0123456789.") != "" || strings.Count(host, ".") > 3 {
-		return false
+	// inet_aton forms (127.1, 0x7f.1, 0): only a VALID address counts. An
+	// invalid one (127.0.0.256, 127., 127..1) isn't parsed as an IP by the
+	// resolver, so it is looked up as a name and may resolve anywhere.
+	if v, ok := inetAton(host); ok {
+		return v>>24 == 127 || v == 0
 	}
-	first, _, _ := strings.Cut(host, ".")
-	return first == "127" || host == "0"
+	return false
+}
+
+// inetAtonPartRe is one inet_aton number: decimal, octal or 0x-hex.
+var inetAtonPartRe = regexp.MustCompile(`^(?:0[xX][0-9a-fA-F]+|[0-9]+)$`)
+
+// inetAton parses an IPv4 address the way glibc's inet_aton does: 1-4 dotted
+// parts, each decimal, octal (leading 0) or hex (0x); the last part fills the
+// remaining bytes. ok=false for anything inet_aton would reject.
+func inetAton(s string) (uint32, bool) {
+	parts := strings.Split(s, ".")
+	if len(parts) > 4 {
+		return 0, false
+	}
+	vals := make([]uint64, len(parts))
+	for i, p := range parts {
+		if !inetAtonPartRe.MatchString(p) {
+			return 0, false // also rejects Go-only 0b/0o/_ forms ParseUint takes
+		}
+		v, err := strconv.ParseUint(p, 0, 32) // base 0: 0x.. hex, 0.. octal
+		if err != nil {
+			return 0, false
+		}
+		vals[i] = v
+	}
+	last := len(vals) - 1
+	for _, v := range vals[:last] {
+		if v > 255 {
+			return 0, false
+		}
+	}
+	if vals[last] >= 1<<(8*(4-last)) {
+		return 0, false
+	}
+	out := vals[last]
+	for i, v := range vals[:last] {
+		out |= v << (8 * (3 - i))
+	}
+	if out > math.MaxUint32 { // unreachable given the part limits above
+		return 0, false
+	}
+	return uint32(out), true
 }
 
 // devNetEndpointNonLoopback reports whether cmdLower opens (or may open) a
@@ -574,15 +621,15 @@ func devNetEndpointNonLoopback(cmdLower string) bool {
 			// The endpoint runs to the next whitespace or command separator;
 			// quotes are dropped, as bash concatenates quoted pieces.
 			tail := cmdLower[from:]
-			if end := strings.IndexAny(tail, " \t\n;|&<>"); end >= 0 {
+			if end := strings.IndexAny(tail, " \t\n;|&<>()"); end >= 0 {
 				tail = tail[:end]
 			}
-			tail = strings.NewReplacer(`"`, "", "'", "").Replace(tail)
+			tail = strings.NewReplacer(`\"`, "", `\'`, "", `"`, "", "'", "").Replace(tail)
 			if tail == "" {
 				continue // a bare mention, no endpoint
 			}
 			host, port, _ := strings.Cut(tail, "/")
-			literal := !strings.ContainsAny(tail, "$`(){}\\")
+			literal := !strings.ContainsAny(tail, "$`{}\\")
 			if literal && port != "" && isLoopbackHost(host) {
 				continue // a probe of a local service
 			}
@@ -590,6 +637,28 @@ func devNetEndpointNonLoopback(cmdLower string) bool {
 		}
 	}
 	return false
+}
+
+// shellArgv0 lists the shells whose command lines can open /dev/tcp|udp
+// connections (bash, plus shells that implement or emulate the redirection).
+var shellArgv0 = map[string]bool{
+	"bash": true, "sh": true, "dash": true, "zsh": true, "ksh": true, "mksh": true,
+	"ash": true, "busybox": true, "rbash": true, "lksh": true, "oksh": true,
+	"yash": true, "posh": true,
+}
+
+// shellDevNetEndpoint applies devNetEndpointNonLoopback only to shell
+// processes: /dev/tcp is a shell feature, so the path inside another
+// program's arguments (git commit -m, grep, sed, rg) is text, not a socket.
+// The agent's own `bash -c "<command>"` wrapper is still a shell, so a mention
+// inside a command it runs can still match; scoping cuts these down without a
+// full shell parser.
+func shellDevNetEndpoint(cmdLower string) bool {
+	arg0 := cmdLower
+	if i := strings.IndexAny(arg0, " \t\n"); i >= 0 {
+		arg0 = arg0[:i]
+	}
+	return shellArgv0[arg0[strings.LastIndexByte(arg0, '/')+1:]] && devNetEndpointNonLoopback(cmdLower)
 }
 
 // perlIOSocketRe matches perl loading the IO bundle (`-MIO`, which pulls in
