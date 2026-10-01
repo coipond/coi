@@ -15,7 +15,7 @@ import (
 // tool's GetContainerEnv emits GIT_*).
 const gitIdentityEnvMarkerKey = "user.coi.git_env_keys"
 
-// applyGitIdentityContainerEnv is Layer 1 of the identity lock: it pins
+// ApplyGitIdentityContainerEnv is Layer 1 of the identity lock: it pins
 // GIT_AUTHOR_*/GIT_COMMITTER_* as container-level `environment.*` config, which
 // Incus injects into EVERY exec — coi's own `bash -c` tool launch (a non-login,
 // non-interactive shell that sources no profile), and a third-party

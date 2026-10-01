@@ -48,7 +48,7 @@ func seedHostFile(mgr container.ContainerManager, hostPath, destPath, homeDir, m
 	return nil
 }
 
-// setupCredentials copies each configured credential entry (catalog bundle or
+// SetupCredentials copies each configured credential entry (catalog bundle or
 // ad-hoc) from host to container via seedHostFile. Tolerant of a missing host
 // file (e.g. the user hasn't signed into the referenced provider yet), logs
 // and skips rather than failing the whole session. Safe to call again on

@@ -29,6 +29,7 @@ type ExitCodeError struct {
 	Message string
 }
 
+// Error returns Message, or "exit code N" when Message is empty.
 func (e *ExitCodeError) Error() string {
 	if e.Message != "" {
 		return e.Message

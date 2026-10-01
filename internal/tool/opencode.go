@@ -11,13 +11,16 @@ type OpencodeTool struct {
 // NewOpencode creates a new opencode tool instance
 func NewOpencode() Tool { return &OpencodeTool{} }
 
+// Name returns "opencode".
 func (c *OpencodeTool) Name() string { return "opencode" }
 
+// Binary returns "opencode".
 func (c *OpencodeTool) Binary() string { return "opencode" }
 
 // ConfigDirName returns the XDG-standard config directory for opencode.
 func (c *OpencodeTool) ConfigDirName() string { return mustBundle("opencode").ConfigDir }
 
+// SessionsDirName returns "sessions-opencode".
 func (c *OpencodeTool) SessionsDirName() string { return "sessions-opencode" }
 
 // BuildCommand builds the opencode launch command.

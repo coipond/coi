@@ -14,6 +14,7 @@ type ConfigError struct {
 	Err  error
 }
 
+// Error describes the invalid configuration, naming the file when Path is set.
 func (e *ConfigError) Error() string {
 	if e.Path != "" {
 		return fmt.Sprintf("invalid configuration (%s): %v", e.Path, e.Err)
@@ -21,4 +22,5 @@ func (e *ConfigError) Error() string {
 	return fmt.Sprintf("invalid configuration: %v", e.Err)
 }
 
+// Unwrap returns the underlying error.
 func (e *ConfigError) Unwrap() error { return e.Err }

@@ -1,3 +1,5 @@
+// Package cli implements the coi command-line interface: the cobra command
+// tree and the logic behind each subcommand.
 package cli
 
 import (

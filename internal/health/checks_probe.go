@@ -58,6 +58,9 @@ func subidSkip(name string) (HealthCheck, bool) {
 	}, true
 }
 
+// CheckContainerConnectivity launches a throwaway container from imageName
+// (default coi-default) under the given hardening policy and verifies it gets
+// a DHCP address and can resolve DNS and reach HTTPS endpoints.
 func CheckContainerConnectivity(imageName string, policy container.HardeningPolicy) HealthCheck {
 	// Skip if no image available
 	if imageName == "" {

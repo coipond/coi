@@ -171,7 +171,7 @@ func (f *NftManager) ApplyAllowlist(cfg *config.NetworkConfig, _ []string) error
 	if err := f.AddStaticIPs(policy.StaticCIDRs()); err != nil {
 		return err
 	}
-	if err := f.AddStaticTuples(policy.StaticTuples(), intsToPortRanges(allowedPorts)); err != nil {
+	if err := f.AddStaticTuples(policy.staticTuples(), intsToPortRanges(allowedPorts)); err != nil {
 		return err
 	}
 
@@ -314,7 +314,7 @@ func (f *NftManager) ReplaceAllowlist(cfg *config.NetworkConfig, staticCIDRs []s
 	if err := f.AddStaticIPs(policy.StaticCIDRs()); err != nil {
 		return err
 	}
-	return f.AddStaticTuples(policy.StaticTuples(), intsToPortRanges(allowedPorts))
+	return f.AddStaticTuples(policy.staticTuples(), intsToPortRanges(allowedPorts))
 }
 
 // EnsureBaseRules creates the ip coi table/chain and adds the shared conntrack rule.

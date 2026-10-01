@@ -8,6 +8,7 @@ import (
 // ThreatLevel indicates severity of detected threat
 type ThreatLevel string
 
+// Threat levels, in increasing order of severity.
 const (
 	ThreatLevelInfo     ThreatLevel = "info"
 	ThreatLevelWarning  ThreatLevel = "warning"

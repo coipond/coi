@@ -1,3 +1,5 @@
+// Package limits validates container resource limits (CPU, memory, disk,
+// runtime) and applies them to Incus containers.
 package limits
 
 import (

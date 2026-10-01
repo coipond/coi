@@ -126,14 +126,14 @@ func NewAllowPolicy(entries []string) (*AllowPolicy, error) {
 // this set backs ICMP reachability and the security monitor, which are per-address.
 func (p *AllowPolicy) StaticCIDRs() []string { return p.staticCIDRs }
 
-// StaticTuples returns the literal address entries paired with their per-entry
+// staticTuples returns the literal address entries paired with their per-entry
 // ports (nil = inherit global), for the port-scoped concatenated nft set.
-func (p *AllowPolicy) StaticTuples() []staticTuple { return p.staticTups }
+func (p *AllowPolicy) staticTuples() []staticTuple { return p.staticTups }
 
 // Names returns the hostname entries. These are resolved on the host; the answers
 // go into both the container's dynamic nft set and its /etc/hosts.
 func (p *AllowPolicy) Names() []string { return p.names }
 
-// PortsForName returns the per-entry ports configured for a hostname (nil =
+// portsForName returns the per-entry ports configured for a hostname (nil =
 // inherit global), keyed by the same normalised name Names() returns.
-func (p *AllowPolicy) PortsForName(name string) []portRange { return p.namePorts[name] }
+func (p *AllowPolicy) portsForName(name string) []portRange { return p.namePorts[name] }

@@ -12,7 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// TrustEnvVar, when set to a truthy value (1/true/yes), bypasses the
+// TrustEnvVar is the environment variable that, when set to a truthy value (1/true/yes), bypasses the
 // untrusted-resource gate. Intended for CI/automation where the operator already
 // controls the config and prompting is impractical. It is safe because only the
 // invoking shell can set it — a cloned repo's config cannot.

@@ -61,17 +61,18 @@ type Remediation struct {
 type FixStatus string
 
 const (
-	// FixPlanned: --dry-run only; the command was not run.
+	// FixPlanned means --dry-run only; the command was not run.
 	FixPlanned FixStatus = "planned"
-	// FixApplied: the command ran and the check now passes.
+	// FixApplied means the command ran and the check now passes.
 	FixApplied FixStatus = "applied"
-	// FixReloginRequired: the command ran successfully but the check still
+	// FixReloginRequired means the command ran successfully but the check still
 	// isn't OK in this session because a re-login (or newgrp) is required.
 	FixReloginRequired FixStatus = "relogin_required"
-	// FixManualRequired: the fix is FixManual, or ShouldApply returned false —
-	// the operator must act. The command (if any) is reported for them.
+	// FixManualRequired means the fix is FixManual: --fix never runs it, and
+	// the operator must act. The command (if any) is reported for them. (A fix
+	// whose ShouldApply returns false produces no outcome at all.)
 	FixManualRequired FixStatus = "manual_required"
-	// FixFailed: the command was run but errored, or building it failed.
+	// FixFailed means the command was run but errored, or building it failed.
 	FixFailed FixStatus = "failed"
 )
 

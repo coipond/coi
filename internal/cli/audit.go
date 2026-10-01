@@ -198,6 +198,8 @@ func newSerializingWriter(w io.Writer, mu *sync.Mutex) *serializingWriter {
 	return &serializingWriter{w: w, mu: mu}
 }
 
+// Write writes p to the underlying writer while holding the shared mutex, so
+// concurrent writers never interleave within a single write.
 func (s *serializingWriter) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

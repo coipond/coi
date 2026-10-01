@@ -1,3 +1,4 @@
+// Package terminal adapts host terminal settings for use inside containers.
 package terminal
 
 import "strings"
