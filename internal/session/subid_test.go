@@ -192,3 +192,79 @@ func TestFindIncusdStartTime(t *testing.T) {
 		t.Errorf("implausible incusd start time %v", started)
 	}
 }
+
+// Container monitors and fork helpers also have comm "incusd" and outlive an
+// Incus restart; the start time must come from the daemon itself.
+func TestIncusdStartTimeIn_PicksDaemonNotMonitor(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stat := func(pid string, ticks int) string {
+		// pid (comm) state + 18 filler fields, then starttime (field 22).
+		return pid + " (incusd) S " + strings.Repeat("0 ", 18) + fmt.Sprint(ticks) + " 0 0\n"
+	}
+	write("stat", "cpu 1 2 3\nbtime 1000000\n")
+	// Old monitor and forkproxy sort BEFORE the daemon's pid.
+	write("100/cmdline", "[lxc monitor] /var/lib/incus/containers coi-x\x00")
+	write("100/stat", stat("100", 100))
+	write("150/cmdline", "incusd\x00forkproxy\x00--\x00x\x00")
+	write("150/stat", stat("150", 150))
+	write("300/cmdline", "/opt/incus/bin/incusd\x00--group\x00incus-admin\x00")
+	write("300/stat", stat("300", 50000))
+	write("400/cmdline", "bash\x00")
+	write("400/stat", "400 (bash) S "+strings.Repeat("0 ", 18)+"1 0 0\n")
+
+	got, ok := incusdStartTimeIn(root)
+	if !ok {
+		t.Fatal("daemon not found")
+	}
+	if want := time.Unix(1000000, 0).Add(500 * time.Second); !got.Equal(want) {
+		t.Errorf("start = %v, want the daemon's %v (not a monitor's)", got, want)
+	}
+
+	// No daemon at all (only a monitor) → not found, rather than a wrong answer.
+	root2 := t.TempDir()
+	root = root2
+	write("stat", "btime 1000000\n")
+	write("100/cmdline", "[lxc monitor] /var/lib/incus/containers coi-x\x00")
+	write("100/stat", stat("100", 100))
+	if _, ok := incusdStartTimeIn(root2); ok {
+		t.Error("a lone container monitor must not be taken for the daemon")
+	}
+}
+
+// btime has 1s resolution: an edit made within a second after the computed
+// start must not read as "Incus not restarted since".
+func TestHostUIDSubordinateRange_RestartTolerance(t *testing.T) {
+	uid := os.Getuid()
+	big := fmt.Sprintf("root:%d:1000000000", uid)
+	if uid > 0 {
+		big = fmt.Sprintf("root:%d:1000000000", uid-1)
+	}
+	content := big + "\n" + fmt.Sprintf("root:%d:1", uid) + "\n"
+	dir := t.TempDir()
+	edited := time.Now().Add(-time.Hour)
+	for _, name := range []string{"subuid", "subgid"} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, edited, edited); err != nil {
+			t.Fatal(err)
+		}
+	}
+	origU, origG, origStart := subuidPath, subgidPath, incusdStartTime
+	t.Cleanup(func() { subuidPath, subgidPath, incusdStartTime = origU, origG, origStart })
+	subuidPath, subgidPath = filepath.Join(dir, "subuid"), filepath.Join(dir, "subgid")
+	incusdStartTime = func() (time.Time, bool) { return edited.Add(-500 * time.Millisecond), true }
+	if line, found := HostUIDSubordinateRange(); found {
+		t.Errorf("edit within the 1s btime resolution should not flag a missing restart: %q", line)
+	}
+}

@@ -119,3 +119,95 @@ def test_branch_guard_disabled_allows_main(coi_binary, workspace_dir, cleanup_co
 
     rc, out = _exec(coi_binary, name, f"cd {REPO} && git commit -m 'on main'")
     assert rc == 0, f"with the guard disabled, a commit on main should succeed, got rc={rc}: {out}"
+
+
+# Paths for the reference-transaction scenario: a bare "server", a seed repo
+# that publishes main, a working clone, and a second clone that advances main.
+RT_SERVER = "/tmp/rt-server.git"
+RT_SEED = "/tmp/rt-seed"
+RT_CLONE = "/tmp/rt-clone"
+RT_OTHER = "/tmp/rt-other"
+_ID = "git config user.name t && git config user.email t@e"
+# Test-only bypass for SETUP steps that legitimately move main (the guard is
+# global; a repo-local hooks path overriding it is a documented bypass).
+_NOHOOKS = "git -c core.hooksPath=/dev/null"
+
+
+def test_branch_guard_reference_transaction_paths(coi_binary, workspace_dir, cleanup_containers):
+    """With coi's real installed hooks, the reference-transaction guard refuses
+    the ways of moving main that never fire pre-commit (branch -f, cherry-pick,
+    delete-and-recreate after `git remote remove`), refuses `fetch origin
+    main:main` with a working alternative, and leaves a new repo's first commit
+    and pushes INTO a local bare repository alone."""
+    env = write_trusted_coi_config('[git]\nprotected_branches = ["main"]\n')
+    name = _start_background_shell(coi_binary, workspace_dir, env)
+
+    def ok(script, what):
+        rc, out = _exec(coi_binary, name, script)
+        assert rc == 0, f"{what} should succeed, got rc={rc}: {out}"
+        return out
+
+    def refused(script, what):
+        rc, out = _exec(coi_binary, name, script)
+        assert rc != 0, f"{what} should be refused, got rc={rc}: {out}"
+        assert "refusing to move protected branch 'main'" in out, (
+            f"{what}: expected the reference-transaction guard's message, got: {out}"
+        )
+        return out
+
+    # A fresh repo's first commit is allowed; publishing it creates main in the
+    # bare server, whose own receive side must not apply the guard.
+    ok(
+        f"rm -rf {RT_SERVER} {RT_SEED} {RT_CLONE} {RT_OTHER} && "
+        f"git init -q --bare -b main {RT_SERVER} && "
+        f"git init -q -b main {RT_SEED} && cd {RT_SEED} && {_ID} && "
+        "echo base > base.txt && git add base.txt && git commit -q -m base && "
+        f"git remote add origin {RT_SERVER} && git push -q --no-verify origin main",
+        "first commit in a new repo + publishing it to a bare server",
+    )
+
+    # Working clone with a local-only commit on a feature branch.
+    ok(
+        f"git clone -q {RT_SERVER} {RT_CLONE} && cd {RT_CLONE} && {_ID} && "
+        "git switch -q -c feature && echo f > f.txt && git add f.txt && git commit -q -m feat",
+        "clone + feature-branch commit",
+    )
+    main_before = ok(f"cd {RT_CLONE} && git rev-parse main", "rev-parse").strip().splitlines()[-1]
+
+    # Paths that never fire pre-commit must still be refused.
+    refused(f"cd {RT_CLONE} && git branch -f main feature", "branch -f main <local commit>")
+    refused(
+        f"cd {RT_CLONE} && git switch -q main && git cherry-pick feature",
+        "cherry-pick onto main",
+    )
+    _exec(
+        coi_binary,
+        name,
+        f"cd {RT_CLONE} && git cherry-pick --abort; git reset -q --hard {main_before}; "
+        "git switch -q feature",
+    )
+
+    # Advance main on the server from a second clone (setup only, hooks off),
+    # pushing an UPDATE into the bare repo — its receive side must accept it.
+    ok(
+        f"git clone -q {RT_SERVER} {RT_OTHER} && cd {RT_OTHER} && {_ID} && "
+        f"{_NOHOOKS} commit -q --allow-empty -m upstream && git push -q --no-verify origin main",
+        "pushing an update into a local bare repository",
+    )
+
+    # `fetch origin main:main` moves main before origin/main, so it's refused —
+    # with a message naming the alternative, which must work.
+    out = refused(f"cd {RT_CLONE} && git fetch -q origin main:main", "fetch origin main:main")
+    assert "git branch -f main <remote>/main" in out, f"refusal should name the alternative: {out}"
+    ok(
+        f"cd {RT_CLONE} && git fetch -q origin && git branch -f main origin/main && "
+        'test "$(git rev-parse main)" = "$(git rev-parse origin/main)"',
+        "the suggested alternative (git branch -f main origin/main)",
+    )
+
+    # `git remote remove` must not unlock recreating main at a local commit.
+    refused(
+        f"cd {RT_CLONE} && git remote remove origin && git branch -D main && "
+        "git branch main feature",
+        "recreating main at a local commit after `git remote remove`",
+    )

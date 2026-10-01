@@ -528,3 +528,29 @@ func TestBranchGuard_RefTransaction_GlobalHooksPath_Exec(t *testing.T) {
 		t.Errorf("clone should work under the guard: %v\n%s", err, out)
 	}
 }
+
+// `git remote remove` empties refs/remotes on demand, so "no remote-tracking
+// refs" alone must not let a protected branch be recreated at a local commit:
+// only a ROOT commit (the first commit of a new repo) gets that exception.
+func TestBranchGuard_RefTransaction_RemoteRemoveDoesNotUnlockRecreate_Exec(t *testing.T) {
+	repo := refTxFixture(t)
+	local := revParse(t, repo, "feature")
+	remote, _ := git(t, repo, nil, "remote", "get-url", "origin")
+	for _, args := range [][]string{
+		{"switch", "-q", "feature"},
+		{"remote", "remove", "origin"},
+		{"branch", "-D", "main"},
+	} {
+		if out, err := git(t, repo, nil, args...); err != nil {
+			t.Fatalf("setup %v: %v\n%s", args, err, out)
+		}
+	}
+	out, err := git(t, repo, nil, "branch", "main", "feature")
+	if err == nil || !strings.Contains(out, "refusing to move protected branch 'main'") {
+		t.Errorf("recreating main at a local commit after `remote remove` should be refused (err=%v):\n%s", err, out)
+	}
+	if got, _ := git(t, repo, nil, "rev-parse", "-q", "--verify", "refs/heads/main"); strings.TrimSpace(got) == local {
+		t.Errorf("main points at the local-only commit %s", local)
+	}
+	_, _ = git(t, repo, nil, "remote", "add", "origin", strings.TrimSpace(remote))
+}

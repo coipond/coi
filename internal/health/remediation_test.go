@@ -591,3 +591,19 @@ func TestSudoersDropinScript_FindsVisudoOffPath(t *testing.T) {
 		t.Errorf("target content = %q", got)
 	}
 }
+
+// The probe must force the C locale so sudo's "password is required" message
+// is matchable regardless of the user's LANG (LANGUAGE overrides LANG for
+// gettext, so it is cleared too).
+func TestRunProbe_ForcesCLocale(t *testing.T) {
+	t.Setenv("LANG", "de_DE.UTF-8")
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+	t.Setenv("LANGUAGE", "de")
+	out, err := runProbe([]string{"sh", "-c", `printf '%s|%s' "$LC_ALL" "$LANGUAGE"`})
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if string(out) != "C|" {
+		t.Errorf("probe env LC_ALL|LANGUAGE = %q, want \"C|\"", out)
+	}
+}

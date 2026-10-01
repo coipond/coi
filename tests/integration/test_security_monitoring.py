@@ -3610,6 +3610,110 @@ echo "Build complete"
         cleanup_container(container_name, coi_binary)
 
 
+# Ordinary agent commands that resemble reverse-shell patterns and were, at
+# some point, flagged CRITICAL (auto-kill) or HIGH (auto-pause). Reviews of
+# #856/#857 reproduced each one; they must all leave the container running.
+AGENT_COMMANDS_NOT_REVERSE_SHELLS = [
+    # Writing a Kubernetes manifest with an exec probe and a TCP probe (the
+    # agent's Bash tool puts the whole heredoc in argv).
+    "bash -c cat > k8s.yaml <<EOF\nlivenessProbe:\n  exec:\n    command: [true]\n"
+    "readinessProbe:\n  tcpSocket:\n    port: 8080\nEOF",
+    # Searching code/docs for the detector's own pattern strings.
+    "grep -rn /dev/tcp/ docs",
+    'rg -n "/dev/tcp/" internal/',
+    'rg -n "exec:" internal/',
+    'rg -n "tcp:|exec:" src/',
+    # Probing the agent's own local services.
+    "bash -c </dev/tcp/localhost/5432",
+    "bash -c </dev/tcp/127.1/8080",
+    # Running a project script with an -i flag; loading a non-socket IO module.
+    "./scripts/setup.sh -i",
+    "perl -MIO::File -e print 1",
+    # Interpreter one-liners touching a local dev server or a unix socket path.
+    "python3 -c import urllib.request; "
+    'print(urllib.request.urlopen("http://127.0.0.1:8000/health").status)',
+    'python3 -c import os; print(os.path.exists("/var/run/docker.sock"))',
+]
+
+
+def inject_literal_process(container_name, cmdline, seconds=60):
+    """Spawn a long-lived process inside the container whose argv[0] is EXACTLY
+    `cmdline`, so the host-side monitor reads it from /proc/<pid>/cmdline.
+
+    The command line is passed as $0 of the inner shell instead of being
+    spliced into the script, so quotes, `$`, `<` and newlines in it reach the
+    monitor verbatim rather than being interpreted by bash first.
+    """
+    subprocess.Popen(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--",
+            "bash",
+            "-c",
+            f'exec -a "$0" sleep {seconds}',
+            cmdline,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+class TestFalsePositivesAgentCommands:
+    """Everyday agent commands that look like reverse-shell patterns must not be
+    flagged. All run in ONE monitored container with auto-kill and auto-pause
+    on: any false CRITICAL kills it, any false HIGH pauses it, and the audit log
+    names the culprit. (Class name keeps the monitoring-response CI lane's
+    `-k TestFalsePositives` selection.)"""
+
+    def test_agent_commands_not_flagged(self, test_workspace, enable_monitoring, coi_binary):
+        slot = 92
+        proc = subprocess.Popen(
+            [coi_binary, "shell", "--workspace", test_workspace, "--slot", str(slot), "--debug"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        container_name = (
+            get_container_name_from_workspace(test_workspace).rsplit("-", 1)[0] + f"-{slot}"
+        )
+        try:
+            if not wait_for_container_running(container_name, timeout=60):
+                pytest.skip(f"Container {container_name} not found or not running")
+            time.sleep(10)  # let the monitoring baseline settle
+
+            for cmdline in AGENT_COMMANDS_NOT_REVERSE_SHELLS:
+                inject_literal_process(container_name, cmdline)
+
+            # Several poll cycles for the snapshot detector, plus the exec-time
+            # watcher, to (not) react.
+            time.sleep(12)
+
+            events = get_threat_events(container_name)
+            flagged = [
+                e
+                for e in events
+                if e.get("level") in ("critical", "high")
+                and (
+                    "reverse shell" in e.get("description", "").lower()
+                    or e.get("category") == "proc_event"
+                )
+            ]
+            assert not flagged, (
+                "Ordinary agent commands were flagged as reverse shells:\n"
+                + "\n".join(f"  {e.get('level')}: {e.get('description')}" for e in flagged)
+            )
+            assert not container_absent(container_name), (
+                "Container was killed while running ordinary agent commands"
+            )
+            state = get_container_state(container_name)
+            assert state == "Running", f"Container should stay Running, got {state}"
+        finally:
+            proc.terminate()
+            cleanup_container(container_name, coi_binary)
+
+
 class TestThresholdBoundaries:
     """Test detector behavior at threshold boundaries."""
 
