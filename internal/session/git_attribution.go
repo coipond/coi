@@ -227,9 +227,9 @@ exit 0
 // already has, so `git pull` and `reset --hard origin/main` keep working while
 // any local-only commit on it is refused — including by deleting and
 // recreating it (checkout -B / switch -C too). Deletion is allowed (pre-push
-// still blocks pushing one), as is creating it in a repository that has never
-// had a remote (the first commit of `git init`). Bare repositories (push
-// targets) are skipped.
+// still blocks pushing one), as is the first commit of a new repository (a
+// root commit while there are no remote-tracking refs). Bare repositories
+// (push targets) are skipped.
 //
 // Refused although legitimate, because git moves the branch BEFORE the
 // remote-tracking ref (two transactions), so the hook can't tell it from a
@@ -263,16 +263,22 @@ while read -r old new ref; do
 const gitRefTxGuardTail = `	[ -n "$protected" ] || continue
 	[ "$old" = "$new" ] && continue
 	case "$new" in *[!0]*) ;; *) continue ;; esac # deletion
-	if [ -n "$(git for-each-ref --count=1 --contains "$new" refs/remotes 2>/dev/null)" ]; then
-		continue # a remote already has it (pull, reset to upstream)
+	# A remote already has it (pull, reset to upstream) iff nothing reachable
+	# from $new is missing from every remote-tracking ref. rev-list walks only
+	# the commits it needs; for-each-ref --contains checked each ref separately
+	# and took ~1 min per update with thousands of remote branches.
+	if [ -z "$(git rev-list -n1 "$new" --not --remotes 2>/dev/null)" ]; then
+		continue
 	fi
 	# (Re)creating the branch must also point at a commit a remote has —
-	# otherwise delete+recreate, branch -M/-C or checkout -B would sidestep
-	# the guard. The exception is a repository that has never had a remote
-	# (git init; first commit): there is no upstream to compare against yet.
+	# otherwise delete+recreate or checkout -B would sidestep the guard. The
+	# one exception is the first commit of a new repository: creating the
+	# branch at a ROOT commit while there are no remote-tracking refs. (Not
+	# "no refs/remotes" alone: "git remote remove" gets there on demand.)
 	# Ask the ref store, not $old: git also sends an all-zero <old> when the
 	# caller didn't give one (update-ref, branch -f).
 	if ! git rev-parse -q --verify "$ref" >/dev/null 2>&1 &&
+		! git rev-parse -q --verify "$new^" >/dev/null 2>&1 &&
 		[ -z "$(git for-each-ref --count=1 refs/remotes 2>/dev/null)" ]; then
 		continue
 	fi

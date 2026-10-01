@@ -102,7 +102,10 @@ func HostUIDSubordinateRange() (line string, inRange bool) {
 	if _, gidDedicated := rootDelegation(uid, string(gidData)); !gidDedicated {
 		return fmt.Sprintf("%s (root:%d:1 is in /etc/subuid but missing from /etc/subgid)", big, uid), true
 	}
-	if started, ok := incusdStartTime(); ok && modifiedAfter(started, subuidPath, subgidPath) {
+	// +1s: btime is whole seconds, so the computed start can be up to a second
+	// early; an edit made in the same second as the restart must not read as
+	// "after" it.
+	if started, ok := incusdStartTime(); ok && modifiedAfter(started.Add(time.Second), subuidPath, subgidPath) {
 		return fmt.Sprintf("%s (root:%d:1 added, but Incus hasn't been restarted since: sudo systemctl restart incus)", big, uid), true
 	}
 	return "", false
@@ -118,16 +121,25 @@ func modifiedAfter(t time.Time, paths ...string) bool {
 	return false
 }
 
-// findIncusdStartTime locates a running incusd in /proc and returns its start
-// time: boot time (/proc/stat btime) plus the process start in clock ticks
-// (/proc/<pid>/stat field 22, USER_HZ=100 on Linux). ok=false when no incusd
-// is visible (e.g. Incus runs in a VM, or not on Linux).
-func findIncusdStartTime() (time.Time, bool) {
-	entries, err := os.ReadDir("/proc")
+// findIncusdStartTime locates the running Incus daemon in /proc and returns
+// its start time. ok=false when none is visible (e.g. Incus runs in a VM).
+func findIncusdStartTime() (time.Time, bool) { return incusdStartTimeIn("/proc") }
+
+// incusdStartTimeIn is findIncusdStartTime over a given proc root (tests use a
+// fixture). The start time is boot time (<root>/stat btime) plus the process
+// start in clock ticks (<root>/<pid>/stat field 22, USER_HZ=100 on Linux).
+//
+// Only the DAEMON counts. Container monitors and helpers carry the comm
+// "incusd" too ("[lxc monitor] ..." after setproctitle, "incusd forkproxy",
+// "incusd forkstart"), and monitors survive `systemctl restart incus` — an
+// old monitor would make a restarted Incus look stale. So argv[0] must be
+// incusd and argv[1], if any, a flag, not a fork* subcommand.
+func incusdStartTimeIn(root string) (time.Time, bool) {
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return time.Time{}, false
 	}
-	btime := procBootTime()
+	btime := procBootTime(root)
 	if btime.IsZero() {
 		return time.Time{}, false
 	}
@@ -135,18 +147,22 @@ func findIncusdStartTime() (time.Time, bool) {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
-		stat, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+		dir := root + "/" + e.Name()
+		if !isIncusDaemonCmdline(dir + "/cmdline") {
+			continue
+		}
+		stat, err := os.ReadFile(dir + "/stat")
 		if err != nil {
 			continue
 		}
 		// "<pid> (<comm>) <state> ..." — comm may contain spaces, so split
 		// after the last ')'.
-		s := string(stat)
-		open, closeIdx := strings.IndexByte(s, '('), strings.LastIndexByte(s, ')')
-		if open < 0 || closeIdx < open || s[open+1:closeIdx] != "incusd" {
+		st := string(stat)
+		closeIdx := strings.LastIndexByte(st, ')')
+		if closeIdx < 0 {
 			continue
 		}
-		fields := strings.Fields(s[closeIdx+1:])
+		fields := strings.Fields(st[closeIdx+1:])
 		if len(fields) < 20 { // starttime is field 22 overall = index 19 here
 			continue
 		}
@@ -160,9 +176,23 @@ func findIncusdStartTime() (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// procBootTime reads the system boot time from /proc/stat ("btime <unix>").
-func procBootTime() time.Time {
-	data, err := os.ReadFile("/proc/stat")
+// isIncusDaemonCmdline reports whether the NUL-separated cmdline at path is
+// the Incus daemon itself (see incusdStartTimeIn).
+func isIncusDaemonCmdline(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	argv := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+	if base := argv[0][strings.LastIndexByte(argv[0], '/')+1:]; base != "incusd" {
+		return false
+	}
+	return len(argv) == 1 || strings.HasPrefix(argv[1], "-")
+}
+
+// procBootTime reads the system boot time from <root>/stat ("btime <unix>").
+func procBootTime(root string) time.Time {
+	data, err := os.ReadFile(root + "/stat")
 	if err != nil {
 		return time.Time{}
 	}

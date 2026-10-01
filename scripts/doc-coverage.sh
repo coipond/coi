@@ -7,9 +7,11 @@
 # Usage: scripts/doc-coverage.sh [dir]   (default: current directory)
 #
 # A comment documents a declaration only when it sits directly above it (a
-# blank line detaches it, as in godoc). Declarations inside grouped
-# `const ( ... )` / `var ( ... )` blocks are not counted. Test files, vendored
-# code and generated files ("// Code generated ... DO NOT EDIT.") are skipped.
+# blank line detaches it, as in godoc); //go: and //nolint directives don't
+# count as documentation. Specs in grouped `type ( ... )` blocks are counted;
+# members of grouped `const ( ... )` / `var ( ... )` blocks are not. Test
+# files, vendored code, generated files ("// Code generated ... DO NOT
+# EDIT.") and the contents of raw string literals are skipped.
 
 set -euo pipefail
 
@@ -45,12 +47,46 @@ trap 'rm -f "$results"' EXIT
 # shellcheck disable=SC2016 # awk program, not shell — no expansion wanted
 list_go_files | while IFS= read -r f; do printf '%s\0' "$f"; done |
   xargs -0 -r awk '
-    FNR == 1 { doc = 0; inblock = 0; generated = 0 }
+    FNR == 1 { doc = 0; inblock = 0; generated = 0; inraw = 0; intype = 0; typedoc = 0 }
+    { sub(/\r$/, "") } # CRLF files
     /^\/\/ Code generated .* DO NOT EDIT\.$/ { generated = 1 }
     inblock {
       if ($0 ~ /\*\//) { inblock = 0; doc = 1 }
       next
     }
+    # Raw string literals: a code line with an odd number of backticks (the
+    # rune literal for a backtick aside) opens or closes one; lines that start
+    # inside one are string content, not declarations. Comment lines do not
+    # count — doc text often wraps a `quoted` phrase across lines.
+    {
+      wasraw = inraw
+      if (inraw || $0 !~ /^[ \t]*\/\//) {
+        bt = $0
+        gsub(/\047`\047/, "", bt)
+        if (gsub(/`/, "", bt) % 2 == 1) { inraw = !inraw }
+      }
+      if (wasraw) { doc = 0; next }
+    }
+    # Grouped type ( ... ) block: each one-tab-indented spec is a declaration,
+    # documented by a comment right above it or by the block comment.
+    /^type[ \t]*\($/ { intype = 1; typedoc = doc; doc = 0; next }
+    intype {
+      if ($0 ~ /^\)/) { intype = 0; doc = 0; next }
+      if ($0 ~ /^\t\/\//) { doc = 1; next }
+      if ($0 ~ /^\t[A-Za-z_]/) {
+        name = substr($0, 2)
+        sub(/[^A-Za-z0-9_].*$/, "", name)
+        if (!generated && name ~ /^[A-Z]/) {
+          printf "%s\t%s\t%s\t%s\n", ((doc || typedoc) ? "DOCUMENTED" : "MISSING"), FILENAME, "type", name
+        }
+      }
+      doc = 0
+      next
+    }
+    # Compiler/linter directives (//go:embed, //nolint:...) are not
+    # documentation, but they may sit between a doc comment and its
+    # declaration without detaching it.
+    /^\/\/(go:|nolint|line |export |extern )/ { next }
     /^\/\// { doc = 1; next }
     /^\/\*/ {
       if ($0 ~ /\*\//) { doc = 1 } else { inblock = 1 }

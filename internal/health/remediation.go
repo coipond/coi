@@ -284,8 +284,13 @@ func recheckIptablesSudo() HealthCheck {
 // runProbe runs a sudo probe (detection checks and post-fix rechecks) and
 // returns its combined output; a package var so unit tests can observe the
 // argv without invoking sudo.
+// The probe runs in the C locale: sudoNeedsPassword matches sudo's English
+// message, and a translated one ("Ein Passwort ist notwendig") would be
+// misread as "iptables itself fails", so the fix would never be offered.
 var runProbe = func(argv []string) ([]byte, error) {
-	return exec.Command(argv[0], argv[1:]...).CombinedOutput() //nolint:gosec // fixed argv from the health probes
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // fixed argv from the health probes
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANGUAGE=")
+	return cmd.CombinedOutput()
 }
 
 // nftPasswordlessSudo is network.NftPasswordlessSudo; a package var so tests

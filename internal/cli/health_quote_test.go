@@ -26,6 +26,9 @@ func TestShellQuoteArgs(t *testing.T) {
 	if shellQuoteArgs([]string{"sysctl", "-w", "net.ipv4.ip_forward=1"}) != "sysctl -w net.ipv4.ip_forward=1" {
 		t.Error("safe arguments should stay unquoted")
 	}
+	if shellQuoteArgs([]string{"echo", "=ls"}) != "echo '=ls'" {
+		t.Error("a leading '=' must be quoted (zsh =cmd expansion)")
+	}
 	if shellQuoteArgs([]string{"echo", ""}) != "echo ''" {
 		t.Error("an empty argument must be quoted")
 	}
