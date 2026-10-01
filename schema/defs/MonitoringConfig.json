@@ -55,7 +55,7 @@
     "reverse_shell_one_liners": {
       "type": "string",
       "enum": ["critical", "warn", "off"],
-      "description": "Severity for interpreter one-liner reverse-shell matches (python -c, python3 -c, perl -e, ruby -e, php -r): 'critical' (default — auto-kills when auto_kill_on_critical is on), 'warn' (logged and audited, never kills or pauses), or 'off' (not flagged at all). Interpreter one-liners only ever match when the command also carries a real network indicator (a socket/tcp/udp/connect keyword, an IP, or a host:port endpoint). The unambiguous reverse-shell patterns (nc -e, /dev/tcp/, socat EXEC:, an interactive shell, ...) always stay critical regardless of this setting. See issue #842."
+      "description": "Severity for interpreter one-liner reverse-shell matches (python -c, python3 -c, perl -e, ruby -e, php -r): 'critical' (default — auto-kills when auto_kill_on_critical is on), 'warn' (logged and audited, never kills or pauses), or 'off' (not flagged at all). Interpreter one-liners only ever match when the command also carries a real network indicator (a socket/tcp/udp keyword, an IP, or a host:port endpoint). The unambiguous reverse-shell patterns (nc -e, /dev/tcp/, socat EXEC:, an interactive shell, ...) always stay critical regardless of this setting. See issue #842."
     }
   }
 }
