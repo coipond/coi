@@ -98,31 +98,16 @@ func (a *App) buildCommand(cmd *cobra.Command, args []string) error {
 
 	// For coi-default image: always use the embedded build script
 	if imageName == image.CoiAlias {
-		// Allow overriding the base image via [container.build] base in profile/config.
-		coiBaseImage := image.BaseImage
-		if p.Container.Build.Base != "" {
-			coiBaseImage = p.Container.Build.Base
-		}
-
 		// Validate the agent selection (#454) and warn if the image would be built
 		// without the tool the user actually runs.
 		if err := prepareBuildAgents(p.Container.Build.Agents, effectiveToolName(a.cfg, p)); err != nil {
 			return err
 		}
 
-		opts := image.BuildOptions{
-			Force:       buildForce,
-			ImageType:   "coi",
-			BaseImage:   coiBaseImage,
-			AliasName:   image.CoiAlias,
-			Description: "coi image (Docker + build tools + AI agents + GitHub CLI)",
-			Compression: p.Container.Build.Compression,
-			StoragePool: buildPool,
-			Agents:      p.Container.Build.Agents,
-			Logger: func(msg string) {
-				fmt.Fprintf(os.Stderr, "%s\n", msg)
-			},
-		}
+		opts := coiImageBuildOptions(p, buildForce, buildPool, func(msg string) {
+			fmt.Fprintf(os.Stderr, "%s\n", msg)
+		})
+		coiBaseImage := opts.BaseImage
 
 		fmt.Fprintf(os.Stderr, "Building image '%s' from profile '%s'...\n", imageName, profileName)
 		builder := image.NewBuilder(opts)
@@ -246,10 +231,6 @@ func (a *App) buildAllProfiles() error {
 		fmt.Fprintf(os.Stderr, "\n[%s] Building image '%s'...\n", profileName, imageName)
 
 		if imageName == image.CoiAlias {
-			coiBaseImage := image.BaseImage
-			if p.Container.Build.Base != "" {
-				coiBaseImage = p.Container.Build.Base
-			}
 			// Validate the agent selection (#454) and warn if the image would be
 			// built without the tool the user runs — same as the single-build path.
 			if err := prepareBuildAgents(p.Container.Build.Agents, effectiveToolName(a.cfg, p)); err != nil {
@@ -257,17 +238,8 @@ func (a *App) buildAllProfiles() error {
 				errored++
 				continue
 			}
-			opts := image.BuildOptions{
-				Force:       buildForce,
-				ImageType:   "coi",
-				BaseImage:   coiBaseImage,
-				AliasName:   image.CoiAlias,
-				Description: "coi image (Docker + build tools + AI agents + GitHub CLI)",
-				Compression: p.Container.Build.Compression,
-				StoragePool: buildPool,
-				Agents:      p.Container.Build.Agents,
-				Logger:      stderrLogFn,
-			}
+			opts := coiImageBuildOptions(p, buildForce, buildPool, stderrLogFn)
+			coiBaseImage := opts.BaseImage
 			result := image.NewBuilder(opts).Build()
 			if result.Error != nil {
 				buildErrors = append(buildErrors, fmt.Sprintf("  profile '%s': %v", profileName, result.Error))
@@ -337,6 +309,28 @@ func (a *App) buildAllProfiles() error {
 		return fmt.Errorf("%d build(s) failed:\n%s", errored, strings.Join(buildErrors, "\n"))
 	}
 	return nil
+}
+
+// coiImageBuildOptions returns the options for building the coi default image
+// from a profile: the base image ([container.build] base, else the stock
+// base), compression, agent selection and target storage pool. Shared by
+// `coi build` and `coi build --all`.
+func coiImageBuildOptions(p *config.ProfileConfig, force bool, pool string, logger func(string)) image.BuildOptions {
+	base := image.BaseImage
+	if p.Container.Build.Base != "" {
+		base = p.Container.Build.Base
+	}
+	return image.BuildOptions{
+		Force:       force,
+		ImageType:   "coi",
+		BaseImage:   base,
+		AliasName:   image.CoiAlias,
+		Description: "coi image (Docker + build tools + AI agents + GitHub CLI)",
+		Compression: p.Container.Build.Compression,
+		StoragePool: pool,
+		Agents:      p.Container.Build.Agents,
+		Logger:      logger,
+	}
 }
 
 // validateBuildAgents checks that every name in a [container.build] agents list is a
