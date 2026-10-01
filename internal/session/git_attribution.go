@@ -66,13 +66,15 @@ var delegatedHookNames = []string{
 }
 
 // gitDelegateHookScript forwards to the repository's own hook of the same
-// name, preserving arguments and exit code. `git rev-parse --git-dir` is used
-// (NOT --git-path hooks, which would resolve back to core.hooksPath — i.e.
-// this directory — and recurse).
+// name, preserving arguments and exit code. `git rev-parse --git-common-dir`
+// is used (NOT --git-path hooks, which would resolve back to core.hooksPath —
+// i.e. this directory — and recurse). --git-common-dir, not --git-dir: in a
+// linked worktree --git-dir is .git/worktrees/<name>, which has no hooks/, so
+// the repository's hooks would silently never run.
 const gitDelegateHookScript = `#!/bin/sh
 # Managed by coi: core.hooksPath points at this directory, which would
 # otherwise hide the repository's own hooks — forward to them.
-hook="$(git rev-parse --git-dir 2>/dev/null)/hooks/$(basename "$0")"
+hook="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/$(basename "$0")"
 if [ -x "$hook" ]; then
 	exec "$hook" "$@"
 fi
@@ -98,7 +100,7 @@ if [ -f "$msg" ] && [ -s "$patterns" ]; then
 	fi
 	rm -f "$tmp"
 fi
-hook="$(git rev-parse --git-dir 2>/dev/null)/hooks/commit-msg"
+hook="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/commit-msg"
 if [ -x "$hook" ]; then
 	exec "$hook" "$@"
 fi
@@ -129,7 +131,9 @@ gitdir="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
 // used (NOT --git-path hooks, which resolves back to this dir and recurses).
 const gitPostCommitRestampBody = `
 delegate() {
-	hook="$gitdir/hooks/post-commit"
+	# Hooks live in the COMMON dir (a linked worktree's $gitdir has none);
+	# $gitdir stays per-worktree for the CHERRY_PICK_HEAD-style state checks.
+	hook="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/post-commit"
 	[ -x "$hook" ] && "$hook" "$@"
 	exit 0
 }
@@ -178,6 +182,9 @@ const gitPreCommitGuardHead = `#!/bin/sh
 # branch (git tag main) makes it print "heads/main" and slip past the check.
 ref="$(git symbolic-ref -q HEAD 2>/dev/null)"
 branch="${ref#refs/heads/}"
+# The first commit of a new repository has nothing to protect yet (and no
+# feature branch to fork from) — let it through.
+git rev-parse -q --verify HEAD >/dev/null 2>&1 || branch=""
 `
 
 const gitPrePushGuardHead = `#!/bin/sh
@@ -198,10 +205,64 @@ while read -r lref lsha rref rsha; do
 const gitPrePushGuardTail = `done <<COI_PROTECTED_REFS
 $input
 COI_PROTECTED_REFS
-hook="$(git rev-parse --git-dir 2>/dev/null)/hooks/pre-push"
+hook="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/pre-push"
 if [ -x "$hook" ]; then
 	# Replay the buffered refs faithfully: an empty $input means git sent no ref
 	# lines, so feed the delegate empty stdin rather than a spurious blank line.
+	if [ -n "$input" ]; then
+		printf '%s\n' "$input" | "$hook" "$@"
+	else
+		"$hook" "$@" < /dev/null
+	fi
+	exit $?
+fi
+exit 0
+`
+
+// gitRefTxGuardHead opens the reference-transaction guard. Git runs this hook
+// for EVERY ref update — commit, cherry-pick, revert, am, fast-forward merge,
+// rebase, reset, update-ref, branch -f — and a non-zero exit in the
+// "prepared" state aborts the update. That closes the paths pre-commit never
+// sees. The rule: a protected branch may only point at commits some remote
+// already has, so `git pull` / `reset --hard origin/main` keep working while
+// any local-only commit on it is refused. Creation (first commit of a new
+// repo) and deletion are allowed; pre-push still blocks pushing a deletion.
+// Needs git >= 2.28; older git ignores the hook (pre-commit still applies).
+const gitRefTxGuardHead = `#!/bin/sh
+# Managed by coi ([git] protected_branches): refuse to move a protected branch
+# to a commit no remote has, then run the repository's own hook of this name.
+# Git feeds "<old> <new> <ref>" lines on stdin; $1 is the transaction state.
+input="$(cat)"
+if [ "$1" = "prepared" ]; then
+while read -r old new ref; do
+	case "$ref" in
+		refs/heads/*) b=${ref#refs/heads/} ;;
+		*) continue ;;
+	esac
+	protected=""
+`
+
+// gitRefTxGuardTail closes the loop (here-doc, not a pipe — see
+// gitPrePushGuardTail) and delegates with the buffered lines replayed.
+const gitRefTxGuardTail = `	[ -n "$protected" ] || continue
+	[ "$old" = "$new" ] && continue
+	case "$new" in *[!0]*) ;; *) continue ;; esac # deletion
+	# Creation (e.g. the first commit of a new repo). Ask the ref store, not
+	# $old: git also sends an all-zero <old> when the caller didn't specify one
+	# (update-ref, branch -f). In "prepared" the ref still holds its old value.
+	git rev-parse -q --verify "$ref" >/dev/null 2>&1 || continue
+	if [ -n "$(git for-each-ref --count=1 --contains "$new" refs/remotes 2>/dev/null)" ]; then
+		continue # a remote already has it (pull, reset to upstream)
+	fi
+	echo "coi: refusing to move protected branch '$b' to a local-only commit (git.protected_branches)." >&2
+	echo "     Work on a feature branch first: git switch -c <name>" >&2
+	exit 1
+done <<COI_REF_UPDATES
+$input
+COI_REF_UPDATES
+fi
+hook="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/reference-transaction"
+if [ -x "$hook" ]; then
 	if [ -n "$input" ]; then
 		printf '%s\n' "$input" | "$hook" "$@"
 	else
@@ -218,7 +279,15 @@ exit 0
 // pre-commit (only pre-merge-commit runs), so guarding pre-commit alone would let
 // a merge land on a protected branch. pre-push is guarded separately (it inspects
 // the pushed refs on stdin, not HEAD).
-var branchGuardHooks = []string{"pre-commit", "pre-merge-commit", "pre-push"}
+// reference-transaction catches every other way to move a protected branch
+// (cherry-pick, revert, am, fast-forward merge, rebase, reset); it is only
+// installed while the guard is on — see refTxHook.
+var branchGuardHooks = []string{"pre-commit", "pre-merge-commit", "pre-push", refTxHook}
+
+// refTxHook is high-frequency plumbing (it runs on every ref update, fetches
+// included), so unlike the other guard hooks it is NOT replaced by a
+// delegation symlink when the guard is off — see delegatedHookNames.
+const refTxHook = "reference-transaction"
 
 // renderBranchGuardScript bakes the protected-branch checks into a guard hook.
 // Each branch becomes its own string-equality `if` (NOT a `case` glob or a
@@ -228,6 +297,12 @@ var branchGuardHooks = []string{"pre-commit", "pre-merge-commit", "pre-push"}
 func renderBranchGuardScript(kind string, branches []string) string {
 	var b strings.Builder
 	switch kind {
+	case refTxHook:
+		b.WriteString(gitRefTxGuardHead)
+		for _, br := range branches {
+			b.WriteString("\tif [ \"$b\" = " + shellEscape(br) + " ]; then protected=1; fi\n")
+		}
+		b.WriteString(gitRefTxGuardTail)
 	case "pre-push":
 		b.WriteString(gitPrePushGuardHead)
 		for _, br := range branches {
@@ -246,7 +321,7 @@ func renderBranchGuardScript(kind string, branches []string) string {
 		}
 		// Delegate to the repo's own hook of the SAME name (pre-commit or
 		// pre-merge-commit), not a fixed one.
-		b.WriteString("hook=\"$(git rev-parse --git-dir 2>/dev/null)/hooks/" + kind + "\"\n")
+		b.WriteString("hook=\"$(git rev-parse --git-common-dir 2>/dev/null)/hooks/" + kind + "\"\n")
 		b.WriteString("[ -x \"$hook\" ] && exec \"$hook\" \"$@\"\nexit 0\n")
 	}
 	return b.String()
@@ -363,6 +438,8 @@ func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentit
 				logger(fmt.Sprintf("Warning: failed to write %s: %v", hookPath, err))
 				return
 			}
+		} else if name == refTxHook {
+			continue // removed above; never delegated (high-frequency hook)
 		} else if _, err := mgr.ExecCommand("ln -sf delegate "+hookPath, container.ExecCommandOptions{Capture: true}); err != nil {
 			logger(fmt.Sprintf("Warning: failed to link %s delegation hook: %v", name, err))
 			return

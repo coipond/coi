@@ -57,6 +57,11 @@ func TestBranchGuard_PreCommit_Exec(t *testing.T) {
 	if out, err := git(t, repo, nil, "init", "-b", "main"); err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
+	// Seed a first commit: the guard deliberately lets the root commit of a
+	// new repo through (TestBranchGuard_FirstCommitAllowed_Exec).
+	if out, err := git(t, repo, nil, "commit", "--allow-empty", "-m", "seed"); err != nil {
+		t.Fatalf("seed: %v\n%s", err, out)
+	}
 	installGuards(t, repo, filepath.Join(t.TempDir(), "hooks"), []string{"main", "master"})
 
 	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o644); err != nil {
@@ -176,5 +181,205 @@ func TestBranchGuard_PrePush_Exec(t *testing.T) {
 	}
 	if out, err := git(t, repo, nil, "push", "origin", "feature"); err != nil {
 		t.Fatalf("push feature should succeed, got:\n%s", out)
+	}
+}
+
+// The first commit of a brand-new repository has nothing to protect and no
+// branch to fork a feature from, so `git init && git commit` must work (it is
+// also what project test suites do in throwaway repos).
+func TestBranchGuard_FirstCommitAllowed_Exec(t *testing.T) {
+	requireGit(t)
+	repo := t.TempDir()
+	if out, err := git(t, repo, nil, "init", "-b", "main"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	installGuards(t, repo, filepath.Join(t.TempDir(), "hooks"), []string{"main"})
+	if out, err := git(t, repo, nil, "commit", "--allow-empty", "-m", "root"); err != nil {
+		t.Fatalf("first commit should be allowed: %v\n%s", err, out)
+	}
+	// ...but the second one is guarded as usual.
+	if out, err := git(t, repo, nil, "commit", "--allow-empty", "-m", "second"); err == nil {
+		t.Fatalf("second commit on main should be rejected:\n%s", out)
+	}
+}
+
+// refTxFixture is a clone of a bare remote whose main has one pushed commit,
+// plus an unpushed feature branch with one commit, with the guard installed.
+func refTxFixture(t *testing.T) (repo string) {
+	t.Helper()
+	requireGit(t)
+	remote := t.TempDir()
+	if out, err := git(t, remote, nil, "init", "-q", "--bare", "-b", "main"); err != nil {
+		t.Fatalf("init bare: %v\n%s", err, out)
+	}
+	seed := t.TempDir()
+	if err := os.WriteFile(filepath.Join(seed, "base.txt"), []byte("base"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"add", "base.txt"}, // non-empty, so `git revert HEAD` has something to undo
+		{"commit", "-q", "-m", "base"},
+		{"remote", "add", "origin", remote},
+		{"push", "-q", "origin", "main"},
+	} {
+		if out, err := git(t, seed, nil, args...); err != nil {
+			t.Fatalf("seed %v: %v\n%s", args, err, out)
+		}
+	}
+	repo = filepath.Join(t.TempDir(), "clone")
+	if out, err := git(t, t.TempDir(), nil, "clone", "-q", remote, repo); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+	if out, err := git(t, repo, nil, "switch", "-q", "-c", "feature"); err != nil {
+		t.Fatalf("switch: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "feat.txt"), []byte("feat"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "feat.txt"}, {"commit", "-q", "-m", "feat"}} {
+		if out, err := git(t, repo, nil, args...); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	installGuards(t, repo, filepath.Join(t.TempDir(), "hooks"), []string{"main"})
+	if out, err := git(t, repo, nil, "switch", "-q", "main"); err != nil {
+		t.Fatalf("switch main: %v\n%s", err, out)
+	}
+	return repo
+}
+
+func revParse(t *testing.T, repo, rev string) string {
+	t.Helper()
+	out, err := git(t, repo, nil, "rev-parse", rev)
+	if err != nil {
+		t.Fatalf("rev-parse %s: %v\n%s", rev, err, out)
+	}
+	return strings.TrimSpace(out)
+}
+
+// Commands that move a protected branch WITHOUT running pre-commit or
+// pre-merge-commit must still be refused (via reference-transaction), and
+// main must be left where it was.
+func TestBranchGuard_RefTransaction_BlocksNonCommitPaths_Exec(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T, repo string) (string, error)
+	}{
+		{"cherry-pick", func(t *testing.T, repo string) (string, error) {
+			return git(t, repo, nil, "cherry-pick", "feature")
+		}},
+		{"revert", func(t *testing.T, repo string) (string, error) {
+			return git(t, repo, nil, "revert", "--no-edit", "HEAD")
+		}},
+		{"fast-forward merge", func(t *testing.T, repo string) (string, error) {
+			return git(t, repo, nil, "merge", "--ff-only", "feature")
+		}},
+		{"reset to local commit", func(t *testing.T, repo string) (string, error) {
+			return git(t, repo, nil, "reset", "--hard", "feature")
+		}},
+		{"rebase onto local branch", func(t *testing.T, repo string) (string, error) {
+			return git(t, repo, nil, "rebase", "feature")
+		}},
+		{"update-ref", func(t *testing.T, repo string) (string, error) {
+			return git(t, repo, nil, "update-ref", "refs/heads/main", "feature")
+		}},
+		{"branch -f from elsewhere", func(t *testing.T, repo string) (string, error) {
+			if out, err := git(t, repo, nil, "switch", "-q", "feature"); err != nil {
+				return out, nil // setup failure surfaces as "not blocked"
+			}
+			return git(t, repo, nil, "branch", "-f", "main", "feature")
+		}},
+		{"am", func(t *testing.T, repo string) (string, error) {
+			patch, err := git(t, repo, nil, "format-patch", "-1", "--stdout", "feature")
+			if err != nil {
+				return patch, nil
+			}
+			f := filepath.Join(t.TempDir(), "p.patch")
+			if err := os.WriteFile(f, []byte(patch), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return git(t, repo, nil, "am", f)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := refTxFixture(t)
+			before := revParse(t, repo, "main")
+			out, err := tc.run(t, repo)
+			if err == nil {
+				t.Errorf("%s onto main should be refused, got:\n%s", tc.name, out)
+			}
+			if !strings.Contains(out, "refusing to move protected branch 'main'") {
+				t.Errorf("rejection should come from the branch guard, got:\n%s", out)
+			}
+			if after := revParse(t, repo, "main"); after != before {
+				t.Errorf("main moved from %s to %s", before, after)
+			}
+		})
+	}
+}
+
+// Syncing a protected branch with its remote, and everyday work on other
+// branches, must keep working under the reference-transaction guard.
+func TestBranchGuard_RefTransaction_AllowsSyncAndFeatureWork_Exec(t *testing.T) {
+	repo := refTxFixture(t)
+
+	// Someone else advances origin/main; a fast-forward pull must succeed.
+	other := filepath.Join(t.TempDir(), "other")
+	remote, _ := git(t, repo, nil, "remote", "get-url", "origin")
+	if out, err := git(t, t.TempDir(), nil, "clone", "-q", strings.TrimSpace(remote), other); err != nil {
+		t.Fatalf("clone other: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{{"commit", "-q", "--allow-empty", "-m", "upstream"}, {"push", "-q", "origin", "main"}} {
+		if out, err := git(t, other, nil, args...); err != nil {
+			t.Fatalf("other %v: %v\n%s", args, err, out)
+		}
+	}
+	if out, err := git(t, repo, nil, "pull", "-q", "--ff-only"); err != nil {
+		t.Fatalf("ff pull of main should be allowed: %v\n%s", err, out)
+	}
+	if revParse(t, repo, "main") != revParse(t, repo, "origin/main") {
+		t.Error("main did not advance to origin/main")
+	}
+
+	// Resetting back to an upstream commit is fine too.
+	if out, err := git(t, repo, nil, "reset", "-q", "--hard", "origin/main~1"); err != nil {
+		t.Fatalf("reset to an upstream commit should be allowed: %v\n%s", err, out)
+	}
+
+	// Feature-branch work, creating and deleting branches.
+	for _, args := range [][]string{
+		{"switch", "-q", "feature"},
+		{"commit", "-q", "--allow-empty", "-m", "more"},
+		{"cherry-pick", "--allow-empty", "--keep-redundant-commits", "main"},
+		{"branch", "scratch"},
+		{"branch", "-D", "scratch"},
+		{"fetch", "-q"},
+	} {
+		if out, err := git(t, repo, nil, args...); err != nil {
+			t.Errorf("%v should be allowed: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// The guard hands off to the repo's own hooks from the COMMON git dir, so a
+// linked worktree (whose --git-dir has no hooks/) still runs them.
+func TestBranchGuard_DelegatesFromLinkedWorktree_Exec(t *testing.T) {
+	repo := refTxFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	repoHook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(repoHook, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(t.TempDir(), "wt")
+	if out, err := git(t, repo, nil, "worktree", "add", "-q", "-b", "wt-branch", wt); err != nil {
+		t.Fatalf("worktree add: %v\n%s", err, out)
+	}
+	if out, err := git(t, wt, nil, "commit", "-q", "--allow-empty", "-m", "in worktree"); err != nil {
+		t.Fatalf("commit in worktree: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("repo's own pre-commit hook did not run from a linked worktree")
 	}
 }

@@ -8,7 +8,7 @@
 
 ### Breaking
 
-- [Breaking] **Direct commits/pushes to `main` and `master` are now blocked by default** — agents work on a feature branch and open a PR instead. Configure or turn it off with `[git] protected_branches` (set to `[]` to disable).
+- [Breaking] **Direct commits/pushes to `main` and `master` are now blocked by default** — agents work on a feature branch and open a PR instead. This covers every way of moving the branch (cherry-pick, revert, `am`, merge, rebase, reset): it may only point at commits the remote already has, so `git pull` keeps working. A new repository's first commit is allowed. Configure or turn it off with `[git] protected_branches` (set to `[]` to disable).
 
 ### Bug Fixes
 
