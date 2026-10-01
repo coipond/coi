@@ -56,6 +56,7 @@ var defaultExecPatterns = []execPattern{
 	{Name: "perl-socket-connect", Arg0: "perl", Keywords: []string{"sockaddr_in"}},
 	// Socat reverse shells
 	{Name: "socat-exec", Arg0: "socat", Keywords: []string{"exec:"}},
+	{Name: "socat-system", Arg0: "socat", Keywords: []string{"system:"}},
 	// PHP reverse shell via fsockopen (GTFOBins)
 	{Name: "php-fsockopen", Arg0: "php", Keywords: []string{"fsockopen"}},
 	// Ruby reverse shell via TCPSocket (GTFOBins)

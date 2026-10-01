@@ -283,3 +283,28 @@ func TestRegistrySizeIsPinnedToDryRunSnapshot(t *testing.T) {
 			"new remediation's write target, then bump this pin", got, pinned)
 	}
 }
+
+// The nft recheck must bypass sudo's credential cache: the fix just ran sudo
+// (usually with a password), so a plain `sudo -n` would succeed for ~15 minutes
+// regardless of whether the sudoers drop-in actually took effect.
+func TestRecheckNftSudo_IgnoresCachedCredentials(t *testing.T) {
+	var got []string
+	orig := runRecheckCommand
+	t.Cleanup(func() { runRecheckCommand = orig })
+	runRecheckCommand = func(argv []string) error { got = argv; return nil }
+
+	if c := recheckNftSudo(); c.Status != StatusOK {
+		t.Fatalf("expected OK when the probe succeeds, got %s", c.Status)
+	}
+	if len(got) < 4 || got[0] != "sudo" || got[1] != "-k" || got[2] != "-n" {
+		t.Fatalf("recheck must run `sudo -k -n nft ...`, got %v", got)
+	}
+	if got[len(got)-2] != "list" || got[len(got)-1] != "ruleset" {
+		t.Errorf("recheck must probe `nft list ruleset`, got %v", got)
+	}
+
+	runRecheckCommand = func([]string) error { return errors.New("a password is required") }
+	if c := recheckNftSudo(); c.Status != StatusFailed {
+		t.Errorf("expected FAILED when the probe fails, got %s", c.Status)
+	}
+}

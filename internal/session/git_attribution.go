@@ -174,7 +174,10 @@ func renderPostCommitRestampScript(id GitIdentity) string {
 const gitPreCommitGuardHead = `#!/bin/sh
 # Managed by coi ([git] protected_branches): refuse a commit while HEAD is on a
 # protected branch, then run the repository's own hook of the same name.
-branch="$(git symbolic-ref --short -q HEAD 2>/dev/null)"
+# Strip refs/heads/ ourselves: --short disambiguates, so a tag named like the
+# branch (git tag main) makes it print "heads/main" and slip past the check.
+ref="$(git symbolic-ref -q HEAD 2>/dev/null)"
+branch="${ref#refs/heads/}"
 `
 
 const gitPrePushGuardHead = `#!/bin/sh

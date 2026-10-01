@@ -75,6 +75,15 @@ detect_pkg_manager() {
     fi
 }
 
+# Refresh apt package lists once per run. Fresh container/minimal images ship
+# with empty lists, so a bare `apt-get install` fails "Unable to locate package".
+# Best-effort: a failed refresh still lets the install try with what's cached.
+apt_update_once() {
+    [ -n "${APT_LISTS_UPDATED:-}" ] && return 0
+    sudo apt-get update -qq || true
+    APT_LISTS_UPDATED=1
+}
+
 # Install a package using the detected package manager
 # Usage: pkg_install <apt-name> [pacman-name] [dnf-name] [zypper-name]
 # If a distro-specific name is omitted, the apt name is used as fallback.
@@ -85,7 +94,7 @@ pkg_install() {
     local zypper_name="${4:-$apt_name}"
 
     case "$PKG_MANAGER" in
-        apt)    sudo apt-get install -y "$apt_name" ;;
+        apt)    apt_update_once; sudo apt-get install -y "$apt_name" ;;
         pacman) sudo pacman -S --noconfirm "$pacman_name" ;;
         dnf)    sudo dnf install -y "$dnf_name" ;;
         zypper) sudo zypper install -y "$zypper_name" ;;
@@ -169,6 +178,7 @@ SOURCES
     fi
 
     sudo apt-get update -qq || return 1
+    APT_LISTS_UPDATED=1
     sudo apt-get install -y incus || return 1
     return 0
 }
@@ -449,13 +459,15 @@ ensure_build_deps() {
     fi
 
     echo -e "${BLUE}→ Installing build dependencies:${need}${NC}"
+    # `|| true`: a failed install must reach the verification below (and its
+    # actionable message) instead of tripping set -e / the generic ERR trap.
     case "$PKG_MANAGER" in
-        apt)    sudo apt-get install -y git build-essential ;;
+        apt)    apt_update_once; sudo apt-get install -y git build-essential ;;
         pacman) sudo pacman -S --noconfirm --needed git base-devel ;;
         dnf)    sudo dnf install -y git make gcc ;;
         zypper) sudo zypper install -y git make gcc ;;
         *)      : ;;
-    esac
+    esac || true
 
     # Verify the essentials the build genuinely cannot proceed without.
     local missing=""

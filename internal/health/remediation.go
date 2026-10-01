@@ -196,12 +196,26 @@ func nftBinaryPath() string {
 // recheckNftSudo reports whether passwordless `sudo -n nft` works now — the
 // exact condition the nft-sudoers remediation fixes. It is config-independent
 // (sudoers is read per invocation, so no re-login is needed): if
-// `sudo -n nft list ruleset` succeeds, the drop-in is in effect.
+// `sudo -k -n nft list ruleset` succeeds, the drop-in is in effect. -k is
+// essential: the fix itself just ran sudo (usually with a password), so the
+// cached credential would make a plain `sudo -n` pass whatever the drop-in says.
 func recheckNftSudo() HealthCheck {
-	if exec.Command("sudo", "-n", nftBinaryPath(), "list", "ruleset").Run() == nil {
+	if runRecheckCommand(nftSudoRecheckArgv()) == nil {
 		return HealthCheck{Name: "nft", Status: StatusOK, Message: "Passwordless sudo for nft configured"}
 	}
 	return HealthCheck{Name: "nft", Status: StatusFailed, Message: "Passwordless sudo for nft still not configured"}
+}
+
+// nftSudoRecheckArgv is the probe recheckNftSudo runs: -k ignores (without
+// clearing) the cached sudo credential, -n forbids prompting.
+func nftSudoRecheckArgv() []string {
+	return []string{"sudo", "-k", "-n", nftBinaryPath(), "list", "ruleset"}
+}
+
+// runRecheckCommand runs a recheck probe; a package var so unit tests can
+// observe the argv without invoking sudo.
+var runRecheckCommand = func(argv []string) error {
+	return exec.Command(argv[0], argv[1:]...).Run() //nolint:gosec // fixed argv from nftSudoRecheckArgv
 }
 
 // RunFixes attempts to remediate every non-OK check in result that has a
