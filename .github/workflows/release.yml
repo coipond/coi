@@ -177,7 +177,7 @@ jobs:
           ### Quick Install (Linux)
           ```bash
           # Install latest version
-          curl -fsSL https://raw.githubusercontent.com/mensfeld/coi/master/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/coipond/coi/master/install.sh | bash
           ```
 
           ### Manual Installation
@@ -186,14 +186,14 @@ jobs:
 
           #### Linux AMD64 (x86_64)
           ```bash
-          wget https://github.com/mensfeld/coi/releases/download/__VERSION__/coi-linux-amd64
+          wget https://github.com/coipond/coi/releases/download/__VERSION__/coi-linux-amd64
           chmod +x coi-linux-amd64
           sudo mv coi-linux-amd64 /usr/local/bin/coi
           ```
 
           #### Linux ARM64 (aarch64)
           ```bash
-          wget https://github.com/mensfeld/coi/releases/download/__VERSION__/coi-linux-arm64
+          wget https://github.com/coipond/coi/releases/download/__VERSION__/coi-linux-arm64
           chmod +x coi-linux-arm64
           sudo mv coi-linux-arm64 /usr/local/bin/coi
           ```
@@ -207,7 +207,7 @@ jobs:
 
           ## What's Changed
 
-          See [CHANGELOG.md](https://github.com/mensfeld/coi/blob/master/CHANGELOG.md) for full changes.
+          See [CHANGELOG.md](https://github.com/coipond/coi/blob/master/CHANGELOG.md) for full changes.
 
           ## Requirements
 
@@ -217,9 +217,9 @@ jobs:
 
           ## Documentation
 
-          - [README](https://github.com/mensfeld/coi/blob/master/README.md)
-          - [Wiki](https://github.com/mensfeld/coi/wiki)
-          - [CHANGELOG](https://github.com/mensfeld/coi/blob/master/CHANGELOG.md)
+          - [README](https://github.com/coipond/coi/blob/master/README.md)
+          - [Wiki](https://github.com/coipond/coi/wiki)
+          - [CHANGELOG](https://github.com/coipond/coi/blob/master/CHANGELOG.md)
           EOF
           sed -i "s|__VERSION__|$VERSION|g" release-notes.md
 

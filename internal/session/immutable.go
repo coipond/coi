@@ -11,7 +11,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 	"golang.org/x/sys/unix"
 )
 

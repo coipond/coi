@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mensfeld/coi/internal/bedrock"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/vmhost"
+	"github.com/coipond/coi/internal/bedrock"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/vmhost"
 )
 
 // 1. Generate or use existing container name, create the manager and session

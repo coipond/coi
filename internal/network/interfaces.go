@@ -3,7 +3,7 @@ package network
 import (
 	"context"
 
-	"github.com/mensfeld/coi/internal/config"
+	"github.com/coipond/coi/internal/config"
 )
 
 // NetworkManager is the interface implemented by *Manager.

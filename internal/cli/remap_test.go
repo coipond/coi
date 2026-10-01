@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // fakeRemapManager is a minimal container.ContainerManager double for

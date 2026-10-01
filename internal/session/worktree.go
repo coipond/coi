@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // systemDirPrefixes are the critical directories a workspace may not be mounted

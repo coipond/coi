@@ -5,8 +5,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // hostIPClass classifies a host-entry address for reachability decisions.

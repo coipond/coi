@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	coischema "github.com/mensfeld/coi/schema"
+	coischema "github.com/coipond/coi/schema"
 	"github.com/spf13/cobra"
 )
 

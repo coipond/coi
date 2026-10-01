@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // TestResponderPauseActualContainer tests pausing a real container

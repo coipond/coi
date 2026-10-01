@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
+	"github.com/coipond/coi/internal/config"
 )
 
 func TestDetectRunScript_Absent(t *testing.T) {

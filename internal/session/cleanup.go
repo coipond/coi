@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // CleanupOptions contains options for cleaning up a session

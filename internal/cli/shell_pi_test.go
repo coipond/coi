@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // TestBuildCLICommand_Pi_NewSession verifies that pi gets a bare

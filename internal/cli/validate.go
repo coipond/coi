@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	coischema "github.com/mensfeld/coi/schema"
+	coischema "github.com/coipond/coi/schema"
 	"github.com/spf13/cobra"
 )
 

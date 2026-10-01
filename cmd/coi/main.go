@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mensfeld/coi/internal/cli"
+	"github.com/coipond/coi/internal/cli"
 )
 
 func main() {

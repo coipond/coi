@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/tool"
-	"github.com/mensfeld/coi/internal/vmhost"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/tool"
+	"github.com/coipond/coi/internal/vmhost"
 )
 
 // TestMacHomeConfigSeeding_Integration reproduces the macOS/Colima credential

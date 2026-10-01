@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // configuredToolForProjectConfig writes a project .coi/config.toml with the
