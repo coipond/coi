@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Git identity is now seeded from the Mac user's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — inside a macOS VM coi reads the identity from your Mac home (shared under `/Users`), including `include.path` files, and falls back to the VM's config. On a multi-user Mac it only uses your own home, never another account's.
 - [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield a silently unwritable workspace (#838)** — when the login UID sits inside root's `/etc/subuid` range Incus can't map it, so coi now aborts the launch with the cause named instead of continuing with a broken `/workspace`, and `coi health` reports it clearly instead of a cryptic failure.
 
 ## 0.13.0 (2026-09-28)

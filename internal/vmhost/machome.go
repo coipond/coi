@@ -211,3 +211,71 @@ func dirNonEmpty(p string) bool {
 	entries, err := os.ReadDir(p)
 	return err == nil && len(entries) > 0
 }
+
+// MacHostHome returns the Mac user's real home directory as seen from inside a
+// Colima/Lima/OrbStack Mac VM, or "" on Linux (KindUnknown) or when it cannot be
+// pinned down unambiguously. There os.UserHomeDir() is the guest home, so
+// `git config --global` reads the VM's gitconfig and misses the Mac user's
+// user.name/user.email; the Mac home is visible under /Users via the shared
+// mount.
+//
+// Only a real home (/Users/<name>) qualifies: a deeper project mount such as
+// /Users/alice/code does not expose the home's dotfiles. When the whole /Users
+// parent is shared, several homes are visible, and picking the first one
+// alphabetically would seed SOMEONE ELSE's identity on a multi-user Mac — so
+// only the guest user's own home (VMs mirror the Mac username) is accepted, and
+// an ambiguous setup yields "" rather than a guess.
+func MacHostHome() string {
+	mounts, _ := os.ReadFile("/proc/mounts")
+	osRelease, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	user := os.Getenv("USER")
+	kind := detect(string(mounts), user, string(osRelease))
+	return macHostHome(kind, string(mounts), user, dirExists)
+}
+
+// macHostHome is the testable core of MacHostHome.
+func macHostHome(kind Kind, mounts, user string, isDir func(string) bool) string {
+	if kind == KindUnknown {
+		return ""
+	}
+	// $USER is joined into a path below: accept only a single plain path
+	// component, so a value like "../../etc" can never steer the lookup out of
+	// /Users.
+	if user == "" || user == "." || user == ".." || strings.ContainsAny(user, `/\`) {
+		user = ""
+	} else {
+		user = filepath.Base(user) // no-op for a validated component; marks it as sanitized
+	}
+	var homes []string
+	seen := make(map[string]bool)
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			homes = append(homes, p)
+		}
+	}
+	for _, m := range macHostMounts(mounts) {
+		switch {
+		case m == "/Users":
+			if user != "" && isDir(filepath.Join(m, user)) {
+				add(filepath.Join(m, user))
+			}
+		case filepath.Dir(m) == "/Users":
+			add(m)
+		}
+	}
+	if len(homes) == 1 {
+		return homes[0]
+	}
+	for _, h := range homes {
+		if user != "" && filepath.Base(h) == user {
+			return h
+		}
+	}
+	return ""
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
