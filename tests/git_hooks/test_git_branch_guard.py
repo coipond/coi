@@ -21,12 +21,15 @@ HOME = "/home/code"
 REPO = "/tmp/guardrepo"
 REMOTE = "/tmp/guardremote"
 
-# One compound setup: a fresh repo on an (unborn) `main`, with a local identity so
-# commits don't trip useConfigOnly, plus one staged file ready to commit.
+# One compound setup: a fresh repo on `main` with a local identity so commits
+# don't trip useConfigOnly, a root commit, and one staged file ready to commit.
+# The guard lets a new repo's root commit through (nothing to protect yet), so
+# the setup succeeds with the guard on and the staged commit is the guarded one.
 _SETUP = (
     f"rm -rf {REPO} {REMOTE} && mkdir -p {REPO} && cd {REPO} && "
     "git init -q && git symbolic-ref HEAD refs/heads/main && "
     "git config user.name t && git config user.email t@e && "
+    "git commit -q --allow-empty -m root && "
     "echo hello > f.txt && git add f.txt"
 )
 

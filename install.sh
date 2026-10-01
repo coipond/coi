@@ -75,6 +75,15 @@ detect_pkg_manager() {
     fi
 }
 
+# Refresh apt package lists once per run. Fresh container/minimal images ship
+# with empty lists, so a bare `apt-get install` fails "Unable to locate package".
+# Best-effort: a failed refresh still lets the install try with what's cached.
+apt_update_once() {
+    [ -n "${APT_LISTS_UPDATED:-}" ] && return 0
+    sudo apt-get update -qq || true
+    APT_LISTS_UPDATED=1
+}
+
 # Install a package using the detected package manager
 # Usage: pkg_install <apt-name> [pacman-name] [dnf-name] [zypper-name]
 # If a distro-specific name is omitted, the apt name is used as fallback.
@@ -85,7 +94,7 @@ pkg_install() {
     local zypper_name="${4:-$apt_name}"
 
     case "$PKG_MANAGER" in
-        apt)    sudo apt-get install -y "$apt_name" ;;
+        apt)    apt_update_once; sudo apt-get install -y "$apt_name" ;;
         pacman) sudo pacman -S --noconfirm "$pacman_name" ;;
         dnf)    sudo dnf install -y "$dnf_name" ;;
         zypper) sudo zypper install -y "$zypper_name" ;;
@@ -169,6 +178,7 @@ SOURCES
     fi
 
     sudo apt-get update -qq || return 1
+    APT_LISTS_UPDATED=1
     sudo apt-get install -y incus || return 1
     return 0
 }
@@ -312,6 +322,23 @@ check_group() {
     echo "  Then log out and back in for changes to take effect."
 }
 
+# Install a sudoers drop-in safely: write the rule to a dot-named temp file in
+# /etc/sudoers.d (sudo's includedir skips names containing '.'), validate it
+# with visudo, then rename it into place. An unchecked in-place write with a
+# syntax error breaks every sudo on the host, including the one to repair it.
+# Mirrors nftSudoersScript in internal/health/remediation.go.
+# Usage: install_sudoers_dropin <rule> <target>
+install_sudoers_dropin() {
+    sudo sh -c '
+        tmp="$(mktemp "$(dirname "$2")/.$(basename "$2").XXXXXX")" || exit 1
+        if printf "%s\n" "$1" > "$tmp" && chmod 0440 "$tmp" && visudo -cf "$tmp" >/dev/null; then
+            mv -f "$tmp" "$2"
+        else
+            rm -f "$tmp"
+            exit 1
+        fi' sh "$1" "$2"
+}
+
 # Set up passwordless sudo for nft (required for network isolation)
 setup_nft_sudoers() {
     local nft_path user
@@ -319,9 +346,10 @@ setup_nft_sudoers() {
     if [ -z "$nft_path" ]; then
         return
     fi
-    # Resolve the user robustly: an empty $USER would write a malformed sudoers
-    # line (" ALL=(ALL) ...") that makes sudo reject the whole drop-in.
-    user="${USER:-$(id -un)}"
+    # Name the user by numeric UID (#1000), not $USER: an empty $USER, or a
+    # directory-service name with a space ("John Doe"), is a sudoers syntax
+    # error that makes sudo reject the whole drop-in — and every sudo after it.
+    user="#$(id -u)"
 
     # Already configured? Check for the sudoers drop-in directly so we don't
     # get a false positive from a cached sudo timestamp.
@@ -335,14 +363,17 @@ setup_nft_sudoers() {
     # without a password prompt; declining leaves open mode working.
     if ! user_agrees "  Configure passwordless sudo for nft — needed for network isolation? [Y/n]: "; then
         echo -e "${YELLOW}⚠ Skipped: without passwordless nft, restricted/allowlist network modes won't work (open mode still does).${NC}"
-        echo -e "   Enable later: ${BLUE}echo \"$user ALL=(ALL) NOPASSWD: $nft_path\" | sudo tee /etc/sudoers.d/coi-nft && sudo chmod 0440 /etc/sudoers.d/coi-nft${NC}"
+        echo -e "   Enable later: ${BLUE}coi health --fix${NC}"
         return
     fi
 
     echo -e "${BLUE}→ Configuring passwordless sudo for nft...${NC}"
-    echo "$user ALL=(ALL) NOPASSWD: $nft_path" | sudo tee /etc/sudoers.d/coi-nft > /dev/null
-    sudo chmod 0440 /etc/sudoers.d/coi-nft
-    echo -e "${GREEN}✓ Passwordless sudo configured for nft${NC}"
+    if install_sudoers_dropin "$user ALL=(ALL) NOPASSWD: $nft_path" /etc/sudoers.d/coi-nft; then
+        echo -e "${GREEN}✓ Passwordless sudo configured for nft${NC}"
+    else
+        echo -e "${YELLOW}⚠ Could not configure passwordless sudo for nft (rule failed validation).${NC}"
+        echo -e "   Retry later: ${BLUE}coi health --fix${NC}"
+    fi
 }
 
 # Check nftables availability for network isolation
@@ -449,13 +480,15 @@ ensure_build_deps() {
     fi
 
     echo -e "${BLUE}→ Installing build dependencies:${need}${NC}"
+    # `|| true`: a failed install must reach the verification below (and its
+    # actionable message) instead of tripping set -e / the generic ERR trap.
     case "$PKG_MANAGER" in
-        apt)    sudo apt-get install -y git build-essential ;;
+        apt)    apt_update_once; sudo apt-get install -y git build-essential ;;
         pacman) sudo pacman -S --noconfirm --needed git base-devel ;;
         dnf)    sudo dnf install -y git make gcc ;;
         zypper) sudo zypper install -y git make gcc ;;
         *)      : ;;
-    esac
+    esac || true
 
     # Verify the essentials the build genuinely cannot proceed without.
     local missing=""

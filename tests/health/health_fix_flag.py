@@ -71,9 +71,10 @@ def _sudo_stat(path):
 def _snapshot_fix_targets():
     """Capture the host state the --fix remediations could durably write.
 
-    The safe-remediation registry currently has three fixes; two of their
+    The safe-remediation registry currently has four fixes; three of their
     targets are snapshotted here:
       - /etc/sudoers.d/coi-nft (nft rule) — via sudo -n stat metadata
+      - /etc/sudoers.d/coi-iptables (iptables rule) — via sudo -n stat metadata
       - incus-admin membership in /etc/group (usermod) — world-readable content
 
     net.ipv4.ip_forward (the sysctl fix's target) is deliberately NOT
@@ -83,11 +84,12 @@ def _snapshot_fix_targets():
     change the (read-only) checks caused.
 
     internal/health/remediation_test.go pins the registry size and points
-    here, so adding a fourth remediation fails loudly until this snapshot is
+    here, so adding a fifth remediation fails loudly until this snapshot is
     extended.
     """
     snapshot = {
         "coi_nft": _sudo_stat(Path("/etc/sudoers.d/coi-nft")),
+        "coi_iptables": _sudo_stat(Path("/etc/sudoers.d/coi-iptables")),
     }
     group_lines = [
         line

@@ -94,8 +94,8 @@ func TestGitHookScripts(t *testing.T) {
 		if !strings.HasPrefix(script, "#!/bin/sh\n") {
 			t.Errorf("%s: missing shebang", name)
 		}
-		if !strings.Contains(script, "git rev-parse --git-dir") {
-			t.Errorf("%s: must delegate via --git-dir", name)
+		if !strings.Contains(script, "git rev-parse --git-common-dir") {
+			t.Errorf("%s: must delegate via --git-common-dir (worktree-safe)", name)
 		}
 		if strings.Contains(script, "--git-path") {
 			t.Errorf("%s: --git-path hooks would recurse through core.hooksPath", name)
@@ -262,6 +262,43 @@ func TestRenderClaudeManagedSettings(t *testing.T) {
 		}
 		if strings.Contains(got, `"includeCoAuthoredBy": false`) != c.wantCoAuthor {
 			t.Errorf("suppress=%v strip=%v: includeCoAuthoredBy presence wrong: %q", c.suppress, c.strip, got)
+		}
+	}
+}
+
+// reference-transaction runs on every ref update (fetches included), so it is
+// only installed as the root-owned guard while protected_branches is on; when
+// the guard is off it is removed and NOT replaced by a delegation symlink.
+func TestSetupGitHooks_ReferenceTransactionOnlyWithGuard(t *testing.T) {
+	refTx := GitHooksDir + "/" + refTxHook
+
+	on := &managedSettingsRecorder{}
+	SetupGitHooks(on, "/home/code", GitIdentity{}, false, nil, false, true, []string{"main"}, func(string) {})
+	var guard *createWithOwnerCall
+	for i := range on.creates {
+		if on.creates[i].path == refTx {
+			guard = &on.creates[i]
+		}
+	}
+	if guard == nil {
+		t.Fatal("guard on: reference-transaction guard was not written")
+	}
+	if guard.uid != 0 || guard.gid != 0 || guard.mode != "0755" {
+		t.Errorf("reference-transaction owner/mode = %d:%d/%s, want 0:0/0755", guard.uid, guard.gid, guard.mode)
+	}
+
+	off := &managedSettingsRecorder{}
+	SetupGitHooks(off, "/home/code", GitIdentity{}, false, nil, false, true, nil, func(string) {})
+	joined := strings.Join(off.commands, "\n")
+	if !strings.Contains(joined, "rm -f "+refTx) {
+		t.Error("guard off: a stale reference-transaction guard must be removed")
+	}
+	if strings.Contains(joined, "ln -sf delegate "+refTx) {
+		t.Error("guard off: reference-transaction must not be delegated (high-frequency hook)")
+	}
+	for _, c := range off.creates {
+		if c.path == refTx {
+			t.Error("guard off: reference-transaction must not be written")
 		}
 	}
 }

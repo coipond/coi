@@ -32,6 +32,8 @@ def test_untrusted_cannot_disable_branch_guard(coi_binary, workspace_dir):
         "rm -rf /tmp/ur && mkdir -p /tmp/ur && cd /tmp/ur && "
         "git init -q && git symbolic-ref HEAD refs/heads/main && "
         "git config user.name t && git config user.email t@e && "
+        # Root commit first: the guard allows a new repo's first commit.
+        "git commit -q --allow-empty -m root && "
         "echo x > f && git add f && git commit -m x"
     )
     result = subprocess.run(

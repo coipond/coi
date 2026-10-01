@@ -159,7 +159,7 @@ func CheckNft(netCfg config.NetworkConfig) HealthCheck {
 	}
 
 	if !available {
-		message := "nft installed but passwordless sudo not configured — run: echo \"$USER ALL=(ALL) NOPASSWD: /usr/sbin/nft\" | sudo tee /etc/sudoers.d/coi-nft && sudo chmod 0440 /etc/sudoers.d/coi-nft"
+		message := "nft installed but passwordless sudo not configured — run: coi health --fix"
 		if isColima {
 			message = "nft sudo not configured — on Colima, set mode = \"open\" in [network] section of your config.toml"
 		}
@@ -300,7 +300,7 @@ func CheckIptablesSudo() HealthCheck {
 		return HealthCheck{
 			Name:    "iptables_sudo",
 			Status:  StatusWarning,
-			Message: fmt.Sprintf(`Passwordless sudo not configured for iptables — run: echo "$USER ALL=(ALL) NOPASSWD: %s" | sudo tee /etc/sudoers.d/coi-iptables && sudo chmod 0440 /etc/sudoers.d/coi-iptables`, iptablesPath),
+			Message: "Passwordless sudo not configured for iptables — run: coi health --fix",
 		}
 	}
 

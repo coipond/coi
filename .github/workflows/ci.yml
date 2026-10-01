@@ -262,8 +262,7 @@ jobs:
             echo "no-sudoers lane: skipping /etc/sudoers.d/coi-nft"
           else
             # Configure sudo NOPASSWD for nft commands
-            echo "$USER ALL=(ALL) NOPASSWD: /usr/sbin/nft *" | sudo tee /etc/sudoers.d/coi-nft
-            sudo chmod 0440 /etc/sudoers.d/coi-nft
+            bash scripts/install-sudoers-dropin.sh "#$(id -u) ALL=(ALL) NOPASSWD: /usr/sbin/nft *" /etc/sudoers.d/coi-nft
 
             # Verify nft access
             sudo -n nft list ruleset || echo "NFT access configured"
