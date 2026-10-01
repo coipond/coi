@@ -5,11 +5,14 @@ block), Incus can't idmap the workspace. The secret-masking / host-credential
 probes must then SKIP with a named WARNING instead of the cryptic forkmount
 [FAIL] the bug reported.
 
-This drives the REAL binary: it temporarily adds a count>1 subuid range covering
-the current test user's UID, runs `coi health --json`, and asserts the two idmap
-probes report a `warning` naming the /etc/subuid cause — then restores
-/etc/subuid exactly. The probe skip fires before any container launch, so this
-needs neither the coi image nor a mappable UID.
+This drives the REAL binary: it temporarily rewrites /etc/subuid so a ROOT-owned
+count>1 range covers the current test user's UID with no dedicated
+`root:<uid>:1` line (the #838 condition — Incus allocates idmaps from root's
+delegations, and a dedicated size-1 line is the fix coi prints, which clears
+it), runs `coi health --json`, and asserts the two idmap probes report a
+`warning` naming the /etc/subuid cause — then restores /etc/subuid exactly.
+The probe skip fires before any container launch, so this needs neither the
+coi image nor a mappable UID.
 """
 
 import json
@@ -54,9 +57,17 @@ def test_idmap_probes_skip_when_uid_in_subuid_range(coi_binary):
     # corrupt both (neither would parse), so the probe wouldn't skip.
     if base and not base.endswith(b"\n"):
         base += b"\n"
-    # A dedicated multi-ID range covering the current UID → reproduces the #838
-    # "host UID inside a subordinate range" condition (count>1 is what breaks).
-    injected = base + f"coitest838:{uid}:2\n".encode()
+    # Drop any dedicated root:<uid>:1 delegation (CI adds root:1001:1 for
+    # raw.idmap): it is the fix for #838, so while present the UID counts as
+    # mappable and the probes rightly run instead of skipping.
+    dedicated = {f"root:{uid}:1".encode(), f"0:{uid}:1".encode()}
+    base = b"".join(
+        line for line in base.splitlines(keepends=True) if line.strip() not in dedicated
+    )
+    # A root-owned multi-ID range covering the current UID → reproduces the #838
+    # "host UID inside root's subordinate range" condition (count>1 is what
+    # breaks; another user's range is irrelevant to Incus).
+    injected = base + f"root:{uid}:2\n".encode()
 
     try:
         _write_subuid(injected)
