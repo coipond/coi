@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -362,7 +363,7 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 			if reverseShellNeedsNetwork[p.pattern] && !networkRelated {
 				continue
 			}
-			if reverseShellNeedsSocat[p.pattern] && !containsAtTokenStart(cmdLower, "socat") {
+			if reverseShellNeedsSocat[p.pattern] && !looksLikeSocat(cmdLower) {
 				continue
 			}
 			if refine, ok := reverseShellRefine[p.pattern]; ok && !refine(cmdLower) {
@@ -419,12 +420,23 @@ var reverseShellNeedsSocat = map[string]bool{
 	"SYSTEM:": true,
 }
 
+// socatNetAddrRe matches a socat network address keyword (TCP:, TCP4-CONNECT:,
+// OPENSSL:, UDP-SENDTO:, SCTP:, ...) as its own token.
+var socatNetAddrRe = regexp.MustCompile(`(?:^|[\s'"])(?:tcp|udp|sctp|openssl|ssl)[a-z0-9-]*:`)
+
+// looksLikeSocat reports whether cmdLower is a socat invocation: the socat
+// binary by name, or — for a copied/renamed binary (`/tmp/x tcp:h:p exec:sh`)
+// — a socat network address alongside the EXEC:/SYSTEM: address.
+func looksLikeSocat(cmdLower string) bool {
+	return containsAtTokenStart(cmdLower, "socat") || socatNetAddrRe.MatchString(cmdLower)
+}
+
 // reverseShellRefine narrows patterns whose literal text is also common in
 // benign commands: the pattern only counts when its predicate holds. Searching
 // for /dev/tcp/ (grep, rg) or loading IO::File must not kill the container.
 var reverseShellRefine = map[string]func(cmdLower string) bool{
-	"/dev/tcp/": devNetRedirectNonLoopback,
-	"/dev/udp/": devNetRedirectNonLoopback,
+	"/dev/tcp/": devNetEndpointNonLoopback,
+	"/dev/udp/": devNetEndpointNonLoopback,
 	"perl -MIO": perlLoadsIOSocket,
 }
 
@@ -513,41 +525,35 @@ func containsRemoteHostPort(cmdLower string) bool {
 }
 
 // isLoopbackHost reports whether host names this machine. A connection there
-// can't reach an attacker, so it is not reverse-shell evidence.
+// can't reach an attacker, so it is not reverse-shell evidence. Only an exact
+// "localhost" or a literal loopback/unspecified IP counts — never a prefix: a
+// DNS name such as 127.0.0.1.evil.com resolves wherever its owner wants.
 func isLoopbackHost(host string) bool {
-	return host == "localhost" || host == "0.0.0.0" || host == "::1" || host == "[::1]" ||
-		strings.HasPrefix(host, "127.")
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
-// devNetRedirectNonLoopback reports whether cmdLower opens a bash /dev/tcp or
-// /dev/udp socket to a non-loopback host. The path only connects when it is a
-// redirection target (`>& /dev/tcp/h/p`, `<>/dev/tcp/...`, `< /dev/tcp/...`),
-// so a mere mention (`grep -rn /dev/tcp/ docs`) is skipped — as is a port
-// probe of the agent's own services (`</dev/tcp/localhost/5432`).
-func devNetRedirectNonLoopback(cmdLower string) bool {
-	for _, dev := range []string{"/dev/tcp/", "/dev/udp/"} {
-		for from := 0; ; {
-			i := strings.Index(cmdLower[from:], dev)
-			if i < 0 {
-				break
-			}
-			i += from
-			from = i + len(dev)
+// devNetEndpointRe matches a bash /dev/tcp or /dev/udp endpoint path with a
+// host and a port (or a $variable port). The host stops at shell syntax, so a
+// quoted or variable-held path (`3<>"/dev/tcp/h/p"`, `d=/dev/tcp/h/p`) still
+// yields it.
+var devNetEndpointRe = regexp.MustCompile("/dev/(?:tcp|udp)/([^/\\s\"'`;|&<>()]+)/(?:[0-9]+|\\$)")
 
-			j := i - 1
-			for j >= 0 && (cmdLower[j] == ' ' || cmdLower[j] == '\t') {
-				j--
-			}
-			if j < 0 || !strings.ContainsRune("<>&", rune(cmdLower[j])) {
-				continue // not a redirection target
-			}
-			host := cmdLower[from:]
-			if k := strings.IndexByte(host, '/'); k >= 0 {
-				host = host[:k]
-			}
-			if !isLoopbackHost(host) {
-				return true
-			}
+// devNetEndpointNonLoopback reports whether cmdLower names a bash /dev/tcp or
+// /dev/udp endpoint on a non-loopback host. It deliberately does NOT require
+// the path to sit right after a redirection operator: bash connects through
+// quotes, variables (`exec 3<>$d`), `>|` and escapes too, and requiring a
+// literal `<`/`>`/`&` let all of those through. A mere mention without an
+// endpoint (`grep -rn /dev/tcp/ docs`, `rg "/dev/tcp/"`) and a probe of the
+// agent's own services (`</dev/tcp/localhost/5432`) don't match.
+func devNetEndpointNonLoopback(cmdLower string) bool {
+	for _, m := range devNetEndpointRe.FindAllStringSubmatch(cmdLower, -1) {
+		if !isLoopbackHost(m[1]) {
+			return true
 		}
 	}
 	return false

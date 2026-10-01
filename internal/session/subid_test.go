@@ -1,6 +1,14 @@
 package session
 
-import "testing"
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestSubuidRangeContaining(t *testing.T) {
 	// The real-world content from the bug report plus a dedicated size-1 line.
@@ -107,5 +115,80 @@ func TestSubuidRangeContaining(t *testing.T) {
 				t.Errorf("line = %q, want %q", line, tt.wantLine)
 			}
 		})
+	}
+}
+
+// The dedicated root:<uid>:1 line clears the UID only once coi's whole printed
+// fix is in effect: present in /etc/subuid AND /etc/subgid, and Incus restarted
+// since. Until then the UID stays flagged with what's still missing.
+func TestHostUIDSubordinateRange_RequiresWholeFix(t *testing.T) {
+	uid := os.Getuid()
+	big := fmt.Sprintf("root:%d:1000000000", uid) // a root block covering uid
+	if uid > 0 {
+		big = fmt.Sprintf("root:%d:1000000000", uid-1)
+	}
+	dedicated := fmt.Sprintf("root:%d:1", uid)
+
+	dir := t.TempDir()
+	write := func(name, content string, mtime time.Time) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	origU, origG, origStart := subuidPath, subgidPath, incusdStartTime
+	t.Cleanup(func() { subuidPath, subgidPath, incusdStartTime = origU, origG, origStart })
+
+	edited := time.Now().Add(-time.Hour)
+	restartedAfter := func() (time.Time, bool) { return edited.Add(time.Minute), true }
+	restartedBefore := func() (time.Time, bool) { return edited.Add(-time.Minute), true }
+	noIncusd := func() (time.Time, bool) { return time.Time{}, false }
+
+	cases := []struct {
+		name      string
+		subuid    string
+		subgid    string
+		start     func() (time.Time, bool)
+		wantFound bool
+		wantHint  string
+	}{
+		{"no dedicated line", big + "\n", big + "\n", restartedAfter, true, ""},
+		{"subuid only", big + "\n" + dedicated + "\n", big + "\n", restartedAfter, true, "missing from /etc/subgid"},
+		{"both files, Incus not restarted", big + "\n" + dedicated + "\n", big + "\n" + dedicated + "\n", restartedBefore, true, "restart incus"},
+		{"both files, Incus restarted", big + "\n" + dedicated + "\n", big + "\n" + dedicated + "\n", restartedAfter, false, ""},
+		{"both files, incusd not visible", big + "\n" + dedicated + "\n", big + "\n" + dedicated + "\n", noIncusd, false, ""},
+		{"not inside a root block", "root:1:1\n", "", restartedAfter, false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			subuidPath = write("subuid", tc.subuid, edited)
+			subgidPath = write("subgid", tc.subgid, edited)
+			incusdStartTime = tc.start
+			line, found := HostUIDSubordinateRange()
+			if found != tc.wantFound {
+				t.Fatalf("found = %v, want %v (line %q)", found, tc.wantFound, line)
+			}
+			if tc.wantHint != "" && !strings.Contains(line, tc.wantHint) {
+				t.Errorf("line %q should say %q", line, tc.wantHint)
+			}
+		})
+	}
+}
+
+// findIncusdStartTime must locate a running incusd via /proc when there is one.
+func TestFindIncusdStartTime(t *testing.T) {
+	if out, err := exec.Command("pgrep", "-x", "incusd").Output(); err != nil || len(out) == 0 {
+		t.Skip("no incusd running here")
+	}
+	started, ok := findIncusdStartTime()
+	if !ok {
+		t.Fatal("incusd is running but wasn't found in /proc")
+	}
+	if started.After(time.Now()) || started.Before(time.Now().Add(-365*24*time.Hour)) {
+		t.Errorf("implausible incusd start time %v", started)
 	}
 }

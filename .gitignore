@@ -42,8 +42,10 @@ tmp/
 *.swo
 *~
 
-# AI agent tooling (local Claude Code config/state at repo root)
+# AI agent tooling (local Claude Code / Codex config/state at repo root; coi
+# also creates empty placeholders here to mount them read-only)
 /.claude/
+/.codex/
 
 # OS
 .DS_Store

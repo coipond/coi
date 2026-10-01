@@ -816,6 +816,24 @@ func NftAvailable() bool {
 	return cmd.Run() == nil
 }
 
+// NftPasswordlessSudo reports whether `sudo nft` works WITHOUT a password —
+// i.e. a NOPASSWD rule is in effect — ignoring any cached sudo credential
+// (`sudo -k -n`). NftAvailable can't tell those apart: right after the user
+// typed a sudo password it succeeds for ~15 minutes, then isolation breaks.
+// Health checks use this; runtime keeps NftAvailable (a cached credential does
+// work for the moment).
+func NftPasswordlessSudo() bool {
+	if !SudoEnabled() {
+		return false
+	}
+	return runSudoProbe("-k", "-n", "nft", "list", "tables") == nil
+}
+
+// runSudoProbe runs `sudo <args>`; a package var so tests can observe the args.
+var runSudoProbe = func(args ...string) error {
+	return exec.Command("sudo", args...).Run() //nolint:gosec // fixed args from NftPasswordlessSudo
+}
+
 // NftUsable reports whether Coi can actually use nft for the given config:
 // config must permit sudo (`[network] use_sudo` != false) AND the passwordless
 // sudo probe must succeed. When use_sudo=false this returns false without ever

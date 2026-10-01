@@ -42,9 +42,9 @@ func CheckNFTables() HealthCheck {
 		}
 	}
 
-	// Check if we can run nft commands with sudo (NOPASSWD)
-	cmd := exec.Command("sudo", "-n", "nft", "list", "ruleset")
-	output, err := cmd.CombinedOutput()
+	// Check if we can run nft commands with sudo (NOPASSWD). -k ignores a cached
+	// sudo credential, which would otherwise mask a missing rule.
+	output, err := runProbe([]string{"sudo", "-k", "-n", "nft", "list", "ruleset"})
 	if err != nil {
 		return HealthCheck{
 			Name:    "nftables",

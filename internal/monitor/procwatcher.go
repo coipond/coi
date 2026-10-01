@@ -455,8 +455,8 @@ func procReadPPID(pid int) int {
 // `bash -c 'grep -rn /dev/tcp/ docs'`, a loopback port probe, or
 // `perl -MIO::File` no longer match. See reverseShellRefine.
 var execKeywordRefine = map[string]func(lower string) bool{
-	"/dev/tcp/": devNetRedirectNonLoopback,
-	"/dev/udp/": devNetRedirectNonLoopback,
+	"/dev/tcp/": devNetEndpointNonLoopback,
+	"/dev/udp/": devNetEndpointNonLoopback,
 	"-mio":      perlLoadsIOSocket,
 }
 

