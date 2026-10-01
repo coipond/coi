@@ -72,6 +72,8 @@ type progressReader struct {
 	logger     func(string)
 }
 
+// Read reads from the wrapped reader, tracking bytes downloaded and logging
+// progress at every 5% step.
 func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.r.Read(p)
 	pr.downloaded += int64(n)

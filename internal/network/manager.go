@@ -1,3 +1,6 @@
+// Package network manages container network isolation: firewall rules for the
+// restricted, open and allowlist modes, domain resolution and IP caching, and
+// per-container /etc/hosts entries.
 package network
 
 import (
@@ -428,7 +431,7 @@ func (m *Manager) syncResolved(domainIPs map[string][]string) error {
 		ttl := m.resolver.DomainTTLs[domain]
 		var entryPorts []portRange
 		if m.policy != nil {
-			entryPorts = m.policy.PortsForName(domain)
+			entryPorts = m.policy.portsForName(domain)
 		}
 		ports := resolvePorts(entryPorts, globalPorts)
 		if err := allower.AllowDynamicIPsPorts(ips, ports, ttl, refreshInterval); err != nil {
@@ -491,6 +494,7 @@ func (m *Manager) dynamicElementLifetimeInterval() time.Duration {
 // noopAllower stands in when the nft layer cannot install set elements (tests).
 type noopAllower struct{}
 
+// AllowDynamicIPsPorts discards the elements and always succeeds.
 func (noopAllower) AllowDynamicIPsPorts([]string, []portRange, uint32, time.Duration) error {
 	return nil
 }

@@ -1,3 +1,6 @@
+// Package monitor watches running containers for security threats (reverse
+// shells, environment scanning, suspicious network and filesystem activity),
+// responds to them, and records events in an audit log.
 package monitor
 
 import (

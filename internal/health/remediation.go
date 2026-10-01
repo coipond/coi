@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+
+	"github.com/coipond/coi/internal/network"
 )
 
 // FixClass classifies how a remediation may be applied by `coi health --fix`.
@@ -59,17 +61,18 @@ type Remediation struct {
 type FixStatus string
 
 const (
-	// FixPlanned: --dry-run only; the command was not run.
+	// FixPlanned means --dry-run only; the command was not run.
 	FixPlanned FixStatus = "planned"
-	// FixApplied: the command ran and the check now passes.
+	// FixApplied means the command ran and the check now passes.
 	FixApplied FixStatus = "applied"
-	// FixReloginRequired: the command ran successfully but the check still
+	// FixReloginRequired means the command ran successfully but the check still
 	// isn't OK in this session because a re-login (or newgrp) is required.
 	FixReloginRequired FixStatus = "relogin_required"
-	// FixManualRequired: the fix is FixManual, or ShouldApply returned false —
-	// the operator must act. The command (if any) is reported for them.
+	// FixManualRequired means the fix is FixManual: --fix never runs it, and
+	// the operator must act. The command (if any) is reported for them. (A fix
+	// whose ShouldApply returns false produces no outcome at all.)
 	FixManualRequired FixStatus = "manual_required"
-	// FixFailed: the command was run but errored, or building it failed.
+	// FixFailed means the command was run but errored, or building it failed.
 	FixFailed FixStatus = "failed"
 )
 
@@ -173,14 +176,21 @@ func remediations() []Remediation {
 			Recheck: recheckNftSudo,
 		},
 		{
-			Check:      "iptables_sudo",
-			Summary:    "Configure passwordless sudo for iptables (bridge FORWARD rule management)",
-			Class:      FixSafe,
+			Check:   "iptables_sudo",
+			Summary: "Configure passwordless sudo for iptables (bridge FORWARD rule management)",
+			// FixManual: `NOPASSWD: iptables` with any arguments is effectively
+			// root (iptables can be pointed at an arbitrary --modprobe helper),
+			// so --fix prints the command for the operator to run deliberately
+			// instead of granting it silently.
+			Class:      FixManual,
 			Privileged: true,
-			// CheckIptablesSudo only warns when iptables is installed and
-			// passwordless sudo for it isn't configured; every other outcome
-			// (macOS, use_sudo=false, not installed) is OK.
-			ShouldApply: func(c HealthCheck) bool { return c.Status == StatusWarning },
+			// Only when sudo stopped at a password prompt. If iptables itself
+			// fails even via sudo, a sudoers rule can't help.
+			ShouldApply: func(c HealthCheck) bool {
+				needs, _ := c.Details["sudo_password_required"].(bool)
+				return c.Status == StatusWarning && needs
+			},
+			PostNote: "This grants passwordless root-equivalent access to iptables; only run it if you need Coi's bridge FORWARD rule management.",
 			Argv: func() ([]string, error) {
 				p, err := exec.LookPath("iptables")
 				if err != nil {
@@ -207,7 +217,12 @@ const (
 // the one needed to repair it — so an unchecked in-place write is a lockout risk.
 // The rule and path are positional args, never spliced into the script.
 // Mirrors install_sudoers_dropin (install.sh) and scripts/install-sudoers-dropin.sh.
-const sudoersDropinScript = `tmp="$(mktemp "$(dirname "$2")/.$(basename "$2").XXXXXX")" || exit 1
+const sudoersDropinScript = `PATH="$PATH:/usr/sbin:/sbin"
+if ! command -v visudo >/dev/null 2>&1; then
+	echo "coi: visudo not found — can't validate the sudoers rule, so not installing it" >&2
+	exit 1
+fi
+tmp="$(mktemp "$(dirname "$2")/.$(basename "$2").XXXXXX")" || exit 1
 if printf '%s\n' "$1" > "$tmp" && chmod 0440 "$tmp" && visudo -cf "$tmp" >/dev/null; then
 	mv -f "$tmp" "$2"
 else
@@ -241,7 +256,7 @@ func nftBinaryPath() string {
 // essential: the fix itself just ran sudo (usually with a password), so the
 // cached credential would make a plain `sudo -n` pass whatever the drop-in says.
 func recheckNftSudo() HealthCheck {
-	if runRecheckCommand(nftSudoRecheckArgv()) == nil {
+	if _, err := runProbe(nftSudoRecheckArgv()); err == nil {
 		return HealthCheck{Name: "nft", Status: StatusOK, Message: "Passwordless sudo for nft configured"}
 	}
 	return HealthCheck{Name: "nft", Status: StatusFailed, Message: "Passwordless sudo for nft still not configured"}
@@ -257,17 +272,25 @@ func nftSudoRecheckArgv() []string {
 // with -k so the credential cached by the fix can't mask a non-working rule.
 func recheckIptablesSudo() HealthCheck {
 	p, err := exec.LookPath("iptables")
-	if err == nil && runRecheckCommand([]string{"sudo", "-k", "-n", p, "-L", "FORWARD", "-n"}) == nil {
+	if err == nil {
+		_, err = runProbe([]string{"sudo", "-k", "-n", p, "-L", "FORWARD", "-n"})
+	}
+	if err == nil {
 		return HealthCheck{Name: "iptables_sudo", Status: StatusOK, Message: "Passwordless sudo configured for iptables"}
 	}
 	return HealthCheck{Name: "iptables_sudo", Status: StatusWarning, Message: "Passwordless sudo for iptables still not configured"}
 }
 
-// runRecheckCommand runs a recheck probe; a package var so unit tests can
-// observe the argv without invoking sudo.
-var runRecheckCommand = func(argv []string) error {
-	return exec.Command(argv[0], argv[1:]...).Run() //nolint:gosec // fixed argv from the recheck probes above
+// runProbe runs a sudo probe (detection checks and post-fix rechecks) and
+// returns its combined output; a package var so unit tests can observe the
+// argv without invoking sudo.
+var runProbe = func(argv []string) ([]byte, error) {
+	return exec.Command(argv[0], argv[1:]...).CombinedOutput() //nolint:gosec // fixed argv from the health probes
 }
+
+// nftPasswordlessSudo is network.NftPasswordlessSudo; a package var so tests
+// can stub it.
+var nftPasswordlessSudo = network.NftPasswordlessSudo
 
 // RunFixes attempts to remediate every non-OK check in result that has a
 // registered fix, following a detect → act → re-check loop per fix. It updates
@@ -301,22 +324,24 @@ func RunFixes(result *HealthResult, opts FixOptions) []FixOutcome {
 		}
 		outcome.Command = displayCommand(argv, r.Privileged)
 
-		// A deliberately manual/destructive fix is reported with its command so
-		// the operator can run it, but --fix never runs it (the #823 rule:
-		// never guess between valid resources, never silently repoint).
-		if r.Class == FixManual {
-			outcome.Status = FixManualRequired
-			outcome.Note = r.PostNote
-			outcomes = append(outcomes, outcome)
-			continue
-		}
-
 		// A safe remediation that can't improve this particular state (e.g.
 		// group membership that only a re-login activates, or a group that
 		// doesn't exist because Incus isn't installed) is skipped without a
 		// line: running its command wouldn't help, and the check's own message
 		// in the table below already carries the right guidance.
 		if r.ShouldApply != nil && !r.ShouldApply(check) {
+			continue
+		}
+
+		// A deliberately manual/destructive fix is reported with its command so
+		// the operator can run it, but --fix never runs it (the #823 rule:
+		// never guess between valid resources, never silently repoint). It
+		// comes after ShouldApply so a manual fix that can't help this state
+		// isn't offered either.
+		if r.Class == FixManual {
+			outcome.Status = FixManualRequired
+			outcome.Note = r.PostNote
+			outcomes = append(outcomes, outcome)
 			continue
 		}
 

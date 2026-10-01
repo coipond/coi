@@ -1,3 +1,5 @@
+// Package config defines coi's configuration model and loads, merges and
+// validates it from the embedded defaults, config files and profiles.
 package config
 
 import (

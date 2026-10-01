@@ -224,16 +224,32 @@ exit 0
 // rebase, reset, update-ref, branch -f — and a non-zero exit in the
 // "prepared" state aborts the update. That closes the paths pre-commit never
 // sees. The rule: a protected branch may only point at commits some remote
-// already has, so `git pull` / `reset --hard origin/main` keep working while
-// any local-only commit on it is refused. Creation (first commit of a new
-// repo) and deletion are allowed; pre-push still blocks pushing a deletion.
+// already has, so `git pull` and `reset --hard origin/main` keep working while
+// any local-only commit on it is refused — including by deleting and
+// recreating it (checkout -B / switch -C too). Deletion is allowed (pre-push
+// still blocks pushing one), as is creating it in a repository that has never
+// had a remote (the first commit of `git init`). Bare repositories (push
+// targets) are skipped.
+//
+// Refused although legitimate, because git moves the branch BEFORE the
+// remote-tracking ref (two transactions), so the hook can't tell it from a
+// local fast-forward: `git fetch origin main:main` and `git pull <url> main`.
+// The rejection message names the working alternative
+// (`git fetch origin && git branch -f main origin/main`).
+//
+// Not caught (pre-push still blocks the push): `git branch -M/-C x main` and
+// `git symbolic-ref` — git 2.43 doesn't run reference-transaction for those —
+// and deliberately writing a local commit under refs/remotes/* first
+// (`git fetch . feat:refs/remotes/x/feat`) so it looks upstream.
 // Needs git >= 2.28; older git ignores the hook (pre-commit still applies).
 const gitRefTxGuardHead = `#!/bin/sh
 # Managed by coi ([git] protected_branches): refuse to move a protected branch
 # to a commit no remote has, then run the repository's own hook of this name.
 # Git feeds "<old> <new> <ref>" lines on stdin; $1 is the transaction state.
 input="$(cat)"
-if [ "$1" = "prepared" ]; then
+# Bare repositories are push targets (the receiving side of a local push, e.g.
+# a test fixture); the pushing client's pre-push hook is what guards those.
+if [ "$1" = "prepared" ] && [ "$(git rev-parse --is-bare-repository 2>/dev/null)" != "true" ]; then
 while read -r old new ref; do
 	case "$ref" in
 		refs/heads/*) b=${ref#refs/heads/} ;;
@@ -247,15 +263,22 @@ while read -r old new ref; do
 const gitRefTxGuardTail = `	[ -n "$protected" ] || continue
 	[ "$old" = "$new" ] && continue
 	case "$new" in *[!0]*) ;; *) continue ;; esac # deletion
-	# Creation (e.g. the first commit of a new repo). Ask the ref store, not
-	# $old: git also sends an all-zero <old> when the caller didn't specify one
-	# (update-ref, branch -f). In "prepared" the ref still holds its old value.
-	git rev-parse -q --verify "$ref" >/dev/null 2>&1 || continue
 	if [ -n "$(git for-each-ref --count=1 --contains "$new" refs/remotes 2>/dev/null)" ]; then
 		continue # a remote already has it (pull, reset to upstream)
 	fi
+	# (Re)creating the branch must also point at a commit a remote has —
+	# otherwise delete+recreate, branch -M/-C or checkout -B would sidestep
+	# the guard. The exception is a repository that has never had a remote
+	# (git init; first commit): there is no upstream to compare against yet.
+	# Ask the ref store, not $old: git also sends an all-zero <old> when the
+	# caller didn't give one (update-ref, branch -f).
+	if ! git rev-parse -q --verify "$ref" >/dev/null 2>&1 &&
+		[ -z "$(git for-each-ref --count=1 refs/remotes 2>/dev/null)" ]; then
+		continue
+	fi
 	echo "coi: refusing to move protected branch '$b' to a local-only commit (git.protected_branches)." >&2
 	echo "     Work on a feature branch first: git switch -c <name>" >&2
+	echo "     To sync it with its remote instead: git fetch <remote> && git branch -f $b <remote>/$b" >&2
 	exit 1
 done <<COI_REF_UPDATES
 $input

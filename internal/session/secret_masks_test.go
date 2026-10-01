@@ -45,7 +45,7 @@ func TestExpandSecretPaths(t *testing.T) {
 	writeFileIn(t, ws, "nested/deep.pem", "k") // not matched by top-level *.pem
 	writeFileIn(t, ws, "README.md", "x")
 
-	masks, skipped := ExpandSecretPaths(ws, []string{".env", "*.pem", "secrets/**"})
+	masks, skipped := expandSecretPaths(ws, []string{".env", "*.pem", "secrets/**"})
 	got := relsOf(masks)
 	want := []string{".env", "key.pem", "other.pem", "secrets"}
 	if len(got) != len(want) {
@@ -79,7 +79,7 @@ func TestExpandSecretPaths_ResolvesInWorkspaceSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	masks, skipped := ExpandSecretPaths(ws, []string{".env"})
+	masks, skipped := expandSecretPaths(ws, []string{".env"})
 	if len(skipped) != 0 {
 		t.Errorf("an in-workspace symlinked secret must NOT be skipped, skipped=%v", skipped)
 	}
@@ -101,7 +101,7 @@ func TestExpandSecretPaths_SkipsEscapingSymlinkAndMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	masks, skipped := ExpandSecretPaths(ws, []string{"escape.pem", "does-not-exist"})
+	masks, skipped := expandSecretPaths(ws, []string{"escape.pem", "does-not-exist"})
 	if len(masks) != 0 {
 		t.Errorf("escaping symlink + missing path must not be masked, got %v", relsOf(masks))
 	}
@@ -120,7 +120,7 @@ func TestExpandSecretPaths_SkipsEscapingSymlinkAndMissing(t *testing.T) {
 
 func TestExpandSecretPaths_RejectsTraversal(t *testing.T) {
 	ws := t.TempDir()
-	masks, _ := ExpandSecretPaths(ws, []string{"../etc/passwd", "..", ""})
+	masks, _ := expandSecretPaths(ws, []string{"../etc/passwd", "..", ""})
 	if len(masks) != 0 {
 		t.Errorf("traversal/empty patterns must be rejected, got %v", relsOf(masks))
 	}

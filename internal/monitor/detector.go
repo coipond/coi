@@ -95,6 +95,8 @@ func newThreatEvent(ts time.Time, level ThreatLevel, category, title, descriptio
 	}
 }
 
+// Analyze runs all detection checks against snapshot and returns the threats
+// found, each with a severity level and supporting evidence.
 func (d *Detector) Analyze(snapshot MonitorSnapshot) []ThreatEvent {
 	var threats []ThreatEvent
 

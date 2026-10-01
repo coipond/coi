@@ -28,6 +28,11 @@ SUDO="sudo"
 # into its script.
 # shellcheck disable=SC2016 # expanded by the inner sh, on purpose
 $SUDO sh -c '
+    PATH="$PATH:/usr/sbin:/sbin"
+    if ! command -v visudo >/dev/null 2>&1; then
+        echo "visudo not found - cannot validate the sudoers rule, so not installing it" >&2
+        exit 1
+    fi
     tmp="$(mktemp "$(dirname "$2")/.$(basename "$2").XXXXXX")" || exit 1
     if printf "%s\n" "$1" > "$tmp" && chmod 0440 "$tmp" && visudo -cf "$tmp" >/dev/null; then
         mv -f "$tmp" "$2"

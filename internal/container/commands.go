@@ -19,6 +19,8 @@ import (
 // incusBinary is the incus executable name, resolved from $PATH by exec.Command.
 const incusBinary = "incus"
 
+// Package-level Incus settings, overridden from user config via Configure:
+// the in-container user's UID and name, and the Incus project to operate in.
 var (
 	CodeUID      = 1000
 	CodeUser     = "code"
@@ -150,7 +152,6 @@ func ImportImage(lxdTar, squashfs, alias string) error {
 	return nil
 }
 
-// IncusOutputContext executes an Incus command with context support and returns the output (trimmed)
 // toExitError wraps a failed incus command's error as *ExitError when it is an
 // *exec.ExitError (capturing the exit code and the given stderr), and returns
 // the original error unchanged otherwise. Pass "" for stderr when none was
@@ -165,6 +166,7 @@ func toExitError(err error, stderr string) error {
 	return ClassifyIncusErr(err, stderr)
 }
 
+// IncusOutputContext executes an Incus command with context support and returns the output (trimmed)
 func IncusOutputContext(ctx context.Context, args ...string) (string, error) {
 	cmdArgs := buildIncusCommand(args...)
 	cmd := execIncusCommandContext(ctx, cmdArgs)

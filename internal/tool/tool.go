@@ -1,3 +1,6 @@
+// Package tool defines the AI coding tools (Claude Code, codex, opencode, pi,
+// omp) that coi can run in containers: how each is launched, resumed and
+// configured for sandboxed, permission-bypassing operation.
 package tool
 
 import (
@@ -102,22 +105,30 @@ func NewClaude() Tool {
 	return &ClaudeTool{}
 }
 
+// Name returns "claude".
 func (c *ClaudeTool) Name() string {
 	return "claude"
 }
 
+// Binary returns "claude".
 func (c *ClaudeTool) Binary() string {
 	return "claude"
 }
 
+// ConfigDirName returns the Claude config directory (~/.claude) from the
+// credential bundle catalog.
 func (c *ClaudeTool) ConfigDirName() string {
 	return mustBundle("claude").ConfigDir
 }
 
+// SessionsDirName returns "sessions-claude".
 func (c *ClaudeTool) SessionsDirName() string {
 	return "sessions-claude"
 }
 
+// BuildCommand builds the claude launch command. It adds
+// --permission-mode bypassPermissions unless in interactive mode, and either
+// --resume [id] when resuming or --session-id <sessionID> for a new session.
 func (c *ClaudeTool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
 	// Base command with flags
 	cmd := []string{"claude", "--verbose"}
@@ -141,6 +152,8 @@ func (c *ClaudeTool) BuildCommand(sessionID string, resume bool, resumeSessionID
 	return cmd
 }
 
+// DiscoverSessionID returns the ID of the first .jsonl session file in
+// stateDir/projects/-workspace, or "" if none is found.
 func (c *ClaudeTool) DiscoverSessionID(stateDir string) string {
 	// Claude stores sessions as .jsonl files in projects/-workspace/
 	// This logic is extracted from cleanup.go:387-411
@@ -161,6 +174,9 @@ func (c *ClaudeTool) DiscoverSessionID(stateDir string) string {
 	return ""
 }
 
+// GetSandboxSettings returns the settings.json entries to inject: bypass
+// permission flags (unless in interactive mode), effort-prompt suppression, and
+// an env block carrying the configured effort level and model, if set.
 func (c *ClaudeTool) GetSandboxSettings() map[string]interface{} {
 	settings := map[string]interface{}{}
 

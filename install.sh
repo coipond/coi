@@ -330,6 +330,11 @@ check_group() {
 # Usage: install_sudoers_dropin <rule> <target>
 install_sudoers_dropin() {
     sudo sh -c '
+        PATH="$PATH:/usr/sbin:/sbin"
+        if ! command -v visudo >/dev/null 2>&1; then
+            echo "visudo not found - cannot validate the sudoers rule, so not installing it" >&2
+            exit 1
+        fi
         tmp="$(mktemp "$(dirname "$2")/.$(basename "$2").XXXXXX")" || exit 1
         if printf "%s\n" "$1" > "$tmp" && chmod 0440 "$tmp" && visudo -cf "$tmp" >/dev/null; then
             mv -f "$tmp" "$2"
@@ -371,7 +376,7 @@ setup_nft_sudoers() {
     if install_sudoers_dropin "$user ALL=(ALL) NOPASSWD: $nft_path" /etc/sudoers.d/coi-nft; then
         echo -e "${GREEN}✓ Passwordless sudo configured for nft${NC}"
     else
-        echo -e "${YELLOW}⚠ Could not configure passwordless sudo for nft (rule failed validation).${NC}"
+        echo -e "${YELLOW}⚠ Could not configure passwordless sudo for nft (see the error above).${NC}"
         echo -e "   Retry later: ${BLUE}coi health --fix${NC}"
     fi
 }

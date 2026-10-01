@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // withRegistry swaps the remediation registry and the command executor for a
@@ -294,9 +296,9 @@ func TestRegistrySizeIsPinnedToDryRunSnapshot(t *testing.T) {
 // regardless of whether the sudoers drop-in actually took effect.
 func TestRecheckNftSudo_IgnoresCachedCredentials(t *testing.T) {
 	var got []string
-	orig := runRecheckCommand
-	t.Cleanup(func() { runRecheckCommand = orig })
-	runRecheckCommand = func(argv []string) error { got = argv; return nil }
+	orig := runProbe
+	t.Cleanup(func() { runProbe = orig })
+	runProbe = func(argv []string) ([]byte, error) { got = argv; return nil, nil }
 
 	if c := recheckNftSudo(); c.Status != StatusOK {
 		t.Fatalf("expected OK when the probe succeeds, got %s", c.Status)
@@ -308,7 +310,7 @@ func TestRecheckNftSudo_IgnoresCachedCredentials(t *testing.T) {
 		t.Errorf("recheck must probe `nft list ruleset`, got %v", got)
 	}
 
-	runRecheckCommand = func([]string) error { return errors.New("a password is required") }
+	runProbe = func([]string) ([]byte, error) { return nil, errors.New("a password is required") }
 	if c := recheckNftSudo(); c.Status != StatusFailed {
 		t.Errorf("expected FAILED when the probe fails, got %s", c.Status)
 	}
@@ -426,10 +428,11 @@ func TestNftSudoersRule_RealVisudo(t *testing.T) {
 	}
 }
 
-// The iptables_sudo check's copy-paste hint was replaced by `coi health --fix`,
-// so a remediation must exist: it fires only on the WARNING (installed, no
-// passwordless sudo), installs via the validated sudoers writer with a #uid
-// rule, and rechecks with `sudo -k -n`.
+// The iptables_sudo remediation is MANUAL (`NOPASSWD: iptables` is
+// root-equivalent, so --fix prints it rather than granting it), is offered
+// only when sudo stopped at a password prompt (not when iptables itself is
+// broken), installs via the validated sudoers writer with a #uid rule, and
+// rechecks with `sudo -k -n`.
 func TestIptablesSudoRemediation(t *testing.T) {
 	var r *Remediation
 	reg := remediationList()
@@ -442,11 +445,18 @@ func TestIptablesSudoRemediation(t *testing.T) {
 	if r == nil {
 		t.Fatal("no remediation registered for the iptables_sudo check")
 	}
-	if r.Class != FixSafe || !r.Privileged || r.Recheck == nil {
-		t.Errorf("iptables_sudo remediation must be a privileged FixSafe with a recheck: %+v", r)
+	if r.Class != FixManual || !r.Privileged || r.Recheck == nil || r.PostNote == "" {
+		t.Errorf("iptables_sudo remediation must be a privileged FixManual with a recheck and a note: %+v", r)
 	}
-	if !r.ShouldApply(HealthCheck{Status: StatusWarning}) {
-		t.Error("must apply on the WARNING (passwordless sudo not configured)")
+	pw := func(b bool) map[string]interface{} { return map[string]interface{}{"sudo_password_required": b} }
+	if !r.ShouldApply(HealthCheck{Status: StatusWarning, Details: pw(true)}) {
+		t.Error("must apply when sudo wants a password (no NOPASSWD rule)")
+	}
+	if r.ShouldApply(HealthCheck{Status: StatusWarning, Details: pw(false)}) {
+		t.Error("must not apply when iptables itself fails via sudo (a rule can't help)")
+	}
+	if r.ShouldApply(HealthCheck{Status: StatusWarning}) {
+		t.Error("must not apply without knowing the failure cause")
 	}
 	if r.ShouldApply(HealthCheck{Status: StatusOK}) {
 		t.Error("must not apply when OK (macOS, use_sudo=false, not installed, configured)")
@@ -472,18 +482,112 @@ func TestIptablesSudoRemediation(t *testing.T) {
 		}
 
 		var got []string
-		orig := runRecheckCommand
-		t.Cleanup(func() { runRecheckCommand = orig })
-		runRecheckCommand = func(argv []string) error { got = argv; return nil }
+		orig := runProbe
+		t.Cleanup(func() { runProbe = orig })
+		runProbe = func(argv []string) ([]byte, error) { got = argv; return nil, nil }
 		if c := recheckIptablesSudo(); c.Status != StatusOK {
 			t.Errorf("recheck should be OK when the probe succeeds, got %s", c.Status)
 		}
 		if len(got) < 3 || got[0] != "sudo" || got[1] != "-k" || got[2] != "-n" {
 			t.Errorf("recheck must run `sudo -k -n iptables ...`, got %v", got)
 		}
-		runRecheckCommand = func([]string) error { return errors.New("password required") }
+		runProbe = func([]string) ([]byte, error) { return nil, errors.New("password required") }
 		if c := recheckIptablesSudo(); c.Status == StatusOK {
 			t.Error("recheck must not be OK when the probe fails")
 		}
+	}
+}
+
+// A manual fix whose ShouldApply says it can't help this state must not be
+// offered at all (it used to be reported before ShouldApply was consulted).
+func TestRunFixes_ManualRespectsShouldApply(t *testing.T) {
+	withRegistry(t, []Remediation{{
+		Check:       "demo",
+		Summary:     "manual fix",
+		Class:       FixManual,
+		ShouldApply: func(HealthCheck) bool { return false },
+		Argv:        func() ([]string, error) { return []string{"x"}, nil },
+	}})
+	if outcomes := RunFixes(resultWith(HealthCheck{Name: "demo", Status: StatusWarning}), FixOptions{}); len(outcomes) != 0 {
+		t.Errorf("non-applicable manual fix must not be offered, got %+v", outcomes)
+	}
+}
+
+// The detection side must ignore a cached sudo credential too, or a recent
+// `sudo` hides a missing NOPASSWD rule from both the check and --fix; and it
+// must tell "sudo wants a password" apart from "iptables itself fails".
+func TestCheckIptablesSudo_ProbeAndCause(t *testing.T) {
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+"/usr/sbin:/sbin")
+	if _, err := exec.LookPath("iptables"); err != nil {
+		t.Skip("iptables not installed")
+	}
+	orig := runProbe
+	t.Cleanup(func() { runProbe = orig })
+
+	var got []string
+	runProbe = func(argv []string) ([]byte, error) { got = argv; return nil, nil }
+	if c := CheckIptablesSudo(); c.Status != StatusOK {
+		t.Errorf("probe success should be OK, got %s: %s", c.Status, c.Message)
+	}
+	if len(got) < 3 || got[0] != "sudo" || got[1] != "-k" || got[2] != "-n" {
+		t.Errorf("detection must probe with `sudo -k -n`, got %v", got)
+	}
+
+	for _, tc := range []struct {
+		out     string
+		wantPwd bool
+	}{
+		{"sudo: a password is required\n", true},
+		{"sudo-rs: interactive authentication is required\n", true},
+		{"iptables v1.8.10 (legacy): can't initialize iptables table `filter': Table does not exist\n", false},
+	} {
+		runProbe = func([]string) ([]byte, error) { return []byte(tc.out), errors.New("exit status 1") }
+		c := CheckIptablesSudo()
+		if c.Status != StatusWarning {
+			t.Errorf("%q: want WARNING, got %s", tc.out, c.Status)
+		}
+		if got, _ := c.Details["sudo_password_required"].(bool); got != tc.wantPwd {
+			t.Errorf("%q: sudo_password_required = %v, want %v", tc.out, got, tc.wantPwd)
+		}
+		if !tc.wantPwd && !strings.Contains(c.Message, "can't initialize iptables") {
+			t.Errorf("broken-iptables message should carry the error, got %q", c.Message)
+		}
+	}
+}
+
+// CheckNft judges passwordless sudo with the cache-independent probe.
+func TestCheckNft_UsesCacheIndependentProbe(t *testing.T) {
+	orig := nftPasswordlessSudo
+	t.Cleanup(func() { nftPasswordlessSudo = orig })
+	called := false
+	nftPasswordlessSudo = func() bool { called = true; return false }
+	c := CheckNft(config.NetworkConfig{Mode: "restricted"})
+	if !called {
+		t.Fatal("CheckNft must probe via nftPasswordlessSudo (sudo -k -n)")
+	}
+	if avail, _ := c.Details["nft_available"].(bool); avail {
+		t.Error("nft_available must reflect the cache-independent probe")
+	}
+}
+
+// Run as root from a non-login shell (Debian `su`), PATH can lack /usr/sbin,
+// where visudo lives; the script must still find it (and only say "visudo not
+// found" when it is genuinely absent, never "invalid rule").
+func TestSudoersDropinScript_FindsVisudoOffPath(t *testing.T) {
+	if _, err := os.Stat("/usr/sbin/visudo"); err != nil {
+		t.Skip("needs /usr/sbin/visudo")
+	}
+	if !strings.Contains(sudoersDropinScript, "visudo not found") {
+		t.Error("script must report a missing visudo distinctly")
+	}
+	target := filepath.Join(t.TempDir(), "coi-nft")
+	argv := sudoersDropinArgv(1000, "/usr/sbin/nft", target)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "PATH=/usr/bin:/bin")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("install with /usr/sbin off PATH failed: %v\n%s", err, out)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft\n" {
+		t.Errorf("target content = %q", got)
 	}
 }

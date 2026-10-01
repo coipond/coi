@@ -129,3 +129,29 @@ func TestSudoersDropinScript_CallerRulesParse(t *testing.T) {
 		}
 	}
 }
+
+// Run as root (no sudo) from a shell whose PATH lacks /usr/sbin, the helper
+// must still find the real visudo and install the validated rule.
+func TestSudoersDropinScript_FindsVisudoOffPath(t *testing.T) {
+	if _, err := os.Stat("/usr/sbin/visudo"); err != nil {
+		t.Skip("needs /usr/sbin/visudo")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// sudo stub runs unprivileged; no visudo stub — the real one must be found.
+	if err := os.WriteFile(filepath.Join(bin, "sudo"), []byte("#!/bin/bash\nexec \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "coi-nft")
+	cmd := exec.Command("/bin/bash", sudoersDropinScriptPath(t), "#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft", target)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("install with /usr/sbin off PATH failed: %v\n%s", err, out)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft\n" {
+		t.Errorf("target content = %q", got)
+	}
+}

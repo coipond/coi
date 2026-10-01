@@ -4,6 +4,9 @@ import (
 	_ "embed"
 )
 
+// EmbeddedDefaultConfig is the built-in default configuration TOML that
+// GetDefaultConfig parses as the base layer of every config.
+//
 //go:embed embedded/default_config.toml
 var EmbeddedDefaultConfig []byte
 

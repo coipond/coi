@@ -1,6 +1,9 @@
 //go:build linux
 // +build linux
 
+// Package nftmonitor monitors container network activity by installing
+// nftables logging rules, reading the resulting kernel log entries, and
+// reporting suspicious connections as threats.
 package nftmonitor
 
 import (

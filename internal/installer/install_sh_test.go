@@ -1489,3 +1489,30 @@ func TestInstallSh_InstallSudoersDropin_ValidatesBeforeInstall(t *testing.T) {
 		t.Errorf("valid rule must land with mode 0440 and no temp file; out:\n%s", out)
 	}
 }
+
+// install_sudoers_dropin finds visudo even when PATH lacks /usr/sbin (root via
+// a non-login su), and reports a genuinely missing visudo as such.
+func TestInstallSh_InstallSudoersDropin_FindsVisudoOffPath(t *testing.T) {
+	if _, err := os.Stat("/usr/sbin/visudo"); err != nil {
+		t.Skip("needs /usr/sbin/visudo")
+	}
+	script := installShPath(t)
+	snippet := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		mkdir "$tmpdir/bin"
+		printf '#!/bin/bash\nexec "$@"\n' > "$tmpdir/bin/sudo"; chmod +x "$tmpdir/bin/sudo"
+		export NONINTERACTIVE=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		PATH="$tmpdir/bin:/usr/bin:/bin"
+		set +e
+		install_sudoers_dropin "#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft" "$tmpdir/coi-nft"
+		echo "===RC=$?==="; cat "$tmpdir/coi-nft"
+	`
+	out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+	if !strings.Contains(out, "===RC=0===\n#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft") {
+		t.Errorf("install with /usr/sbin off PATH should succeed; out:\n%s", out)
+	}
+	if b, _ := os.ReadFile(script); !strings.Contains(string(b), "visudo not found") {
+		t.Error("install.sh must report a missing visudo distinctly")
+	}
+}

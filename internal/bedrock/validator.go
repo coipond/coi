@@ -1,3 +1,5 @@
+// Package bedrock detects AWS Bedrock configuration in Claude settings and
+// validates that a Colima environment is set up correctly to use it.
 package bedrock
 
 import (

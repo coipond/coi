@@ -383,3 +383,148 @@ func TestBranchGuard_DelegatesFromLinkedWorktree_Exec(t *testing.T) {
 		t.Error("repo's own pre-commit hook did not run from a linked worktree")
 	}
 }
+
+// Recreating a protected branch over a local-only commit is moving it too:
+// delete+recreate, checkout -B and switch -C must all be refused, leaving main
+// unable to point at the local commit. (branch -M/-C over main aren't covered:
+// git 2.43 doesn't run reference-transaction for rename/copy.)
+func TestBranchGuard_RefTransaction_BlocksRecreate_Exec(t *testing.T) {
+	cases := []struct {
+		name  string
+		steps [][]string // all but the last must succeed; the last must be refused
+	}{
+		{"delete then recreate", [][]string{{"switch", "-q", "feature"}, {"branch", "-D", "main"}, {"branch", "main", "feature"}}},
+		{"checkout -B main", [][]string{{"switch", "-q", "feature"}, {"checkout", "-B", "main", "feature"}}},
+		{"switch -C main", [][]string{{"switch", "-q", "feature"}, {"switch", "-C", "main", "feature"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := refTxFixture(t)
+			local := revParse(t, repo, "feature")
+			last := len(tc.steps) - 1
+			for _, args := range tc.steps[:last] {
+				if out, err := git(t, repo, nil, args...); err != nil {
+					t.Fatalf("setup %v: %v\n%s", args, err, out)
+				}
+			}
+			out, err := git(t, repo, nil, tc.steps[last]...)
+			if err == nil || !strings.Contains(out, "refusing to move protected branch 'main'") {
+				t.Errorf("%v should be refused by the guard (err=%v):\n%s", tc.steps[last], err, out)
+			}
+			if got, _ := git(t, repo, nil, "rev-parse", "-q", "--verify", "refs/heads/main"); strings.TrimSpace(got) == local {
+				t.Errorf("main now points at the local-only commit %s", local)
+			}
+		})
+	}
+}
+
+// `git fetch origin main:main` moves main BEFORE origin/main (two separate
+// transactions), so the guard can't tell it from a local fast-forward and
+// refuses it — with a message naming the alternative, which must work:
+// fetch, then point main at the remote-tracking ref. Recreating main from the
+// remote (git switch after deleting it) is fine too.
+func TestBranchGuard_RefTransaction_SyncFromRemote_Exec(t *testing.T) {
+	repo := refTxFixture(t)
+	remote, _ := git(t, repo, nil, "remote", "get-url", "origin")
+	other := filepath.Join(t.TempDir(), "other")
+	if out, err := git(t, t.TempDir(), nil, "clone", "-q", strings.TrimSpace(remote), other); err != nil {
+		t.Fatalf("clone other: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{{"commit", "-q", "--allow-empty", "-m", "upstream"}, {"push", "-q", "origin", "main"}} {
+		if out, err := git(t, other, nil, args...); err != nil {
+			t.Fatalf("other %v: %v\n%s", args, err, out)
+		}
+	}
+	if out, err := git(t, repo, nil, "switch", "-q", "feature"); err != nil {
+		t.Fatalf("switch: %v\n%s", err, out)
+	}
+	out, err := git(t, repo, nil, "fetch", "-q", "origin", "main:main")
+	if err == nil {
+		t.Fatalf("fetch origin main:main is expected to be refused (git moves main first):\n%s", out)
+	}
+	if !strings.Contains(out, "git branch -f main <remote>/main") {
+		t.Errorf("refusal should name the working alternative:\n%s", out)
+	}
+	for _, args := range [][]string{
+		{"fetch", "-q", "origin"},
+		{"branch", "-f", "main", "origin/main"}, // the suggested alternative
+		{"branch", "-D", "main"},
+		{"switch", "-q", "main"}, // DWIM: recreate main from origin/main
+	} {
+		if out, err := git(t, repo, nil, args...); err != nil {
+			t.Errorf("%v should be allowed: %v\n%s", args, err, out)
+		}
+	}
+	if revParse(t, repo, "main") != revParse(t, repo, "origin/main") {
+		t.Error("main should match origin/main")
+	}
+}
+
+// With the guard as the GLOBAL hooks path (as coi installs it), cloning,
+// pushing into a local bare repository, and building a fresh repo from
+// scratch must all keep working.
+func TestBranchGuard_RefTransaction_GlobalHooksPath_Exec(t *testing.T) {
+	requireGit(t)
+	hooks := filepath.Join(t.TempDir(), "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range branchGuardHooks {
+		if err := os.WriteFile(filepath.Join(hooks, name), []byte(renderBranchGuardScript(name, []string{"main"})), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gcfg := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(gcfg, []byte("[core]\n\thooksPath = "+hooks+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"GIT_CONFIG_GLOBAL=" + gcfg}
+
+	// Fresh repo + bare "server" fixture, as a project test suite would build.
+	bare := filepath.Join(t.TempDir(), "srv.git")
+	work := filepath.Join(t.TempDir(), "work")
+	for _, step := range []struct {
+		dir  string
+		args []string
+	}{
+		{t.TempDir(), []string{"init", "-q", "--bare", "-b", "main", bare}},
+		{t.TempDir(), []string{"init", "-q", "-b", "main", work}},
+		{work, []string{"commit", "-q", "--allow-empty", "-m", "root"}}, // first commit: allowed
+		{work, []string{"remote", "add", "origin", bare}},
+	} {
+		if out, err := git(t, step.dir, env, step.args...); err != nil {
+			t.Fatalf("%v: %v\n%s", step.args, err, out)
+		}
+	}
+	// The client-side pre-push refuses pushing to main...
+	if out, err := git(t, work, env, "push", "-q", "origin", "main"); err == nil {
+		t.Errorf("push to main should still be refused by pre-push:\n%s", out)
+	}
+	// ...but the bare repo's own reference-transaction must not reject the
+	// receive (that broke local bare-repo fixtures): push with the client
+	// guard bypassed and the server side has to accept it.
+	// Two pushes: the first only CREATES main in the bare repo; the second
+	// UPDATES it, which is what the receiving side used to refuse.
+	for _, args := range [][]string{
+		{"push", "-q", "--no-verify", "origin", "main"},
+		{"commit", "-q", "--allow-empty", "-m", "second"},
+		{"push", "-q", "--no-verify", "origin", "main"},
+	} {
+		if args[0] == "commit" {
+			// Commit with hooks off: the local guard isn't what's under test
+			// here (it would rightly refuse); the receiving side is.
+			if out, err := git(t, work, append(env, "GIT_CONFIG_PARAMETERS='core.hooksPath'='/dev/null'"), args...); err != nil {
+				t.Fatalf("%v: %v\n%s", args, err, out)
+			}
+			continue
+		}
+		if out, err := git(t, work, env, args...); err != nil {
+			t.Errorf("bare receiving repo must not reject %v: %v\n%s", args, err, out)
+		}
+	}
+	// Cloning creates main from the remote.
+	clone := filepath.Join(t.TempDir(), "clone")
+	if out, err := git(t, t.TempDir(), env, "clone", "-q", bare, clone); err != nil {
+		t.Errorf("clone should work under the guard: %v\n%s", err, out)
+	}
+}

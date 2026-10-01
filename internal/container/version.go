@@ -12,13 +12,14 @@ const (
 	// MinIncusVersionMinor is the minimum required Incus minor version
 	MinIncusVersionMinor = 1
 
-	// RecommendedIncusVersionMajor/Minor is the version below which `coi
-	// health` warns (but nothing refuses to run): Incus releases carry
+	// RecommendedIncusVersionMajor and RecommendedIncusVersionMinor give the
+	// version below which `coi health` warns (but nothing refuses to run): Incus releases carry
 	// container-manager and isolation fixes that stable distributions
 	// backport late or never, so running far behind the current release
 	// means known-fixed issues stay live. Bump this occasionally alongside
 	// dependency updates.
 	RecommendedIncusVersionMajor = 6
+	// RecommendedIncusVersionMinor is the recommended Incus minor version.
 	RecommendedIncusVersionMinor = 7
 )
 

@@ -614,10 +614,7 @@ func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName
 	// Called unconditionally: applySecurityMounts internally skips the read-only
 	// protected_paths when disable_protection is set (GetEffectiveProtectedPaths
 	// returns nil), but secret-path masking is a separate opt-in that still runs.
-	if err := a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree); err != nil {
-		return err
-	}
-	return nil
+	return a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree)
 }
 
 // addMount adds a single configured directory mount to the container.

@@ -13,14 +13,17 @@ type PiTool struct {
 // NewPi creates a new pi tool instance
 func NewPi() Tool { return &PiTool{} }
 
+// Name returns "pi".
 func (p *PiTool) Name() string { return "pi" }
 
+// Binary returns "pi".
 func (p *PiTool) Binary() string { return "pi" }
 
 // ConfigDirName returns the config directory for pi.
 // Pi stores config in ~/.pi/agent/ (controlled by PI_CODING_AGENT_DIR).
 func (p *PiTool) ConfigDirName() string { return mustBundle("pi").ConfigDir }
 
+// SessionsDirName returns "sessions-pi".
 func (p *PiTool) SessionsDirName() string { return "sessions-pi" }
 
 // BuildCommand builds the pi launch command.

@@ -1,3 +1,5 @@
+// Command coi runs AI coding tools inside isolated Incus containers; it is a
+// thin entry point that executes the CLI and maps errors to exit codes.
 package main
 
 import (

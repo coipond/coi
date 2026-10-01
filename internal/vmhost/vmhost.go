@@ -13,6 +13,7 @@ import (
 type Kind int
 
 const (
+	// KindUnknown means no known VM host was detected.
 	KindUnknown Kind = iota
 	// KindLimaLike is Colima or Lima: both mount host directories via
 	// virtiofs and already handle UID mapping at the VM level.

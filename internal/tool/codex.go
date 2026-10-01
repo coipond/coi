@@ -17,13 +17,16 @@ type CodexTool struct {
 // NewCodex creates a new codex tool instance
 func NewCodex() Tool { return &CodexTool{} }
 
+// Name returns "codex".
 func (c *CodexTool) Name() string { return "codex" }
 
+// Binary returns "codex".
 func (c *CodexTool) Binary() string { return "codex" }
 
 // ConfigDirName returns the config directory for codex (~/.codex, aka CODEX_HOME).
 func (c *CodexTool) ConfigDirName() string { return mustBundle("codex").ConfigDir }
 
+// SessionsDirName returns "sessions-codex".
 func (c *CodexTool) SessionsDirName() string { return "sessions-codex" }
 
 // rolloutSessionFile matches codex session files

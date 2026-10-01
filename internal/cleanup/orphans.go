@@ -1,3 +1,6 @@
+// Package cleanup detects and removes host resources orphaned by containers
+// that were not cleaned up properly: veth interfaces, nft and ip6 rules,
+// nft monitoring rules, and iptables bridge-forward rules.
 package cleanup
 
 import (
