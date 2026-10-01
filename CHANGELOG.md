@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Security monitor no longer kills the container for installing or mentioning `socat`/`powershell`, or for `rsync -e` / `ssh -i`** — these matched reverse-shell patterns as plain substrings; matching is now word-anchored and bare tool names need a network indicator. Real reverse shells are still caught.
 - [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield a silently unwritable workspace (#838)** — when the login UID sits inside root's `/etc/subuid` range Incus can't map it, so coi now aborts the launch with the cause named instead of continuing with a broken `/workspace`, and `coi health` reports it clearly instead of a cryptic failure.
 
 ## 0.13.0 (2026-09-28)

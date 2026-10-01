@@ -277,6 +277,13 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 		// Bash/sh reverse shells
 		{"bash -i", []string{"interactive bash"}, ReverseShellClassStrong},
 		{"sh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		// Matching is token-anchored (see containsAtTokenStart), so the other
+		// shells that "sh -i" used to catch as a substring are listed explicitly.
+		{"zsh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"ksh -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"dash -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"ash -i", []string{"interactive shell"}, ReverseShellClassStrong},
+		{"fish -i", []string{"interactive shell"}, ReverseShellClassStrong},
 		{"/dev/tcp/", []string{"bash tcp redirect"}, ReverseShellClassStrong},
 		{"/dev/udp/", []string{"bash udp redirect"}, ReverseShellClassStrong},
 
@@ -332,7 +339,15 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 		matched := -1
 		for i := range reverseShellPatterns {
 			p := &reverseShellPatterns[i]
-			if !strings.Contains(cmdLower, strings.ToLower(p.pattern)) {
+			if !containsAtTokenStart(cmdLower, strings.ToLower(p.pattern)) {
+				continue
+			}
+			// Generic tool names (socat, powershell) are not evidence on their
+			// own — `apt-get install socat` or `rg -i powershell docs/` must not
+			// auto-kill the container. They need a network indicator like the
+			// one-liners; the real attack forms still trip the self-sufficient
+			// patterns (EXEC:, System.Net.Sockets) regardless.
+			if reverseShellNeedsNetwork[p.pattern] && !networkRelated {
 				continue
 			}
 			// The network-indicator gate constrains ONLY the ambiguous
@@ -367,6 +382,37 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 	}
 
 	return threats
+}
+
+// reverseShellNeedsNetwork lists STRONG patterns that are only bare tool names:
+// they stay always-critical when they fire, but only fire alongside a network
+// indicator (see isNetworkRelated), exactly like the one-liner class.
+var reverseShellNeedsNetwork = map[string]bool{
+	"socat":      true,
+	"powershell": true,
+}
+
+// containsAtTokenStart reports whether pat occurs in s at the start of a token,
+// i.e. not glued to a preceding letter, digit, or underscore. Plain substring
+// matching flagged benign commands: `rsync -e ssh` contains "nc -e" and
+// `ssh -i key host` contains "sh -i". A path prefix still counts as a token
+// boundary, so `/usr/bin/nc -e` and `/bin/sh -i` keep matching.
+func containsAtTokenStart(s, pat string) bool {
+	for from := 0; ; {
+		i := strings.Index(s[from:], pat)
+		if i < 0 {
+			return false
+		}
+		i += from
+		if i == 0 || !isWordByte(s[i-1]) {
+			return true
+		}
+		from = i + 1
+	}
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // hostPortRe matches an explicit network endpoint — an IPv4 address or a
