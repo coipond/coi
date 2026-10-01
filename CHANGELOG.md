@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable (for example a wrapper script) instead of silently ignoring the setting.
 - [Bug Fix] **Installer works on fresh container/minimal images** — refreshes apt package lists before installing, so build-from-source no longer fails with "Unable to locate package"; a failed install now ends with the actionable "Building from source needs: …" message.
 - [Bug Fix] **Passwordless-sudo setup for nft can no longer break sudo** — the installer and `coi health --fix` now name the user by UID and validate the rule with `visudo` before atomically installing it, so a username with a space (e.g. AD/SSSD logins) can't leave an invalid `/etc/sudoers.d` file that disables every `sudo` on the host. For iptables, `coi health --fix` prints the equivalent command for you to run (it grants root-equivalent access, so it isn't applied automatically), and only when sudo is what's failing — not when iptables itself is broken.
 - [Bug Fix] **`coi health` no longer reports "can't be idmapped" after you apply its suggested fix** — a dedicated `root:<uid>:1` line clears the UID once it is in both `/etc/subuid` and `/etc/subgid` and Incus has been restarted (until then `coi health` says which step is missing), and only root's ranges are considered (Incus allocates from those).

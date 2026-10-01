@@ -146,6 +146,19 @@ func getConfiguredTool(cfg *config.Config) (tool.Tool, error) {
 		}
 	}
 
+	// [tool] binary replaces the executable coi launches for the tool (e.g. a
+	// wrapper script). Like the codex flags above, it travels inside a shell
+	// command string, so reject an unsafe value loudly instead of letting the
+	// setter drop it silently.
+	if cfg.Tool.Binary != "" {
+		if err := tool.ValidateBinary(cfg.Tool.Binary); err != nil {
+			return nil, err
+		}
+		if twb, ok := t.(tool.ToolWithBinary); ok {
+			twb.SetBinary(cfg.Tool.Binary)
+		}
+	}
+
 	// Set permission mode if the tool supports it
 	if twpm, ok := t.(tool.ToolWithPermissionMode); ok {
 		if cfg.Tool.PermissionMode != "" {
