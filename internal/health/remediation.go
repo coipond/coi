@@ -168,24 +168,46 @@ func remediations() []Remediation {
 				return installed && !available
 			},
 			Argv: func() ([]string, error) {
-				return nftSudoersArgv(os.Getuid(), nftBinaryPath(), nftSudoersPath), nil
+				return sudoersDropinArgv(os.Getuid(), nftBinaryPath(), nftSudoersPath), nil
 			},
 			Recheck: recheckNftSudo,
+		},
+		{
+			Check:      "iptables_sudo",
+			Summary:    "Configure passwordless sudo for iptables (bridge FORWARD rule management)",
+			Class:      FixSafe,
+			Privileged: true,
+			// CheckIptablesSudo only warns when iptables is installed and
+			// passwordless sudo for it isn't configured; every other outcome
+			// (macOS, use_sudo=false, not installed) is OK.
+			ShouldApply: func(c HealthCheck) bool { return c.Status == StatusWarning },
+			Argv: func() ([]string, error) {
+				p, err := exec.LookPath("iptables")
+				if err != nil {
+					return nil, fmt.Errorf("iptables not found: %w", err)
+				}
+				return sudoersDropinArgv(os.Getuid(), p, iptablesSudoersPath), nil
+			},
+			Recheck: recheckIptablesSudo,
 		},
 	}
 }
 
-// nftSudoersPath is the drop-in the nft remediation installs.
-const nftSudoersPath = "/etc/sudoers.d/coi-nft"
+// Drop-ins the passwordless-sudo remediations install.
+const (
+	nftSudoersPath      = "/etc/sudoers.d/coi-nft"
+	iptablesSudoersPath = "/etc/sudoers.d/coi-iptables"
+)
 
-// nftSudoersScript installs a sudoers drop-in without ever leaving a broken
+// sudoersDropinScript installs a sudoers drop-in without ever leaving a broken
 // file where sudo reads it: the rule ($1) goes to a dot-named temp file in the
 // target's directory (sudo's includedir skips names containing '.'), is
 // syntax-checked with visudo, and only then renamed over the target ($2). A
 // syntax error in /etc/sudoers.d makes every sudo on the host fail — including
 // the one needed to repair it — so an unchecked in-place write is a lockout risk.
 // The rule and path are positional args, never spliced into the script.
-const nftSudoersScript = `tmp="$(mktemp "$(dirname "$2")/.coi-nft.XXXXXX")" || exit 1
+// Mirrors install_sudoers_dropin (install.sh) and scripts/install-sudoers-dropin.sh.
+const sudoersDropinScript = `tmp="$(mktemp "$(dirname "$2")/.$(basename "$2").XXXXXX")" || exit 1
 if printf '%s\n' "$1" > "$tmp" && chmod 0440 "$tmp" && visudo -cf "$tmp" >/dev/null; then
 	mv -f "$tmp" "$2"
 else
@@ -194,13 +216,13 @@ else
 	exit 1
 fi`
 
-// nftSudoersArgv builds the (unprivileged) argv that installs the nft
-// passwordless-sudo rule at path. The user is named by numeric UID (`#1000`),
-// not username: a directory-service name containing a space or quote (SSSD/AD
-// "John Doe") is a sudoers syntax error, while `#uid` is always valid.
-func nftSudoersArgv(uid int, nftPath, path string) []string {
-	rule := fmt.Sprintf("#%d ALL=(ALL) NOPASSWD: %s", uid, nftPath)
-	return []string{"sh", "-c", nftSudoersScript, "sh", rule, path}
+// sudoersDropinArgv builds the (unprivileged) argv that installs a rule giving
+// uid passwordless sudo for binPath, at path. The user is named by numeric UID
+// (`#1000`), not username: a directory-service name containing a space or quote
+// (SSSD/AD "John Doe") is a sudoers syntax error, while `#uid` is always valid.
+func sudoersDropinArgv(uid int, binPath, path string) []string {
+	rule := fmt.Sprintf("#%d ALL=(ALL) NOPASSWD: %s", uid, binPath)
+	return []string{"sh", "-c", sudoersDropinScript, "sh", rule, path}
 }
 
 // nftBinaryPath resolves the nft binary, falling back to its usual location
@@ -231,10 +253,20 @@ func nftSudoRecheckArgv() []string {
 	return []string{"sudo", "-k", "-n", nftBinaryPath(), "list", "ruleset"}
 }
 
+// recheckIptablesSudo mirrors recheckNftSudo for the iptables drop-in, probing
+// with -k so the credential cached by the fix can't mask a non-working rule.
+func recheckIptablesSudo() HealthCheck {
+	p, err := exec.LookPath("iptables")
+	if err == nil && runRecheckCommand([]string{"sudo", "-k", "-n", p, "-L", "FORWARD", "-n"}) == nil {
+		return HealthCheck{Name: "iptables_sudo", Status: StatusOK, Message: "Passwordless sudo configured for iptables"}
+	}
+	return HealthCheck{Name: "iptables_sudo", Status: StatusWarning, Message: "Passwordless sudo for iptables still not configured"}
+}
+
 // runRecheckCommand runs a recheck probe; a package var so unit tests can
 // observe the argv without invoking sudo.
 var runRecheckCommand = func(argv []string) error {
-	return exec.Command(argv[0], argv[1:]...).Run() //nolint:gosec // fixed argv from nftSudoRecheckArgv
+	return exec.Command(argv[0], argv[1:]...).Run() //nolint:gosec // fixed argv from the recheck probes above
 }
 
 // RunFixes attempts to remediate every non-OK check in result that has a
