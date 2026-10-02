@@ -104,14 +104,49 @@ APTCONF
 configure_apt_mirror() {
     [ -n "${COI_APT_MIRROR:-}" ] || return 0
     log "Using apt mirror ${COI_APT_MIRROR} (COI_APT_MIRROR)"
-    local f
-    for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+    local f backup
+    for f in ${COI_APT_SOURCE_FILES:-/etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list}; do
         [ -f "$f" ] || continue
+        # Keep the stock sources so apt_get can fall back if the mirror fails
+        # (outside apt's own directories, which warn about unknown files).
+        mkdir -p "${COI_APT_BACKUP_DIR:-/var/lib/coi/apt-sources-orig}"
+        backup="${COI_APT_BACKUP_DIR:-/var/lib/coi/apt-sources-orig}/$(echo "$f" | tr / _)"
+        [ -f "$backup" ] || cp -p "$f" "$backup"
         sed -i -E \
             -e "s#https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu#${COI_APT_MIRROR}#g" \
             -e "s#https?://security\.ubuntu\.com/ubuntu#${COI_APT_MIRROR}#g" \
             "$f"
     done
+    APT_MIRROR_ACTIVE=1
+}
+
+# restore_default_apt_sources undoes configure_apt_mirror.
+restore_default_apt_sources() {
+    local f backup
+    for f in ${COI_APT_SOURCE_FILES:-/etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list}; do
+        backup="${COI_APT_BACKUP_DIR:-/var/lib/coi/apt-sources-orig}/$(echo "$f" | tr / _)"
+        if [ -f "$backup" ]; then mv -f "$backup" "$f"; fi
+    done
+    APT_MIRROR_ACTIVE=0
+}
+
+# apt_get runs apt-get non-interactively. A mirror is a speed optimisation, not
+# a dependency: if a command fails while COI_APT_MIRROR is in use (observed in
+# CI: the in-region mirror answering "502 Proxy Error" and timing out
+# connections for hours), switch back to the stock Ubuntu archive once,
+# refresh the index and retry, instead of failing the whole build.
+apt_get() {
+    if DEBIAN_FRONTEND=noninteractive apt-get "$@"; then
+        return 0
+    fi
+    if [ "${APT_MIRROR_ACTIVE:-0}" != 1 ]; then
+        return 1
+    fi
+    log "WARNING: apt-get $1 failed via mirror ${COI_APT_MIRROR}; falling back to the default Ubuntu archive"
+    restore_default_apt_sources
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq || return 1
+    [ "$1" = update ] && return 0
+    DEBIAN_FRONTEND=noninteractive apt-get "$@"
 }
 
 #######################################
@@ -120,9 +155,9 @@ configure_apt_mirror() {
 install_base_dependencies() {
     log "Installing base dependencies..."
 
-    apt-get update -qq
+    apt_get update -qq
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    apt_get install -y -qq \
         curl wget git ca-certificates gnupg jq unzip sudo \
         tmux \
         dnsutils \
@@ -174,7 +209,7 @@ install_nodejs() {
     log "Installing Node.js LTS..."
 
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    apt-get install -y -qq nodejs
+    apt_get install -y -qq nodejs
 
     log "Node.js $(node --version) installed"
 }
@@ -696,8 +731,8 @@ install_docker() {
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
     # Install Docker
-    apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    apt_get update -qq
+    apt_get install -y -qq \
         docker-ce docker-ce-cli containerd.io \
         docker-buildx-plugin docker-compose-plugin
 
@@ -753,8 +788,8 @@ install_github_cli() {
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
 
     # Install
-    apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh
+    apt_get update -qq
+    apt_get install -y -qq gh
 
     log "GitHub CLI $(gh --version 2>/dev/null | head -1 || echo 'installed')"
 }

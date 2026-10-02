@@ -3691,24 +3691,30 @@ class TestFalsePositivesAgentCommands:
             time.sleep(12)
 
             events = get_threat_events(container_name)
+            # Only events about the injected commands count: an unrelated
+            # HIGH event during the window (e.g. some process gaining root)
+            # is not a detector false positive. Match on the first line of
+            # each command, which the event description quotes.
+            needles = [c.split("\n", 1)[0] for c in AGENT_COMMANDS_NOT_REVERSE_SHELLS]
             flagged = [
                 e
                 for e in events
                 if e.get("level") in ("critical", "high")
-                and (
-                    "reverse shell" in e.get("description", "").lower()
-                    or e.get("category") == "proc_event"
-                )
+                and any(n in e.get("description", "") for n in needles)
             ]
-            assert not flagged, (
-                "Ordinary agent commands were flagged as reverse shells:\n"
-                + "\n".join(f"  {e.get('level')}: {e.get('description')}" for e in flagged)
+            assert not flagged, "Ordinary agent commands were flagged:\n" + "\n".join(
+                f"  {e.get('level')}: {e.get('description')}" for e in flagged
+            )
+            all_events = "\n".join(
+                f"  {e.get('level')} {e.get('category')}: {e.get('description')}" for e in events
             )
             assert not container_absent(container_name), (
-                "Container was killed while running ordinary agent commands"
+                f"Container was killed while running ordinary agent commands. Events:\n{all_events}"
             )
             state = get_container_state(container_name)
-            assert state == "Running", f"Container should stay Running, got {state}"
+            assert state == "Running", (
+                f"Container should stay Running, got {state}. Events:\n{all_events}"
+            )
         finally:
             proc.terminate()
             cleanup_container(container_name, coi_binary)
