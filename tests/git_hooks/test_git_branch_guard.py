@@ -135,10 +135,10 @@ _NOHOOKS = "git -c core.hooksPath=/dev/null"
 
 def test_branch_guard_reference_transaction_paths(coi_binary, workspace_dir, cleanup_containers):
     """With coi's real installed hooks, the reference-transaction guard refuses
-    the ways of moving main that never fire pre-commit (branch -f, cherry-pick,
-    delete-and-recreate after `git remote remove`), refuses `fetch origin
-    main:main` with a working alternative, and leaves a new repo's first commit
-    and pushes INTO a local bare repository alone."""
+    the ways of moving main that never fire pre-commit (branch -f, cherry-pick),
+    refuses `fetch origin main:main` with a working alternative, and leaves a new
+    repo's first commit, creating main in a repo without remotes, and pushes
+    INTO a local bare repository alone."""
     env = write_trusted_coi_config('[git]\nprotected_branches = ["main"]\n')
     name = _start_background_shell(coi_binary, workspace_dir, env)
 
@@ -205,9 +205,10 @@ def test_branch_guard_reference_transaction_paths(coi_binary, workspace_dir, cle
         "the suggested alternative (git branch -f main origin/main)",
     )
 
-    # `git remote remove` must not unlock recreating main at a local commit.
-    refused(
-        f"cd {RT_CLONE} && git remote remove origin && git branch -D main && "
-        "git branch main feature",
-        "recreating main at a local commit after `git remote remove`",
+    # A repo without remote-tracking refs may create main from existing work.
+    ok(
+        "rm -rf /tmp/rt-local && git init -q -b dev /tmp/rt-local && cd /tmp/rt-local && "
+        f"{_ID} && git commit -q --allow-empty -m one && git commit -q --allow-empty -m two && "
+        "git checkout -q -b main",
+        "creating main in a repo with no remotes (git init -b dev, commits, checkout -b main)",
     )

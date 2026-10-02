@@ -4,43 +4,25 @@ Integration tests for [container.build] compression (config-driven; the former
 config/profiles, not flags).
 
 Currently covered:
-- coi build with [container.build] compression = "none" via $COI_CONFIG
+- the default-image path is covered by unit tests (see the note below)
 - coi build --profile <name> with compression in the profile's build section
 - the removed --compression flag fails with the config migration hint
 """
 
-import os
 import subprocess
-import tempfile
 import time
 
-
-def test_build_with_compression_none(coi_binary):
-    """Test building the coi image with [container.build] compression = none."""
-    fd, cfg_path = tempfile.mkstemp(suffix=".toml", prefix="coi-compression-")
-    with os.fdopen(fd, "w") as f:
-        f.write('[container.build]\ncompression = "none"\n')
-    env = {**os.environ, "COI_CONFIG": cfg_path}
-
-    result = subprocess.run(
-        [coi_binary, "build", "--force"],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        env=env,
-    )
-    assert result.returncode == 0, f"Build failed: {result.stderr}"
-    assert (
-        "built successfully" in result.stdout.lower()
-        or "built successfully" in result.stderr.lower()
-    )
-
-    # Verify image exists
-    result = subprocess.run(
-        [coi_binary, "image", "exists", "coi-default"],
-        capture_output=True,
-    )
-    assert result.returncode == 0, "coi image should exist after build"
+# The default-image variant (`coi build --force` with compression = "none")
+# used to live here. It rebuilt the whole coi image from the network — its
+# apt step alone took up to 24 minutes against a slow mirror, or failed with
+# mirror 502s — so it was flaky against its 600s timeout, and it swapped the
+# shared coi-default image mid-run. Its coverage is now deterministic:
+#   - internal/cli TestCoiImageBuildOptions: the profile's compression reaches
+#     the default-image build options (`coi build` and `coi build --all`);
+#   - internal/image TestCreateImage_PassesCompression: build options become
+#     `incus publish --compression none`;
+#   - test_build_custom_with_compression_none below: the same publish path end
+#     to end, on top of the existing image (no package downloads).
 
 
 def test_build_custom_with_compression_none(coi_binary, tmp_path):

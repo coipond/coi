@@ -133,7 +133,9 @@ func findIncusdStartTime() (time.Time, bool) { return incusdStartTimeIn("/proc")
 // "incusd" too ("[lxc monitor] ..." after setproctitle, "incusd forkproxy",
 // "incusd forkstart"), and monitors survive `systemctl restart incus` — an
 // old monitor would make a restarted Incus look stale. So argv[0] must be
-// incusd and argv[1], if any, a flag, not a fork* subcommand.
+// incusd and argv[1], if any, a flag, not a fork* subcommand. An incusd
+// inside a container (nested PID namespace) is skipped too: the host's /proc
+// lists it, and /proc is scanned in name order, not numeric order.
 func incusdStartTimeIn(root string) (time.Time, bool) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -148,7 +150,7 @@ func incusdStartTimeIn(root string) (time.Time, bool) {
 			continue
 		}
 		dir := root + "/" + e.Name()
-		if !isIncusDaemonCmdline(dir + "/cmdline") {
+		if !isIncusDaemonCmdline(dir+"/cmdline") || inNestedPIDNamespace(dir+"/status") {
 			continue
 		}
 		stat, err := os.ReadFile(dir + "/stat")
@@ -174,6 +176,25 @@ func incusdStartTimeIn(root string) (time.Time, bool) {
 		return btime.Add(time.Duration(ticks) * time.Second / userHZ), true
 	}
 	return time.Time{}, false
+}
+
+// inNestedPIDNamespace reports whether the process whose status file is at
+// path lives in a nested PID namespace — e.g. an incusd running inside a
+// container, which the host's /proc also lists and which would otherwise be
+// mistaken for the host daemon. The "NSpid:" line (Linux 4.1+) lists the
+// process's PID at each namespace level; more than one means nested. An
+// unreadable file or missing line counts as not nested.
+func inNestedPIDNamespace(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(line, "NSpid:"); ok {
+			return len(strings.Fields(rest)) > 1
+		}
+	}
+	return false
 }
 
 // isIncusDaemonCmdline reports whether the NUL-separated cmdline at path is
