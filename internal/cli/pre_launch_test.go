@@ -129,16 +129,16 @@ func (r *preLaunchRecorder) CreateFileWithOwner(path, content string, uid, _ int
 	return nil
 }
 
-// A command that ignores TERM, or leaves a child process behind, still can't
-// hold the tool up: timeout escalates to KILL and covers the whole process
-// group (review of #861).
-func TestUserPreLaunchScript_TimeoutKillsStubbornCommandAndChildren(t *testing.T) {
+// A command that ignores TERM still can't hold the tool up: timeout escalates
+// to KILL after the grace period. (With --foreground, a process the command
+// started in the background may outlive the timeout — the accepted trade-off
+// for keeping Ctrl+C and the terminal working; see renderUserPreLaunchScript.)
+func TestUserPreLaunchScript_TimeoutKillsStubbornCommand(t *testing.T) {
 	dir := t.TempDir()
 	after := filepath.Join(dir, "after")
-	pidFile := filepath.Join(dir, "child.pid")
 	start := time.Now()
 	out, code := runRenderedPreLaunch(t, []string{
-		"trap '' TERM; sleep 60 & echo $! > " + pidFile + "; sleep 60; wait",
+		"trap '' TERM; exec sleep 60",
 		"touch " + after,
 	}, 1)
 	if elapsed := time.Since(start); elapsed > 15*time.Second {
@@ -150,25 +150,77 @@ func TestUserPreLaunchScript_TimeoutKillsStubbornCommandAndChildren(t *testing.T
 	if _, err := os.Stat(after); err != nil {
 		t.Error("the next command must still run")
 	}
-	pid, err := os.ReadFile(pidFile)
-	if err != nil {
-		t.Fatalf("child pid not recorded: %v", err)
+}
+
+// runInTerminal runs `bash -c 'trap : INT; bash <script>; echo TOOLSTART'` —
+// the shape of the real launch — inside a pseudo-terminal (util-linux
+// script(1)), optionally typing Ctrl+C after ctrlCAfter, and returns the
+// output and how long until TOOLSTART appeared.
+func runInTerminal(t *testing.T, cmds []string, ctrlCAfter time.Duration) (string, time.Duration) {
+	t.Helper()
+	if _, err := exec.LookPath("script"); err != nil {
+		t.Skip("script(1) not available")
 	}
-	if childAlive(strings.TrimSpace(string(pid))) {
-		_ = exec.Command("kill", "-9", strings.TrimSpace(string(pid))).Run()
-		t.Error("the timed-out command's child process must be killed too")
+	pl := filepath.Join(t.TempDir(), "pre-launch.sh")
+	if err := os.WriteFile(pl, []byte(renderUserPreLaunchScript(cmds, 300, 1)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("script", "-qfec", "bash -c 'trap : INT; bash "+pl+"; echo TOOLSTART'", "/dev/null")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	start := time.Now()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if ctrlCAfter > 0 {
+		time.Sleep(ctrlCAfter)
+		_, _ = stdin.Write([]byte{0x03})
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("launch did not finish in 30s:\n%s", out.String())
+	}
+	_ = stdin.Close()
+	return out.String(), time.Since(start)
+}
+
+// Ctrl+C during a pre_launch command skips it and the remaining commands, and
+// the tool starts right away. (Without --foreground the command sat in a
+// background process group, Ctrl+C never reached it, and the user waited it
+// out — found in review of #861.)
+func TestUserPreLaunch_CtrlCSkipsRemainingCommands(t *testing.T) {
+	out, took := runInTerminal(t, []string{"sleep 20", "echo SECOND-RAN"}, 1500*time.Millisecond)
+	if !strings.Contains(out, "TOOLSTART") {
+		t.Fatalf("the tool should start after Ctrl+C:\n%s", out)
+	}
+	if took > 10*time.Second {
+		t.Errorf("Ctrl+C should end the slow command immediately; tool started after %v", took)
+	}
+	if strings.Contains(out, "SECOND-RAN") {
+		t.Errorf("Ctrl+C should skip the remaining commands:\n%s", out)
 	}
 }
 
-// childAlive reports whether pid is a live (non-zombie) process.
-func childAlive(pid string) bool {
-	stat, err := os.ReadFile("/proc/" + pid + "/stat")
-	if err != nil {
-		return false
+// A pre_launch command can set terminal modes without being stopped (in a
+// background process group tcsetattr raised SIGTTOU and froze it until the
+// timeout).
+func TestUserPreLaunch_TerminalModesWork(t *testing.T) {
+	out, took := runInTerminal(t, []string{"stty sane </dev/tty && echo STTY-OK"}, 0)
+	if !strings.Contains(out, "STTY-OK") || !strings.Contains(out, "TOOLSTART") {
+		t.Errorf("stty should succeed and the tool start:\n%s", out)
 	}
-	s := string(stat)
-	i := strings.LastIndexByte(s, ')')
-	return i < 0 || !strings.HasPrefix(strings.TrimSpace(s[i+1:]), "Z")
+	if took > 10*time.Second {
+		t.Errorf("setting terminal modes should not stall; took %v", took)
+	}
 }
 
 // A pre-launch command gets no terminal input (stdin is /dev/null), so a

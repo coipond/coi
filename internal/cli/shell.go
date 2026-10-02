@@ -377,13 +377,14 @@ const userPreLaunchKillGraceSec = 10
 // moves on. (These are the USER's commands; tool.ToolWithPreLaunch is the
 // tool's own setup, run separately via runPreLaunch.)
 //
-// timeout runs WITHOUT --foreground, so it manages the command's whole
-// process group: on timeout every process the command started is signalled
-// (TERM, then KILL after the grace period), not just the direct child — a
-// hung download can't outlive its command or keep the agent from starting.
-// timeout forwards Ctrl+C to that group too. The command's stdin is
-// /dev/null: in a background process group a read from the terminal would
-// stop it instead of failing.
+// timeout runs with --foreground so the command stays in the terminal's
+// foreground process group: Ctrl+C reaches it (skipping the remaining
+// commands) and it may set terminal modes or open the terminal without being
+// stopped. -k escalates to KILL after the grace period, so a command that
+// ignores TERM still can't keep the agent from starting. Trade-off: with
+// --foreground, timeout only signals the command itself, so a process it
+// started in the background can outlive a timeout. stdin is /dev/null, so a
+// command never sits waiting for input.
 func renderUserPreLaunchScript(cmds []string, timeoutSec, killGraceSec int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `#!/bin/bash
@@ -392,7 +393,7 @@ func renderUserPreLaunchScript(cmds []string, timeoutSec, killGraceSec int) stri
 # Ctrl+C skips the remaining commands.
 coi_pre_launch() {
 	printf '[coi] pre-launch: %%s\n' "$1"
-	timeout -k %[2]d %[1]d bash -c "$1" </dev/null
+	timeout --foreground -k %[2]d %[1]d bash -c "$1" </dev/null
 	local rc=$?
 	if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
 		printf '[coi] pre-launch command timed out after %[1]ds; starting the tool anyway\n'
