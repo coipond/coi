@@ -403,3 +403,18 @@ func TestValidateProfileMap_ToolPreLaunch(t *testing.T) {
 		}
 	}
 }
+
+// [git] protected_branches is valid in a profile: a list of branch names, or
+// [] to disable the guard.
+func TestValidateProfileMap_GitProtectedBranches(t *testing.T) {
+	for _, ok := range []any{[]any{"main", "release"}, []any{}} {
+		if err := schema.ValidateProfileMap(map[string]any{"git": map[string]any{"protected_branches": ok}}); err != nil {
+			t.Errorf("protected_branches %v should validate, got: %v", ok, err)
+		}
+	}
+	for _, bad := range []any{"main", []any{""}, []any{1}} {
+		if err := schema.ValidateProfileMap(map[string]any{"git": map[string]any{"protected_branches": bad}}); err == nil {
+			t.Errorf("protected_branches %v should be rejected", bad)
+		}
+	}
+}
