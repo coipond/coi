@@ -13,7 +13,9 @@ assert both the NEGATIVE case (protected branch blocked) and the POSITIVE case
 hooks are what block, not some unrelated failure.
 """
 
+import os
 import subprocess
+from pathlib import Path
 
 from support.helpers import extract_container_name, write_trusted_coi_config
 
@@ -212,3 +214,103 @@ def test_branch_guard_reference_transaction_paths(coi_binary, workspace_dir, cle
         "git checkout -q -b main",
         "creating main in a repo with no remotes (git init -b dev, commits, checkout -b main)",
     )
+
+
+def _write_profile(base_dir, name, body):
+    """Write <base_dir>/profiles/<name>/config.toml and return its path."""
+    path = Path(base_dir) / "profiles" / name / "config.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    return path
+
+
+def _trusted_profile_env(tmp_path, name, body):
+    """A COI_CONFIG whose directory holds a profile: the directory of $COI_CONFIG
+    is a trusted profile root (like ~/.coi), so this exercises a user's own
+    profile without touching the runner's real ~/.coi."""
+    cfg = tmp_path / "coi-config" / "config.toml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text("")
+    _write_profile(cfg.parent, name, body)
+    return {**os.environ, "COI_CONFIG": str(cfg)}
+
+
+def _start_profile_shell(coi_binary, workspace_dir, env, profile):
+    result = subprocess.run(
+        [
+            coi_binary,
+            "shell",
+            "--workspace",
+            workspace_dir,
+            "--profile",
+            profile,
+            "--background",
+            "--debug",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        # Run from the workspace, as a user would: project profiles are
+        # discovered under <cwd>/.coi/profiles.
+        cwd=workspace_dir,
+    )
+    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
+    name = extract_container_name(result)
+    assert name, f"could not find container name. stderr: {result.stderr}"
+    return name, result
+
+
+def test_branch_guard_list_from_profile(coi_binary, workspace_dir, cleanup_containers, tmp_path):
+    """A user profile's [git] protected_branches replaces the default list: main
+    becomes committable, the listed branch is guarded. (A profile containing the
+    key used to fail schema validation and not load at all.)"""
+    env = _trusted_profile_env(
+        tmp_path, "guard-release", '[git]\nprotected_branches = ["release"]\n'
+    )
+    name, _ = _start_profile_shell(coi_binary, workspace_dir, env, "guard-release")
+
+    rc, out = _exec(coi_binary, name, _SETUP)
+    assert rc == 0, f"repo setup failed: {out}"
+
+    rc, out = _exec(coi_binary, name, f"cd {REPO} && git commit -q -m 'on main'")
+    assert rc == 0, f"main is not in the profile's list, so committing should work: {out}"
+
+    rc, out = _exec(
+        coi_binary,
+        name,
+        f"cd {REPO} && git checkout -q -b release && git commit -q --allow-empty -m 'on release'",
+    )
+    assert rc != 0, f"commit on release should be refused, got rc={rc}: {out}"
+    assert "refusing to commit on protected branch 'release'" in out, out
+
+
+def test_branch_guard_disabled_from_profile(
+    coi_binary, workspace_dir, cleanup_containers, tmp_path
+):
+    """A user profile's `protected_branches = []` disables the guard."""
+    env = _trusted_profile_env(tmp_path, "guard-off", "[git]\nprotected_branches = []\n")
+    name, _ = _start_profile_shell(coi_binary, workspace_dir, env, "guard-off")
+
+    rc, out = _exec(coi_binary, name, _SETUP)
+    assert rc == 0, f"repo setup failed: {out}"
+    rc, out = _exec(coi_binary, name, f"cd {REPO} && git commit -q -m 'on main'")
+    assert rc == 0, f"with the guard disabled by the profile, main should be committable: {out}"
+
+
+def test_branch_guard_project_profile_cannot_disable(coi_binary, workspace_dir, cleanup_containers):
+    """A repo's own profile (workspace .coi/profiles) can't change the list: its
+    `[]` is ignored with a warning and main stays protected."""
+    _write_profile(
+        Path(workspace_dir) / ".coi", "repo-guard-off", "[git]\nprotected_branches = []\n"
+    )
+    name, result = _start_profile_shell(coi_binary, workspace_dir, {**os.environ}, "repo-guard-off")
+    assert "git.protected_branches" in result.stderr, (
+        f"expected a warning about the ignored project setting:\n{result.stderr}"
+    )
+
+    rc, out = _exec(coi_binary, name, _SETUP)
+    assert rc == 0, f"repo setup failed: {out}"
+    rc, out = _exec(coi_binary, name, f"cd {REPO} && git commit -q -m 'on main'")
+    assert rc != 0, f"a project profile must not disable the guard, got rc={rc}: {out}"
+    assert "refusing to commit on protected branch 'main'" in out, out
