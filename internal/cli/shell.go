@@ -367,31 +367,40 @@ const userPreLaunchScriptPath = "/etc/coi/pre-launch.sh"
 // can't keep the agent from starting.
 const userPreLaunchTimeoutSec = 300
 
+// userPreLaunchKillGraceSec is how long a timed-out command gets after TERM
+// before timeout escalates to KILL (a command may ignore TERM).
+const userPreLaunchKillGraceSec = 10
+
 // renderUserPreLaunchScript builds the script that runs the user's [tool]
 // pre_launch commands in order. Each is announced, bounded by a timeout, and
 // never blocks the tool: a failure or timeout is reported and the script
 // moves on. (These are the USER's commands; tool.ToolWithPreLaunch is the
 // tool's own setup, run separately via runPreLaunch.)
-func renderUserPreLaunchScript(cmds []string, timeoutSec int) string {
+//
+// timeout runs WITHOUT --foreground, so it manages the command's whole
+// process group: on timeout every process the command started is signalled
+// (TERM, then KILL after the grace period), not just the direct child — a
+// hung download can't outlive its command or keep the agent from starting.
+// timeout forwards Ctrl+C to that group too. The command's stdin is
+// /dev/null: in a background process group a read from the terminal would
+// stop it instead of failing.
+func renderUserPreLaunchScript(cmds []string, timeoutSec, killGraceSec int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `#!/bin/bash
 # Managed by coi: [tool] pre_launch commands, run before the tool starts.
 # Each command gets %[1]ds; a failing or slow command never blocks the tool.
 # Ctrl+C skips the remaining commands.
 coi_pre_launch() {
-	printf '[coi] pre-launch: %%s
-' "$1"
-	timeout --foreground %[1]d bash -c "$1"
+	printf '[coi] pre-launch: %%s\n' "$1"
+	timeout -k %[2]d %[1]d bash -c "$1" </dev/null
 	local rc=$?
-	if [ "$rc" -eq 124 ]; then
-		printf '[coi] pre-launch command timed out after %[1]ds; starting the tool anyway
-'
+	if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+		printf '[coi] pre-launch command timed out after %[1]ds; starting the tool anyway\n'
 	elif [ "$rc" -ne 0 ]; then
-		printf '[coi] pre-launch command failed (exit %%s); starting the tool anyway
-' "$rc"
+		printf '[coi] pre-launch command failed (exit %%s); starting the tool anyway\n' "$rc"
 	fi
 }
-`, timeoutSec)
+`, timeoutSec, killGraceSec)
 	for _, c := range cmds {
 		b.WriteString("coi_pre_launch " + shellQuote(c) + "\n")
 	}
@@ -410,11 +419,14 @@ func withUserPreLaunch(mgr container.ContainerManager, cmds []string, cliCmd str
 		fmt.Fprintf(os.Stderr, "Warning: skipping [tool] pre_launch: %v\n", err)
 		return cliCmd
 	}
-	if err := mgr.CreateFileWithOwner(userPreLaunchScriptPath, renderUserPreLaunchScript(cmds, userPreLaunchTimeoutSec), 0, 0, "0755"); err != nil {
+	if err := mgr.CreateFileWithOwner(userPreLaunchScriptPath, renderUserPreLaunchScript(cmds, userPreLaunchTimeoutSec, userPreLaunchKillGraceSec), 0, 0, "0755"); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: skipping [tool] pre_launch: %v\n", err)
 		return cliCmd
 	}
-	return "bash " + userPreLaunchScriptPath + "; " + cliCmd
+	// `trap : INT` keeps Ctrl+C during the pre-launch step from killing the
+	// launching shell (which would end the session before the tool starts):
+	// the tmux wrapper already traps INT, the direct (no-tmux) bash -c does not.
+	return "trap : INT; bash " + userPreLaunchScriptPath + "; " + cliCmd
 }
 
 // runCLI executes the CLI tool in the container interactively

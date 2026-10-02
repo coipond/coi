@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coipond/coi/internal/container"
 )
@@ -19,7 +20,7 @@ func runRenderedPreLaunch(t *testing.T, cmds []string, timeoutSec int) (string, 
 		t.Skip("timeout(1) not available")
 	}
 	script := filepath.Join(t.TempDir(), "pre-launch.sh")
-	if err := os.WriteFile(script, []byte(renderUserPreLaunchScript(cmds, timeoutSec)), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(renderUserPreLaunchScript(cmds, timeoutSec, 1)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	out, err := exec.Command("bash", script).CombinedOutput()
@@ -87,7 +88,7 @@ func TestWithUserPreLaunch(t *testing.T) {
 	}
 	rec := &preLaunchRecorder{}
 	got := withUserPreLaunch(rec, []string{`claude update; echo "done"`}, "claude --verbose")
-	if got != "bash "+userPreLaunchScriptPath+"; claude --verbose" {
+	if got != "trap : INT; bash "+userPreLaunchScriptPath+"; claude --verbose" {
 		t.Errorf("prefixed command = %q", got)
 	}
 	if strings.Contains(got, "update") {
@@ -126,4 +127,55 @@ func (r *preLaunchRecorder) CreateFileWithOwner(path, content string, uid, _ int
 	}
 	r.path, r.content, r.uid, r.mode = path, content, uid, mode
 	return nil
+}
+
+// A command that ignores TERM, or leaves a child process behind, still can't
+// hold the tool up: timeout escalates to KILL and covers the whole process
+// group (review of #861).
+func TestUserPreLaunchScript_TimeoutKillsStubbornCommandAndChildren(t *testing.T) {
+	dir := t.TempDir()
+	after := filepath.Join(dir, "after")
+	pidFile := filepath.Join(dir, "child.pid")
+	start := time.Now()
+	out, code := runRenderedPreLaunch(t, []string{
+		"trap '' TERM; sleep 60 & echo $! > " + pidFile + "; sleep 60; wait",
+		"touch " + after,
+	}, 1)
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Errorf("a TERM-ignoring command blocked for %v", elapsed)
+	}
+	if code != 0 || !strings.Contains(out, "timed out after 1s") {
+		t.Errorf("timeout should be reported and the script exit 0 (code %d):\n%s", code, out)
+	}
+	if _, err := os.Stat(after); err != nil {
+		t.Error("the next command must still run")
+	}
+	pid, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("child pid not recorded: %v", err)
+	}
+	if childAlive(strings.TrimSpace(string(pid))) {
+		_ = exec.Command("kill", "-9", strings.TrimSpace(string(pid))).Run()
+		t.Error("the timed-out command's child process must be killed too")
+	}
+}
+
+// childAlive reports whether pid is a live (non-zombie) process.
+func childAlive(pid string) bool {
+	stat, err := os.ReadFile("/proc/" + pid + "/stat")
+	if err != nil {
+		return false
+	}
+	s := string(stat)
+	i := strings.LastIndexByte(s, ')')
+	return i < 0 || !strings.HasPrefix(strings.TrimSpace(s[i+1:]), "Z")
+}
+
+// A pre-launch command gets no terminal input (stdin is /dev/null), so a
+// command that tries to read can't stall the launch.
+func TestUserPreLaunchScript_CommandsGetNoInput(t *testing.T) {
+	out, code := runRenderedPreLaunch(t, []string{`read -r x; echo "read-rc=$?"`}, 30)
+	if code != 0 || !strings.Contains(out, "read-rc=1") {
+		t.Errorf("a read should get EOF immediately (code %d):\n%s", code, out)
+	}
 }
