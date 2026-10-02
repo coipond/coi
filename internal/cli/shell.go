@@ -356,6 +356,67 @@ func runPreLaunch(mgr container.ContainerManager, t tool.Tool, opts container.Ex
 	return nil
 }
 
+// userPreLaunchScriptPath is where coi writes the user's [tool] pre_launch
+// commands inside the container. Root-owned and read-only to the agent, and
+// rewritten on every launch so config changes apply. The tool command line
+// only references this path, so the commands never have to survive the
+// nested `tmux "bash -c '...'"` quoting.
+const userPreLaunchScriptPath = "/etc/coi/pre-launch.sh"
+
+// userPreLaunchTimeoutSec bounds each pre_launch command so a hung download
+// can't keep the agent from starting.
+const userPreLaunchTimeoutSec = 300
+
+// renderUserPreLaunchScript builds the script that runs the user's [tool]
+// pre_launch commands in order. Each is announced, bounded by a timeout, and
+// never blocks the tool: a failure or timeout is reported and the script
+// moves on. (These are the USER's commands; tool.ToolWithPreLaunch is the
+// tool's own setup, run separately via runPreLaunch.)
+func renderUserPreLaunchScript(cmds []string, timeoutSec int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `#!/bin/bash
+# Managed by coi: [tool] pre_launch commands, run before the tool starts.
+# Each command gets %[1]ds; a failing or slow command never blocks the tool.
+# Ctrl+C skips the remaining commands.
+coi_pre_launch() {
+	printf '[coi] pre-launch: %%s
+' "$1"
+	timeout --foreground %[1]d bash -c "$1"
+	local rc=$?
+	if [ "$rc" -eq 124 ]; then
+		printf '[coi] pre-launch command timed out after %[1]ds; starting the tool anyway
+'
+	elif [ "$rc" -ne 0 ]; then
+		printf '[coi] pre-launch command failed (exit %%s); starting the tool anyway
+' "$rc"
+	fi
+}
+`, timeoutSec)
+	for _, c := range cmds {
+		b.WriteString("coi_pre_launch " + shellQuote(c) + "\n")
+	}
+	return b.String()
+}
+
+// withUserPreLaunch installs the [tool] pre_launch script in the container and
+// returns cliCmd prefixed to run it first. With no commands configured it
+// returns cliCmd unchanged. If the script can't be written the tool still
+// starts — the pre-launch step is skipped with a warning, never a hard error.
+func withUserPreLaunch(mgr container.ContainerManager, cmds []string, cliCmd string) string {
+	if len(cmds) == 0 {
+		return cliCmd
+	}
+	if _, err := mgr.ExecCommand("mkdir -p /etc/coi", container.ExecCommandOptions{Capture: true}); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: skipping [tool] pre_launch: %v\n", err)
+		return cliCmd
+	}
+	if err := mgr.CreateFileWithOwner(userPreLaunchScriptPath, renderUserPreLaunchScript(cmds, userPreLaunchTimeoutSec), 0, 0, "0755"); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: skipping [tool] pre_launch: %v\n", err)
+		return cliCmd
+	}
+	return "bash " + userPreLaunchScriptPath + "; " + cliCmd
+}
+
 // runCLI executes the CLI tool in the container interactively
 func (a *App) runCLI(result *session.SetupResult, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
 	cmdToRun := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
@@ -386,6 +447,7 @@ func (a *App) runCLI(result *session.SetupResult, sessionID string, useResumeFla
 		return err
 	}
 
+	cmdToRun = withUserPreLaunch(result.Manager, a.cfg.Tool.PreLaunch, cmdToRun)
 	_, err = result.Manager.ExecCommand(cmdToRun, opts)
 	return err
 }
@@ -464,6 +526,10 @@ func (a *App) runCLIInTmux(result *session.SetupResult, sessionID string, detach
 	}); err != nil {
 		return err
 	}
+
+	// The user's [tool] pre_launch commands run in the pane, before the tool,
+	// for both a new tmux session and a command sent into an existing one.
+	cliCmd = withUserPreLaunch(result.Manager, a.cfg.Tool.PreLaunch, cliCmd)
 
 	// Ensure tmux server is running first (critical for CI and new containers)
 	ensureTmuxServer(result.Manager, userPtr)

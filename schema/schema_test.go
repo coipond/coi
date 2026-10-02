@@ -391,3 +391,15 @@ func TestValidateProfileMap_ToolBinary(t *testing.T) {
 		}
 	}
 }
+
+// [tool] pre_launch is a list of non-empty command strings.
+func TestValidateProfileMap_ToolPreLaunch(t *testing.T) {
+	if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"pre_launch": []any{"claude update", "echo ok && true"}}}); err != nil {
+		t.Errorf("pre_launch list should validate, got: %v", err)
+	}
+	for _, bad := range []any{"claude update", []any{""}, []any{42}} {
+		if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"pre_launch": bad}}); err == nil {
+			t.Errorf("pre_launch %v should be rejected", bad)
+		}
+	}
+}

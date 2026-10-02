@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as they already were in project config.
 - [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable (for example a wrapper script) instead of silently ignoring the setting.
 - [Bug Fix] **Installer works on fresh container and minimal images** — building from source no longer fails on missing package lists.
 - [Bug Fix] **Setting up passwordless sudo can no longer break sudo** — the installer and `coi health --fix` validate the rule before installing it; the iptables rule is shown for you to apply rather than added automatically.
@@ -19,6 +20,10 @@
 - [Bug Fix] **`coi health` no longer misses missing sudo rules** — a recently typed sudo password no longer hides them.
 - [Bug Fix] **Security monitor no longer stops containers for everyday commands** — searching code, waiting for a local service, or installing networking tools no longer looks like a reverse shell. Real reverse shells are still caught.
 - [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield an unwritable workspace (#838)** — coi stops with a clear explanation instead of continuing with a broken `/workspace`.
+
+### Features
+
+- [Feature] **Run commands before the agent starts: `[tool] pre_launch` (#852)** — e.g. `pre_launch = ["claude update"]` keeps the agent current without rebuilding the image. A failing or slow command never blocks the session.
 
 ## 0.13.0 (2026-09-28)
 
