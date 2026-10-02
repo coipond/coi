@@ -33,6 +33,14 @@
         "type": "string"
       },
       "description": "Replace the default strip patterns (grep -E extended regexes, matched per commit-message line) when non-empty. Trusted-scope only."
+    },
+    "protected_branches": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Branches the agent can't commit on or push to: root-owned git hooks refuse commits on them, moving them to a commit the remote doesn't already have (cherry-pick, merge, rebase, reset, ...), and pushes to them — so the agent works on a feature branch and opens a PR. Unset: [\"main\", \"master\"]. [] disables the guard. A list replaces the default. Trusted scope only: ignored (with a warning) from a project config or project profile, where the default stays on."
     }
   }
 }

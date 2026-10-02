@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Profiles can set `[git] protected_branches`** — a profile containing it no longer fails to load.
 - [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as they already were in project config.
 - [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable (for example a wrapper script) instead of silently ignoring the setting.
 - [Bug Fix] **Installer works on fresh container and minimal images** — building from source no longer fails on missing package lists.
