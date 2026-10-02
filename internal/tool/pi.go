@@ -8,6 +8,7 @@ import (
 type PiTool struct {
 	permissionMode  string // "bypass" (default) or "interactive" — pi has no permission gate, so this is largely a no-op
 	contextFilePath string // absolute path to sandbox context file inside container (set by SetAutoContextPath)
+	binary          string // [tool] binary override; empty means "pi"
 }
 
 // NewPi creates a new pi tool instance
@@ -16,8 +17,22 @@ func NewPi() Tool { return &PiTool{} }
 // Name returns "pi".
 func (p *PiTool) Name() string { return "pi" }
 
-// Binary returns "pi".
-func (p *PiTool) Binary() string { return "pi" }
+// Binary returns the executable to launch: the [tool] binary override if set,
+// else "pi".
+func (p *PiTool) Binary() string {
+	if p.binary != "" {
+		return p.binary
+	}
+	return "pi"
+}
+
+// SetBinary implements ToolWithBinary: the executable to launch instead of
+// "pi" ([tool] binary). An empty or unsafe value leaves the default.
+func (p *PiTool) SetBinary(path string) {
+	if path != "" && ValidateBinary(path) == nil {
+		p.binary = path
+	}
+}
 
 // ConfigDirName returns the config directory for pi.
 // Pi stores config in ~/.pi/agent/ (controlled by PI_CODING_AGENT_DIR).
@@ -32,7 +47,7 @@ func (p *PiTool) SessionsDirName() string { return "sessions-pi" }
 // Filesystem setup (symlink creation) is handled by PreLaunch(), keeping
 // BuildCommand free of shell metacharacters.
 func (p *PiTool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
-	cmd := []string{"pi"}
+	cmd := []string{p.Binary()}
 	if resume {
 		// Always use --continue; pi manages its own session discovery
 		// in .pi-sessions/ (redirected via PI_CODING_AGENT_SESSION_DIR).

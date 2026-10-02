@@ -9,7 +9,8 @@
     },
     "binary": {
       "type": "string",
-      "description": "Binary name to execute. Defaults to the tool name if not set."
+      "pattern": "^[A-Za-z0-9_./][A-Za-z0-9._:/@+-]*$",
+      "description": "Executable to launch instead of the tool's default (e.g. a wrapper script at /workspace/claude-wrapper.sh); it receives the tool's usual arguments. A command name or path without whitespace, quotes or shell metacharacters. Defaults to the tool name if not set."
     },
     "permission_mode": {
       "type": "string",

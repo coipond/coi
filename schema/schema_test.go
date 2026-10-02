@@ -375,3 +375,19 @@ func TestGetProfileSchema_Deterministic(t *testing.T) {
 		t.Fatal("GetProfileSchema is not deterministic across calls")
 	}
 }
+
+// [tool] binary takes a command name or path, never a shell snippet (it is
+// launched inside a shell command string); the schema mirrors
+// tool.ValidateBinary.
+func TestValidateProfileMap_ToolBinary(t *testing.T) {
+	for _, ok := range []string{"claude", "/workspace/claude-wrapper.sh", "./bin/agent"} {
+		if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"binary": ok}}); err != nil {
+			t.Errorf("binary %q should validate, got: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"claude update; claude", "/path with space/claude", "-x"} {
+		if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"binary": bad}}); err == nil {
+			t.Errorf("binary %q should be rejected", bad)
+		}
+	}
+}

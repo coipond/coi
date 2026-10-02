@@ -8,6 +8,7 @@ import (
 type OmpTool struct {
 	permissionMode  string
 	contextFilePath string
+	binary          string // [tool] binary override; empty means "omp"
 }
 
 // NewOmp creates a new omp tool instance
@@ -16,8 +17,22 @@ func NewOmp() Tool { return &OmpTool{} }
 // Name returns "omp".
 func (o *OmpTool) Name() string { return "omp" }
 
-// Binary returns "omp".
-func (o *OmpTool) Binary() string { return "omp" }
+// Binary returns the executable to launch: the [tool] binary override if set,
+// else "omp".
+func (o *OmpTool) Binary() string {
+	if o.binary != "" {
+		return o.binary
+	}
+	return "omp"
+}
+
+// SetBinary implements ToolWithBinary: the executable to launch instead of
+// "omp" ([tool] binary). An empty or unsafe value leaves the default.
+func (o *OmpTool) SetBinary(path string) {
+	if path != "" && ValidateBinary(path) == nil {
+		o.binary = path
+	}
+}
 
 // ConfigDirName returns the config directory for omp (~/.omp).
 func (o *OmpTool) ConfigDirName() string { return mustBundle("omp").ConfigDir }
@@ -27,7 +42,7 @@ func (o *OmpTool) SessionsDirName() string { return "sessions-omp" }
 
 // BuildCommand builds the omp launch command.
 func (o *OmpTool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
-	cmd := []string{"omp"}
+	cmd := []string{o.Binary()}
 	if resume {
 		cmd = append(cmd, "--continue")
 	}

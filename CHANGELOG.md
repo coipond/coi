@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable (for example a wrapper script) instead of silently ignoring the setting.
 - [Bug Fix] **Installer works on fresh container and minimal images** — building from source no longer fails on missing package lists.
 - [Bug Fix] **Setting up passwordless sudo can no longer break sudo** — the installer and `coi health --fix` validate the rule before installing it; the iptables rule is shown for you to apply rather than added automatically.
 - [Bug Fix] **`coi health` accepts its own UID-mapping fix** — once the suggested fix is applied it stops reporting the problem, and tells you which step is still missing until then.
