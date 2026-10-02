@@ -12,6 +12,14 @@
       "pattern": "^[A-Za-z0-9_./][A-Za-z0-9._:/@+-]*$",
       "description": "Executable to launch instead of the tool's default (e.g. a wrapper script at /workspace/claude-wrapper.sh); it receives the tool's usual arguments. A command name or path without whitespace, quotes or shell metacharacters. Defaults to the tool name if not set."
     },
+    "pre_launch": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Shell commands run inside the container, in order, before the tool starts in `coi shell` — e.g. [\"claude update\"] to keep the agent current without rebuilding the image. They run as the container user in the workspace and their output shows in the session. Each command gets 5 minutes (it and anything it started are stopped after that); a failing or slow command is reported and the tool starts anyway, and Ctrl+C skips the remaining commands. Commands get no terminal input, so they must not prompt. Unlike `binary` (which replaces the tool's executable), these run before it. Honored only from your own config (~/.coi/config.toml, $COI_CONFIG, ~/.coi/profiles), never from a project's .coi/config.toml or project profiles."
+    },
     "permission_mode": {
       "type": "string",
       "enum": ["bypass", "interactive", ""],
