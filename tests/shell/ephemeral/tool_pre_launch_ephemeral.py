@@ -2,7 +2,7 @@
 Test `[tool] pre_launch`: commands that run inside the container before the
 tool starts in `coi shell` (issue #852, e.g. `claude update`).
 
-The tool is replaced (via `[tool] binary`) by a stand-in agent that records
+In tests 1-2 the tool is replaced (via `[tool] binary`) by a stand-in agent that records
 whether the pre-launch marker already existed when it started, so ordering is
 observable. COI_USE_DUMMY is deliberately NOT set: it would replace argv[0]
 and mask the configured binary.
@@ -11,14 +11,16 @@ Verifies that:
 1. pre_launch commands from trusted config run BEFORE the tool, in order;
    a failing command doesn't stop the remaining commands or the tool;
 2. pre_launch from a project's .coi/config.toml (untrusted) is ignored with a
-   warning, and the tool still starts.
+   warning, and the tool still starts;
+3. pre_launch on its own (no `binary`) runs a script file from the workspace,
+   with its arguments, and the stock tool still starts.
 """
 
 import subprocess
 import time
 from pathlib import Path
 
-from support.helpers import write_trusted_coi_config
+from support.helpers import calculate_container_name, write_trusted_coi_config
 
 AGENT_MARKER = ".coi-agent-started"
 PRE_MARKER = ".coi-pre-launch-ran"
@@ -100,3 +102,43 @@ def test_pre_launch_ignored_from_project_config(coi_binary, cleanup_containers, 
         "pre_launch from a project's config must not run"
     )
     assert agent.read_text().strip() == "no-pre-launch"
+
+
+def _container_processes(container_name):
+    result = subprocess.run(
+        ["incus", "exec", container_name, "--", "ps", "-eo", "args"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def test_pre_launch_script_alone_with_real_tool(coi_binary, cleanup_containers, workspace_dir):
+    """pre_launch on its own (no `binary`): a script file from the workspace runs
+    before the stock tool, and the real tool still starts."""
+    script = Path(workspace_dir) / "before-agent.sh"
+    script.write_text(f'#!/bin/sh\necho "args: $*" > /workspace/{PRE_MARKER}\n')
+    script.chmod(0o755)
+    env = write_trusted_coi_config('[tool]\npre_launch = ["/workspace/before-agent.sh --quiet"]\n')
+
+    result = _start_shell(coi_binary, workspace_dir, env)
+    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
+
+    marker = Path(workspace_dir) / PRE_MARKER
+    assert _wait_for(marker), "the pre_launch script did not run"
+    assert marker.read_text().strip() == "args: --quiet", (
+        f"the script should get its arguments, got {marker.read_text()!r}"
+    )
+
+    container_name = calculate_container_name(workspace_dir, 1)
+    deadline = time.monotonic() + 60
+    procs = ""
+    while time.monotonic() < deadline:
+        procs = _container_processes(container_name)
+        if any(line.startswith("claude ") for line in procs.splitlines()):
+            break
+        time.sleep(2)
+    assert any(line.startswith("claude ") for line in procs.splitlines()), (
+        f"the stock claude should start after pre_launch; processes:\n{procs}"
+    )
