@@ -205,7 +205,7 @@ jobs:
             description: "Threat detection tests"
           - name: monitoring-response
             path: tests/integration/test_security_monitoring.py
-            pytest_args: "-k 'TestAutomatedResponse or TestHighLevelThreats or TestLargeWriteDetection or TestMonitoringConfiguration or TestMultipleThreats or TestAuditLogValidation or TestFalsePositives or TestThresholdBoundaries or TestConcurrentThreats'"
+            pytest_args: "-k 'TestAutomatedResponse or TestHighLevelThreats or TestLargeWriteDetection or TestDiskSpaceMonitoring or TestMonitoringConfiguration or TestMultipleThreats or TestAuditLogValidation or TestFalsePositives or TestThresholdBoundaries or TestConcurrentThreats'"
             description: "Response and threshold tests"
           - name: monitoring-advanced
             path: tests/integration/test_security_monitoring.py
