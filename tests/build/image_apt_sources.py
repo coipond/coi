@@ -29,14 +29,18 @@ def test_image_uses_stock_apt_sources(coi_binary, cleanup_containers, workspace_
             "--",
             "sh",
             "-c",
-            f"cat {SOURCES} 2>/dev/null; if [ -e {BACKUP_DIR} ]; then echo BACKUP_LEFT; fi",
+            # coi echoes the command it runs ("Executing: ..."), so the marker
+            # is assembled by the shell: the command text says BACKUP_""LEFT,
+            # and only an actual echo prints BACKUP_LEFT.
+            f'cat {SOURCES} 2>/dev/null; if [ -e {BACKUP_DIR} ]; then echo BACKUP_""LEFT; fi',
         ],
         capture_output=True,
         text=True,
         timeout=300,
     )
     assert result.returncode == 0, f"coi run failed:\n{result.stderr}"
-    out = result.stdout + result.stderr
+    # Only what the container printed: stderr carries coi's own messages.
+    out = result.stdout
 
     assert "archive.ubuntu.com/ubuntu" in out, f"expected the stock Ubuntu sources:\n{out}"
     mirror = os.environ.get("COI_APT_MIRROR", "")
