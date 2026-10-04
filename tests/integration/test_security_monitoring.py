@@ -4103,219 +4103,148 @@ class TestThresholdBoundaries:
         cleanup_container(container_name, coi_binary)
 
 
-# NOTE: TestDiskSpaceMonitoring was removed because it requires a small tmpfs (<500MB)
-# which cannot be configured in CI due to the base image not supporting tmpfs device
-# overrides. The disk space monitoring logic is verified via Go unit tests in
-# internal/monitor/detector_test.go
+@pytest.fixture
+def enable_monitoring_small_tmp():
+    """Enable monitoring with a small RAM-backed /tmp (64MiB).
+
+    The low-disk-space warning fires above 80% /tmp usage; a 64MiB tmpfs
+    ([limits.disk] tmpfs_size) can be filled past that in about a second.
+    A high read threshold (writes share it) keeps the fill from raising
+    other threats.
+    """
+    config_path = Path.home() / ".coi" / "config.toml"
+    backup = config_path.read_text() if config_path.exists() else None
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+[network]
+mode = "open"
+
+[limits.disk]
+tmpfs_size = "64MiB"
+
+[monitoring]
+enabled = true
+auto_pause_on_high = true
+auto_kill_on_critical = true
+poll_interval_sec = 1
+file_read_threshold_mb = 500
+file_read_rate_mb_per_sec = 1000
+"""
+    )
+
+    yield config_path
+
+    if backup:
+        config_path.write_text(backup)
+    elif config_path.exists():
+        config_path.unlink()
 
 
-class DisabledTestDiskSpaceMonitoring:
-    """DISABLED - see comment above."""
+def _disk_space_warnings(container_name):
+    return [
+        e
+        for e in get_threat_events(container_name)
+        if e.get("level") == "warning"
+        and e.get("category") == "filesystem"
+        and (e.get("evidence") or {}).get("disk_space") is not None
+    ]
 
-    def disabled_test_disk_space_80_percent_triggers_warning(
-        self, test_workspace, enable_monitoring, coi_binary
+
+def _fill_tmp(container_name, name, size_mb):
+    result = subprocess.run(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--",
+            "dd",
+            "if=/dev/zero",
+            f"of=/tmp/{name}",
+            "bs=1M",
+            f"count={size_mb}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"could not fill /tmp: {result.stderr}"
+
+
+def _tmp_size_mb(container_name, timeout=30):
+    """Size of the container's /tmp in MB, once the boot-time tmpfs is mounted."""
+    total_mb = 0
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        df = subprocess.run(
+            ["incus", "exec", container_name, "--", "df", "-BM", "--output=size", "/tmp"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        fields = df.stdout.split()
+        if df.returncode == 0 and len(fields) == 2:
+            total_mb = int(fields[1].rstrip("M"))
+            if total_mb <= 64:
+                break
+        time.sleep(1)
+    return total_mb
+
+
+class TestDiskSpaceMonitoring:
+    """A nearly full /tmp raises a WARNING carrying disk-space evidence, end to
+    end: the monitor measures the real container's /tmp and writes the event to
+    the audit log."""
+
+    def test_tmp_over_80_percent_warns_with_disk_space_evidence(
+        self, test_workspace, enable_monitoring_small_tmp, coi_binary
     ):
-        """Test that /tmp > 80% full triggers a WARNING threat."""
         proc = subprocess.Popen(
-            [
-                coi_binary,
-                "shell",
-                "--workspace",
-                test_workspace,
-                "--slot",
-                "40",
-            ],
+            [coi_binary, "shell", "--workspace", test_workspace, "--slot", "40"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-
         container_name = get_container_name_from_workspace(test_workspace).rsplit("-", 1)[0] + "-40"
+        try:
+            assert wait_for_container_running(container_name), (
+                f"Container {container_name} did not start"
+            )
+            total_mb = _tmp_size_mb(container_name)
+            assert 0 < total_mb <= 64, f"/tmp should be the 64MiB tmpfs, got {total_mb}MB"
 
-        if not wait_for_container_running(container_name, timeout=30):
-            proc.terminate()
-            pytest.skip(f"Container {container_name} not found or not running")
-
-        # Wait for monitoring baseline
-        time.sleep(5)
-
-        # Get /tmp size
-        result = subprocess.run(
-            ["incus", "exec", container_name, "--", "df", "-BM", "/tmp"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            proc.terminate()
-            cleanup_container(container_name, coi_binary)
-            pytest.skip("Could not get /tmp size")
-
-        lines = result.stdout.strip().split("\n")
-        if len(lines) < 2:
-            proc.terminate()
-            cleanup_container(container_name, coi_binary)
-            pytest.skip("Could not parse df output")
-
-        fields = lines[1].split()
-        total_mb = int(fields[1].replace("M", ""))
-
-        # Skip if /tmp is too large - filling would take too long
-        # This test requires a small tmpfs (<500MB) to run in reasonable time
-        if total_mb > 500:
-            proc.terminate()
-            cleanup_container(container_name, coi_binary)
-            pytest.skip(
-                f"/tmp is {total_mb}MB (>500MB) - test requires small tmpfs. "
-                "Configure tmpfs_size in config or use container with small /tmp."
+            # Half full: below the 80% threshold, no warning across several polls.
+            _fill_tmp(container_name, "fill_half", total_mb // 2)
+            time.sleep(8)
+            assert _disk_space_warnings(container_name) == [], (
+                "a half-full /tmp must not raise a disk-space warning"
             )
 
-        # Fill /tmp to 85% (above the 80% threshold)
-        fill_mb = int(total_mb * 0.85)
-        subprocess.run(
-            [
-                "incus",
-                "exec",
-                container_name,
-                "--",
-                "dd",
-                "if=/dev/zero",
-                f"of=/tmp/fill_disk_{fill_mb}mb",
-                "bs=1M",
-                f"count={fill_mb}",
-            ],
-            capture_output=True,
-            timeout=30,
-        )
+            # ~90% full: the warning appears, with the measured usage as evidence.
+            _fill_tmp(container_name, "fill_more", total_mb * 2 // 5)
+            warnings = []
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline and not warnings:
+                time.sleep(1)
+                warnings = _disk_space_warnings(container_name)
 
-        # Wait for monitoring to detect
-        time.sleep(10)
-
-        # Check for WARNING threat about disk space
-        events = get_threat_events(container_name)
-        disk_warnings = [
-            e
-            for e in events
-            if e.get("level") == "warning"
-            and e.get("category") == "filesystem"
-            and "disk space" in e.get("title", "").lower()
-        ]
-
-        proc.terminate()
-
-        print("\n=== Disk Space Test Debug ===")
-        print(f"Total /tmp size: {total_mb}MB, filled: {fill_mb}MB ({fill_mb * 100 // total_mb}%)")
-        print(f"Total events: {len(events)}")
-        for event in events:
-            print(
-                f"- level={event.get('level')}, category={event.get('category')}, "
-                f"title={event.get('title')}"
+            assert warnings, (
+                "expected a disk-space WARNING once /tmp is ~90% full; "
+                f"events: {get_threat_events(container_name)}"
             )
-        print("=== End Debug ===\n")
+            warning = warnings[0]
+            disk = warning["evidence"]["disk_space"]
+            assert "disk space" in warning.get("title", "").lower(), warning
+            assert disk["tmp_used_percent"] > 80, disk
+            assert 0 < disk["tmp_total_mb"] <= 64, disk
+            assert 0 < disk["tmp_used_mb"] <= disk["tmp_total_mb"], disk
 
-        assert len(disk_warnings) > 0, (
-            f"Expected WARNING threat for /tmp > 80% full, got {len(disk_warnings)} "
-            f"disk warnings. Filled {fill_mb}MB of {total_mb}MB "
-            f"({fill_mb * 100 // total_mb}%)"
-        )
-
-        cleanup_container(container_name, coi_binary)
-
-    def disabled_test_disk_space_below_threshold_no_alert(
-        self, test_workspace, enable_monitoring, coi_binary
-    ):
-        """Test that /tmp < 80% full does NOT trigger a warning."""
-        proc = subprocess.Popen(
-            [
-                coi_binary,
-                "shell",
-                "--workspace",
-                test_workspace,
-                "--slot",
-                "41",
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-        container_name = get_container_name_from_workspace(test_workspace).rsplit("-", 1)[0] + "-41"
-
-        if not wait_for_container_running(container_name, timeout=30):
-            proc.terminate()
-            pytest.skip(f"Container {container_name} not found or not running")
-
-        # Wait for monitoring baseline
-        time.sleep(5)
-
-        # Get /tmp size
-        result = subprocess.run(
-            ["incus", "exec", container_name, "--", "df", "-BM", "/tmp"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
+            # A warning only alerts: the container keeps running.
+            assert get_container_state(container_name) == "Running"
+        finally:
             proc.terminate()
             cleanup_container(container_name, coi_binary)
-            pytest.skip("Could not get /tmp size")
-
-        lines = result.stdout.strip().split("\n")
-        if len(lines) < 2:
-            proc.terminate()
-            cleanup_container(container_name, coi_binary)
-            pytest.skip("Could not parse df output")
-
-        fields = lines[1].split()
-        total_mb = int(fields[1].replace("M", ""))
-
-        # Skip if /tmp is too large - filling would take too long
-        if total_mb > 500:
-            proc.terminate()
-            cleanup_container(container_name, coi_binary)
-            pytest.skip(
-                f"/tmp is {total_mb}MB (>500MB) - test requires small tmpfs. "
-                "Configure tmpfs_size in config or use container with small /tmp."
-            )
-
-        # Fill /tmp to only 50% (well below 80% threshold)
-        fill_mb = int(total_mb * 0.50)
-        subprocess.run(
-            [
-                "incus",
-                "exec",
-                container_name,
-                "--",
-                "dd",
-                "if=/dev/zero",
-                f"of=/tmp/fill_disk_{fill_mb}mb",
-                "bs=1M",
-                f"count={fill_mb}",
-            ],
-            capture_output=True,
-            timeout=30,
-        )
-
-        # Wait for monitoring cycles
-        time.sleep(10)
-
-        # Check that NO disk space warnings were generated
-        events = get_threat_events(container_name)
-        disk_warnings = [
-            e
-            for e in events
-            if e.get("level") == "warning"
-            and e.get("category") == "filesystem"
-            and "disk space" in e.get("title", "").lower()
-        ]
-
-        proc.terminate()
-
-        assert len(disk_warnings) == 0, (
-            f"Expected NO disk space warnings for /tmp at 50%, got {len(disk_warnings)}"
-        )
-
-        cleanup_container(container_name, coi_binary)
 
 
 class TestLargeWriteDetection:
