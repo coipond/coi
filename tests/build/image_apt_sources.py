@@ -11,7 +11,11 @@ built (with the mirror set) from inside a real container.
 import os
 import subprocess
 
-SOURCES = "/etc/apt/sources.list.d/ubuntu.sources"
+# Every apt source in the image: base images differ in layout (the classic
+# /etc/apt/sources.list or the deb822 sources.list.d/ubuntu.sources), and the
+# build's own repositories (NodeSource, Docker, GitHub CLI) live in
+# sources.list.d too.
+SOURCES = "/etc/apt/sources.list /etc/apt/sources.list.d/*"
 BACKUP_DIR = "/var/lib/coi/apt-sources-orig"
 
 
@@ -25,7 +29,7 @@ def test_image_uses_stock_apt_sources(coi_binary, cleanup_containers, workspace_
             "--",
             "sh",
             "-c",
-            f"cat {SOURCES}; if [ -e {BACKUP_DIR} ]; then echo BACKUP_LEFT; fi",
+            f"cat {SOURCES} 2>/dev/null; if [ -e {BACKUP_DIR} ]; then echo BACKUP_LEFT; fi",
         ],
         capture_output=True,
         text=True,
