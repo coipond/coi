@@ -142,3 +142,74 @@ def test_pre_launch_script_alone_with_real_tool(coi_binary, cleanup_containers, 
     assert any(line.startswith("claude ") for line in procs.splitlines()), (
         f"the stock claude should start after pre_launch; processes:\n{procs}"
     )
+
+
+def _code_user_exec(container_name, *argv):
+    """Run a command in the container as the code user (owner of the tmux server)."""
+    return subprocess.run(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--user",
+            "1000",
+            "--env",
+            "HOME=/home/code",
+            "--",
+            *argv,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+def test_pre_launch_ctrl_c_skips_remaining(coi_binary, cleanup_containers, workspace_dir):
+    """Ctrl+C during a slow pre_launch command skips it and the remaining
+    commands, and the tool starts right away. (A regression once left the
+    command in a background process group, where Ctrl+C never reached it.)"""
+    _write_fake_agent(workspace_dir)
+    second = Path(workspace_dir) / ".coi-second-ran"
+    env = write_trusted_coi_config(
+        "[tool]\n"
+        'binary = "/workspace/fake-agent.sh"\n'
+        f'pre_launch = ["sleep 120", "touch /workspace/{second.name}"]\n'
+    )
+    result = _start_shell(coi_binary, workspace_dir, env)
+    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
+
+    container_name = calculate_container_name(workspace_dir, 1)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if _code_user_exec(container_name, "pgrep", "-f", "sleep 120").returncode == 0:
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError("the slow pre_launch command never started")
+
+    sent = _code_user_exec(
+        container_name, "tmux", "send-keys", "-t", f"coi-{container_name}", "C-c"
+    )
+    assert sent.returncode == 0, f"could not send Ctrl+C: {sent.stderr}"
+
+    agent = Path(workspace_dir) / AGENT_MARKER
+    assert _wait_for(agent, timeout=20), "Ctrl+C should skip the slow command and start the tool"
+    assert not second.exists(), "Ctrl+C should skip the remaining pre_launch commands"
+
+
+def test_pre_launch_can_set_terminal_modes(coi_binary, cleanup_containers, workspace_dir):
+    """A pre_launch command that changes terminal settings runs normally
+    instead of being stopped until the 5-minute timeout."""
+    _write_fake_agent(workspace_dir)
+    ok = Path(workspace_dir) / ".coi-stty-ok"
+    env = write_trusted_coi_config(
+        "[tool]\n"
+        'binary = "/workspace/fake-agent.sh"\n'
+        f'pre_launch = ["stty sane </dev/tty && touch /workspace/{ok.name}"]\n'
+    )
+    result = _start_shell(coi_binary, workspace_dir, env)
+    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
+
+    agent = Path(workspace_dir) / AGENT_MARKER
+    assert _wait_for(agent, timeout=90), "the tool should start well before the 5-minute timeout"
+    assert ok.exists(), "stty should succeed inside a pre_launch command"

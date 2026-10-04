@@ -21,9 +21,13 @@
       "maximum": 10,
       "description": "Disk I/O scheduling priority (0–10)"
     },
+    "size": {
+      "type": "string",
+      "description": "Disk quota for the whole container root filesystem, e.g. \"20GiB\". Requires a quota-capable storage pool (btrfs, zfs or lvm); rejected on a dir pool. Empty means unlimited."
+    },
     "tmpfs_size": {
       "type": "string",
-      "description": "Size of /tmp tmpfs, e.g. \"2GiB\" (default: \"2GiB\")"
+      "description": "Opt-in RAM-backed /tmp of this size, e.g. \"2GiB\". Unset: /tmp stays on disk (use size to bound total disk use)."
     }
   }
 }

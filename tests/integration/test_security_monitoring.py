@@ -3626,6 +3626,9 @@ AGENT_COMMANDS_NOT_REVERSE_SHELLS = [
     # Probing the agent's own local services.
     "bash -c </dev/tcp/localhost/5432",
     "bash -c </dev/tcp/127.1/8080",
+    # Waiting for a local service whose port comes from a variable.
+    "bash -c until echo > /dev/tcp/localhost/$PORT; do sleep 1; done",
+    "bash -c until (</dev/tcp/127.0.0.1/${PORT:-8080}) 2>/dev/null; do sleep 1; done",
     # Running a project script with an -i flag; loading a non-socket IO module.
     "./scripts/setup.sh -i",
     "perl -MIO::File -e print 1",

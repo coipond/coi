@@ -874,8 +874,19 @@ EOF
 #######################################
 # Cleanup
 #######################################
+# unset_build_apt_mirror: a build-time apt mirror (COI_APT_MIRROR) is a build
+# speed-up, not part of the image — put the stock sources back so containers
+# use the standard Ubuntu archive, and drop the backup copies.
+unset_build_apt_mirror() {
+    if [ "${APT_MIRROR_ACTIVE:-0}" = 1 ]; then
+        restore_default_apt_sources
+    fi
+    rm -rf "${COI_APT_BACKUP_DIR:-/var/lib/coi/apt-sources-orig}"
+}
+
 cleanup() {
     log "Cleaning up..."
+    unset_build_apt_mirror
     apt-get clean
     rm -rf /var/lib/apt/lists/*
     log "Cleanup complete"

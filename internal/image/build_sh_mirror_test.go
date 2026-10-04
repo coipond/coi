@@ -37,7 +37,7 @@ exit ` + boolStr[okOnDefault] + `
 	}
 	driver := `set -euo pipefail
 log() { echo "LOG: $*"; }
-for fn in configure_apt_mirror restore_default_apt_sources apt_get; do
+for fn in configure_apt_mirror restore_default_apt_sources apt_get unset_build_apt_mirror; do
   source <(sed -n "/^${fn}()/,/^}/p" "$1") || { echo "SOURCE_FAILED $fn"; exit 3; }
 done
 ` + script
@@ -103,5 +103,32 @@ func TestAptGet_FallbackFailurePropagates(t *testing.T) {
 		`configure_apt_mirror; if apt_get install -y -qq git; then echo UNEXPECTED_OK; else echo FAILED_AS_EXPECTED; fi`)
 	if !strings.Contains(out, "FAILED_AS_EXPECTED") {
 		t.Errorf("a failing fallback must still fail the step:\n%s", out)
+	}
+}
+
+// The finished image must not keep the build-time mirror: cleanup restores the
+// stock sources and removes the backup copies (review of #859).
+func TestUnsetBuildAptMirror_RestoresStockSources(t *testing.T) {
+	out, sources, err := runMirrorFallback(t, "http://azure.archive.ubuntu.com/ubuntu", true, true,
+		`configure_apt_mirror; unset_build_apt_mirror; [ -d "$COI_APT_BACKUP_DIR" ] && echo BACKUP_LEFT || echo BACKUP_GONE`)
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	if strings.Contains(sources, "azure") || !strings.Contains(sources, "http://archive.ubuntu.com/ubuntu") {
+		t.Errorf("stock sources should be back after cleanup, got:\n%s", sources)
+	}
+	if !strings.Contains(out, "BACKUP_GONE") {
+		t.Errorf("backup copies should be removed:\n%s", out)
+	}
+}
+
+// Without a mirror, cleanup leaves the sources alone.
+func TestUnsetBuildAptMirror_NoMirrorIsNoop(t *testing.T) {
+	out, sources, err := runMirrorFallback(t, "", true, true, `configure_apt_mirror; unset_build_apt_mirror; echo DONE`)
+	if err != nil || !strings.Contains(out, "DONE") {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(sources, "http://archive.ubuntu.com/ubuntu") {
+		t.Errorf("sources should be untouched, got:\n%s", sources)
 	}
 }

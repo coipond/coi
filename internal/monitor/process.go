@@ -139,6 +139,7 @@ func readProcessFromProc(pid int) (Process, error) {
 		// old incus exec ps aux path, this is numeric rather than a username.
 		User:    strconv.Itoa(uid),
 		Command: command,
+		Name:    name,
 	}, nil
 }
 
@@ -367,7 +368,7 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 			if reverseShellNeedsSocat[p.pattern] && !looksLikeSocat(cmdLower) {
 				continue
 			}
-			if refine, ok := reverseShellRefine[p.pattern]; ok && !refine(cmdLower) {
+			if refine, ok := reverseShellRefine[p.pattern]; ok && !refine(proc, cmdLower) {
 				continue
 			}
 			// The network-indicator gate constrains ONLY the ambiguous
@@ -443,10 +444,10 @@ func looksLikeSocat(cmdLower string) bool {
 // reverseShellRefine narrows patterns whose literal text is also common in
 // benign commands: the pattern only counts when its predicate holds. Searching
 // for /dev/tcp/ (grep, rg) or loading IO::File must not kill the container.
-var reverseShellRefine = map[string]func(cmdLower string) bool{
+var reverseShellRefine = map[string]func(proc Process, cmdLower string) bool{
 	"/dev/tcp/": shellDevNetEndpoint,
 	"/dev/udp/": shellDevNetEndpoint,
-	"perl -MIO": perlLoadsIOSocket,
+	"perl -MIO": func(_ Process, cmdLower string) bool { return perlLoadsIOSocket(cmdLower) },
 }
 
 // containsAtTokenStart reports whether pat occurs in s at the start of a token,
@@ -606,8 +607,8 @@ func inetAton(s string) (uint32, bool) {
 // occurrence is ignored only when it is clearly harmless:
 //   - nothing follows the prefix: a mention (grep -rn /dev/tcp/ docs,
 //     rg "/dev/tcp/");
-//   - a fully literal loopback endpoint: a probe of the agent's own services
-//     (</dev/tcp/localhost/5432, /dev/tcp/127.1/8080).
+//   - a literal loopback host: a probe of the agent's own services
+//     (</dev/tcp/localhost/5432, /dev/tcp/127.1/$PORT).
 //
 // Every other occurrence counts.
 func devNetEndpointNonLoopback(cmdLower string) bool {
@@ -629,8 +630,11 @@ func devNetEndpointNonLoopback(cmdLower string) bool {
 				continue // a bare mention, no endpoint
 			}
 			host, port, _ := strings.Cut(tail, "/")
-			literal := !strings.ContainsAny(tail, "$`{}\\")
-			if literal && port != "" && isLoopbackHost(host) {
+			// Only the HOST must be literal: bash splits the path at the first
+			// '/' after the host, so a variable port ($PORT, ${PORT:-8080})
+			// can't redirect a literal loopback host anywhere else.
+			hostLiteral := !strings.ContainsAny(host, "$`{}\\")
+			if hostLiteral && port != "" && isLoopbackHost(host) {
 				continue // a probe of a local service
 			}
 			return true
@@ -653,12 +657,22 @@ var shellArgv0 = map[string]bool{
 // The agent's own `bash -c "<command>"` wrapper is still a shell, so a mention
 // inside a command it runs can still match; scoping cuts these down without a
 // full shell parser.
-func shellDevNetEndpoint(cmdLower string) bool {
-	arg0 := cmdLower
+func shellDevNetEndpoint(proc Process, cmdLower string) bool {
+	return isShellProcess(proc, cmdLower) && devNetEndpointNonLoopback(cmdLower)
+}
+
+// isShellProcess reports whether the process is a shell. argv[0] is set by the
+// process itself, so the kernel's process name (Name, from the executable) is
+// checked too; argv[0] is normalized for the login-shell form ("-bash") and
+// leading whitespace.
+func isShellProcess(proc Process, cmdLower string) bool {
+	arg0 := strings.TrimLeft(cmdLower, " \t\n")
 	if i := strings.IndexAny(arg0, " \t\n"); i >= 0 {
 		arg0 = arg0[:i]
 	}
-	return shellArgv0[arg0[strings.LastIndexByte(arg0, '/')+1:]] && devNetEndpointNonLoopback(cmdLower)
+	arg0 = strings.TrimPrefix(arg0[strings.LastIndexByte(arg0, '/')+1:], "-")
+	name := strings.TrimPrefix(strings.ToLower(proc.Name), "-")
+	return shellArgv0[arg0] || shellArgv0[name]
 }
 
 // perlIOSocketRe matches perl loading the IO bundle (`-MIO`, which pulls in

