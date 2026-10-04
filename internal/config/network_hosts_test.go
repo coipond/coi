@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateNetworkHosts(t *testing.T) {
 	ok := []HostEntry{
@@ -42,5 +45,19 @@ func TestSanitizeStripsUntrustedNetworkHosts(t *testing.T) {
 
 	if fileCfg.Network.Hosts != nil {
 		t.Errorf("untrusted network.hosts must be stripped, got %+v", fileCfg.Network.Hosts)
+	}
+}
+
+// A profile with a single invalid [[network.hosts]] entry is rejected by
+// ProfileConfig.Validate — validation must not only kick in for 2+ entries.
+func TestProfileValidate_SingleInvalidNetworkHost(t *testing.T) {
+	p := &ProfileConfig{Network: &NetworkConfig{Hosts: []HostEntry{{IP: "not-an-ip", Hostnames: []string{"db"}}}}}
+	err := p.Validate("test")
+	if err == nil || !strings.Contains(err.Error(), "not a valid IPv4 address") {
+		t.Errorf("a single invalid host entry must be rejected, got %v", err)
+	}
+	ok := &ProfileConfig{Network: &NetworkConfig{Hosts: []HostEntry{{IP: "10.0.0.5", Hostnames: []string{"db"}}}}}
+	if err := ok.Validate("test"); err != nil {
+		t.Errorf("a single valid host entry should pass, got %v", err)
 	}
 }
