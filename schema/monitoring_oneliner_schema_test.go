@@ -3,7 +3,7 @@ package schema_test
 import (
 	"testing"
 
-	"github.com/mensfeld/coi/schema"
+	"github.com/coipond/coi/schema"
 )
 
 // The #842 [monitoring] reverse_shell_one_liners knob is an enum:

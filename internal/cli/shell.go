@@ -12,15 +12,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
-	"github.com/mensfeld/coi/internal/monitor"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/nftmonitor"
-	"github.com/mensfeld/coi/internal/session"
-	"github.com/mensfeld/coi/internal/terminal"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
+	"github.com/coipond/coi/internal/monitor"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/nftmonitor"
+	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/terminal"
+	"github.com/coipond/coi/internal/tool"
 	"github.com/spf13/cobra"
 )
 
@@ -143,6 +143,19 @@ func getConfiguredTool(cfg *config.Config) (tool.Tool, error) {
 	if twm, ok := t.(tool.ToolWithModel); ok {
 		if model != "" {
 			twm.SetModel(model)
+		}
+	}
+
+	// [tool] binary replaces the executable coi launches for the tool (e.g. a
+	// wrapper script). Like the codex flags above, it travels inside a shell
+	// command string, so reject an unsafe value loudly instead of letting the
+	// setter drop it silently.
+	if cfg.Tool.Binary != "" {
+		if err := tool.ValidateBinary(cfg.Tool.Binary); err != nil {
+			return nil, err
+		}
+		if twb, ok := t.(tool.ToolWithBinary); ok {
+			twb.SetBinary(cfg.Tool.Binary)
 		}
 	}
 
@@ -343,6 +356,80 @@ func runPreLaunch(mgr container.ContainerManager, t tool.Tool, opts container.Ex
 	return nil
 }
 
+// userPreLaunchScriptPath is where coi writes the user's [tool] pre_launch
+// commands inside the container. Root-owned and read-only to the agent, and
+// rewritten on every launch so config changes apply. The tool command line
+// only references this path, so the commands never have to survive the
+// nested `tmux "bash -c '...'"` quoting.
+const userPreLaunchScriptPath = "/etc/coi/pre-launch.sh"
+
+// userPreLaunchTimeoutSec bounds each pre_launch command so a hung download
+// can't keep the agent from starting.
+const userPreLaunchTimeoutSec = 300
+
+// userPreLaunchKillGraceSec is how long a timed-out command gets after TERM
+// before timeout escalates to KILL (a command may ignore TERM).
+const userPreLaunchKillGraceSec = 10
+
+// renderUserPreLaunchScript builds the script that runs the user's [tool]
+// pre_launch commands in order. Each is announced, bounded by a timeout, and
+// never blocks the tool: a failure or timeout is reported and the script
+// moves on. (These are the USER's commands; tool.ToolWithPreLaunch is the
+// tool's own setup, run separately via runPreLaunch.)
+//
+// timeout runs with --foreground so the command stays in the terminal's
+// foreground process group: Ctrl+C reaches it (skipping the remaining
+// commands) and it may set terminal modes or open the terminal without being
+// stopped. -k escalates to KILL after the grace period, so a command that
+// ignores TERM still can't keep the agent from starting. Trade-off: with
+// --foreground, timeout only signals the command itself, so a process it
+// started in the background can outlive a timeout. stdin is /dev/null, so a
+// command never sits waiting for input.
+func renderUserPreLaunchScript(cmds []string, timeoutSec, killGraceSec int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `#!/bin/bash
+# Managed by coi: [tool] pre_launch commands, run before the tool starts.
+# Each command gets %[1]ds; a failing or slow command never blocks the tool.
+# Ctrl+C skips the remaining commands.
+coi_pre_launch() {
+	printf '[coi] pre-launch: %%s\n' "$1"
+	timeout --foreground -k %[2]d %[1]d bash -c "$1" </dev/null
+	local rc=$?
+	if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+		printf '[coi] pre-launch command timed out after %[1]ds; starting the tool anyway\n'
+	elif [ "$rc" -ne 0 ]; then
+		printf '[coi] pre-launch command failed (exit %%s); starting the tool anyway\n' "$rc"
+	fi
+}
+`, timeoutSec, killGraceSec)
+	for _, c := range cmds {
+		b.WriteString("coi_pre_launch " + shellQuote(c) + "\n")
+	}
+	return b.String()
+}
+
+// withUserPreLaunch installs the [tool] pre_launch script in the container and
+// returns cliCmd prefixed to run it first. With no commands configured it
+// returns cliCmd unchanged. If the script can't be written the tool still
+// starts — the pre-launch step is skipped with a warning, never a hard error.
+func withUserPreLaunch(mgr container.ContainerManager, cmds []string, cliCmd string) string {
+	if len(cmds) == 0 {
+		return cliCmd
+	}
+	if _, err := mgr.ExecCommand("mkdir -p /etc/coi", container.ExecCommandOptions{Capture: true}); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: skipping [tool] pre_launch: %v\n", err)
+		return cliCmd
+	}
+	if err := mgr.CreateFileWithOwner(userPreLaunchScriptPath, renderUserPreLaunchScript(cmds, userPreLaunchTimeoutSec, userPreLaunchKillGraceSec), 0, 0, "0755"); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: skipping [tool] pre_launch: %v\n", err)
+		return cliCmd
+	}
+	// `trap : INT` keeps Ctrl+C during the pre-launch step from killing the
+	// launching shell (which would end the session before the tool starts):
+	// the tmux wrapper already traps INT, the direct (no-tmux) bash -c does not.
+	return "trap : INT; bash " + userPreLaunchScriptPath + "; " + cliCmd
+}
+
 // runCLI executes the CLI tool in the container interactively
 func (a *App) runCLI(result *session.SetupResult, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
 	cmdToRun := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
@@ -373,6 +460,7 @@ func (a *App) runCLI(result *session.SetupResult, sessionID string, useResumeFla
 		return err
 	}
 
+	cmdToRun = withUserPreLaunch(result.Manager, a.cfg.Tool.PreLaunch, cmdToRun)
 	_, err = result.Manager.ExecCommand(cmdToRun, opts)
 	return err
 }
@@ -451,6 +539,10 @@ func (a *App) runCLIInTmux(result *session.SetupResult, sessionID string, detach
 	}); err != nil {
 		return err
 	}
+
+	// The user's [tool] pre_launch commands run in the pane, before the tool,
+	// for both a new tmux session and a command sent into an existing one.
+	cliCmd = withUserPreLaunch(result.Manager, a.cfg.Tool.PreLaunch, cliCmd)
 
 	// Ensure tmux server is running first (critical for CI and new containers)
 	ensureTmuxServer(result.Manager, userPtr)

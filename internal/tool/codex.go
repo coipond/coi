@@ -12,18 +12,36 @@ type CodexTool struct {
 	permissionMode  string // "bypass" (default) or "interactive"
 	model           string // codex model, delivered as -m (e.g. "gpt-5-codex") — empty means unset (codex's own default)
 	reasoningEffort string // "minimal", "low", "medium", "high" — delivered as -c model_reasoning_effort=<v>; empty means unset
+	binary          string // [tool] binary override; empty means "codex"
 }
 
 // NewCodex creates a new codex tool instance
 func NewCodex() Tool { return &CodexTool{} }
 
+// Name returns "codex".
 func (c *CodexTool) Name() string { return "codex" }
 
-func (c *CodexTool) Binary() string { return "codex" }
+// Binary returns the executable to launch: the [tool] binary override if set,
+// else "codex".
+func (c *CodexTool) Binary() string {
+	if c.binary != "" {
+		return c.binary
+	}
+	return "codex"
+}
+
+// SetBinary implements ToolWithBinary: the executable to launch instead of
+// "codex" ([tool] binary). An empty or unsafe value leaves the default.
+func (c *CodexTool) SetBinary(path string) {
+	if path != "" && ValidateBinary(path) == nil {
+		c.binary = path
+	}
+}
 
 // ConfigDirName returns the config directory for codex (~/.codex, aka CODEX_HOME).
 func (c *CodexTool) ConfigDirName() string { return mustBundle("codex").ConfigDir }
 
+// SessionsDirName returns "sessions-codex".
 func (c *CodexTool) SessionsDirName() string { return "sessions-codex" }
 
 // rolloutSessionFile matches codex session files
@@ -67,7 +85,7 @@ func ValidateCodexFlagValue(key, value string) error {
 // root command; if upstream ever drops that, remove the flags from the resume
 // path — the host-seeded ~/.codex/config.toml still governs defaults.
 func (c *CodexTool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
-	cmd := []string{"codex"}
+	cmd := []string{c.Binary()}
 
 	if resume {
 		cmd = append(cmd, "resume")

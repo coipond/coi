@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/monitor"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/vmhost"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/monitor"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/vmhost"
 )
 
 // CheckNetworkBridge verifies the network bridge is configured
@@ -109,9 +109,11 @@ func CheckNft(netCfg config.NetworkConfig) HealthCheck {
 	mode := netCfg.Mode
 	sudoAllowed := netCfg.SudoAllowed()
 	installed := network.NftInstalled()
-	// NftUsable returns false (without probing sudo) when use_sudo=false — a user
-	// who opted out of Coi invoking sudo at all.
-	available := network.NftUsable(&netCfg)
+	// No sudo probe at all when use_sudo=false — a user who opted out of Coi
+	// invoking sudo. Otherwise probe with `sudo -k -n`: a credential cached by a
+	// recent `sudo` would make a plain `sudo -n` pass for ~15 minutes, hiding a
+	// missing NOPASSWD rule from both this check and `coi health --fix`.
+	available := sudoAllowed && nftPasswordlessSudo()
 	masquerade := network.MasqueradeEnabled()
 	isColima := vmhost.Detect() == vmhost.KindLimaLike
 
@@ -159,7 +161,7 @@ func CheckNft(netCfg config.NetworkConfig) HealthCheck {
 	}
 
 	if !available {
-		message := "nft installed but passwordless sudo not configured — run: echo \"$USER ALL=(ALL) NOPASSWD: /usr/sbin/nft\" | sudo tee /etc/sudoers.d/coi-nft && sudo chmod 0440 /etc/sudoers.d/coi-nft"
+		message := "nft installed but passwordless sudo not configured — run: coi health --fix"
 		if isColima {
 			message = "nft sudo not configured — on Colima, set mode = \"open\" in [network] section of your config.toml"
 		}
@@ -296,11 +298,25 @@ func CheckIptablesSudo() HealthCheck {
 		}
 	}
 
-	if exec.Command("sudo", "-n", iptablesPath, "-L", "FORWARD", "-n").Run() != nil {
+	// -k: ignore a cached sudo credential (see CheckNft).
+	if out, err := runProbe([]string{"sudo", "-k", "-n", iptablesPath, "-L", "FORWARD", "-n"}); err != nil {
+		// Only a sudo password prompt means a NOPASSWD rule is missing. If sudo
+		// ran iptables and IT failed (no ip_tables module, backend mismatch, a
+		// nested container), a sudoers rule can't help — say so instead of
+		// offering a remediation that would never fix anything.
+		if !sudoNeedsPassword(out) {
+			return HealthCheck{
+				Name:    "iptables_sudo",
+				Status:  StatusWarning,
+				Message: "iptables fails even via sudo: " + firstLine(out),
+				Details: map[string]interface{}{"sudo_password_required": false},
+			}
+		}
 		return HealthCheck{
 			Name:    "iptables_sudo",
 			Status:  StatusWarning,
-			Message: fmt.Sprintf(`Passwordless sudo not configured for iptables — run: echo "$USER ALL=(ALL) NOPASSWD: %s" | sudo tee /etc/sudoers.d/coi-iptables && sudo chmod 0440 /etc/sudoers.d/coi-iptables`, iptablesPath),
+			Message: "Passwordless sudo not configured for iptables — `coi health --fix` shows the command to grant it",
+			Details: map[string]interface{}{"sudo_password_required": true},
 		}
 	}
 
@@ -468,4 +484,22 @@ func CheckDockerForwardPolicy() HealthCheck {
 		Message: "Docker FORWARD DROP detected, no nft or iptables — containers cannot reach internet",
 		Details: details,
 	}
+}
+
+// sudoNeedsPassword reports whether `sudo -n` output says it stopped at a
+// password prompt (sudo: "a password is required"; sudo-rs: "interactive
+// authentication is required") rather than running the command.
+func sudoNeedsPassword(out []byte) bool {
+	o := string(out)
+	return strings.Contains(o, "password is required") || strings.Contains(o, "authentication is required")
+}
+
+// firstLine returns the first non-empty line of out, or "unknown error".
+func firstLine(out []byte) string {
+	for _, l := range strings.Split(string(out), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			return l
+		}
+	}
+	return "unknown error"
 }

@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // Allowlist mode makes the container's name resolution deterministic instead of

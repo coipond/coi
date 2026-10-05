@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/mensfeld/coi/internal/timing"
+	"github.com/coipond/coi/internal/timing"
 )
 
 // Teardown is a cleanup function registered by a Phase. Teardowns run in LIFO
@@ -27,7 +27,10 @@ type PhaseFunc struct {
 	RunFn     func(ctx context.Context) (Teardown, error)
 }
 
-func (p PhaseFunc) Name() string                              { return p.PhaseName }
+// Name returns PhaseName.
+func (p PhaseFunc) Name() string { return p.PhaseName }
+
+// Run calls RunFn.
 func (p PhaseFunc) Run(ctx context.Context) (Teardown, error) { return p.RunFn(ctx) }
 
 // Pipeline executes Phases in order and tracks their Teardowns for LIFO

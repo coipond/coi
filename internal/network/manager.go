@@ -1,3 +1,6 @@
+// Package network manages container network isolation: firewall rules for the
+// restricted, open and allowlist modes, domain resolution and IP caching, and
+// per-container /etc/hosts entries.
 package network
 
 import (
@@ -9,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
 )
 
 // errNftNotAvailable is the user-facing error when nft is unavailable
@@ -21,9 +24,8 @@ Network isolation in restricted/allowlist modes requires nftables (nft).
 
 To fix this:
   1. Install nftables: sudo apt install nftables
-  2. Configure passwordless sudo for nft:
-     echo "$USER ALL=(ALL) NOPASSWD: /usr/sbin/nft" | sudo tee /etc/sudoers.d/coi-nft
-     sudo chmod 0440 /etc/sudoers.d/coi-nft
+  2. Configure passwordless sudo for nft (validated with visudo):
+     coi health --fix
 
 Alternatively, run with unrestricted network access by setting open mode in
 your config file (.coi/config.toml in your workspace, or the profile's
@@ -429,7 +431,7 @@ func (m *Manager) syncResolved(domainIPs map[string][]string) error {
 		ttl := m.resolver.DomainTTLs[domain]
 		var entryPorts []portRange
 		if m.policy != nil {
-			entryPorts = m.policy.PortsForName(domain)
+			entryPorts = m.policy.portsForName(domain)
 		}
 		ports := resolvePorts(entryPorts, globalPorts)
 		if err := allower.AllowDynamicIPsPorts(ips, ports, ttl, refreshInterval); err != nil {
@@ -492,6 +494,7 @@ func (m *Manager) dynamicElementLifetimeInterval() time.Duration {
 // noopAllower stands in when the nft layer cannot install set elements (tests).
 type noopAllower struct{}
 
+// AllowDynamicIPsPorts discards the elements and always succeeds.
 func (noopAllower) AllowDynamicIPsPorts([]string, []portRange, uint32, time.Duration) error {
 	return nil
 }

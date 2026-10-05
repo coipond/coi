@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/image"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/image"
 	"github.com/spf13/cobra"
 )
 

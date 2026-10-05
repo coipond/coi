@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // fakeProber scripts successive probe answers; Running answers come from a

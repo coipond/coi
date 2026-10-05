@@ -181,7 +181,7 @@ def test_full_installation_process(meta_container, coi_binary):
     # - Fork PRs (branch doesn't exist in main repo)
     # - Deleted branches (branch was deleted after PR merged)
     github_branch = os.environ.get("GITHUB_HEAD_REF", "")
-    github_repo = os.environ.get("GITHUB_REPOSITORY", "mensfeld/coi")
+    github_repo = os.environ.get("GITHUB_REPOSITORY", "coipond/coi")
     github_server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     repo_url = f"{github_server}/{github_repo}.git"
 

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // secretMask is an expanded secret path to mask, with whether it is a directory.
@@ -21,7 +21,7 @@ type secretMask struct {
 	isDir   bool
 }
 
-// ExpandSecretPaths resolves the workspace-relative secret_paths globs to the
+// expandSecretPaths resolves the workspace-relative secret_paths globs to the
 // concrete entries to mask. Supported patterns: exact paths (".env"),
 // filepath.Glob patterns ("*.pem"), and a trailing "/**" ("secrets/**") which
 // masks the base directory.
@@ -35,7 +35,7 @@ type secretMask struct {
 // target is not reachable in the container's /workspace, so there is nothing to
 // leak, but the caller MUST surface it so the protection never fails silently.
 // Pure; safe to unit-test without a container.
-func ExpandSecretPaths(workspacePath string, secretPaths []string) (masks []secretMask, skipped []string) {
+func expandSecretPaths(workspacePath string, secretPaths []string) (masks []secretMask, skipped []string) {
 	wsResolved, err := filepath.EvalSymlinks(workspacePath)
 	if err != nil {
 		wsResolved = filepath.Clean(workspacePath)
@@ -161,7 +161,7 @@ func ensureMaskSources() (emptyFile, emptyDir string, err error) {
 // read the real file underneath. It protects the agent's normal reads/writes, not
 // a deliberate root-level unmount.
 func SetupSecretMasks(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, secretPaths []string, useShift bool) (masked, skipped []string, err error) {
-	masks, skipped := ExpandSecretPaths(workspacePath, secretPaths)
+	masks, skipped := expandSecretPaths(workspacePath, secretPaths)
 	if len(masks) == 0 {
 		return nil, skipped, nil
 	}

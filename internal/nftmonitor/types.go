@@ -45,6 +45,7 @@ type ThreatEvent struct {
 // ThreatLevel represents the severity of a threat
 type ThreatLevel string
 
+// Threat levels, in increasing order of severity.
 const (
 	ThreatLevelInfo     ThreatLevel = "info"
 	ThreatLevelWarning  ThreatLevel = "warning"

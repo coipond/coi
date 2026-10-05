@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/session"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/session"
 )
 
 // warnNamedSessionFork tells the user when a launch of a NAMED session lands

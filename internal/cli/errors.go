@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // Process exit codes. Codes 1 and 2 predate this list; the named codes let the
@@ -29,6 +29,7 @@ type ExitCodeError struct {
 	Message string
 }
 
+// Error returns Message, or "exit code N" when Message is empty.
 func (e *ExitCodeError) Error() string {
 	if e.Message != "" {
 		return e.Message

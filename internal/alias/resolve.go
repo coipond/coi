@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/session"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/session"
 )
 
 // ResolvedAlias is the result of resolving an alias for launching a new session.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 type recordingExecution struct {

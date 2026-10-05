@@ -1,4 +1,4 @@
-module github.com/mensfeld/coi
+module github.com/coipond/coi
 
 go 1.26.0
 

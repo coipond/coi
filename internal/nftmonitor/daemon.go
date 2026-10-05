@@ -1,6 +1,9 @@
 //go:build linux
 // +build linux
 
+// Package nftmonitor monitors container network activity by installing
+// nftables logging rules, reading the resulting kernel log entries, and
+// reporting suspicious connections as threats.
 package nftmonitor
 
 import (
@@ -8,8 +11,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/coipond/coi/internal/monitor"
 	"github.com/google/uuid"
-	"github.com/mensfeld/coi/internal/monitor"
 )
 
 // Daemon orchestrates nftables-based network monitoring

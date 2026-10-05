@@ -1,3 +1,6 @@
+// Package cleanup detects and removes host resources orphaned by containers
+// that were not cleaned up properly: veth interfaces, nft and ip6 rules,
+// nft monitoring rules, and iptables bridge-forward rules.
 package cleanup
 
 import (
@@ -9,8 +12,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/network"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
 )
 
 // OrphanedResources holds information about orphaned system resources

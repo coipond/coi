@@ -303,7 +303,7 @@ func restoreCapability(binaryPath string) {
 
 // fetchLatestRelease queries the GitHub API for the latest release
 func fetchLatestRelease() (*githubRelease, error) {
-	url := "https://api.github.com/repos/mensfeld/coi/releases/latest"
+	url := "https://api.github.com/repos/coipond/coi/releases/latest"
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {

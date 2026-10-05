@@ -1,3 +1,6 @@
+// Package container wraps the incus CLI: running incus commands, managing
+// container lifecycle, files, devices, storage and hardening, and checking
+// the installed Incus version.
 package container
 
 import (
@@ -17,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mensfeld/coi/internal/timing"
+	"github.com/coipond/coi/internal/timing"
 )
 
 // Manager provides a clean interface for Incus container operations
@@ -32,6 +35,7 @@ type ExitError struct {
 	Stderr   string // captured stderr from the incus subprocess, if any
 }
 
+// Error returns "exit status N", followed by the captured stderr when present.
 func (e *ExitError) Error() string {
 	if e.Stderr != "" {
 		return fmt.Sprintf("exit status %d: %s", e.ExitCode, e.Stderr)
@@ -39,6 +43,7 @@ func (e *ExitError) Error() string {
 	return fmt.Sprintf("exit status %d", e.ExitCode)
 }
 
+// Unwrap returns the underlying error.
 func (e *ExitError) Unwrap() error { return e.Err }
 
 // NewManager creates a new container manager
@@ -855,7 +860,7 @@ func UserInGroupFile(username, groupName string) bool {
 	return false
 }
 
-// Helper function to create a file with content. The pushed file inherits the
+// CreateFile writes content to containerPath in the container. The pushed file inherits the
 // host temp file's owner and mode (0600); use CreateFileWithOwner for files
 // that must land with explicit attributes.
 func (m *Manager) CreateFile(containerPath, content string) error {

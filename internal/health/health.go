@@ -1,15 +1,19 @@
+// Package health implements `coi health`: system, Incus, network, storage
+// and container probes, their aggregation into an overall status, and
+// optional remediation of failed checks.
 package health
 
 import (
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // CheckStatus represents the status of a health check
 type CheckStatus string
 
+// Possible CheckStatus values.
 const (
 	StatusOK      CheckStatus = "ok"
 	StatusWarning CheckStatus = "warning"
@@ -19,6 +23,7 @@ const (
 // OverallStatus represents the overall health status
 type OverallStatus string
 
+// Possible OverallStatus values.
 const (
 	OverallHealthy   OverallStatus = "healthy"
 	OverallDegraded  OverallStatus = "degraded"

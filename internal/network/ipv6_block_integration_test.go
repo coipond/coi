@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
 )
 
 // TestApplyIPv6BlockRule_Integration verifies that ApplyIPv6BlockForContainer adds

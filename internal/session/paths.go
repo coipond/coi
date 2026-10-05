@@ -3,7 +3,7 @@ package session
 import (
 	"path/filepath"
 
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // GetSessionsDir returns the sessions directory path for a given tool.

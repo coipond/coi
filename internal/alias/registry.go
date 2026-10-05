@@ -1,3 +1,5 @@
+// Package alias persists workspace aliases (alias -> workspace and optional
+// profile) and resolves them to running or launchable containers.
 package alias
 
 import (

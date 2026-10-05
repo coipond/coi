@@ -8,6 +8,7 @@ import (
 // ThreatLevel indicates severity of detected threat
 type ThreatLevel string
 
+// Threat levels, in increasing order of severity.
 const (
 	ThreatLevelInfo     ThreatLevel = "info"
 	ThreatLevelWarning  ThreatLevel = "warning"
@@ -157,8 +158,9 @@ type Process struct {
 	PID       int    `json:"pid"`
 	PPID      int    `json:"ppid"`
 	User      string `json:"user"`
-	Command   string `json:"command"`    // Full command line
-	EnvAccess bool   `json:"env_access"` // Has accessed /proc/*/environ
+	Command   string `json:"command"`        // Full command line
+	Name      string `json:"name,omitempty"` // Kernel process name (/proc/<pid>/status Name, i.e. comm): set from the executable, unaffected by argv[0]
+	EnvAccess bool   `json:"env_access"`     // Has accessed /proc/*/environ
 }
 
 // FilesystemStats holds workspace access statistics

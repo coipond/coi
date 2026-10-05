@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mensfeld/coi/internal/alias"
-	"github.com/mensfeld/coi/internal/session"
+	"github.com/coipond/coi/internal/alias"
+	"github.com/coipond/coi/internal/session"
 	"github.com/spf13/cobra"
 )
 

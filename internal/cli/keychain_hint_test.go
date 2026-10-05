@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/tool"
-	"github.com/mensfeld/coi/internal/vmhost"
+	"github.com/coipond/coi/internal/tool"
+	"github.com/coipond/coi/internal/vmhost"
 )
 
 func TestFormatMacKeychainHint(t *testing.T) {

@@ -128,9 +128,8 @@ sudo usermod -aG incus-admin "$USER"
 incus network list
 
 # Open mode still adds nft ACCEPT rules (internal/network); mirror the native
-# lanes' passwordless nft sudo rule.
-echo "$USER ALL=(ALL) NOPASSWD: /usr/sbin/nft *" | sudo tee /etc/sudoers.d/coi-nft
-sudo chmod 0440 /etc/sudoers.d/coi-nft
+# lanes' passwordless nft sudo rule (visudo-validated, atomic install).
+bash "$REPO_DIR/scripts/install-sudoers-dropin.sh" "#$(id -u) ALL=(ALL) NOPASSWD: /usr/sbin/nft *" /etc/sudoers.d/coi-nft
 # Container internet for the cache-miss `coi build` path.
 echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward >/dev/null
 

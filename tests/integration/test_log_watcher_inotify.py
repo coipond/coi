@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 # ---------------------------------------------------------------------------
-# Shared helpers (mirrors test_security_monitoring.py)
+# Shared helpers (mirror tests/support/monitoring.py)
 # ---------------------------------------------------------------------------
 
 

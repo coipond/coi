@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/monitor"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/session"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/monitor"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/session"
 )
 
 // waitProbeReady waits up to 30s for a just-launched probe container via the
@@ -58,6 +58,9 @@ func subidSkip(name string) (HealthCheck, bool) {
 	}, true
 }
 
+// CheckContainerConnectivity launches a throwaway container from imageName
+// (default coi-default) under the given hardening policy and verifies it gets
+// a DHCP address and can resolve DNS and reach HTTPS endpoints.
 func CheckContainerConnectivity(imageName string, policy container.HardeningPolicy) HealthCheck {
 	// Skip if no image available
 	if imageName == "" {

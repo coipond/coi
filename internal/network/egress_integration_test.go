@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
 )
 
 // linesWithComment returns the nft rule lines carrying this container's coi-<ip>

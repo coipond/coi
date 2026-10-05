@@ -6,25 +6,43 @@ import "path/filepath"
 type OpencodeTool struct {
 	permissionMode  string // "bypass" (default) or "interactive"
 	contextFilePath string // absolute path to sandbox context file inside container (set by SetAutoContextPath)
+	binary          string // [tool] binary override; empty means "opencode"
 }
 
 // NewOpencode creates a new opencode tool instance
 func NewOpencode() Tool { return &OpencodeTool{} }
 
+// Name returns "opencode".
 func (c *OpencodeTool) Name() string { return "opencode" }
 
-func (c *OpencodeTool) Binary() string { return "opencode" }
+// Binary returns the executable to launch: the [tool] binary override if set,
+// else "opencode".
+func (c *OpencodeTool) Binary() string {
+	if c.binary != "" {
+		return c.binary
+	}
+	return "opencode"
+}
+
+// SetBinary implements ToolWithBinary: the executable to launch instead of
+// "opencode" ([tool] binary). An empty or unsafe value leaves the default.
+func (c *OpencodeTool) SetBinary(path string) {
+	if path != "" && ValidateBinary(path) == nil {
+		c.binary = path
+	}
+}
 
 // ConfigDirName returns the XDG-standard config directory for opencode.
 func (c *OpencodeTool) ConfigDirName() string { return mustBundle("opencode").ConfigDir }
 
+// SessionsDirName returns "sessions-opencode".
 func (c *OpencodeTool) SessionsDirName() string { return "sessions-opencode" }
 
 // BuildCommand builds the opencode launch command.
 // When resume is true, passes --continue to auto-resume the last session,
 // or --session <id> if a specific session ID is provided.
 func (c *OpencodeTool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
-	cmd := []string{"opencode"}
+	cmd := []string{c.Binary()}
 	if resume {
 		if resumeSessionID != "" {
 			cmd = append(cmd, "--session", resumeSessionID)

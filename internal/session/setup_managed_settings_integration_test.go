@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // TestSetupClaudeManagedSettings_Integration proves the fix's observable

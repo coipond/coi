@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/logger"
+	"github.com/coipond/coi/internal/logger"
 )
 
 // TestStopGracefulTrue verifies that StopGraceful=true maps to force=false

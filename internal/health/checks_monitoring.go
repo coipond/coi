@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/nftmonitor"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/nftmonitor"
 )
 
 // CheckNFTables checks if nftables is available and properly configured
@@ -42,9 +42,9 @@ func CheckNFTables() HealthCheck {
 		}
 	}
 
-	// Check if we can run nft commands with sudo (NOPASSWD)
-	cmd := exec.Command("sudo", "-n", "nft", "list", "ruleset")
-	output, err := cmd.CombinedOutput()
+	// Check if we can run nft commands with sudo (NOPASSWD). -k ignores a cached
+	// sudo credential, which would otherwise mask a missing rule.
+	output, err := runProbe([]string{"sudo", "-k", "-n", "nft", "list", "ruleset"})
 	if err != nil {
 		return HealthCheck{
 			Name:    "nftables",

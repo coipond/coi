@@ -1,6 +1,7 @@
 package installer_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -511,6 +512,15 @@ fi
 exit 0
 STUB
 		chmod +x "$tmpdir/incus"
+		# install.sh runs these queries as ` + "`sudo incus ...`" + `; real sudo resets PATH
+		# to secure_path, which would bypass the stub and hit a host's real
+		# incus (making this test pass/fail depending on the machine).
+		cat > "$tmpdir/sudo" <<'STUB'
+#!/bin/bash
+if [ "$1" = "incus" ]; then exec "$@"; fi
+exit 0
+STUB
+		chmod +x "$tmpdir/sudo"
 		export PATH="$tmpdir:$PATH"
 
 		export NONINTERACTIVE=1
@@ -1280,8 +1290,9 @@ func TestInstallSh_SetupNftSudoers_ConsentAndDecline(t *testing.T) {
 		cat > "$tmpdir/sudo" <<'STUB'
 #!/bin/bash
 echo "$*" >> "$SUDO_LOG"
+# install_sudoers_dropin runs: sudo sh -c SCRIPT sh RULE TARGET
 case "$1" in
-  tee)  cat > "$NFT_LINE" ;;
+  sh)   printf '%s\n' "$5" > "$NFT_LINE" ;;
   *)    : ;;
 esac
 exit 0
@@ -1299,6 +1310,11 @@ STUB
 	out, _, _ := runBashSnippet(t, base, "NONINTERACTIVE=1", "COI_ASSUME_YES=1")
 	if !strings.Contains(out, "NOPASSWD:") || !strings.Contains(out, "nft") {
 		t.Errorf("with consent, setup_nft_sudoers should write the NOPASSWD nft rule; out:\n%s", out)
+	}
+	// The user is named by numeric UID: a username with a space is a sudoers
+	// syntax error that would break every sudo on the host.
+	if !strings.Contains(out, fmt.Sprintf("#%d ALL=(ALL) NOPASSWD:", os.Getuid())) {
+		t.Errorf("sudoers rule should name the user by #uid; out:\n%s", out)
 	}
 	// Decline: skip + guidance, no drop-in written.
 	out, _, _ = runBashSnippet(t, base, "NONINTERACTIVE=1")
@@ -1359,5 +1375,144 @@ func TestInstallSh_EnsureBuildDeps_PresentIsNoop(t *testing.T) {
 	}
 	if strings.Contains(out, "install") {
 		t.Errorf("no install expected when tools present; out:\n%s", out)
+	}
+}
+
+// On apt, ensure_build_deps must refresh the package lists before installing:
+// fresh container/minimal images ship with empty lists, so a bare
+// ` + "`apt-get install`" + ` fails "Unable to locate package". A failed install must
+// still reach the actionable "Building from source needs:" message instead of
+// tripping set -e / the generic ERR trap.
+func TestInstallSh_EnsureBuildDeps_AptUpdatesBeforeInstall(t *testing.T) {
+	script := installShPath(t)
+	snippet := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		export SUDO_LOG="$tmpdir/sudo.log"; : > "$SUDO_LOG"
+		# sudo stub: log every call; the install itself fails (as on an image
+		# whose lists couldn't be refreshed) and installs nothing.
+		printf '#!/bin/bash\necho "$*" >> "$SUDO_LOG"\n[[ "$*" == *" install "* ]] && exit 100\nexit 0\n' > "$tmpdir/sudo"
+		chmod +x "$tmpdir/sudo"
+		export NONINTERACTIVE=1 COI_ASSUME_YES=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		PKG_MANAGER=apt
+		# Restrict PATH so git/make/gcc are genuinely absent.
+		PATH="$tmpdir"
+		# Bare subshell keeps install.sh's set -e live inside it (an || list
+		# would disable it); set +e only so the parent survives the exit.
+		set +e; ( set -e; ensure_build_deps ); rc=$?
+		echo "===RC=$rc==="; echo "===SUDO==="; /bin/cat "$SUDO_LOG"
+	`
+	out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+	idxUpdate := strings.Index(out, "apt-get update")
+	idxInstall := strings.Index(out, "apt-get install -y git build-essential")
+	if idxUpdate < 0 || idxInstall < 0 || idxUpdate > idxInstall {
+		t.Errorf("expected apt-get update before apt-get install; out:\n%s", out)
+	}
+	if !strings.Contains(out, "Building from source needs:") {
+		t.Errorf("failed install should reach the actionable message; out:\n%s", out)
+	}
+	if strings.Contains(out, "===RC=0===") {
+		t.Errorf("expected non-zero exit when deps are still missing; out:\n%s", out)
+	}
+}
+
+// pkg_install on apt refreshes the lists exactly once per run.
+func TestInstallSh_PkgInstall_AptUpdatesOnce(t *testing.T) {
+	script := installShPath(t)
+	snippet := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		export SUDO_LOG="$tmpdir/sudo.log"; : > "$SUDO_LOG"
+		printf '#!/bin/bash\necho "$*" >> "$SUDO_LOG"; exit 0\n' > "$tmpdir/sudo"; chmod +x "$tmpdir/sudo"
+		export PATH="$tmpdir:$PATH"
+		export NONINTERACTIVE=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		PKG_MANAGER=apt
+		pkg_install foo
+		pkg_install bar
+		cat "$SUDO_LOG"
+	`
+	out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+	want := "apt-get update -qq\napt-get install -y foo\napt-get install -y bar\n"
+	if out != want {
+		t.Errorf("unexpected sudo calls:\ngot:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// install_sudoers_dropin validates the rule with visudo before it can reach the
+// target: a rejected rule leaves the existing drop-in untouched and no temp file
+// behind (a broken file in /etc/sudoers.d disables sudo host-wide); an accepted
+// one lands with mode 0440.
+func TestInstallSh_InstallSudoersDropin_ValidatesBeforeInstall(t *testing.T) {
+	script := installShPath(t)
+	run := func(visudoExit int) string {
+		snippet := `
+			tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+			mkdir "$tmpdir/bin" "$tmpdir/sudoers.d"
+			# sudo stub runs the command unprivileged; visudo stub accepts/rejects.
+			printf '#!/bin/bash\nexec "$@"\n' > "$tmpdir/bin/sudo"
+			printf '#!/bin/sh\nexit ` + fmt.Sprint(visudoExit) + `\n' > "$tmpdir/bin/visudo"
+			chmod +x "$tmpdir/bin/sudo" "$tmpdir/bin/visudo"
+			export PATH="$tmpdir/bin:$PATH"
+			echo previous > "$tmpdir/sudoers.d/coi-nft"
+			export NONINTERACTIVE=1
+			source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+			set +e
+			install_sudoers_dropin "#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft" "$tmpdir/sudoers.d/coi-nft"
+			echo "===RC=$?==="
+			echo "===CONTENT==="; cat "$tmpdir/sudoers.d/coi-nft"
+			echo "===MODE=$(stat -c %a "$tmpdir/sudoers.d/coi-nft")==="
+			echo "===FILES=$(ls -A "$tmpdir/sudoers.d" | wc -l)==="
+		`
+		out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+		return out
+	}
+
+	out := run(1)
+	if !strings.Contains(out, "===RC=1===") {
+		t.Errorf("rejected rule must fail; out:\n%s", out)
+	}
+	if !strings.Contains(out, "===CONTENT===\nprevious\n") {
+		t.Errorf("rejected rule must leave the existing drop-in untouched; out:\n%s", out)
+	}
+	if !strings.Contains(out, "===FILES=1===") {
+		t.Errorf("rejected rule must not leave a temp file behind; out:\n%s", out)
+	}
+
+	out = run(0)
+	if !strings.Contains(out, "===RC=0===") {
+		t.Errorf("valid rule must install; out:\n%s", out)
+	}
+	if !strings.Contains(out, "===CONTENT===\n#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft\n") {
+		t.Errorf("valid rule not written to target; out:\n%s", out)
+	}
+	if !strings.Contains(out, "===MODE=440===") || !strings.Contains(out, "===FILES=1===") {
+		t.Errorf("valid rule must land with mode 0440 and no temp file; out:\n%s", out)
+	}
+}
+
+// install_sudoers_dropin finds visudo even when PATH lacks /usr/sbin (root via
+// a non-login su), and reports a genuinely missing visudo as such.
+func TestInstallSh_InstallSudoersDropin_FindsVisudoOffPath(t *testing.T) {
+	if _, err := os.Stat("/usr/sbin/visudo"); err != nil {
+		t.Skip("needs /usr/sbin/visudo")
+	}
+	script := installShPath(t)
+	snippet := `
+		tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+		mkdir "$tmpdir/bin"
+		printf '#!/bin/bash\nexec "$@"\n' > "$tmpdir/bin/sudo"; chmod +x "$tmpdir/bin/sudo"
+		export NONINTERACTIVE=1
+		source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+		PATH="$tmpdir/bin:/usr/bin:/bin"
+		set +e
+		install_sudoers_dropin "#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft" "$tmpdir/coi-nft"
+		echo "===RC=$?==="; cat "$tmpdir/coi-nft"
+	`
+	out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1")
+	if !strings.Contains(out, "===RC=0===\n#1000 ALL=(ALL) NOPASSWD: /usr/sbin/nft") {
+		t.Errorf("install with /usr/sbin off PATH should succeed; out:\n%s", out)
+	}
+	if b, _ := os.ReadFile(script); !strings.Contains(string(b), "visudo not found") {
+		t.Error("install.sh must report a missing visudo distinctly")
 	}
 }

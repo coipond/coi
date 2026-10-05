@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // TestSetupCLIConfig_Codex_Integration runs the real codex config seeding

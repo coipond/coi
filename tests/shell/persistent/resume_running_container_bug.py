@@ -17,7 +17,7 @@ Simulated without rebooting by:
 2. Modifying the saved session metadata to set persistent=false
 3. Running coi shell --resume=<id> — now succeeds
 
-See: https://github.com/mensfeld/coi/issues/413
+See: https://github.com/coipond/coi/issues/413
 """
 
 import json
@@ -223,7 +223,7 @@ def test_resume_running_container_succeeds(coi_binary, cleanup_containers, works
             f"Bug #413 confirmed: resume failed with slot conflict error.\n"
             f"Stderr: {resume_stderr}\n"
             f"This should NOT happen — coi should reuse the running container.\n"
-            f"See: https://github.com/mensfeld/coi/issues/413"
+            f"See: https://github.com/coipond/coi/issues/413"
         )
         assert resume_returncode == 0, (
             f"Expected coi shell --resume to succeed (exit 0), got exit {resume_returncode}.\n"

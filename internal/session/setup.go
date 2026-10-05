@@ -1,3 +1,6 @@
+// Package session sets up, runs and tears down coi sessions: container
+// launch and configuration, mounts, credentials, git identity and guards,
+// security hardening, and cleanup.
 package session
 
 import (
@@ -10,15 +13,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/limits"
-	"github.com/mensfeld/coi/internal/logger"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/timing"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/limits"
+	"github.com/coipond/coi/internal/logger"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/timing"
+	"github.com/coipond/coi/internal/tool"
 )
 
+// Container images: DefaultImage is the stock base image, CoiImage the
+// coi-built image used by default.
 const (
 	DefaultImage = "images:ubuntu/22.04"
 	CoiImage     = "coi-default"
