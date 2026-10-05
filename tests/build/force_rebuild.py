@@ -8,6 +8,8 @@ Tests:
 
 import subprocess
 
+import pytest
+
 
 def test_build_custom_force_rebuild(coi_binary, tmp_path):
     """Test force rebuilding an existing custom image."""
@@ -15,11 +17,11 @@ def test_build_custom_force_rebuild(coi_binary, tmp_path):
 
     # Skip if base doesn't exist
     result = subprocess.run(
-        [coi_binary, "image", "exists", "coi-sandbox"],
+        [coi_binary, "image", "exists", "coi-default"],
         capture_output=True,
     )
     if result.returncode != 0:
-        return
+        pytest.skip("coi-default image not built")
 
     # Create profile directory with config and build script
     profile_dir = tmp_path / ".coi" / "profiles" / "test-force"
