@@ -91,7 +91,7 @@ def test_multiple_simultaneous_threats(test_workspace, enable_monitoring, coi_bi
 
     # Container should be killed (CRITICAL takes precedence)
     killed = False
-    for _ in range(15):
+    for _ in range(35):  # a kill (stop + delete) can take ~20s on CI
         time.sleep(1)
         state = get_container_state(container_name)
         if container_absent(container_name):

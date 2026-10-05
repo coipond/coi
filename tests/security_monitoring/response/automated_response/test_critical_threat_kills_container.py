@@ -53,7 +53,7 @@ def test_critical_threat_kills_container(test_workspace, enable_monitoring, coi_
 
     # Wait for auto-kill
     killed = False
-    for _ in range(15):
+    for _ in range(35):  # a kill (stop + delete) can take ~20s on CI
         time.sleep(1)
         if container_absent(container_name):
             killed = True

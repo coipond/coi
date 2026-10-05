@@ -29,7 +29,7 @@ def test_interpreter_reverse_shell_still_killed(
         inject_faked_process(container_name, wrapped)
 
         killed = False
-        for _ in range(20):
+        for _ in range(35):  # a kill (stop + delete) can take ~20s on CI
             time.sleep(1)
             if container_absent(container_name):
                 killed = True

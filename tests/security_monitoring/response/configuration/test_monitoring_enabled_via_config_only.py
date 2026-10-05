@@ -75,7 +75,7 @@ mode = "restricted"
         time.sleep(5)
 
         killed = False
-        for _ in range(15):
+        for _ in range(35):  # a kill (stop + delete) can take ~20s on CI
             time.sleep(1)
             state = get_container_state(container_name)
             if container_absent(container_name):

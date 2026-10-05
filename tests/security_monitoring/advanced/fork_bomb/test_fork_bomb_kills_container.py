@@ -87,7 +87,7 @@ process_count_threshold = 15
         )
 
         killed = False
-        for _ in range(20):
+        for _ in range(35):  # a kill (stop + delete) can take ~20s on CI
             time.sleep(1)
             if container_absent(container_name):
                 killed = True

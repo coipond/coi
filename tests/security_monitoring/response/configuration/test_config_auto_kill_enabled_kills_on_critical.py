@@ -81,7 +81,7 @@ file_read_rate_mb_per_sec = 1000
         # Container SHOULD be killed: config has auto_kill_on_critical=true
         killed = False
         final_state = "Unknown"
-        for _ in range(15):
+        for _ in range(35):  # a kill (stop + delete) can take ~20s on CI
             time.sleep(1)
             state = get_container_state(container_name)
             if container_absent(container_name):
