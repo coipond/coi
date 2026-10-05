@@ -1087,7 +1087,7 @@ func ConfigGet(ctx context.Context, containerName, key string) (string, error) {
 // differs, so a reused container whose config already matches costs one
 // (cached) read instead of a write. Returns whether it wrote.
 func ConfigSetIfChanged(ctx context.Context, containerName, key, value string) (bool, error) {
-	if cur, err := ConfigGet(ctx, containerName, key); err == nil && cur == strings.TrimSpace(value) {
+	if cur, err := ConfigGet(ctx, containerName, key); err == nil && value == strings.TrimSpace(value) && cur == value {
 		return false, nil
 	}
 	return true, ConfigSet(ctx, containerName, key, value)

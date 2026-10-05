@@ -110,10 +110,10 @@ func TestPullDirectoryTar_EndToEnd(t *testing.T) {
 
 	bin := t.TempDir()
 	script := "#!/bin/sh\n" +
-		"# argv: --project P exec NAME -- tar -C PARENT -cf - BASE\n" +
+		"# argv: --project P exec NAME -- sh -c SCRIPT NAME0 PARENT BASE\n" +
 		"shift 2; [ \"$1\" = exec ] || exit 9; shift 3\n" +
-		"[ \"$1\" = tar ] || exit 9\n" +
-		"exec tar -C \"" + root + "$3\" -cf - \"$6\"\n"
+		"[ \"$1\" = sh ] || exit 9\n" +
+		"exec sh -c \"$3\" \"$4\" \"" + root + "$5\" \"$6\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -135,5 +135,20 @@ func TestPullDirectoryTar_EndToEnd(t *testing.T) {
 	}
 	if err := m.PullDirectoryTar("/home/code/missing", filepath.Join(t.TempDir(), "x")); err == nil {
 		t.Error("missing source must fail")
+	}
+}
+
+// A failing stream (any non-zero exit after the in-container 1->0 mapping)
+// is never accepted, even if what arrived parses as a complete archive.
+func TestPullDirectoryTar_NonZeroExitFails(t *testing.T) {
+	bin := t.TempDir()
+	// Emits an empty-but-valid archive, then fails like a dropped incus stream.
+	script := "#!/bin/sh\nhead -c 1024 /dev/zero\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := NewManager("c1").PullDirectoryTar("/home/code/.claude", filepath.Join(t.TempDir(), "x")); err == nil {
+		t.Error("exit 1 from incus must fail the pull")
 	}
 }

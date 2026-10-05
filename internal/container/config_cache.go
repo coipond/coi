@@ -63,7 +63,7 @@ func invalidateConfigCache() {
 // the guest filesystem, not the instance config.
 var readOnlyIncusVerbs = map[string]bool{
 	"list": true, "info": true, "version": true, "exec": true, "file": true,
-	"query": true, "monitor": true, "console": true, "export": true,
+	"monitor": true, "console": true, "export": true,
 }
 
 // incusArgsAreReadOnly reports whether argv (without the "--project X"

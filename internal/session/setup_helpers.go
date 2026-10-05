@@ -523,13 +523,13 @@ func setupWritableGitConfig(mgr container.ContainerManager, homeDir string, iden
 	}
 	out, err := runGuestOpsOutput(mgr, ops, container.ExecCommandOptions{})
 	if !strings.Contains(out, gitGuardOKMarker) {
-		logger(fmt.Sprintf("Warning: Failed to set git user.useConfigOnly (%v)", err))
+		logger("Warning: Failed to set git user.useConfigOnly" + errSuffix(err))
 	}
 	if identity.Complete() {
 		if strings.Contains(out, gitIdentityOKMarker) {
 			logger("Configured container git identity from host global git config")
 		} else {
-			logger(fmt.Sprintf("Warning: Failed to configure git identity (%v)", err))
+			logger("Warning: Failed to configure git identity" + errSuffix(err))
 		}
 	}
 	if len(hookOps) == 0 {
@@ -540,6 +540,14 @@ func setupWritableGitConfig(mgr container.ContainerManager, homeDir string, iden
 		return
 	}
 	logGitHooksInstalled(stripAttribution, lockIdentity, len(protectedBranches) > 0, protectedBranches, logger)
+}
+
+// errSuffix renders ": <err>" for a non-nil error, else "".
+func errSuffix(err error) string {
+	if err == nil {
+		return ""
+	}
+	return ": " + err.Error()
 }
 
 // GitIdentity is a concrete git author identity resolved outside the container.

@@ -3,6 +3,7 @@ package network
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -875,9 +876,12 @@ const instanceNetTTL = 5 * time.Second
 // (either may be empty) from one `incus list`.
 func lookupInstanceNet(containerName string) (ip, veth string, err error) {
 	if v, ok := instanceNetCache.Load(containerName); ok {
-		if n, ok := v.(instanceNet); ok && time.Since(n.at) < instanceNetTTL {
+		// The veth is recreated on every container start: only trust a cached
+		// answer whose veth still exists on the host.
+		if n, ok := v.(instanceNet); ok && time.Since(n.at) < instanceNetTTL && hostInterfaceExists(n.veth) {
 			return n.ip, n.veth, nil
 		}
+		instanceNetCache.Delete(containerName)
 	}
 	output, err := container.IncusOutput("list", containerName, "--format=json")
 	if err != nil {
@@ -891,6 +895,15 @@ func lookupInstanceNet(containerName string) (ip, veth string, err error) {
 		instanceNetCache.Store(containerName, instanceNet{ip: ip, veth: veth, at: time.Now()})
 	}
 	return ip, veth, nil
+}
+
+// hostInterfaceExists reports whether a network interface exists on the host.
+func hostInterfaceExists(name string) bool {
+	if name == "" || strings.ContainsAny(name, "/.") {
+		return false
+	}
+	_, err := os.Stat("/sys/class/net/" + name)
+	return err == nil
 }
 
 // parseInstanceNet extracts eth0's IPv4 address and host_name for

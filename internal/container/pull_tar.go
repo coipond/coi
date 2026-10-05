@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -54,7 +53,15 @@ func (m *Manager) PullDirectoryTar(containerPath, localPath string) error {
 	}
 	defer os.RemoveAll(tempDir)
 
-	argv := buildIncusCommand("exec", m.ContainerName, "--", "tar", "-C", parent, "-cf", "-", base)
+	// GNU tar exits 1 for "a file changed as we read it" (routine for a live
+	// config dir; the archive is complete). Map that to 0 INSIDE the container
+	// so the host can accept exit 0 only: the incus client also exits 1 on its
+	// own failures (a dropped stream), which must never pass as success.
+	// --hard-dereference stores every name of a hard-linked file as a regular
+	// file (the extractor drops link entries), matching what `file pull` saved.
+	argv := buildIncusCommand("exec", m.ContainerName, "--", "sh", "-c",
+		`tar --hard-dereference -C "$1" -cf - "$2"; rc=$?; [ "$rc" -eq 1 ] && rc=0; exit "$rc"`,
+		"coi-tar-pull", parent, base)
 	cmd := execIncusCommand(argv)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -76,7 +83,7 @@ func (m *Manager) PullDirectoryTar(containerPath, localPath string) error {
 	if extractErr != nil {
 		return fmt.Errorf("tar pull of %s: %w", clean, extractErr)
 	}
-	if waitErr != nil && !tarSoftFailure(waitErr) {
+	if waitErr != nil {
 		msg := strings.TrimSpace(stderr.String())
 		return fmt.Errorf("tar pull of %s failed: %w: %s", clean, waitErr, msg)
 	}
@@ -86,14 +93,6 @@ func (m *Manager) PullDirectoryTar(containerPath, localPath string) error {
 		return fmt.Errorf("tar pull of %s: no directory in stream", clean)
 	}
 	return os.Rename(pulled, localPath)
-}
-
-// tarSoftFailure reports GNU tar's exit status 1 ("some files differ" — a file
-// changed while being read, routine for a live tool config dir): the archive
-// is complete and usable.
-func tarSoftFailure(err error) bool {
-	var exitErr *exec.ExitError
-	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
 // extractTarStrict extracts r into dir, accepting only directories and regular
