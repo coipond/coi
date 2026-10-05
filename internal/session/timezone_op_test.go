@@ -91,3 +91,50 @@ func TestPhaseConfigureTimezone_Deferred(t *testing.T) {
 		t.Errorf("want one queued timezone op, got %+v", st.pendingGuestOps)
 	}
 }
+
+// The run path sets timezone and mise trust in ONE exec and logs only what
+// changed or failed.
+func TestConfigureTimezoneAndMiseTrust_OneExec(t *testing.T) {
+	r := &guestOpsRecorder{}
+	var logs []string
+	ConfigureTimezoneAndMiseTrust(r, "Europe/Warsaw", "/workspace", func(m string) { logs = append(logs, m) })
+	if len(r.execs) != 1 {
+		t.Fatalf("want one exec, got %d", len(r.execs))
+	}
+	for _, want := range []string{"zoneinfo/Europe/Warsaw", "MISE_TRUSTED_CONFIG_PATHS", timezoneFailedMarker, miseTrustFailedMarker} {
+		if !strings.Contains(r.execs[0], want) {
+			t.Errorf("batched exec missing %q", want)
+		}
+	}
+	if len(logs) != 0 {
+		t.Errorf("unchanged zone and successful trust must log nothing, got %v", logs)
+	}
+}
+
+// The shell path queues mise trust for the context-files exec too.
+func TestPhaseMountsAndContextPath_DefersMiseTrust(t *testing.T) {
+	st := &setupState{opts: SetupOptions{Logger: func(string) {}}, result: &SetupResult{ContainerWorkspacePath: "/workspace"}}
+	if _, err := st.phaseMountsAndContextPath(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.pendingGuestOps) != 1 || !strings.Contains(st.pendingGuestOps[0].cmd, "MISE_TRUSTED_CONFIG_PATHS") {
+		t.Errorf("want one queued mise-trust op, got %+v", st.pendingGuestOps)
+	}
+}
+
+func TestMiseTrustOp_FailureDoesNotFailBatch(t *testing.T) {
+	// /etc/profile.d is not writable for a non-root test (or the sed target is
+	// missing), so the op must report via the marker and still exit 0.
+	if os.Getuid() == 0 {
+		t.Skip("root can write /etc")
+	}
+	out, err := exec.Command("bash", "-c", miseTrustOp("/workspace").cmd).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), miseTrustFailedMarker) {
+		t.Errorf("want marker and exit 0, got err=%v out=%q", err, out)
+	}
+	var logs []string
+	reportMiseTrust(string(out), func(m string) { logs = append(logs, m) })
+	if len(logs) != 1 {
+		t.Errorf("failure must be logged, got %v", logs)
+	}
+}

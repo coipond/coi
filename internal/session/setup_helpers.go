@@ -429,16 +429,50 @@ func mergeJSONSettings(existingContent []byte, settings map[string]interface{}) 
 // to /etc/bash.bashrc (non-login interactive shells, sourced before ~/.bashrc
 // where mise activates). Non-fatal: logs a warning on failure.
 func SetupMiseTrust(mgr container.ContainerExecution, containerWorkspacePath string, logger func(string)) {
+	if _, err := mgr.ExecCommand(miseTrustCmd(containerWorkspacePath), container.ExecCommandOptions{Capture: true}); err != nil {
+		logger(fmt.Sprintf("Warning: Failed to configure mise workspace trust: %v", err))
+	}
+}
+
+// miseTrustCmd is SetupMiseTrust's in-container command.
+func miseTrustCmd(containerWorkspacePath string) string {
 	exportLine := fmt.Sprintf(`export MISE_TRUSTED_CONFIG_PATHS="%s"`, containerWorkspacePath)
-	trustCmd := fmt.Sprintf(
+	return fmt.Sprintf(
 		`printf '%%s\n' '%s' > /etc/profile.d/coi-mise-trust.sh && `+
 			`sed -i '/MISE_TRUSTED_CONFIG_PATHS/d' /etc/bash.bashrc && `+
 			`sed -i '1i %s' /etc/bash.bashrc`,
 		exportLine, exportLine,
 	)
-	if _, err := mgr.ExecCommand(trustCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-		logger(fmt.Sprintf("Warning: Failed to configure mise workspace trust: %v", err))
+}
+
+// miseTrustFailedMarker is printed by miseTrustOp when the trust setup fails.
+const miseTrustFailedMarker = "coi:mise-trust-failed"
+
+// miseTrustOp is SetupMiseTrust as a batchable op that never fails its batch:
+// a failure prints miseTrustFailedMarker instead (see reportMiseTrust).
+func miseTrustOp(containerWorkspacePath string) guestOp {
+	return guestCmd("{ " + miseTrustCmd(containerWorkspacePath) + "; } || echo " + miseTrustFailedMarker)
+}
+
+// reportMiseTrust logs a mise-trust failure from a batched exec's output.
+func reportMiseTrust(out string, logger func(string)) {
+	if strings.Contains(out, miseTrustFailedMarker) {
+		logger("Warning: Failed to configure mise workspace trust")
 	}
+}
+
+// ConfigureTimezoneAndMiseTrust sets the container timezone ("" = UTC) and the
+// workspace mise trust in ONE exec (the run path; the shell path batches the
+// same ops into its context-files exec). Both are non-fatal and idempotent:
+// a matching timezone writes nothing, and only a change or failure is logged.
+func ConfigureTimezoneAndMiseTrust(mgr container.ContainerManager, tz, containerWorkspacePath string, logger func(string)) {
+	out, err := runGuestOpsOutput(mgr, []guestOp{timezoneOp(tz), miseTrustOp(containerWorkspacePath)}, container.ExecCommandOptions{})
+	if err != nil {
+		logger(fmt.Sprintf("Warning: Failed to configure timezone and mise workspace trust: %v", err))
+		return
+	}
+	reportTimezone(out, tz, logger)
+	reportMiseTrust(out, logger)
 }
 
 // GitIdentity is a concrete git author identity resolved outside the container.
