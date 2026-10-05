@@ -657,13 +657,20 @@ func deleteNFTRulesByCommentFamily(family, comment string) error {
 		maxRounds = 8
 		delay     = 300 * time.Millisecond
 	)
+	// Back off only after a failed list or delete (a transient nft lock). A
+	// clean round re-lists at once: the re-list is the verification that
+	// every matching rule is gone, and sleeping before it cost 300 ms on
+	// every boot-block lift and stale-rule purge for nothing.
+	backoff := false
 	for round := 0; round < maxRounds; round++ {
-		if round > 0 {
+		if backoff {
 			time.Sleep(delay)
 		}
+		backoff = false
 		handles, err := nftGetHandlesByCommentFamily(family, comment)
 		if err != nil {
 			logWarnf("Warning: nft list failed (round %d/%d): %v, retrying...", round+1, maxRounds, err)
+			backoff = true
 			continue
 		}
 		if len(handles) == 0 {
@@ -672,6 +679,7 @@ func deleteNFTRulesByCommentFamily(family, comment string) error {
 		for _, h := range handles {
 			if _, delErr := runNFTCommand("delete", "rule", family, "coi", "forward", "handle", h); delErr != nil {
 				logWarnf("Warning: failed to delete nft rule handle %s (round %d/%d): %v", h, round+1, maxRounds, delErr)
+				backoff = true
 			}
 		}
 	}

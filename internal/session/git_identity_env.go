@@ -40,16 +40,16 @@ func ApplyGitIdentityContainerEnv(ctx context.Context, containerName string, id 
 		logger(fmt.Sprintf("Warning: skipping git identity env %s (unsafe value)", k))
 	}
 	for _, k := range plan.unset {
-		_ = container.ConfigUnset(ctx, containerName, "environment."+k)
+		_ = container.ConfigUnsetIfSet(ctx, containerName, "environment."+k)
 	}
 	for _, k := range plan.setKeys {
-		if err := container.ConfigSet(ctx, containerName, "environment."+k, plan.set[k]); err != nil {
+		if _, err := container.ConfigSetIfChanged(ctx, containerName, "environment."+k, plan.set[k]); err != nil {
 			logger(fmt.Sprintf("Warning: failed to set git identity env %s: %v", k, err))
 		}
 	}
 	switch {
 	case plan.marker != "":
-		if err := container.ConfigSet(ctx, containerName, gitIdentityEnvMarkerKey, plan.marker); err != nil {
+		if _, err := container.ConfigSetIfChanged(ctx, containerName, gitIdentityEnvMarkerKey, plan.marker); err != nil {
 			logger(fmt.Sprintf("Warning: failed to record git identity env marker: %v", err))
 		}
 	case prevMarker != "":

@@ -237,38 +237,49 @@ var ErrNotReady = errors.New("container failed to become ready")
 // probes) — private copies of this loop drift, as coi run's no-sleep variant
 // proved.
 func WaitForReady(ctx context.Context, mgr container.ContainerManager, maxRetries int, logger func(string)) error {
+	return waitForReady(ctx, mgr, time.Duration(maxRetries)*time.Second, readyPollInterval, logger)
+}
+
+// readyPollInterval is how often WaitForReady re-probes. It used to be a full
+// second, so a container that became ready a moment after the first probe
+// (the usual case right after a start) cost almost a second of nothing.
+const readyPollInterval = 200 * time.Millisecond
+
+func waitForReady(ctx context.Context, mgr container.ContainerManager, timeout, interval time.Duration, logger func(string)) error {
 	defer timing.Start(timing.CatStep, "wait-for-ready")()
 	logger("Waiting for container to be ready...")
-	for i := 0; i < maxRetries; i++ {
-		running, err := mgr.Running()
-		if err != nil {
+	start := time.Now()
+	deadline := start.Add(timeout)
+	nextNote := 5 * time.Second
+	for {
+		// A command that runs proves the container is running AND usable, so
+		// try it first: on an already-running container that is the only call.
+		if _, err := mgr.ExecCommand("echo ready", container.ExecCommandOptions{Capture: true}); err == nil {
+			return nil
+		}
+		// Not usable yet. Surface a real status-query failure (incus down)
+		// as an error rather than waiting out the window.
+		if _, err := mgr.Running(); err != nil {
 			return fmt.Errorf("failed to check container status: %w", err)
 		}
 
-		if running {
-			// Additional check: try to execute a simple command
-			_, err := mgr.ExecCommand("echo ready", container.ExecCommandOptions{Capture: true})
-			if err == nil {
-				return nil
-			}
-		}
-
 		// No sleep after the final probe — it would delay the error for
-		// nothing. The last iteration falls straight through to the timeout.
-		if i == maxRetries-1 {
+		// nothing.
+		if !time.Now().Add(interval).Before(deadline) {
 			break
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(1 * time.Second):
+		case <-time.After(interval):
 		}
-		if (i+1)%5 == 0 {
-			logger(fmt.Sprintf("Still waiting... (%ds)", i+1))
+		if waited := time.Since(start); waited >= nextNote {
+			logger(fmt.Sprintf("Still waiting... (%ds)", int(waited.Seconds())))
+			nextNote += 5 * time.Second
 		}
 	}
 
-	return fmt.Errorf("%w after %d seconds", ErrNotReady, maxRetries)
+	return fmt.Errorf("%w after %d seconds", ErrNotReady, int(timeout.Seconds()))
 }
 
 // AnnotateReadyTimeout appends a cause hint to a WaitForReady timeout when

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -62,6 +63,12 @@ func ConfigureUIDMapping(containerName string, sources []string, disableShift bo
 		} else {
 			logger(fmt.Sprintf("Host UID %d matches container code UID but shift is off and the guest doesn't map it, using raw.idmap: %s",
 				os.Getuid(), idmap))
+		}
+		// Skip the write when the map is already in place (every reuse of the
+		// same container); a failed read just falls through to the write, so
+		// the #838 fail-fast below still fires on a real failure.
+		if cur, getErr := container.ConfigGet(context.Background(), containerName, "raw.idmap"); getErr == nil && cur == strings.TrimSpace(idmap) {
+			return useShift, true, nil
 		}
 		if setErr := container.IncusExec("config", "set", containerName, "raw.idmap", idmap); setErr != nil {
 			// Fail fast (#838): without this map the workspace mounts with no UID
