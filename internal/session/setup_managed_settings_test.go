@@ -1,7 +1,10 @@
 package session
 
 import (
+	"encoding/base64"
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -37,7 +40,31 @@ func (r *managedSettingsRecorder) ExecCommand(command string, _ container.ExecCo
 			return "", err
 		}
 	}
+	// A batched guest script: its file writes count as pushes.
+	if writes := decodeGuestWrites(command); len(writes) > 0 {
+		if r.createErr != nil {
+			return "", r.createErr
+		}
+		r.creates = append(r.creates, writes...)
+	}
 	return "", nil
+}
+
+var guestWriteRe = regexp.MustCompile(`printf '%s' '([A-Za-z0-9+/=]*)' \| base64 -d > '[^']*' && chown (\d+):(\d+) '[^']*' && chmod '([0-7]+)' '[^']*' && mv -f '[^']*' '([^']*)'`)
+
+// decodeGuestWrites recovers the file writes from a renderGuestScript script.
+func decodeGuestWrites(script string) []createWithOwnerCall {
+	var out []createWithOwnerCall
+	for _, m := range guestWriteRe.FindAllStringSubmatch(script, -1) {
+		content, err := base64.StdEncoding.DecodeString(m[1])
+		if err != nil {
+			continue
+		}
+		uid, _ := strconv.Atoi(m[2])
+		gid, _ := strconv.Atoi(m[3])
+		out = append(out, createWithOwnerCall{path: m[5], content: string(content), uid: uid, gid: gid, mode: m[4]})
+	}
+	return out
 }
 
 func (r *managedSettingsRecorder) CreateFileWithOwner(path, content string, uid, gid int, mode string) error {
@@ -127,7 +154,7 @@ func TestSetupClaudeManagedSettingsSkipsWriteWhenMkdirFails(t *testing.T) {
 	if len(rec.creates) != 0 {
 		t.Fatalf("no file should be written after mkdir failure, got %v", rec.creates)
 	}
-	if len(logs) != 1 || !strings.Contains(logs[0], "directory") {
-		t.Fatalf("expected exactly one mkdir-failure warning, got %v", logs)
+	if len(logs) != 1 || !strings.Contains(logs[0], "mkdir failed") {
+		t.Fatalf("expected exactly one warning carrying the mkdir failure, got %v", logs)
 	}
 }

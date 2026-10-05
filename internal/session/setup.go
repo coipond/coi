@@ -961,17 +961,17 @@ func configureGitIdentity(ctx context.Context, result *SetupResult, opts SetupOp
 		if opts.Git.Readonly {
 			opts.Logger("Warning: git.readonly is set but no identity is resolvable — set [git] name/email (or enable seed_host_identity); nothing to lock")
 		}
-		SetupGitIdentityGuard(result.Manager, result.HomeDir, opts.Logger)
-		SetupGitIdentity(result.Manager, result.HomeDir, opts.Git.Identity, opts.Logger)
+		// Guard + identity + (when any hook policy is on) the hooks, in one exec.
+		var hookOps []guestOp
+		if opts.Git.StripAttribution || identityLock || guardOn {
+			hookOps = gitHooksOps(result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, true, guardBranches)
+		}
+		setupWritableGitConfig(result.Manager, result.HomeDir, opts.Git.Identity, hookOps, guardBranches, opts.Git.StripAttribution, identityLock, opts.Logger)
 	}
-	if opts.Git.StripAttribution || identityLock || guardOn {
+	if readonlyLock && (opts.Git.StripAttribution || identityLock || guardOn) {
 		// The hook dir is needed on every hook path; core.hooksPath is written
 		// live only on the writable path (the readonly mount already carries it).
-		SetupGitHooks(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, !readonlyLock, guardBranches, opts.Logger)
-	} else if !readonlyLock {
-		// Converge a reused persistent container after every hook policy was turned
-		// off: drop the stale core.hooksPath (best-effort).
-		RemoveGitAttributionHookConfig(result.Manager, result.HomeDir)
+		SetupGitHooks(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, false, guardBranches, opts.Logger)
 	}
 	// Layer 1: pin GIT_AUTHOR_*/GIT_COMMITTER_* as container-level env so `-c
 	// user.*` overrides lose without rewriting history. No-op (and unsets stale
