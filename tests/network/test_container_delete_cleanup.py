@@ -21,6 +21,8 @@ import time
 
 import pytest
 
+from support.helpers import calculate_container_name
+
 
 def _skip_unless_ready():
     if subprocess.run(["which", "incus"], capture_output=True).returncode != 0:
@@ -214,31 +216,37 @@ def test_container_delete_removes_monitoring_log_rules(
         )
         config_file = f.name
 
-    name = None
+    # Monitoring runs inside the `coi shell` process (a --background shell
+    # exits right away, taking its monitor with it), so start it in the
+    # foreground, wait for the LOG rules, then SIGKILL it: its own teardown
+    # never runs and the rules are left behind -- the leftover that
+    # `coi container delete` must clean up.
+    name = calculate_container_name(workspace_dir, 1)
+    proc = None
     try:
         env = os.environ.copy()
         env["COI_CONFIG"] = config_file
-        result = subprocess.run(
-            [coi_binary, "shell", "--workspace", workspace_dir, "--background"],
-            capture_output=True,
-            text=True,
-            timeout=120,
+        proc = subprocess.Popen(
+            [coi_binary, "shell", "--workspace", workspace_dir, "--slot", "1"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=env,
         )
-        assert result.returncode == 0, f"Failed to start container: {result.stderr}"
-        for line in (result.stdout + result.stderr).split("\n"):
-            if "Container: " in line:
-                name = line.split("Container: ")[1].strip()
-                break
-        assert name, f"no container name: {result.stdout + result.stderr}"
 
-        ip, _count = _wait_for_rules_for_ip(coi_binary, name)
+        ip, _count = _wait_for_rules_for_ip(coi_binary, name, timeout=90)
         assert ip, f"{name} never got a DHCP IP"
 
         # The monitoring daemon installs the LOG rules asynchronously; require
         # them as a precondition so this test genuinely exercises their removal.
         assert _poll_for_monitor_rules(ip) > 0, (
             f"nft monitoring LOG rules for {ip} were never installed"
+        )
+
+        proc.kill()
+        proc.wait(timeout=10)
+        assert _count_monitor_rules_for_ip(ip) > 0, (
+            "the LOG rules should outlive a killed coi shell (precondition)"
         )
 
         dele = subprocess.run(
@@ -253,4 +261,6 @@ def test_container_delete_removes_monitoring_log_rules(
             f"NFT_*[{ip}] monitoring LOG rules still present after delete (#696 item 5)"
         )
     finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
         os.unlink(config_file)

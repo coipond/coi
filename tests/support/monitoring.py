@@ -39,7 +39,10 @@ def get_container_state(name):
     if result.returncode != 0:
         return "Unknown"
     containers = json.loads(result.stdout)
-    return containers[0].get("status", "Unknown") if containers else "Unknown"
+    # `incus list <name>` matches by prefix (it also lists e.g. <name>-forensics-*),
+    # so pick the exact name.
+    match = [c for c in containers if c.get("name") == name]
+    return match[0].get("status", "Unknown") if match else "Unknown"
 
 
 def container_absent(name):
@@ -65,7 +68,8 @@ def container_absent(name):
         containers = json.loads(result.stdout)
     except json.JSONDecodeError:
         return False
-    return len(containers) == 0
+    # Prefix match: a forensic copy (<name>-forensics-*) must not count.
+    return not any(c.get("name") == name for c in containers)
 
 
 def wait_for_container_running(name, timeout=60):
