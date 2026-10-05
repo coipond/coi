@@ -578,15 +578,25 @@ class TestNetworkConnectionDetection:
             if not _wait_port_listening(container_name, 8080):
                 pytest.skip("metadata server on port 8080 did not start within 15 s")
 
-            meta_cmd = (
-                'python3 -c "'
-                "import socket, time; "
-                "s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); "
-                "s.connect(('169.254.169.254', 8080)); "
-                'time.sleep(120)"'
+            # Run the probe from a script file, not `python3 -c "...socket.socket..."`:
+            # that command line matches the process detector's reverse-shell
+            # patterns, which can then kill the container before the network
+            # detector logs the metadata connection this test is about.
+            probe = tmp_path / "meta_probe.py"
+            probe.write_text(
+                "import socket, time\n"
+                "s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+                "s.connect(('169.254.169.254', 8080))\n"
+                "time.sleep(120)\n"
+            )
+            subprocess.run(
+                ["incus", "file", "push", str(probe), f"{container_name}/tmp/meta_probe.py"],
+                capture_output=True,
+                timeout=10,
+                check=True,
             )
             subprocess.Popen(
-                ["incus", "exec", container_name, "--", "bash", "-c", meta_cmd],
+                ["incus", "exec", container_name, "--", "python3", "/tmp/meta_probe.py"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

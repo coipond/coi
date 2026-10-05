@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from support.monitoring import coi_session_logs
+
 
 def get_container_name_from_workspace(workspace, slot=1):
     """Generate expected container name from workspace path."""
@@ -759,19 +761,24 @@ class TestDaemonLifecycle:
             )
 
             try:
-                # Poll stderr for startup message instead of fixed sleep. The
+                # Poll for the startup message instead of a fixed sleep. The
                 # window is generous (CI runners are frequently overloaded and the
-                # daemon starts after full session setup).
-                stderr_content = ""
+                # daemon starts after full session setup). The session supervisor
+                # runs the monitor and writes to the session log, so look there as
+                # well as at coi shell's own stderr (its in-process fallback).
+                output = ""
                 started = False
                 for _ in range(90):
                     time.sleep(1)
-                    stderr_content = stderr_file.read_text()
-                    if "[security] NFT network monitoring started" in stderr_content:
+                    output = stderr_file.read_text() + coi_session_logs(container_name)
+                    if "[security] NFT network monitoring started" in output:
                         started = True
                         break
 
-                assert started, f"NFT daemon startup message not found. stderr:\n{stderr_content}"
+                assert started, (
+                    f"NFT daemon startup message not found in coi shell stderr or the "
+                    f"session logs:\n{output}"
+                )
 
             finally:
                 proc.terminate()
