@@ -17,6 +17,7 @@ from support.helpers import (
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
+    write_trusted_coi_config,
 )
 
 
@@ -213,31 +214,19 @@ def test_context_file_contains_container_name(
     )
 
 
-def test_context_json_file_contains_required_fields(
-    coi_binary, cleanup_containers, workspace_dir, tmp_path
-):
-    """
-    End-to-end: a real `coi shell` session must write ~/SANDBOX_CONTEXT.json next
-    to the .md, and it must be valid JSON carrying the required structured fields
-    (schema_version, container_name, tool_name, workspace_path, os, network.mode)
-    for programmatic consumers (#705).
+def _read_context_json(coi_binary, workspace_dir, tmp_path, env):
+    """Start a real `coi shell` with the dummy tool, read the container's
+    ~/SANDBOX_CONTEXT.json, tear the session down, and return the parsed JSON.
 
-    Flow:
-    1. Start coi shell with the dummy tool.
-    2. Wait for ready, drop to bash.
-    3. Read ~/SANDBOX_CONTEXT.json via incus exec and json.loads it.
-    4. Assert the required fields are present and correct.
+    `env` is the base environment (e.g. from write_trusted_coi_config); the
+    dummy tool and a fake home with credentials are added so setup runs.
     """
-    env = {"COI_USE_DUMMY": "1"}
-    slot = 1
-    container_name = calculate_container_name(workspace_dir, slot)
+    env = {**env, "COI_USE_DUMMY": "1"}
+    container_name = calculate_container_name(workspace_dir, 1)
 
-    # Create fake home with credentials so setup runs
     fake_home = tmp_path / "fake_home"
-    fake_home.mkdir()
-    claude_dir = fake_home / ".claude"
-    claude_dir.mkdir()
-    (claude_dir / ".credentials.json").write_text('{"token": "test"}')
+    (fake_home / ".claude").mkdir(parents=True)
+    (fake_home / ".claude" / ".credentials.json").write_text('{"token": "test"}')
     env["HOME"] = str(fake_home)
 
     child = spawn_coi(coi_binary, ["shell"], cwd=workspace_dir, env=env, timeout=120)
@@ -251,7 +240,6 @@ def test_context_json_file_contains_required_fields(
     child.send("\x0d")
     time.sleep(2)
 
-    # Read SANDBOX_CONTEXT.json from the container
     result = subprocess.run(
         [
             "sg",
@@ -263,8 +251,6 @@ def test_context_json_file_contains_required_fields(
         text=True,
         timeout=30,
     )
-    json_exists = result.returncode == 0
-    json_content = result.stdout
 
     # Cleanup
     child.send("sudo poweroff")
@@ -285,15 +271,28 @@ def test_context_json_file_contains_required_fields(
         timeout=30,
     )
 
-    # Assertions
-    assert json_exists, "~/SANDBOX_CONTEXT.json should exist in container"
-
+    assert result.returncode == 0, (
+        f"~/SANDBOX_CONTEXT.json should exist in container: {result.stderr}"
+    )
     try:
-        data = json.loads(json_content)
+        return json.loads(result.stdout)
     except json.JSONDecodeError as e:
         raise AssertionError(
-            f"~/SANDBOX_CONTEXT.json is not valid JSON: {e}\nGot:\n{json_content[:500]}"
+            f"~/SANDBOX_CONTEXT.json is not valid JSON: {e}\nGot:\n{result.stdout[:500]}"
         ) from e
+
+
+def test_context_json_file_contains_required_fields(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
+    """
+    End-to-end: a real `coi shell` session must write ~/SANDBOX_CONTEXT.json next
+    to the .md, and it must be valid JSON carrying the required structured fields
+    (schema_version, container_name, tool_name, workspace_path, os, architecture,
+    network.mode) for programmatic consumers (#705).
+    """
+    container_name = calculate_container_name(workspace_dir, 1)
+    data = _read_context_json(coi_binary, workspace_dir, tmp_path, {})
 
     assert data.get("schema_version") == 1, (
         f"schema_version should be 1, got {data.get('schema_version')!r}"
@@ -305,8 +304,28 @@ def test_context_json_file_contains_required_fields(
     assert data.get("workspace_path"), (
         f"workspace_path should be non-empty, got {data.get('workspace_path')!r}"
     )
-    # os is defaulted server-side, so it must never be empty.
+    # os and architecture are defaulted server-side, so they must never be empty.
     assert data.get("os"), f"os should be non-empty (defaulted), got {data.get('os')!r}"
+    assert data.get("architecture"), (
+        f"architecture should be non-empty (defaulted), got {data.get('architecture')!r}"
+    )
     assert isinstance(data.get("network"), dict) and "mode" in data["network"], (
         f"network.mode should be present, got network={data.get('network')!r}"
+    )
+
+
+def test_context_json_reports_docker_unavailable(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
+    """
+    With Docker disabled ([container] docker = false), the container has no
+    nesting support, so ~/SANDBOX_CONTEXT.json must report docker_available:
+    false — not advertise Docker-in-Docker the agent cannot use.
+    """
+    env = write_trusted_coi_config("[container]\ndocker = false\n")
+    data = _read_context_json(coi_binary, workspace_dir, tmp_path, env)
+
+    assert data.get("docker_available") is False, (
+        f"docker_available should be false with docker disabled, got "
+        f"{data.get('docker_available')!r}"
     )
