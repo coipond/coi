@@ -27,8 +27,7 @@ $SUDO usermod -a -G systemd-journal $USER
 
 # Create sudoers file for nftables (NOPASSWD)
 echo "Creating sudoers file for nftables..."
-echo '%incus-admin ALL=(ALL) NOPASSWD: /usr/sbin/nft' | $SUDO tee /etc/sudoers.d/coi-nft
-$SUDO chmod 0440 /etc/sudoers.d/coi-nft
+bash "$(dirname "$0")/install-sudoers-dropin.sh" '%incus-admin ALL=(ALL) NOPASSWD: /usr/sbin/nft' /etc/sudoers.d/coi-nft
 
 echo ""
 echo "✓ Dependencies installed successfully!"

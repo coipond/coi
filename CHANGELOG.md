@@ -4,16 +4,28 @@
 
 ### Changed
 
-- [Change] **Primary name is now `Coi`** — `Coi` (Code on Incus) is the product name and `coi` the command; the old all-caps `COI` styling is gone. `coi version` now prints `Coi (Code on Incus) v…`. Cosmetic only; no behavior change.
+- [Change] **Primary name is now `Coi`** — `Coi` (Code on Incus) is the product name and `coi` the command. Cosmetic only.
 
 ### Breaking
 
-- [Breaking] **Direct commits/pushes to `main` and `master` are now blocked by default** — agents work on a feature branch and open a PR instead. Configure or turn it off with `[git] protected_branches` (set to `[]` to disable).
+- [Breaking] **Direct commits and pushes to `main` and `master` are blocked by default** — agents work on a feature branch and open a PR instead; `git pull` keeps working. Turn it off with `[git] protected_branches = []`.
 
 ### Bug Fixes
 
 - [Bug Fix] **Git identity is now seeded from the Mac user's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — inside a macOS VM coi reads the identity from your Mac home (shared under `/Users`), including `include.path` files, and falls back to the VM's config. On a multi-user Mac it only uses your own home, never another account's.
-- [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield a silently unwritable workspace (#838)** — when the login UID sits inside root's `/etc/subuid` range Incus can't map it, so coi now aborts the launch with the cause named instead of continuing with a broken `/workspace`, and `coi health` reports it clearly instead of a cryptic failure.
+- [Bug Fix] **Profiles can set `[git] protected_branches` and `[limits.disk] size`** — a profile containing either no longer fails to load (which made every coi command fail).
+- [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as they already were in project config.
+- [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable (for example a wrapper script) instead of silently ignoring the setting.
+- [Bug Fix] **Installer works on fresh container and minimal images** — building from source no longer fails on missing package lists.
+- [Bug Fix] **Setting up passwordless sudo can no longer break sudo** — the installer and `coi health --fix` validate the rule before installing it; the iptables rule is shown for you to apply rather than added automatically.
+- [Bug Fix] **`coi health` accepts its own UID-mapping fix** — once the suggested fix is applied it stops reporting the problem, and tells you which step is still missing until then.
+- [Bug Fix] **`coi health` no longer misses missing sudo rules** — a recently typed sudo password no longer hides them.
+- [Bug Fix] **Security monitor no longer stops containers for everyday commands** — searching code, waiting for a local service, or installing networking tools no longer looks like a reverse shell. Real reverse shells are still caught.
+- [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield an unwritable workspace (#838)** — coi stops with a clear explanation instead of continuing with a broken `/workspace`.
+
+### Features
+
+- [Feature] **Run commands before the agent starts: `[tool] pre_launch` (#852)** — e.g. `pre_launch = ["claude update"]` keeps the agent current without rebuilding the image. A failing or slow command never blocks the session.
 
 ## 0.13.0 (2026-09-28)
 

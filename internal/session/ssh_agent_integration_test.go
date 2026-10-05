@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // skipUnlessSSHAgentTestable skips the test if prerequisites are missing.

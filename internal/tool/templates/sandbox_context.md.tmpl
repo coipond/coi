@@ -124,7 +124,7 @@ Ports NOT listed here are not reachable from the host's localhost.
 
 ## Protected Branches
 
-`{{.ProtectedBranchesDesc}}` are **protected** in this sandbox. Do **not** commit on or push to them directly — coi's git hooks reject it. Work on a feature branch (`git switch -c <name>`), commit there, and open a pull request.
+`{{.ProtectedBranchesDesc}}` are **protected** in this sandbox. Do **not** commit on or push to them directly — coi's git hooks reject it. Work on a feature branch (`git switch -c <name>`), commit there, and open a pull request. A protected branch may only point at commits the remote already has: `git pull` / `git reset --hard origin/<branch>` work, but cherry-pick, revert, `am`, merge, rebase or reset onto it with local-only commits are refused too.
 {{- end}}
 
 ## Limitations

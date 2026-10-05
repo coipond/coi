@@ -117,14 +117,14 @@ func TestAllowPolicy_PerEntryPorts(t *testing.T) {
 	}
 
 	// Names carry their ports (or nil when bare).
-	if got := p.PortsForName("github.com"); !reflect.DeepEqual(got, []portRange{{443, 443}}) {
-		t.Errorf("PortsForName(github.com) = %v, want [443]", got)
+	if got := p.portsForName("github.com"); !reflect.DeepEqual(got, []portRange{{443, 443}}) {
+		t.Errorf("portsForName(github.com) = %v, want [443]", got)
 	}
-	if got := p.PortsForName("registry.npmjs.org"); got != nil {
-		t.Errorf("PortsForName(registry.npmjs.org) = %v, want nil (inherit)", got)
+	if got := p.portsForName("registry.npmjs.org"); got != nil {
+		t.Errorf("portsForName(registry.npmjs.org) = %v, want nil (inherit)", got)
 	}
-	if got := p.PortsForName("svc.internal"); !reflect.DeepEqual(got, []portRange{{8000, 8100}}) {
-		t.Errorf("PortsForName(svc.internal) = %v, want [8000-8100]", got)
+	if got := p.portsForName("svc.internal"); !reflect.DeepEqual(got, []portRange{{8000, 8100}}) {
+		t.Errorf("portsForName(svc.internal) = %v, want [8000-8100]", got)
 	}
 
 	// Literal tuples carry their address and ports; the address also lands in
@@ -133,7 +133,7 @@ func TestAllowPolicy_PerEntryPorts(t *testing.T) {
 		"192.168.1.50/32": {{8080, 8080}},
 		"10.0.0.0/8":      {{22, 22}},
 	}
-	for _, tup := range p.StaticTuples() {
+	for _, tup := range p.staticTuples() {
 		want, ok := wantTuples[tup.CIDR]
 		if !ok {
 			t.Errorf("unexpected static tuple %q", tup.CIDR)
@@ -143,8 +143,8 @@ func TestAllowPolicy_PerEntryPorts(t *testing.T) {
 			t.Errorf("tuple %q ports = %v, want %v", tup.CIDR, tup.Ports, want)
 		}
 	}
-	if len(p.StaticTuples()) != len(wantTuples) {
-		t.Errorf("StaticTuples() = %v, want %d entries", p.StaticTuples(), len(wantTuples))
+	if len(p.staticTuples()) != len(wantTuples) {
+		t.Errorf("staticTuples() = %v, want %d entries", p.staticTuples(), len(wantTuples))
 	}
 }
 

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
+	"github.com/coipond/coi/internal/config"
 )
 
 // TestApplyAllowlist_RequiresGateway pins that allowlist mode treats a missing

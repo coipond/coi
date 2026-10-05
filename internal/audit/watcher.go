@@ -26,6 +26,7 @@ const (
 // observed.
 type WatcherStatus int
 
+// WatcherStatus values.
 const (
 	StatusFirstSeen WatcherStatus = iota
 	StatusStale

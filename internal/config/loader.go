@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	coischema "github.com/mensfeld/coi/schema"
+	coischema "github.com/coipond/coi/schema"
 )
 
 // Load loads configuration from all available sources
@@ -233,7 +233,9 @@ func warnUntrustedDowngrade(path, field string) {
 // ~/SANDBOX_CONTEXT.md, and context_json_file = "~/.aws/credentials" lands it in
 // ~/SANDBOX_CONTEXT.json — both readable by the in-container agent. Both are
 // therefore honored only from trusted scope (~/.coi/config.toml or $COI_CONFIG).
-// nil is a no-op.
+// pre_launch is dropped too: commands that run automatically at every session
+// start must not be switched on by a cloned repo. Applied to the top-level
+// project config and to project-scoped profiles alike. nil is a no-op.
 func sanitizeUntrustedTool(tc *ToolConfig, path string) {
 	if tc == nil {
 		return
@@ -245,6 +247,16 @@ func sanitizeUntrustedTool(tc *ToolConfig, path string) {
 	if tc.ContextJSONFile != "" {
 		warnUntrustedDowngrade(path, "tool.context_json_file")
 		tc.ContextJSONFile = ""
+	}
+	// pre_launch runs commands automatically at every session start: a cloned
+	// repo must not be able to switch that on.
+	if len(tc.PreLaunch) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"WARNING: ignoring 'tool.pre_launch' in project config %s; commands that "+
+				"run automatically at session start must come from your own config. "+
+				"Move it to ~/.coi/config.toml (or a profile under ~/.coi/profiles) "+
+				"or set COI_CONFIG to apply it.\n", path)
+		tc.PreLaunch = nil
 	}
 }
 
@@ -733,6 +745,7 @@ func loadProfileDirectories(cfg *Config, configDir string, trusted bool) error {
 			sanitizeUntrustedDocker(&profileCfg.Container, profileConfigPath)
 			sanitizeUntrustedSecurity(profileCfg.Security, profileConfigPath)
 			sanitizeUntrustedGit(profileCfg.Git, profileConfigPath)
+			sanitizeUntrustedTool(profileCfg.Tool, profileConfigPath)
 			sanitizeUntrustedPrompts(profileCfg.Prompts, profileConfigPath)
 			markUntrustedMounts(profileCfg.Mounts, profileConfigPath)
 			markUntrustedSockets(profileCfg.Sockets, profileConfigPath)

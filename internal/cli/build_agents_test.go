@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/image"
+	"github.com/coipond/coi/internal/tool"
 )
 
 func TestValidateBuildAgents(t *testing.T) {
@@ -86,5 +87,25 @@ func TestPrepareBuildAgents(t *testing.T) {
 	// Explicitly selecting the opt-in agent alongside its tool is clean.
 	if err := prepareBuildAgents([]string{"claude", "codex"}, "codex"); err != nil {
 		t.Errorf("explicit codex selection must not error, got %v", err)
+	}
+}
+
+// coiImageBuildOptions carries the profile's [container.build] settings —
+// compression, base, agents — into the coi default image build, for both
+// `coi build` and `coi build --all`.
+func TestCoiImageBuildOptions(t *testing.T) {
+	p := &config.ProfileConfig{}
+	p.Container.Build.Compression = "none"
+	p.Container.Build.Agents = []string{"claude"}
+	opts := coiImageBuildOptions(p, true, "fast", nil)
+	if opts.Compression != "none" || opts.StoragePool != "fast" || !opts.Force ||
+		opts.ImageType != "coi" || opts.AliasName != image.CoiAlias || opts.BaseImage != image.BaseImage ||
+		len(opts.Agents) != 1 {
+		t.Errorf("unexpected options: %+v", opts)
+	}
+
+	p.Container.Build.Base = "images:ubuntu/24.04/cloud"
+	if got := coiImageBuildOptions(p, false, "", nil).BaseImage; got != "images:ubuntu/24.04/cloud" {
+		t.Errorf("base override not applied: %q", got)
 	}
 }

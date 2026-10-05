@@ -10,13 +10,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mensfeld/coi/internal/alias"
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/limits"
-	"github.com/mensfeld/coi/internal/logger"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/session"
+	"github.com/coipond/coi/internal/alias"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/limits"
+	"github.com/coipond/coi/internal/logger"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -614,10 +614,7 @@ func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName
 	// Called unconditionally: applySecurityMounts internally skips the read-only
 	// protected_paths when disable_protection is set (GetEffectiveProtectedPaths
 	// returns nil), but secret-path masking is a separate opt-in that still runs.
-	if err := a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree); err != nil {
-		return err
-	}
-	return nil
+	return a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree)
 }
 
 // addMount adds a single configured directory mount to the container.

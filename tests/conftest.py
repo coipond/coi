@@ -231,6 +231,23 @@ def pytest_report_teststatus(report, config):
     return None  # Use default formatting
 
 
+def pytest_runtest_logreport(report):
+    """Print why a test's first attempt failed before --reruns retries it.
+
+    A retried test that then passes shows only "RERUN" in the log, hiding the
+    failure and its captured output; print both so a flaky test's cause is
+    visible in CI.
+    """
+    if report.outcome != "rerun":
+        return
+    out = sys.__stderr__
+    out.write(f"\n===== first attempt of {report.nodeid} failed (retrying) =====\n")
+    out.write(report.longreprtext + "\n")
+    for name, content in report.sections:
+        out.write(f"--- {name} ---\n{content}\n")
+    out.flush()
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Clean up orphaned resources at the end of the test session.
 

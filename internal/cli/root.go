@@ -1,3 +1,5 @@
+// Package cli implements the coi command-line interface: the cobra command
+// tree and the logic behind each subcommand.
 package cli
 
 import (
@@ -5,10 +7,10 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/network"
-	"github.com/mensfeld/coi/internal/timing"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/timing"
 	"github.com/spf13/cobra"
 )
 
@@ -363,11 +365,11 @@ var versionCmd = &cobra.Command{
 			return &ExitCodeError{Code: 2, Message: fmt.Sprintf("invalid format %q: must be 'text' or 'json'", format)}
 		}
 		if format == "json" {
-			fmt.Printf(`{"version":%q,"url":"https://github.com/mensfeld/coi"}`+"\n", "v"+normalizeVersion(Version))
+			fmt.Printf(`{"version":%q,"url":"https://github.com/coipond/coi"}`+"\n", "v"+normalizeVersion(Version))
 			return nil
 		}
 		fmt.Printf("Coi (Code on Incus) v%s\n", normalizeVersion(Version))
-		fmt.Println("https://github.com/mensfeld/coi")
+		fmt.Println("https://github.com/coipond/coi")
 		return nil
 	},
 }

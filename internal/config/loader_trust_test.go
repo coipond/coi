@@ -363,3 +363,68 @@ func TestLoad_CredentialsSurviveRealPath(t *testing.T) {
 		t.Error("project-scoped profile credential must have SourcePath set")
 	}
 }
+
+// [tool] pre_launch runs commands automatically at session start, so it is
+// honored from trusted scope only: kept from ~/.coi config and ~/.coi
+// profiles, stripped from a project's .coi/config.toml and project profiles.
+func TestPreLaunch_TrustedScopeOnly(t *testing.T) {
+	const body = "[tool]\npre_launch = [\"claude update\"]\n"
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trusted := GetDefaultConfig()
+	if err := loadConfigFileScoped(trusted, path, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(trusted.Tool.PreLaunch) != 1 || trusted.Tool.PreLaunch[0] != "claude update" {
+		t.Errorf("trusted config must keep pre_launch, got %v", trusted.Tool.PreLaunch)
+	}
+	untrusted := GetDefaultConfig()
+	if err := loadConfigFileScoped(untrusted, path, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(untrusted.Tool.PreLaunch) != 0 {
+		t.Errorf("project config must not set pre_launch, got %v", untrusted.Tool.PreLaunch)
+	}
+
+	root, _ := writeProfile(t, body)
+	tp := GetDefaultConfig()
+	if err := loadProfileDirectories(tp, root, true); err != nil {
+		t.Fatal(err)
+	}
+	if p := tp.Profiles["dev"]; p.Tool == nil || len(p.Tool.PreLaunch) != 1 {
+		t.Errorf("trusted profile must keep pre_launch, got %+v", p.Tool)
+	}
+	up := GetDefaultConfig()
+	if err := loadProfileDirectories(up, root, false); err != nil {
+		t.Fatal(err)
+	}
+	if p := up.Profiles["dev"]; p.Tool != nil && len(p.Tool.PreLaunch) != 0 {
+		t.Errorf("project profile must not set pre_launch, got %v", p.Tool.PreLaunch)
+	}
+}
+
+// A project profile must not read arbitrary host files into the container via
+// [tool] context_file / context_json_file — the same rule as a project's
+// top-level config (the profile path used to skip sanitizeUntrustedTool).
+func TestLoadProfileDirectories_UntrustedStripsToolContextInjectors(t *testing.T) {
+	root, _ := writeProfile(t, "[tool]\ncontext_file = \"~/.ssh/id_rsa\"\ncontext_json_file = \"~/.aws/credentials\"\n")
+	cfg := GetDefaultConfig()
+	if err := loadProfileDirectories(cfg, root, false); err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Profiles["dev"]
+	if p.Tool != nil && (p.Tool.ContextFile != "" || p.Tool.ContextJSONFile != "") {
+		t.Errorf("project profile host-file injectors must be stripped, got %+v", p.Tool)
+	}
+	trusted := GetDefaultConfig()
+	if err := loadProfileDirectories(trusted, root, true); err != nil {
+		t.Fatal(err)
+	}
+	if trusted.Profiles["dev"].Tool.ContextFile != "~/.ssh/id_rsa" {
+		t.Error("a trusted profile keeps context_file")
+	}
+}

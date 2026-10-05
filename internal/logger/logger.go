@@ -1,3 +1,5 @@
+// Package logger provides per-session loggers that write to log files
+// under ~/.coi/logs/.
 package logger
 
 import (

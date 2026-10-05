@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/mensfeld/coi/internal/session"
+	"github.com/coipond/coi/internal/session"
 	"github.com/spf13/cobra"
 )
 

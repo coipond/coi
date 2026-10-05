@@ -34,7 +34,7 @@ def test_version_no_network_required(coi_binary):
     # Verify complete version output
     assert "Coi (Code on Incus) v" in output, f"Should contain version string. Got:\n{output}"
 
-    assert "https://github.com/mensfeld/coi" in output, (
+    assert "https://github.com/coipond/coi" in output, (
         f"Should contain repository URL. Got:\n{output}"
     )
 

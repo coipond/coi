@@ -86,10 +86,7 @@ func ValidateProfileMap(data map[string]any) error {
 		return fmt.Errorf("failed to deserialize profile for validation: %w", err)
 	}
 
-	if err := compiledSchema.Validate(jsonValue); err != nil {
-		return err
-	}
-	return nil
+	return compiledSchema.Validate(jsonValue)
 }
 
 // ValidationIssue is a single schema violation with the JSON-pointer path to

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // toolEnvMarkerKey records (comma-separated) which environment.* keys coi set

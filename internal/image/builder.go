@@ -1,3 +1,5 @@
+// Package image builds, versions and cleans up the Incus images coi launches
+// containers from.
 package image
 
 import (
@@ -8,10 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/network"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
 )
 
+// Default image names: the upstream base image, the alias of the built coi
+// image, and the name of the temporary build container.
 const (
 	BaseImage      = "ubuntu:24.04"
 	CoiAlias       = "coi-default"

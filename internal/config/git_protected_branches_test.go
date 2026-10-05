@@ -126,3 +126,39 @@ func TestSanitizeUntrusted_GitProtectedBranches(t *testing.T) {
 		t.Error("untrusted protected_branches override must be stripped")
 	}
 }
+
+// A profile may set [git] protected_branches: the profile loads (it used to fail
+// schema validation with "additional properties 'protected_branches' not
+// allowed") and, once applied, its list — or [] to disable — takes effect.
+// A project-scoped (untrusted) profile still can't change it.
+func TestGitProtectedBranches_FromProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		trusted bool
+		want    []string
+	}{
+		{"trusted list", "[git]\nprotected_branches = [\"release\"]\n", true, []string{"release"}},
+		{"trusted disable", "[git]\nprotected_branches = []\n", true, []string{}},
+		{"untrusted ignored", "[git]\nprotected_branches = []\n", false, []string{"main", "master"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, _ := writeProfile(t, tc.body)
+			cfg := GetDefaultConfig()
+			if err := loadProfileDirectories(cfg, root, tc.trusted); err != nil {
+				t.Fatalf("profile should load: %v", err)
+			}
+			if err := cfg.ApplyProfile("dev"); err != nil {
+				t.Fatalf("ApplyProfile: %v", err)
+			}
+			got := cfg.Git.EffectiveProtectedBranches()
+			if len(tc.want) == 0 {
+				if len(got) != 0 {
+					t.Errorf("guard should be disabled, got %v", got)
+				}
+			} else if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("effective protected_branches = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

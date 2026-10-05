@@ -1,3 +1,5 @@
+// Package limits validates container resource limits (CPU, memory, disk,
+// runtime) and applies them to Incus containers.
 package limits
 
 import (
@@ -5,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // ApplyOptions contains options for applying limits

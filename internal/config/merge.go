@@ -572,6 +572,7 @@ func mergeToolInto(dst *ToolConfig, src *ToolConfig) {
 	mergePtr(&dst.AutoContext, src.AutoContext)
 	mergePtr(&dst.ContextJSON, src.ContextJSON)
 	mergeScalar(&dst.ContextJSONFile, src.ContextJSONFile)
+	mergeSlice(&dst.PreLaunch, src.PreLaunch)
 	mergeScalar(&dst.Claude.EffortLevel, src.Claude.EffortLevel)
 	mergeScalar(&dst.Claude.Model, src.Claude.Model)
 	mergeScalar(&dst.Codex.Model, src.Codex.Model)

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/container"
 )
 
 // 5. Create and configure the container (unless reusing), and set/update alias

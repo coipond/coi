@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // fakeAutoCtxManager is an in-memory ContainerManager that simulates just enough

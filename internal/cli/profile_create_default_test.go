@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
-	"github.com/mensfeld/coi/internal/config"
+	"github.com/coipond/coi/internal/config"
 	"github.com/spf13/cobra"
 )
 

@@ -56,6 +56,7 @@ var defaultExecPatterns = []execPattern{
 	{Name: "perl-socket-connect", Arg0: "perl", Keywords: []string{"sockaddr_in"}},
 	// Socat reverse shells
 	{Name: "socat-exec", Arg0: "socat", Keywords: []string{"exec:"}},
+	{Name: "socat-system", Arg0: "socat", Keywords: []string{"system:"}},
 	// PHP reverse shell via fsockopen (GTFOBins)
 	{Name: "php-fsockopen", Arg0: "php", Keywords: []string{"fsockopen"}},
 	// Ruby reverse shell via TCPSocket (GTFOBins)
@@ -449,6 +450,16 @@ func procReadPPID(pid int) int {
 	return 0
 }
 
+// execKeywordRefine narrows keywords that also occur in benign commands; it
+// applies to compiled-in and GTFOBins-derived patterns alike, so
+// `bash -c 'grep -rn /dev/tcp/ docs'`, a loopback port probe, or
+// `perl -MIO::File` no longer match. See reverseShellRefine.
+var execKeywordRefine = map[string]func(lower string) bool{
+	"/dev/tcp/": devNetEndpointNonLoopback,
+	"/dev/udp/": devNetEndpointNonLoopback,
+	"-mio":      perlLoadsIOSocket,
+}
+
 // matchSuspiciousExec returns the name of the first matching execPattern for
 // the given command, or "" if none match. patterns must be pre-loaded by the
 // caller (e.g. via loadExecPatterns) to avoid a file read on every invocation.
@@ -471,6 +482,10 @@ func matchSuspiciousExec(cmd string, patterns []execPattern) string {
 		matched := true
 		for _, kw := range p.Keywords {
 			if !strings.Contains(lower, kw) {
+				matched = false
+				break
+			}
+			if refine, ok := execKeywordRefine[kw]; ok && !refine(lower) {
 				matched = false
 				break
 			}

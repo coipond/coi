@@ -112,12 +112,13 @@ max_duration = "10s"
 """
     )
 
-    # Create a script
+    # The script outlives the 10s limit by far, so only the limit can end it
+    # (a 20s script used to finish on its own around the time the stop landed).
     test_script = Path(workspace_dir) / "test_script.sh"
     test_script.write_text(
         """#!/bin/bash
 echo "Running test"
-sleep 20
+sleep 120
 echo "Done"
 """
     )
@@ -136,16 +137,20 @@ echo "Done"
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=90,  # Generous ceiling for the test itself (< the 120s script)
         cwd=workspace_dir,
     )
 
     elapsed_time = time.time() - start_time
 
-    # Verify it stopped around timeout
-    assert 8 <= elapsed_time <= 20, (
-        f"Container should stop around 10s timeout, took {elapsed_time:.1f}s"
+    # A graceful stop plus the follow-up "is it really stopped" check takes
+    # ~10s past the limit (~20s in total on CI), so the upper bound matches
+    # test_container_auto_stops_after_timeout rather than sitting on that edge.
+    assert 8 <= elapsed_time <= 60, (
+        f"Container should stop after the 10s timeout (allowing for CI load), "
+        f"took {elapsed_time:.1f}s"
     )
+    assert "Done" not in result.stdout, "the runtime limit should stop the script before it ends"
 
     # Brief pause for container state to settle
     time.sleep(2)

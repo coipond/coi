@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/logger"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
 )
 
 // skipUnlessBootBlockReady skips the test if Incus, nft, or the coi image are absent.

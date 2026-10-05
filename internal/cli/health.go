@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/health"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/health"
 	"github.com/spf13/cobra"
 )
 
@@ -119,7 +119,7 @@ func printFixReport(outcomes []health.FixOutcome, dryRun bool) {
 
 		fmt.Printf("  %-8s %s: %s\n", icon, formatCheckName(o.Check), o.Summary)
 		if len(o.Command) > 0 && (o.Status == health.FixPlanned || o.Status == health.FixManualRequired) {
-			fmt.Printf("           %s: %s\n", verb, strings.Join(o.Command, " "))
+			fmt.Printf("           %s: %s\n", verb, shellQuoteArgs(o.Command))
 		}
 		if o.Err != nil {
 			fmt.Printf("           error: %v\n", o.Err)
@@ -327,4 +327,20 @@ func formatCheckName(name string) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+// shellQuoteArgs renders argv as one copy-pasteable shell command: arguments
+// made only of safe characters are left bare, anything else is single-quoted
+// (a fix can carry a multi-line sh -c script, which a plain space-join mangles).
+func shellQuoteArgs(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		// A leading '=' stays quoted: zsh expands =cmd to the path of cmd.
+		if a != "" && a[0] != '=' && strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-") == "" {
+			quoted[i] = a
+			continue
+		}
+		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(quoted, " ")
 }

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mensfeld/coi/internal/container"
-	"github.com/mensfeld/coi/internal/tool"
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // skipUnlessContextFileTestable skips the test if integration prerequisites are missing.

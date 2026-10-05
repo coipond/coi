@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mensfeld/coi/schema"
+	"github.com/coipond/coi/schema"
 )
 
 func mustGetSchema(t *testing.T) []byte {
@@ -373,5 +373,48 @@ func TestGetProfileSchema_Deterministic(t *testing.T) {
 	}
 	if string(a) != string(b) {
 		t.Fatal("GetProfileSchema is not deterministic across calls")
+	}
+}
+
+// [tool] binary takes a command name or path, never a shell snippet (it is
+// launched inside a shell command string); the schema mirrors
+// tool.ValidateBinary.
+func TestValidateProfileMap_ToolBinary(t *testing.T) {
+	for _, ok := range []string{"claude", "/workspace/claude-wrapper.sh", "./bin/agent"} {
+		if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"binary": ok}}); err != nil {
+			t.Errorf("binary %q should validate, got: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"claude update; claude", "/path with space/claude", "-x"} {
+		if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"binary": bad}}); err == nil {
+			t.Errorf("binary %q should be rejected", bad)
+		}
+	}
+}
+
+// [tool] pre_launch is a list of non-empty command strings.
+func TestValidateProfileMap_ToolPreLaunch(t *testing.T) {
+	if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"pre_launch": []any{"claude update", "echo ok && true"}}}); err != nil {
+		t.Errorf("pre_launch list should validate, got: %v", err)
+	}
+	for _, bad := range []any{"claude update", []any{""}, []any{42}} {
+		if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"pre_launch": bad}}); err == nil {
+			t.Errorf("pre_launch %v should be rejected", bad)
+		}
+	}
+}
+
+// [git] protected_branches is valid in a profile: a list of branch names, or
+// [] to disable the guard.
+func TestValidateProfileMap_GitProtectedBranches(t *testing.T) {
+	for _, ok := range []any{[]any{"main", "release"}, []any{}} {
+		if err := schema.ValidateProfileMap(map[string]any{"git": map[string]any{"protected_branches": ok}}); err != nil {
+			t.Errorf("protected_branches %v should validate, got: %v", ok, err)
+		}
+	}
+	for _, bad := range []any{"main", []any{""}, []any{1}} {
+		if err := schema.ValidateProfileMap(map[string]any{"git": map[string]any{"protected_branches": bad}}); err == nil {
+			t.Errorf("protected_branches %v should be rejected", bad)
+		}
 	}
 }

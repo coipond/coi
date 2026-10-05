@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mensfeld/coi/internal/config"
-	"github.com/mensfeld/coi/internal/container"
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // NftManager manages nftables rules for container network isolation.
@@ -171,7 +171,7 @@ func (f *NftManager) ApplyAllowlist(cfg *config.NetworkConfig, _ []string) error
 	if err := f.AddStaticIPs(policy.StaticCIDRs()); err != nil {
 		return err
 	}
-	if err := f.AddStaticTuples(policy.StaticTuples(), intsToPortRanges(allowedPorts)); err != nil {
+	if err := f.AddStaticTuples(policy.staticTuples(), intsToPortRanges(allowedPorts)); err != nil {
 		return err
 	}
 
@@ -314,7 +314,7 @@ func (f *NftManager) ReplaceAllowlist(cfg *config.NetworkConfig, staticCIDRs []s
 	if err := f.AddStaticIPs(policy.StaticCIDRs()); err != nil {
 		return err
 	}
-	return f.AddStaticTuples(policy.StaticTuples(), intsToPortRanges(allowedPorts))
+	return f.AddStaticTuples(policy.staticTuples(), intsToPortRanges(allowedPorts))
 }
 
 // EnsureBaseRules creates the ip coi table/chain and adds the shared conntrack rule.
@@ -814,6 +814,24 @@ func NftAvailable() bool {
 	}
 	cmd := exec.Command("sudo", "-n", "nft", "list", "tables")
 	return cmd.Run() == nil
+}
+
+// NftPasswordlessSudo reports whether `sudo nft` works WITHOUT a password —
+// i.e. a NOPASSWD rule is in effect — ignoring any cached sudo credential
+// (`sudo -k -n`). NftAvailable can't tell those apart: right after the user
+// typed a sudo password it succeeds for ~15 minutes, then isolation breaks.
+// Health checks use this; runtime keeps NftAvailable (a cached credential does
+// work for the moment).
+func NftPasswordlessSudo() bool {
+	if !SudoEnabled() {
+		return false
+	}
+	return runSudoProbe("-k", "-n", "nft", "list", "tables") == nil
+}
+
+// runSudoProbe runs `sudo <args>`; a package var so tests can observe the args.
+var runSudoProbe = func(args ...string) error {
+	return exec.Command("sudo", args...).Run() //nolint:gosec // fixed args from NftPasswordlessSudo
 }
 
 // NftUsable reports whether Coi can actually use nft for the given config:

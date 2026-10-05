@@ -1,3 +1,6 @@
+// Package tool defines the AI coding tools (Claude Code, codex, opencode, pi,
+// omp) that coi can run in containers: how each is launched, resumed and
+// configured for sandboxed, permission-bypassing operation.
 package tool
 
 import (
@@ -7,12 +10,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"text/template"
 
-	"github.com/mensfeld/coi/internal/tool/credentials"
+	"github.com/coipond/coi/internal/tool/credentials"
 )
 
 //go:embed templates/sandbox_context.md.tmpl
@@ -95,6 +99,7 @@ type ClaudeTool struct {
 	effortLevel    string // "low", "medium", "high", "xhigh", "max", "auto" — empty means unset (user controls interactively)
 	model          string // Claude model, delivered as ANTHROPIC_MODEL — empty means unset (Claude Code's own default)
 	permissionMode string // "bypass" (default) or "interactive"
+	binary         string // [tool] binary override; empty means "claude"
 }
 
 // NewClaude creates a new Claude tool instance
@@ -102,25 +107,45 @@ func NewClaude() Tool {
 	return &ClaudeTool{}
 }
 
+// Name returns "claude".
 func (c *ClaudeTool) Name() string {
 	return "claude"
 }
 
+// Binary returns the executable to launch: the [tool] binary override if set,
+// else "claude".
 func (c *ClaudeTool) Binary() string {
+	if c.binary != "" {
+		return c.binary
+	}
 	return "claude"
 }
 
+// SetBinary implements ToolWithBinary: the executable to launch instead of
+// "claude" ([tool] binary). An empty or unsafe value leaves the default.
+func (c *ClaudeTool) SetBinary(path string) {
+	if path != "" && ValidateBinary(path) == nil {
+		c.binary = path
+	}
+}
+
+// ConfigDirName returns the Claude config directory (~/.claude) from the
+// credential bundle catalog.
 func (c *ClaudeTool) ConfigDirName() string {
 	return mustBundle("claude").ConfigDir
 }
 
+// SessionsDirName returns "sessions-claude".
 func (c *ClaudeTool) SessionsDirName() string {
 	return "sessions-claude"
 }
 
+// BuildCommand builds the claude launch command. It adds
+// --permission-mode bypassPermissions unless in interactive mode, and either
+// --resume [id] when resuming or --session-id <sessionID> for a new session.
 func (c *ClaudeTool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
 	// Base command with flags
-	cmd := []string{"claude", "--verbose"}
+	cmd := []string{c.Binary(), "--verbose"}
 
 	// Only add bypass permissions when not in interactive mode
 	if c.permissionMode != "interactive" {
@@ -141,6 +166,8 @@ func (c *ClaudeTool) BuildCommand(sessionID string, resume bool, resumeSessionID
 	return cmd
 }
 
+// DiscoverSessionID returns the ID of the first .jsonl session file in
+// stateDir/projects/-workspace, or "" if none is found.
 func (c *ClaudeTool) DiscoverSessionID(stateDir string) string {
 	// Claude stores sessions as .jsonl files in projects/-workspace/
 	// This logic is extracted from cleanup.go:387-411
@@ -161,6 +188,9 @@ func (c *ClaudeTool) DiscoverSessionID(stateDir string) string {
 	return ""
 }
 
+// GetSandboxSettings returns the settings.json entries to inject: bypass
+// permission flags (unless in interactive mode), effort-prompt suppression, and
+// an env block carrying the configured effort level and model, if set.
 func (c *ClaudeTool) GetSandboxSettings() map[string]interface{} {
 	settings := map[string]interface{}{}
 
@@ -363,6 +393,30 @@ type ToolWithContainerEnv interface {
 // Valid values: "bypass" (default, all permissions auto-granted) or "interactive" (human-in-the-loop).
 func (c *ClaudeTool) SetPermissionMode(mode string) {
 	c.permissionMode = mode
+}
+
+// ToolWithBinary is an optional interface for tools whose executable can be
+// replaced ([tool] binary), e.g. by a wrapper script.
+type ToolWithBinary interface {
+	Tool
+	// SetBinary sets the executable launched for the tool ([tool] binary).
+	// Empty keeps the tool's default executable name.
+	SetBinary(path string)
+}
+
+// binarySafe is a single shell-safe command name or path: the launch command
+// travels as a string through `tmux ... "bash -c '...'"`, so whitespace,
+// quotes and shell metacharacters are not allowed, and a leading '-' would
+// read as an option.
+var binarySafe = regexp.MustCompile(`^[A-Za-z0-9_./][A-Za-z0-9._:/@+-]*$`)
+
+// ValidateBinary returns an error when a [tool] binary value is not a single
+// shell-safe command name or path. Empty is valid (setting unset).
+func ValidateBinary(value string) error {
+	if value == "" || binarySafe.MatchString(value) {
+		return nil
+	}
+	return fmt.Errorf("[tool] binary %q must be a command name or path of letters, digits, or ._:/@+- (no whitespace, quotes or shell metacharacters)", value)
 }
 
 // ToolWithPermissionMode is an optional interface for tools that support
