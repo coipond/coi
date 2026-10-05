@@ -34,7 +34,7 @@ def test_agent_commands_not_flagged(test_workspace, enable_monitoring, coi_binar
     )
     try:
         if not wait_for_container_running(container_name, timeout=60):
-            pytest.skip(f"Container {container_name} not found or not running")
+            pytest.fail(f"Container {container_name} did not start")
         time.sleep(10)  # let the monitoring baseline settle
 
         for cmdline in AGENT_COMMANDS_NOT_REVERSE_SHELLS:

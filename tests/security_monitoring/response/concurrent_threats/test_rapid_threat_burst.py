@@ -31,9 +31,9 @@ def test_rapid_threat_burst(test_workspace, enable_monitoring, coi_binary):
 
     container_name = get_container_name_from_workspace(test_workspace).rsplit("-", 1)[0] + "-45"
 
-    if not wait_for_container_running(container_name, timeout=30):
+    if not wait_for_container_running(container_name):
         proc.terminate()
-        pytest.skip(f"Container {container_name} not found or not running")
+        pytest.fail(f"Container {container_name} did not start")
 
     # Wait for monitoring baseline
     time.sleep(5)

@@ -51,9 +51,9 @@ file_read_rate_mb_per_sec = 1000
 
     container_name = get_container_name_from_workspace(str(test_workspace)).rsplit("-", 1)[0] + "-7"
 
-    if not wait_for_container_running(container_name, timeout=30):
+    if not wait_for_container_running(container_name):
         proc.terminate()
-        pytest.skip(f"Container {container_name} not found or not running")
+        pytest.fail(f"Container {container_name} did not start")
 
     # Wait for monitoring baseline to stabilize
     time.sleep(10)

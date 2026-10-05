@@ -73,8 +73,8 @@ time.sleep(60)
     )
 
     try:
-        if not wait_for_container_running(container_name, timeout=30):
-            pytest.skip(f"Container {container_name} not found or not running")
+        if not wait_for_container_running(container_name):
+            pytest.fail(f"Container {container_name} did not start")
 
         time.sleep(10)
 

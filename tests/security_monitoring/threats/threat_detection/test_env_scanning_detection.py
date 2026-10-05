@@ -35,7 +35,7 @@ def test_env_scanning_detection(test_workspace, enable_monitoring, coi_binary):
 
     if not container_ready:
         proc.terminate()
-        pytest.skip(f"Container {container_name} not found or not running")
+        pytest.fail(f"Container {container_name} did not start")
 
     # Inject env scanning command
     subprocess.Popen(

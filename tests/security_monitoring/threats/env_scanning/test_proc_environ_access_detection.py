@@ -32,8 +32,8 @@ def test_proc_environ_access_detection(test_workspace, enable_monitoring, coi_bi
     )
 
     try:
-        if not wait_for_container_running(container_name, timeout=30):
-            pytest.skip(f"Container {container_name} not found or not running")
+        if not wait_for_container_running(container_name):
+            pytest.fail(f"Container {container_name} did not start")
 
         # Wait for monitoring baseline to stabilize
         time.sleep(10)
