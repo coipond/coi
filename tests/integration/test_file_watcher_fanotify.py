@@ -29,6 +29,20 @@ from pathlib import Path
 
 import pytest
 
+# Sensitive-file monitoring needs CAP_SYS_ADMIN for fanotify_init, which a
+# standard (non-root) coi install doesn't have: every session logs
+# "filewatcher: fanotify_init: operation not permitted (sensitive file
+# monitoring disabled)" and nothing is detected. Expected to fail until coi
+# gets that privilege some other way (e.g. a sudo helper, like the nft
+# monitor). strict=True: once it works, these XPASS and fail, so the marker
+# gets removed.
+pytestmark = pytest.mark.xfail(
+    os.geteuid() != 0,
+    reason="fanotify needs CAP_SYS_ADMIN, which a non-root coi doesn't have",
+    strict=True,
+)
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
