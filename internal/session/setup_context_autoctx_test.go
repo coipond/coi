@@ -33,7 +33,7 @@ func newFakeAutoCtxManager() *fakeAutoCtxManager {
 
 var (
 	fakeReadRe  = regexp.MustCompile(`if \[ -f '([^']*)' \]`)
-	fakeWriteRe = regexp.MustCompile(`printf '%s' '([A-Za-z0-9+/=]*)' \| base64 -d > .* mv -f '[^']*' '([^']*)'$`)
+	fakeWriteRe = regexp.MustCompile(`printf '%s' '([A-Za-z0-9+/=]*)' \| base64 -d > .* mv -f '[^']*' '([^']*)'; } \|\| exit 1$`)
 )
 
 func (f *fakeAutoCtxManager) ExecCommand(cmd string, _ container.ExecCommandOptions) (string, error) {

@@ -34,25 +34,28 @@ func guestFile(path, content string, uid, gid int, mode string) guestOp {
 // element of `bash -c`. Bigger batches fall back to one call per op.
 const maxGuestScriptBytes = 96 * 1024
 
-// renderGuestScript renders ops as one `set -e` shell script. File content is
+// renderGuestScript renders ops as one fail-fast shell script. File content is
 // base64-encoded so arbitrary bytes (quotes, newlines, config-sourced strings)
 // can never break out of the script. Each file is written to a sibling temp
 // path, owned and chmod-ed, then renamed over the target: rename replaces a
 // symlink at the target instead of following it, and readers never see a
 // half-written file.
 func renderGuestScript(ops []guestOp) string {
+	// `set -e` alone is not enough: bash ignores a failure inside an `a && b`
+	// list unless it is the last command, so every op also ends in
+	// `|| exit 1` — a failed step must stop the script, never be masked by a
+	// later step that succeeds.
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	for _, op := range ops {
 		if op.write == nil {
-			b.WriteString(op.cmd)
-			b.WriteByte('\n')
+			fmt.Fprintf(&b, "{ %s; } || exit 1\n", op.cmd)
 			continue
 		}
 		w := op.write
 		dst := shellEscape(w.path)
 		tmp := shellEscape(w.path + ".coi-new")
-		fmt.Fprintf(&b, "rm -f %s && printf '%%s' '%s' | base64 -d > %s && chown %d:%d %s && chmod %s %s && mv -f %s %s\n",
+		fmt.Fprintf(&b, "{ rm -f %s && printf '%%s' '%s' | base64 -d > %s && chown %d:%d %s && chmod %s %s && mv -f %s %s; } || exit 1\n",
 			tmp, base64.StdEncoding.EncodeToString([]byte(w.content)), tmp,
 			w.uid, w.gid, tmp, shellEscape(w.mode), tmp, tmp, dst)
 	}

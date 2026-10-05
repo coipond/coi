@@ -66,16 +66,29 @@ func TestRenderGuestScript_RunsInBash(t *testing.T) {
 	}
 }
 
-// set -e: a failing step stops the script, so later steps don't run.
+// A failing step stops the script — including a failure in the MIDDLE of an
+// `a && b` chain, which plain `set -e` ignores — so a later step that succeeds
+// can never mask it (a hook reported installed that was never written).
 func TestRenderGuestScript_StopsOnError(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "after")
-	script := renderGuestScript([]guestOp{guestCmd("false"), guestCmd("touch " + shellEscape(marker))})
-	if err := exec.Command("bash", "-c", script).Run(); err == nil {
-		t.Fatal("script should fail")
-	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Error("steps after a failure must not run")
+	for name, failing := range map[string]guestOp{
+		"plain command":       guestCmd("false"),
+		"mid-chain command":   guestCmd("true && false && true"),
+		"write, chown fails":  guestFile(filepath.Join(dir, "f"), "x", 0, 0, "0644"),
+		"write, bad dest dir": guestFile(filepath.Join(dir, "no", "such", "f"), "x", os.Getuid(), os.Getgid(), "0644"),
+	} {
+		if name == "write, chown fails" && os.Getuid() == 0 {
+			continue // root can chown to 0
+		}
+		_ = os.Remove(marker)
+		script := renderGuestScript([]guestOp{failing, guestCmd("touch " + shellEscape(marker))})
+		if err := exec.Command("bash", "-c", script).Run(); err == nil {
+			t.Errorf("%s: script should fail", name)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Errorf("%s: steps after a failure must not run", name)
+		}
 	}
 }
 
