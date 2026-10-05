@@ -200,16 +200,13 @@ jobs:
             path: tests/integration/test_nft_monitoring.py
             description: "NFT network monitoring tests"
           - name: monitoring-threats
-            path: tests/integration/test_security_monitoring.py
-            pytest_args: "-k 'TestThreatDetection or TestEnvironmentScanningPatterns or TestReverseShellPatterns or TestNetworkThreats or TestPromptInjectionScenario'"
+            path: tests/security_monitoring/threats
             description: "Threat detection tests"
           - name: monitoring-response
-            path: tests/integration/test_security_monitoring.py
-            pytest_args: "-k 'TestAutomatedResponse or TestHighLevelThreats or TestLargeWriteDetection or TestDiskSpaceMonitoring or TestMonitoringConfiguration or TestMultipleThreats or TestAuditLogValidation or TestFalsePositives or TestThresholdBoundaries or TestConcurrentThreats'"
+            path: tests/security_monitoring/response
             description: "Response and threshold tests"
           - name: monitoring-advanced
-            path: tests/integration/test_security_monitoring.py
-            pytest_args: "-k 'TestExpandedEnvScanningPatterns or TestProcessHostProcWalk or TestForkBombDetection or TestProcessSpawnRateDetection or TestAuthLogWatcher or TestProcEventWatcher or TestCgroupInitPID'"
+            path: tests/security_monitoring/advanced
             description: "Host-side monitoring: env scan, process walk, fork bomb, spawn rate, auth log, proc events, cgroup init PID"
           - name: monitoring-network-detection
             path: tests/integration/test_network_connection_detection.py
