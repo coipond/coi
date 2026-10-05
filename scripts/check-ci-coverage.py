@@ -23,8 +23,8 @@ def check_pytest_k_filters(ci: dict, repo: Path) -> list[str]:
     """Verify `-k` class filters against the classes actually in the file.
 
     A lane can narrow a big test file to a subset of classes via
-    `pytest_args: -k 'ClassA or ClassB'`. Split across several lanes, this is
-    how test_security_monitoring.py is sharded. The failure mode is silent
+    `pytest_args: -k 'ClassA or ClassB'` (sharding one file across several
+    lanes; prefer a directory per lane). The failure mode is silent
     DRIFT: rename/add a class and a lane's `-k` still "passes" while that class
     never runs in CI, or a `-k` names a class that no longer exists (dead
     reference). For every single-file lane path that carries a `-k`, this
@@ -128,6 +128,20 @@ def main() -> int:
             for p in covered
         )
         if not is_covered:
+            uncovered.append(rel)
+
+    # Every test file must be selected by some lane, not just its top-level
+    # directory: a lane can point at a subdirectory (tests/shell/ephemeral,
+    # tests/security_monitoring/threats), and a new sibling directory would
+    # otherwise never run.
+    for f in sorted(tests_dir.rglob("*.py")):
+        rel_parts = f.relative_to(tests_dir).parts
+        if f.name == "conftest.py" or any(p in NOT_TEST_ENTRIES or p.startswith("_") for p in rel_parts):
+            continue
+        rel = f"tests/{'/'.join(rel_parts)}"
+        if rel in uncovered or any(rel.startswith(u + "/") for u in uncovered):
+            continue
+        if not any(rel == p or rel.startswith(p.rstrip("/") + "/") for p in covered):
             uncovered.append(rel)
 
     if uncovered:
