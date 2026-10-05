@@ -123,11 +123,34 @@ def poll_network_threats(container_name, max_wait=45):
 
 
 def find_container_cgroup_path(container_name: str) -> str | None:
-    """Discover the cgroup v2 path for a container by searching /sys/fs/cgroup."""
-    import glob
-
-    matches = glob.glob(f"/sys/fs/cgroup/**/{container_name}", recursive=True)
-    return next((m for m in matches if os.path.isdir(m)), None)
+    """The container's cgroup v2 directory, read from its init process's
+    /proc/<pid>/cgroup (Incus names it lxc.payload.<name>, incus.payload/<name>,
+    ... depending on the version, so guessing the name is unreliable).
+    A trailing systemd scope (init.scope) is dropped, so the result is the
+    container's root cgroup."""
+    result = subprocess.run(
+        ["incus", "query", f"/1.0/instances/{container_name}/state"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return None
+    pid = json.loads(result.stdout).get("pid", 0)
+    if not pid:
+        return None
+    try:
+        with open(f"/proc/{pid}/cgroup") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return None
+    rel = next((line[3:] for line in lines if line.startswith("0::")), None)
+    if not rel:
+        return None
+    path = "/sys/fs/cgroup" + rel
+    if path.endswith(".scope"):
+        path = os.path.dirname(path)
+    return path if os.path.isdir(path) else None
 
 
 def cleanup_container(name, coi_binary):
@@ -226,9 +249,9 @@ def forensic_copies(container_name):
     return [row for row in result.stdout.strip().splitlines() if row]
 
 
-def trigger_critical_and_wait_kill(coi_binary, test_workspace, slot):
-    """Start a shell, trigger a CRITICAL threat, wait for the auto-kill.
-    Returns (proc, container_name, killed)."""
+def trigger_critical_and_wait_kill(coi_binary, test_workspace, slot, kill_timeout=35):
+    """Start a shell, trigger a CRITICAL threat, wait up to kill_timeout seconds
+    for the auto-kill. Returns (proc, container_name, killed)."""
     proc = subprocess.Popen(
         [coi_binary, "shell", "--workspace", test_workspace, "--slot", str(slot), "--debug"],
         stdin=subprocess.DEVNULL,
@@ -257,7 +280,7 @@ def trigger_critical_and_wait_kill(coi_binary, test_workspace, slot):
     )
     time.sleep(5)
     killed = False
-    for _ in range(35):
+    for _ in range(kill_timeout):
         time.sleep(1)
         if container_absent(container_name):
             killed = True

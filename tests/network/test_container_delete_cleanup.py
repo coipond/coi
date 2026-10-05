@@ -233,13 +233,13 @@ def test_container_delete_removes_monitoring_log_rules(
         assert name, f"no container name: {result.stdout + result.stderr}"
 
         ip, _count = _wait_for_rules_for_ip(coi_binary, name)
-        if not ip:
-            pytest.skip("container never got a DHCP IP; cannot assert LOG-rule cleanup")
+        assert ip, f"{name} never got a DHCP IP"
 
         # The monitoring daemon installs the LOG rules asynchronously; require
         # them as a precondition so this test genuinely exercises their removal.
-        if _poll_for_monitor_rules(ip) == 0:
-            pytest.skip("nft monitoring LOG rules never installed in this environment")
+        assert _poll_for_monitor_rules(ip) > 0, (
+            f"nft monitoring LOG rules for {ip} were never installed"
+        )
 
         dele = subprocess.run(
             [coi_binary, "container", "delete", name, "--force"],

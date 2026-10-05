@@ -628,7 +628,7 @@ jobs:
           # shell poweroff detection — see #653/#658/#665) where a single transient
           # miss reds the whole run. A genuine bug still fails after every attempt;
           # only integration lanes get this, never the strict Go unit lane.
-          python -m pytest ${{ matrix.test_group.path }} ${{ matrix.test_group.pytest_args }} -v --tb=short --durations=0 --reruns 2 --reruns-delay 3 --cov=tests --cov-report=term-missing
+          python -m pytest ${{ matrix.test_group.path }} ${{ matrix.test_group.pytest_args }} -v -rs --tb=short --durations=0 --reruns 2 --reruns-delay 3 --cov=tests --cov-report=term-missing
         env:
           COI_BINARY: ./coi
           GITHUB_REPOSITORY_URL: ${{ github.event.pull_request.head.repo.clone_url || format('https://github.com/{0}.git', github.repository) }}
