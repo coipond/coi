@@ -4,6 +4,7 @@
 
 ### Changed
 
+- [Change] **`coi shell` starts and exits faster, especially on a reused persistent container** — fewer and cheaper Incus calls throughout: slot lookup no longer fetches every container's full state, git hooks and the sandbox context files are each installed in one call, tmux setup is one call, protected-path devices that already match are kept instead of re-created, the container IP is polled every 200 ms instead of every second, and `exit` is recognised in one check instead of a ~1.5 s confirmation window. The faster `exit` detection needs a rebuilt image (`coi build`).
 - [Change] **Primary name is now `Coi`** — `Coi` (Code on Incus) is the product name and `coi` the command. Cosmetic only.
 
 ### Breaking
@@ -12,6 +13,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **An auto-killed container is now always deleted** — the kill could leave it behind, stopped, when the session hosting the monitor (notably a `coi shell --background` supervisor) ended between the stop and the delete. The kill is now a single `incus delete --force`.
 - [Bug Fix] **Background and detached sessions are now protected** — security monitoring and the runtime limit keep running after `coi shell --background`, or when you detach or leave the agent with the container still running, and stop when the container does. Before, they stopped as soon as `coi shell` returned. `coi shell` prints a `[supervisor]` line confirming what is covered and where it logs.
 - [Bug Fix] **Profiles can set `[git] protected_branches` and `[limits.disk] size`** — a profile containing either no longer fails to load (which made every coi command fail).
 - [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as they already were in project config.

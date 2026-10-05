@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -180,5 +183,45 @@ func TestBuildTmuxSetEnvironmentCmds_OnePerVar(t *testing.T) {
 func TestBuildTmuxSetEnvironmentCmds_EmptyEnv(t *testing.T) {
 	if got := buildTmuxSetEnvironmentCmds("s", nil); len(got) != 0 {
 		t.Errorf("expected no commands for nil env, got: %v", got)
+	}
+}
+
+// The tmux prep script must create a missing session, reuse an existing one,
+// apply env either way, and report each outcome — checked against a fake tmux.
+func TestBuildTmuxPrepScript_Exec(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	fake := "#!/bin/sh\necho \"$*\" >> " + log + "\n" +
+		"case \"$1\" in has-session) [ -n \"$FAKE_EXISTS\" ] ;; new-session) [ -z \"$FAKE_CREATE_FAILS\" ] ;; set-environment) [ -z \"$FAKE_ENV_FAILS\" ] ;; esac\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"A": "1"}
+	script := buildTmuxPrepScript("coi-x", buildTmuxNewSessionCmd("coi-x", "/w", "claude", env), buildTmuxSetEnvironmentCmds("coi-x", env))
+
+	run := func(extra ...string) (string, string, error) {
+		_ = os.Remove(log)
+		cmd := exec.Command("bash", "-c", script)
+		cmd.Env = append([]string{"PATH=" + dir + ":" + os.Getenv("PATH")}, extra...)
+		out, err := cmd.Output()
+		calls, _ := os.ReadFile(log)
+		return string(out), string(calls), err
+	}
+
+	out, calls, err := run()
+	if err != nil || !strings.Contains(out, tmuxPrepCreated) || !strings.Contains(calls, "new-session") || !strings.Contains(calls, "set-environment") {
+		t.Errorf("missing session: want create + env; out=%q err=%v calls=%q", out, err, calls)
+	}
+	out, calls, err = run("FAKE_EXISTS=1")
+	if err != nil || !strings.Contains(out, tmuxPrepExisting) || strings.Contains(calls, "new-session") || !strings.Contains(calls, "set-environment") {
+		t.Errorf("existing session: want reuse + env, no create; out=%q err=%v calls=%q", out, err, calls)
+	}
+	out, _, err = run("FAKE_CREATE_FAILS=1")
+	if err == nil || strings.Contains(out, tmuxPrepCreated) {
+		t.Errorf("failed create must exit non-zero without the created marker; out=%q err=%v", out, err)
+	}
+	out, _, err = run("FAKE_ENV_FAILS=1")
+	if err != nil || !strings.Contains(out, tmuxPrepEnvFailed) || !strings.Contains(out, tmuxPrepCreated) {
+		t.Errorf("env failure is a warning, not fatal; out=%q err=%v", out, err)
 	}
 }

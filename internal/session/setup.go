@@ -414,7 +414,7 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 		opts.Logger(fmt.Sprintf("Warning: git worktree not resolved (%v); its git dirs are skipped by the UID-mapping check and git commands may fail in the container", reuseWtErr))
 	}
 	reuseWritableHooks := !containsGitHooksPath(opts.Security.ProtectedPaths)
-	StripSecurityDevices(result.Manager, opts.Logger)
+	secDevices := newSecurityDeviceReconciler(result.Manager, opts.Logger)
 	// Reconcile the kernel-surface policy while the container is stopped —
 	// the only window where security.nesting and security.syscalls.deny can
 	// change — so a persistent container converges to the CURRENT
@@ -477,7 +477,8 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 			result.ContainerWorkspacePath = cwp
 		}
 	}
-	reusePaths, reuseImmutable, reuseErr := applySessionSecurity(result.Manager, *opts, reuseCWP, reuseUseShift, reuseLayout, reuseWritableHooks, containerName)
+	reusePaths, reuseImmutable, reuseErr := applySessionSecurity(secDevices, *opts, reuseCWP, reuseUseShift, reuseLayout, reuseWritableHooks, containerName)
+	secDevices.finish()
 	opts.Security.ProtectedPaths = reusePaths
 	if reuseImmutable {
 		result.HasImmutableProtection = true
@@ -742,7 +743,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 // facts, injects ~/SANDBOX_CONTEXT.md (and the optional .json companion), and
 // returns the rendered context content for the auto-context step. Extracted
 // verbatim from Setup's phase-12 block.
-func injectSandboxContext(result *SetupResult, opts SetupOptions) string {
+func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestOp) {
 	networkMode := ""
 	var allowedPorts []int
 	var dnsServers, allowedDomains []string
@@ -818,19 +819,52 @@ func injectSandboxContext(result *SetupResult, opts SetupOptions) string {
 		DockerUnavailable:  !hardeningPolicyFrom(&opts).DockerEnabled(),
 	}
 	contextContent := resolveContextContent(ctxInfo, opts.Context.FilePath, opts.Logger)
-	if err := injectContextFile(result.Manager, ctxInfo, opts.Context.FilePath, result.HomeDir, opts.Logger); err != nil {
+	var ops []guestOp
+	if op, err := contextFileOp(ctxInfo, opts.Context.FilePath, result.HomeDir, opts.Logger); err != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to inject context file: %v", err))
+	} else {
+		ops = append(ops, op)
 	}
 	// Machine-readable companion for programmatic consumers (#705), enabled
 	// by default. Written from ctxInfo (the real facts) unless [tool]
 	// context_json_file provides a custom JSON to inject verbatim; disable
 	// entirely with context_json = false.
 	if config.BoolVal(opts.Context.JSON) {
-		if err := injectContextJSONFile(result.Manager, ctxInfo, opts.Context.JSONFilePath, result.HomeDir, opts.Logger); err != nil {
+		if op, err := contextJSONFileOp(ctxInfo, opts.Context.JSONFilePath, result.HomeDir, opts.Logger); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: Failed to inject context JSON file: %v", err))
+		} else {
+			ops = append(ops, op)
 		}
 	}
-	return contextContent
+	return contextContent, ops
+}
+
+// injectSandboxContextFiles writes ~/SANDBOX_CONTEXT.md, the optional .json,
+// and (when [tool] auto_context is on and the tool has one) the tool's native
+// auto-load file, all in ONE exec. Runs for both new and resumed sessions so
+// dynamic info stays current.
+func injectSandboxContextFiles(result *SetupResult, opts SetupOptions) {
+	contextContent, ops := sandboxContextOps(result, opts)
+
+	if opts.Tool != nil && config.BoolVal(opts.Context.Auto) && contextContent != "" {
+		if acf, ok := opts.Tool.(tool.ToolWithAutoContextFile); ok {
+			if op, err := autoContextFileOp(result.Manager, acf, contextContent, result.HomeDir, opts.Logger); err != nil {
+				opts.Logger(fmt.Sprintf("Warning: Failed to inject auto-context file: %v", err))
+			} else {
+				ops = append(ops, op)
+			}
+		}
+	}
+	if len(ops) == 0 {
+		return
+	}
+	if err := runGuestOps(result.Manager, ops, container.ExecCommandOptions{}); err != nil {
+		opts.Logger(fmt.Sprintf("Warning: Failed to write sandbox context files: %v", err))
+		return
+	}
+	for _, op := range ops {
+		opts.Logger(fmt.Sprintf("Context file injected at %s", op.write.path))
+	}
 }
 
 // remapContainerUser remaps the container's `code` user to a non-default

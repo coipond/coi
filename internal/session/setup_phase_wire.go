@@ -51,22 +51,28 @@ func (st *setupState) phaseConfigureTimezone(_ context.Context) (Teardown, error
 	st.result.Timezone = st.opts.Timezone
 	if st.opts.Timezone != "" {
 		st.opts.Logger(fmt.Sprintf("Setting container timezone to %s...", st.opts.Timezone))
-		tzCmd := fmt.Sprintf(
-			"ln -sf /usr/share/zoneinfo/%s /etc/localtime && echo %s > /etc/timezone",
-			st.opts.Timezone, st.opts.Timezone,
-		)
+		tzCmd := timezoneCmd(st.opts.Timezone)
 		if _, err := st.result.Manager.ExecCommand(tzCmd, container.ExecCommandOptions{Capture: true}); err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Failed to set timezone: %v", err))
 		}
 	} else {
 		// Explicitly reset to UTC — important for persistent containers that may
 		// have had a different timezone applied in a previous session.
-		resetCmd := "ln -sf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone"
+		resetCmd := timezoneCmd("UTC")
 		if _, err := st.result.Manager.ExecCommand(resetCmd, container.ExecCommandOptions{Capture: true}); err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Failed to reset timezone to UTC: %v", err))
 		}
 	}
 	return nil, nil
+}
+
+// timezoneCmd sets the container's zone, writing nothing when it is already
+// set (the usual case on a reused persistent container).
+func timezoneCmd(tz string) string {
+	return fmt.Sprintf(
+		`[ "$(readlink /etc/localtime)" = /usr/share/zoneinfo/%[1]s ] && [ "$(cat /etc/timezone 2>/dev/null)" = %[1]s ] || { ln -sf /usr/share/zoneinfo/%[1]s /etc/localtime && echo %[1]s > /etc/timezone; }`,
+		tz,
+	)
 }
 
 // 7. Start the timeout monitor if max_duration is configured.

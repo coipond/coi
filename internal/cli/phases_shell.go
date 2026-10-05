@@ -131,10 +131,13 @@ func (a *App) validateEnvPhase(cmd *cobra.Command, s *shellState) session.Phase 
 				s.useTmux = *a.cfg.Shell.UseTmux
 			}
 
+			// Both are independent incus round trips: run them side by side.
+			versionErr := make(chan error, 1)
+			go func() { versionErr <- container.CheckMinimumVersion() }()
 			if !container.Available() {
 				return nil, container.IncusNotAvailableError()
 			}
-			if err := container.CheckMinimumVersion(); err != nil {
+			if err := <-versionErr; err != nil {
 				return nil, err
 			}
 			if warning := container.CheckKernelVersion(); warning != "" {

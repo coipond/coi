@@ -242,11 +242,8 @@ func (r *Responder) killContainer(ctx context.Context) error {
 
 	// Forensic copy BEFORE the stop, while the container is still running.
 	// Best-effort: a failed prune/copy must never block or delay the kill.
-	// When enabled, the copy adds a little latency before the stop, and the
-	// stop below runs under a DETACHED context (see stopAndDelete) so the
-	// session-teardown that the stop itself triggers cannot cancel it — the
-	// default (forensics-off) path keeps master's exact caller-context
-	// behavior, untouched.
+	// When enabled, the copy adds a little latency before the delete, so the
+	// delete then runs under a DETACHED context (see stopAndDelete).
 	forensicName := ""
 	detachStop := false
 	if r.forensicsOnKill {
@@ -279,17 +276,20 @@ func (r *Responder) killContainer(ctx context.Context) error {
 	return nil
 }
 
-// stopAndDelete stops the (ephemeral) container — which also auto-deletes it —
-// cleans up its firewall/NFT rules, and deletes it explicitly as a backstop.
+// stopAndDelete removes the container in ONE atomic `incus delete --force`
+// (stop + delete in a single incusd operation), after cleaning up its
+// firewall/NFT rules.
 //
-// The DEFAULT path (detached=false) is master's exact behavior on the caller's
-// context: stop, and abort the response if the stop errors. The FORENSICS path
-// (detached=true) runs under a fresh timeout-bounded context because the copy
-// added latency ahead of the stop, and the stop ENDS the attached session,
-// tearing down the coi process hosting this daemon and cancelling the caller
-// context mid-`incus stop` ("exit status -1") — a fresh context is immune to
-// that self-cancellation, and the stop is best-effort (the ephemeral
-// auto-delete is the real guarantee that the container is gone).
+// It used to stop and then delete in two calls. The stop ends the session,
+// and whatever hosts this daemon (the attached `coi shell`, or the background
+// session's supervisor, which exits as soon as it sees the container
+// Stopped) can be torn down in that gap — losing the delete and leaving a
+// killed container behind, Stopped. One incusd operation has no such gap:
+// once the request is sent, incusd finishes it even if this process dies.
+//
+// detached (the forensics path) runs under a fresh timeout-bounded context
+// rather than the caller's, because the forensic copy added latency ahead of
+// the delete during which the caller context may already be cancelling.
 func (r *Responder) stopAndDelete(callerCtx context.Context, detached bool) error {
 	ctx := callerCtx
 	if detached {
@@ -301,33 +301,13 @@ func (r *Responder) stopAndDelete(callerCtx context.Context, detached bool) erro
 		defer cancel()
 	}
 
-	// Get container IP BEFORE removing it (needed for cleanup)
+	// Get container IP BEFORE removing it (needed for cleanup), and clean up
+	// first so the rules go even if this process dies right after the delete.
 	containerIP, _ := network.GetContainerIPFast(r.containerName)
-
-	if detached {
-		// FORENSICS path: one ATOMIC `incus delete --force`, which stops AND
-		// deletes in a single incusd operation. This is robust to the coi
-		// process (hosting this daemon) being torn down the instant the
-		// container stops: a two-step stop-then-delete can lose the delete in
-		// that window (the container is left "Stopped"), and — observed on the
-		// btrfs pool CI uses — the forensic copy also suppresses the ephemeral
-		// auto-delete that would otherwise be the backstop. Doing it in one
-		// incusd call sidesteps both. Tolerate not-found (a race already
-		// removed it). Cleanup first so the rules go even if the delete's
-		// caller dies right after.
-		r.cleanupContainerRules(containerIP)
-		if _, err := container.IncusOutputContext(ctx, "delete", "--force", r.containerName); err != nil && !container.IsNotFoundErr(err) {
-			return fmt.Errorf("failed to delete container: %w", err)
-		}
-		return nil
-	}
-
-	// DEFAULT path: master's exact stop-then-delete on the caller context.
-	if _, err := container.StopContainerQuiet(ctx, r.containerName, true); err != nil {
-		return fmt.Errorf("failed to stop container: %w", err)
-	}
 	r.cleanupContainerRules(containerIP)
-	if _, err := container.IncusOutputContext(ctx, "delete", r.containerName); err != nil && !container.IsNotFoundErr(err) {
+
+	// Tolerate not-found: a race (or the ephemeral auto-delete) already removed it.
+	if _, err := container.IncusOutputContext(ctx, "delete", "--force", r.containerName); err != nil && !container.IsNotFoundErr(err) {
 		return fmt.Errorf("failed to delete container: %w", err)
 	}
 	return nil

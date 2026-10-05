@@ -4,6 +4,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -631,4 +632,32 @@ func TestContextFile_JSONInjection(t *testing.T) {
 	if ownership := strings.TrimSpace(statOut); ownership != "1000:1000" {
 		t.Errorf("Expected ownership 1000:1000, got %s", ownership)
 	}
+}
+
+// injectContextFile creates ~/SANDBOX_CONTEXT.md inside the container (see
+// contextFileOp) in one exec.
+func injectContextFile(mgr container.ContainerManager, info tool.ContextInfo, customPath, homeDir string, logger func(string)) error {
+	op, err := contextFileOp(info, customPath, homeDir, logger)
+	if err != nil {
+		return err
+	}
+	if err := runGuestOps(mgr, []guestOp{op}, container.ExecCommandOptions{}); err != nil {
+		return fmt.Errorf("failed to create context file %s: %w", op.write.path, err)
+	}
+	logger(fmt.Sprintf("Context file injected at %s", op.write.path))
+	return nil
+}
+
+// injectContextJSONFile creates ~/SANDBOX_CONTEXT.json inside the container
+// (see contextJSONFileOp) in one exec.
+func injectContextJSONFile(mgr container.ContainerManager, info tool.ContextInfo, customPath, homeDir string, logger func(string)) error {
+	op, err := contextJSONFileOp(info, customPath, homeDir, logger)
+	if err != nil {
+		return err
+	}
+	if err := runGuestOps(mgr, []guestOp{op}, container.ExecCommandOptions{}); err != nil {
+		return fmt.Errorf("failed to create context JSON file %s: %w", op.write.path, err)
+	}
+	logger(fmt.Sprintf("Context JSON file injected at %s", op.write.path))
+	return nil
 }

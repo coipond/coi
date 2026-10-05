@@ -411,6 +411,24 @@ WantedBy=multi-user.target
 UNIT_EOF
     systemctl enable coi-fix-hostname.service
 
+    # Shared power helper. It touches /run/coi-shutdown-requested right before
+    # asking systemd to power off, so coi's session cleanup can tell a `close`
+    # from a plain `exit` with one probe instead of waiting out a confirmation
+    # window (internal/session/cleanup.go, ShutdownMarkerPath). /run is tmpfs,
+    # and the marker is removed again if the request fails.
+    mkdir -p /usr/local/libexec
+    cat > /usr/local/libexec/coi-power << 'WRAPPER_EOF'
+#!/bin/bash
+marker=/run/coi-shutdown-requested
+case "$1" in
+    poweroff | reboot) ;;
+    *) echo "usage: coi-power poweroff|reboot" >&2; exit 2 ;;
+esac
+touch "$marker"
+systemctl --force "$1" || { rc=$?; rm -f "$marker"; exit "$rc"; }
+WRAPPER_EOF
+    chmod 755 /usr/local/libexec/coi-power
+
     # Power-off wrappers.
     #
     # In Ubuntu 24.04 containers systemd-logind can be mid-start when a shutdown
@@ -420,20 +438,20 @@ UNIT_EOF
     for cmd in poweroff halt; do
         cat > "/usr/local/bin/${cmd}" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force poweroff
+exec sudo /usr/local/libexec/coi-power poweroff
 WRAPPER_EOF
         chmod 755 "/usr/local/bin/${cmd}"
     done
 
     cat > "/usr/local/bin/reboot" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force reboot
+exec sudo /usr/local/libexec/coi-power reboot
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/reboot"
 
     cat > "/usr/local/bin/shutdown" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force poweroff
+exec sudo /usr/local/libexec/coi-power poweroff
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/shutdown"
 
@@ -442,7 +460,7 @@ WRAPPER_EOF
     # preventing accidental host shutdowns when typed outside the container
     cat > "/usr/local/bin/close" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force poweroff
+exec sudo /usr/local/libexec/coi-power poweroff
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/close"
 
@@ -452,7 +470,7 @@ WRAPPER_EOF
     # easy to confuse and are used interchangeably.
     cat > "/usr/local/bin/stop" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force poweroff
+exec sudo /usr/local/libexec/coi-power poweroff
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/stop"
 

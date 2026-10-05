@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/coipond/coi/internal/timing"
+	"gopkg.in/yaml.v3"
 )
 
 // Manager provides a clean interface for Incus container operations
@@ -185,6 +186,55 @@ func (m *Manager) ListDevices() ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+// DiskDevice is the part of a disk device's config coi compares when deciding
+// whether an existing device already matches what it would add.
+type DiskDevice struct {
+	Source, Path    string
+	Shift, Readonly bool
+}
+
+// DiskDevices returns the container's own (non-profile) disk devices by name,
+// from one `incus config show`. Works on stopped containers.
+func (m *Manager) DiskDevices() (map[string]DiskDevice, error) {
+	out, err := IncusOutput("config", "show", m.ContainerName)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDiskDevices(out)
+}
+
+// ParseDiskDevices extracts the disk devices from `incus config show` YAML.
+func ParseDiskDevices(configYAML string) (map[string]DiskDevice, error) {
+	var cfg struct {
+		Devices map[string]map[string]string `yaml:"devices"`
+	}
+	if err := yaml.Unmarshal([]byte(configYAML), &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse container config: %w", err)
+	}
+	disks := make(map[string]DiskDevice)
+	for name, d := range cfg.Devices {
+		if d["type"] != "disk" {
+			continue
+		}
+		disks[name] = DiskDevice{
+			Source:   d["source"],
+			Path:     d["path"],
+			Shift:    isTrue(d["shift"]),
+			Readonly: isTrue(d["readonly"]),
+		}
+	}
+	return disks, nil
+}
+
+// isTrue reads an Incus boolean config value.
+func isTrue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // buildTmpMountUnit returns a systemd tmp.mount unit that mounts /tmp as a

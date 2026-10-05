@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -112,7 +113,7 @@ func TestGitHookScripts(t *testing.T) {
 func TestSetupGitAttributionHook(t *testing.T) {
 	rec := &managedSettingsRecorder{}
 	// strip on, identity NOT locked: post-commit stays a delegation symlink.
-	SetupGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, true, nil, func(string) {})
+	recordGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, true, nil, func(string) {})
 
 	// Three root-owned files: the two scripts (0755) and the pattern file (0644).
 	wantModes := map[string]string{
@@ -160,7 +161,7 @@ func TestSetupGitAttributionHook(t *testing.T) {
 func TestSetupGitHooks_IdentityLock(t *testing.T) {
 	rec := &managedSettingsRecorder{}
 	id := GitIdentity{Name: testBotName, Email: testBotEmail}
-	SetupGitHooks(rec, "/home/code", id, false, nil, true, true, nil, func(string) {})
+	recordGitHooks(rec, "/home/code", id, false, nil, true, true, nil, func(string) {})
 
 	var post *createWithOwnerCall
 	for i := range rec.creates {
@@ -222,7 +223,7 @@ func TestRenderPostCommitRestampScript_Escaping(t *testing.T) {
 // mount and log a spurious warning).
 func TestSetupGitAttributionHookSkipsConfigWhenReadonly(t *testing.T) {
 	rec := &managedSettingsRecorder{}
-	SetupGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, false, nil, func(string) {})
+	recordGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, false, nil, func(string) {})
 	for _, cmd := range rec.commands {
 		if strings.Contains(cmd, "core.hooksPath") {
 			t.Errorf("setHooksPath=false must not write git config, got %q", cmd)
@@ -273,7 +274,7 @@ func TestSetupGitHooks_ReferenceTransactionOnlyWithGuard(t *testing.T) {
 	refTx := GitHooksDir + "/" + refTxHook
 
 	on := &managedSettingsRecorder{}
-	SetupGitHooks(on, "/home/code", GitIdentity{}, false, nil, false, true, []string{"main"}, func(string) {})
+	recordGitHooks(on, "/home/code", GitIdentity{}, false, nil, false, true, []string{"main"}, func(string) {})
 	var guard *createWithOwnerCall
 	for i := range on.creates {
 		if on.creates[i].path == refTx {
@@ -288,7 +289,7 @@ func TestSetupGitHooks_ReferenceTransactionOnlyWithGuard(t *testing.T) {
 	}
 
 	off := &managedSettingsRecorder{}
-	SetupGitHooks(off, "/home/code", GitIdentity{}, false, nil, false, true, nil, func(string) {})
+	recordGitHooks(off, "/home/code", GitIdentity{}, false, nil, false, true, nil, func(string) {})
 	joined := strings.Join(off.commands, "\n")
 	if !strings.Contains(joined, "rm -f "+refTx) {
 		t.Error("guard off: a stale reference-transaction guard must be removed")
@@ -300,5 +301,44 @@ func TestSetupGitHooks_ReferenceTransactionOnlyWithGuard(t *testing.T) {
 		if c.path == refTx {
 			t.Error("guard off: reference-transaction must not be written")
 		}
+	}
+}
+
+// recordGitHooks expands SetupGitHooks' batched ops into rec, so the tests can
+// assert on individual file writes and commands. The trailing logger mirrors
+// SetupGitHooks' signature.
+func recordGitHooks(rec *managedSettingsRecorder, homeDir string, id GitIdentity, stripAttribution bool, patterns []string, lockIdentity, setHooksPath bool, protectedBranches []string, _ func(string)) {
+	for _, op := range gitHooksOps(homeDir, id, stripAttribution, patterns, lockIdentity, setHooksPath, protectedBranches) {
+		if w := op.write; w != nil {
+			rec.creates = append(rec.creates, createWithOwnerCall{path: w.path, content: w.content, uid: w.uid, gid: w.gid, mode: w.mode})
+			continue
+		}
+		rec.commands = append(rec.commands, op.cmd)
+	}
+}
+
+// The whole hook install is one in-container exec, not a round trip per file
+// and per symlink (it used to be ~16 sequential incus calls).
+func TestSetupGitHooks_SingleExec(t *testing.T) {
+	rec := &managedSettingsRecorder{}
+	SetupGitHooks(rec, "/home/code", GitIdentity{Name: testBotName, Email: testBotEmail}, true, nil, true, true, []string{"main"}, func(string) {})
+	if len(rec.commands) != 1 || len(rec.creates) != 0 {
+		t.Fatalf("want exactly one exec and no separate pushes, got %d execs, %d pushes", len(rec.commands), len(rec.creates))
+	}
+	script := rec.commands[0]
+	for _, want := range []string{"set -e", "mkdir -p " + GitHooksDir, "base64 -d", "mv -f", "core.hooksPath"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("batched script missing %q", want)
+		}
+	}
+}
+
+// A failing batch is reported, not fatal, and no success line is logged.
+func TestSetupGitHooks_FailureWarns(t *testing.T) {
+	rec := &managedSettingsRecorder{execErr: func(string) error { return errors.New("boom") }}
+	var logs []string
+	SetupGitHooks(rec, "/home/code", GitIdentity{}, true, nil, false, true, []string{"main"}, func(m string) { logs = append(logs, m) })
+	if len(logs) != 1 || !strings.Contains(logs[0], "Warning") || !strings.Contains(logs[0], "boom") {
+		t.Errorf("want a single warning carrying the error, got %v", logs)
 	}
 }
