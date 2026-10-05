@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`coi health` shows when sensitive-file monitoring can't run** — watching for reads of `/etc/shadow` and writes to `sudoers` or `authorized_keys` needs extra privileges that a standard install doesn't have; health now says so instead of monitoring looking complete.
 - [Bug Fix] **Profiles can set `[git] protected_branches` and `[limits.disk] size`** — a profile containing either no longer fails to load (which made every coi command fail).
 - [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as they already were in project config.
 - [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable (for example a wrapper script) instead of silently ignoring the setting.

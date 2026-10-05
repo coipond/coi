@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/monitor"
 	"github.com/coipond/coi/internal/nftmonitor"
 )
 
@@ -339,6 +340,32 @@ func CheckCgroupAvailability() HealthCheck {
 		},
 	}
 }
+
+// CheckSensitiveFileMonitoring reports whether the security monitor can watch
+// sensitive files (credential reads, sudoers/authorized_keys writes). That
+// watcher uses fanotify, which needs CAP_SYS_ADMIN; without it the monitor
+// runs but switches the watcher off, so say so instead of letting it look
+// enabled.
+func CheckSensitiveFileMonitoring() HealthCheck {
+	if err := fanotifyAvailable(); err != nil {
+		return HealthCheck{
+			Name:    "sensitive_file_monitoring",
+			Status:  StatusWarning,
+			Message: "Sensitive-file monitoring unavailable: reads of /etc/shadow and writes to sudoers or authorized_keys inside containers are not detected (needs CAP_SYS_ADMIN)",
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		}
+	}
+	return HealthCheck{
+		Name:    "sensitive_file_monitoring",
+		Status:  StatusOK,
+		Message: "Sensitive-file monitoring available",
+	}
+}
+
+// fanotifyAvailable is monitor.FanotifyAvailable, replaceable in tests.
+var fanotifyAvailable = monitor.FanotifyAvailable
 
 // CheckMonitoringConfiguration checks if monitoring is properly configured
 func CheckMonitoringConfiguration(cfg *config.Config) HealthCheck {

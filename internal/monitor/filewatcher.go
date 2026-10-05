@@ -155,6 +155,18 @@ func NewFileWatcher(containerName string, onThreat func(ThreatEvent), onError fu
 	}
 }
 
+// FanotifyAvailable reports whether this process can use fanotify, which the
+// sensitive-file watcher needs (it requires CAP_SYS_ADMIN). It returns the
+// fanotify_init error when it can't.
+func FanotifyAvailable() error {
+	fd, err := unix.FanotifyInit(unix.FAN_CLOEXEC, unix.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	_ = unix.Close(fd)
+	return nil
+}
+
 // Run starts the fanotify watch loop and blocks until ctx is cancelled.
 // If fanotify is unavailable (no CAP_SYS_ADMIN, kernel too old, or inotify
 // init limit reached) the method logs once via onError and returns immediately

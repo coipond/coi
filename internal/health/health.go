@@ -132,6 +132,9 @@ func RunAllChecks(cfg *config.Config, verbose bool) *HealthResult {
 
 	// Process/Filesystem monitoring checks (always run)
 	checks["monitoring_configuration"] = CheckMonitoringConfiguration(cfg)
+	if config.BoolVal(cfg.Monitoring.Enabled) {
+		checks["sensitive_file_monitoring"] = CheckSensitiveFileMonitoring()
+	}
 	checks["audit_log_directory"] = CheckAuditLogDirectory()
 	checks["cgroup_availability"] = CheckCgroupAvailability()
 
