@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from support.monitoring import coi_session_logs
+
 
 def get_container_name_from_workspace(workspace, slot=1):
     """Generate expected container name from workspace path."""
@@ -257,7 +259,8 @@ class TestNFTRuleManagement:
             cleanup_container(container_name, coi_binary, env=coi_monitoring_env)
 
     def test_rules_removed_on_session_end(self, test_workspace, coi_binary, coi_monitoring_env):
-        """Verify nftables rules are cleaned up when session ends."""
+        """nftables rules outlive the coi shell command and are removed when the
+        session's container stops."""
         slot = 51
         container_name = get_container_name_from_workspace(test_workspace, slot)
 
@@ -293,22 +296,33 @@ class TestNFTRuleManagement:
                 time.sleep(2)
             assert nft_ready, "Rules should exist while monitoring"
 
-            # Stop session
+            # End the coi shell command. The container keeps running, and so
+            # does its monitoring (the session supervisor owns it), so the
+            # rules must stay.
             proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
-            time.sleep(3)
-
-            # Check rules are gone
-            result = subprocess.run(
-                ["sudo", "-n", "nft", "list", "ruleset"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            time.sleep(5)
+            assert check_nft_rules_exist(container_ip), (
+                "monitoring rules disappeared while the container was still running"
             )
-            assert f"NFT_COI[{container_ip}]" not in result.stdout, "Rules not cleaned up"
+
+            # Stopping the container ends the session: the supervisor removes
+            # the rules.
+            subprocess.run(
+                ["incus", "stop", "--force", container_name],
+                capture_output=True,
+                timeout=60,
+            )
+            gone = False
+            for _ in range(30):
+                if not check_nft_rules_exist(container_ip):
+                    gone = True
+                    break
+                time.sleep(1)
+            assert gone, f"NFT rules for {container_ip} not cleaned up after the container stopped"
 
         finally:
             proc.terminate()
@@ -661,18 +675,21 @@ class TestAuditLogging:
                 # Wait for the NFT monitoring daemon to actually start before
                 # triggering traffic. Without this, the curl may fire before the
                 # daemon is ready to observe it and write audit logs.
+                # The session supervisor runs the daemon and writes to the session
+                # log; coi shell's stderr covers the in-process fallback.
                 daemon_started = False
+                output = ""
                 for _ in range(30):
                     time.sleep(1)
-                    stderr_content = stderr_file.read_text()
-                    if "[security] NFT network monitoring started" in stderr_content:
+                    output = stderr_file.read_text() + coi_session_logs(container_name)
+                    if "[security] NFT network monitoring started" in output:
                         daemon_started = True
                         break
 
                 if not daemon_started:
                     pytest.fail(
                         "NFT monitoring daemon did not start in time. "
-                        f"stderr:\n{stderr_file.read_text()}"
+                        f"coi shell stderr and session logs:\n{output}"
                     )
 
                 # Trigger some network activity
@@ -747,19 +764,33 @@ class TestDaemonLifecycle:
             )
 
             try:
-                # Poll stderr for startup message instead of fixed sleep. The
+                # Poll for the startup message instead of a fixed sleep. The
                 # window is generous (CI runners are frequently overloaded and the
-                # daemon starts after full session setup).
-                stderr_content = ""
+                # daemon starts after full session setup). The session supervisor
+                # runs the monitor and writes to the session log, so look there as
+                # well as at coi shell's own stderr (its in-process fallback).
+                output = ""
                 started = False
                 for _ in range(90):
                     time.sleep(1)
-                    stderr_content = stderr_file.read_text()
-                    if "[security] NFT network monitoring started" in stderr_content:
+                    output = stderr_file.read_text() + coi_session_logs(container_name)
+                    if "[security] NFT network monitoring started" in output:
                         started = True
                         break
 
-                assert started, f"NFT daemon startup message not found. stderr:\n{stderr_content}"
+                assert started, (
+                    f"NFT daemon startup message not found in coi shell stderr or the "
+                    f"session logs:\n{output}"
+                )
+
+                # The user's terminal (coi shell's stderr) must still confirm that
+                # monitoring is running: the supervisor's notice, or the monitors'
+                # own lines when coi shell fell back to running them in-process.
+                terminal = stderr_file.read_text()
+                assert (
+                    "[supervisor] Running security monitoring" in terminal
+                    or "[security] NFT network monitoring started" in terminal
+                ), f"no monitoring confirmation on the terminal:\n{terminal}"
 
             finally:
                 proc.terminate()

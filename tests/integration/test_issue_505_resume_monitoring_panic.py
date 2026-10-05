@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 from support.helpers import calculate_container_name
+from support.monitoring import coi_session_logs
 
 PANIC_MARKERS = ("slice bounds out of range", "panic:", "runtime error:")
 
@@ -151,8 +152,11 @@ def test_monitoring_gtfobins_load_does_not_panic(
         )
         restore()
 
-    stderr = stderr_file.read_text(errors="replace")
-    print("\n=== Coi stderr ===\n" + stderr + "\n=== end Coi stderr ===\n")
+    # The monitors (and the GTFOBins load that panicked in #505) run in the
+    # session supervisor, which writes to the session log rather than to coi
+    # shell's stderr. Scan both, or a regression would pass unnoticed.
+    stderr = stderr_file.read_text(errors="replace") + coi_session_logs(container_name)
+    print("\n=== Coi stderr + session logs ===\n" + stderr + "\n=== end ===\n")
     lowered = stderr.lower()
 
     # The test only proves something if monitoring actually engaged.
