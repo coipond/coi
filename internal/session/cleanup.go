@@ -460,12 +460,27 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 
 	logger(fmt.Sprintf("Saving session data to %s", localSessionDir))
 
-	// Remove old config directory if it exists (when resuming)
+	// Pull into a fresh sibling first and only replace the previous copy once
+	// the new one is complete: deleting the old copy up front lost the only
+	// backup whenever the pull then failed.
 	localConfigDir := filepath.Join(localSessionDir, configDirName)
-	if _, err := os.Stat(localConfigDir); err == nil {
-		logger("Removing old session data before saving new state")
-		if err := os.RemoveAll(localConfigDir); err != nil {
-			return fmt.Errorf("failed to remove old %s directory: %w", configDirName, err)
+	stagingDir := localConfigDir + ".coi-new"
+	if err := os.RemoveAll(stagingDir); err != nil {
+		return fmt.Errorf("failed to clear staging directory: %w", err)
+	}
+
+	// Fast path: one tar stream from the running container (seconds faster
+	// than a file-by-file SFTP walk of a busy config dir). It needs a running
+	// container; anything else falls back to `incus file pull` below.
+	pulled := false
+	if tp, ok := mgr.(tarPuller); ok {
+		if err := tp.PullDirectoryTar(stateDir, stagingDir); err == nil {
+			pulled = true
+		} else {
+			_ = os.RemoveAll(stagingDir)
+			if !strings.Contains(strings.ToLower(err.Error()), "no such file") {
+				logger(fmt.Sprintf("Fast session save unavailable (%v); using file pull", err))
+			}
 		}
 	}
 
@@ -480,14 +495,16 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 	// fully stop, then retry. Once stopped, incus switches to direct file access
 	// (no SFTP), so the retry reliably succeeds.
 	var pullErr error
-	for attempt := range 3 {
+	for attempt := 0; attempt < 3 && !pulled; attempt++ {
 		if attempt > 0 {
 			// SFTP failed — wait for the container to fully stop so incus
 			// uses direct file access (not SFTP) on the next attempt.
 			waitForStopped(mgr, 5*time.Second)
+			_ = os.RemoveAll(stagingDir)
 		}
-		pullErr = mgr.PullDirectory(stateDir, localConfigDir)
+		pullErr = mgr.PullDirectory(stateDir, stagingDir)
 		if pullErr == nil {
+			pulled = true
 			break
 		}
 		msg := strings.ToLower(pullErr.Error())
@@ -505,8 +522,20 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 			break
 		}
 	}
-	if pullErr != nil {
+	if !pulled {
+		_ = os.RemoveAll(stagingDir)
 		return fmt.Errorf("failed to pull %s directory: %w", configDirName, pullErr)
+	}
+
+	// Swap the new copy in.
+	if _, err := os.Stat(localConfigDir); err == nil {
+		logger("Removing old session data before saving new state")
+		if err := os.RemoveAll(localConfigDir); err != nil {
+			return fmt.Errorf("failed to remove old %s directory: %w", configDirName, err)
+		}
+	}
+	if err := os.Rename(stagingDir, localConfigDir); err != nil {
+		return fmt.Errorf("failed to store pulled %s directory: %w", configDirName, err)
 	}
 
 	// Save metadata
@@ -527,6 +556,12 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 
 	logger("Session data saved successfully")
 	return nil
+}
+
+// tarPuller is implemented by *container.Manager: a one-stream directory pull
+// from a running container (see PullDirectoryTar).
+type tarPuller interface {
+	PullDirectoryTar(containerPath, localPath string) error
 }
 
 // SessionMetadata contains information about a saved session
