@@ -107,3 +107,45 @@ func extractNFTHandle(line string) string {
 	}
 	return handleStr
 }
+
+// runNFTScript applies cmds (each one nft command's argv, exactly as it would
+// be passed to runNFTCommand) as ONE `nft -f -` script. The nft CLI joins its
+// argv with spaces and parses the result, so a script line built the same way
+// is the identical command — but the whole script is a single kernel
+// transaction: every command applies, or none does. That makes a rule set
+// all-or-nothing (no half-applied policy on failure) and costs one sudo+nft
+// exec instead of one per rule.
+func runNFTScript(cmds [][]string) error {
+	if len(cmds) == 0 {
+		return nil
+	}
+	if !SudoEnabled() {
+		return fmt.Errorf("nft command skipped: sudo disabled (use_sudo=false)")
+	}
+	script := nftScript(cmds)
+	ctx, cancel := context.WithTimeout(context.Background(), NFTCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sudo", "-n", "nft", "-f", "-")
+	cmd.Stdin = strings.NewReader(script)
+
+	stop := timing.Start(timing.CatHost, fmt.Sprintf("nft -f - (%d commands)", len(cmds)))
+	output, err := cmd.CombinedOutput()
+	stop()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("nft script timed out after %v", NFTCommandTimeout)
+	}
+	if err != nil {
+		return fmt.Errorf("nft script failed: %w (output: %s)", err, string(output))
+	}
+	return nil
+}
+
+// nftScript renders cmds as nft script lines (see runNFTScript).
+func nftScript(cmds [][]string) string {
+	var b strings.Builder
+	for _, c := range cmds {
+		b.WriteString(strings.Join(c, " "))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}

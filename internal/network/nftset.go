@@ -420,11 +420,17 @@ func removeAllowlistSetsForIP(containerIP string) error {
 	if containerIP == "" {
 		return nil
 	}
+	// One listing tells which of the four sets exist, so the common case
+	// (open/restricted, no sets) costs one call instead of four failing deletes.
+	listing, listErr := runNFTCommand("list", "sets", "ip", "coi")
 	var firstErr error
 	for _, name := range []string{
 		staticSetName(containerIP), dynamicSetName(containerIP),
 		staticPortSetName(containerIP), dynamicPortSetName(containerIP),
 	} {
+		if listErr == nil && !strings.Contains(string(listing), "set "+name+" ") {
+			continue
+		}
 		if _, err := runNFTCommand("delete", "set", "ip", "coi", name); err != nil {
 			if isNftNotFound(err) {
 				continue

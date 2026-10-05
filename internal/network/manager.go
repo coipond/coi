@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coipond/coi/internal/config"
@@ -104,10 +105,7 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 			} else {
 				m.containerIP = containerIP
 				m.nft = NewNftManager(containerIP, "")
-				m.purgeStaleRulesForIP(containerIP)
-				if err := EnsureOpenModeRules(containerIP); err != nil {
-					m.logger.Errorf("Warning: could not add open mode rules: %v", err)
-				}
+				m.applyOpenRules(containerIP)
 			}
 		} else if m.config.SudoAllowed() && NeedsIptablesFallback() {
 			bridgeName, err := GetIncusBridgeName()
@@ -194,6 +192,125 @@ func (m *Manager) purgeStaleRulesForIP(containerIP string) {
 	}
 }
 
+// forwardRule is one rule of `nft -a list chain ip coi forward`: its handle
+// and its text without the trailing "# handle N".
+type forwardRule struct{ handle, text string }
+
+// forwardRulesWithComment lists the forward-chain rules carrying comment, in
+// one nft call. A missing chain holds no rules.
+func forwardRulesWithComment(comment string) ([]forwardRule, error) {
+	output, err := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "No such file or directory") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return parseForwardRules(string(output), comment), nil
+}
+
+// parseForwardRules picks the rules carrying comment out of an
+// `nft -a list chain` listing.
+func parseForwardRules(listing, comment string) []forwardRule {
+	var rules []forwardRule
+	want := fmt.Sprintf(`comment "%s"`, comment)
+	for _, line := range strings.Split(listing, "\n") {
+		if !strings.Contains(line, want) {
+			continue
+		}
+		h := extractNFTHandle(line)
+		if h == "" {
+			continue
+		}
+		text := line
+		if i := strings.LastIndex(text, " # handle "); i >= 0 {
+			text = text[:i]
+		}
+		rules = append(rules, forwardRule{handle: h, text: strings.TrimSpace(text)})
+	}
+	return rules
+}
+
+// deleteForwardRuleCmds turns rules into `delete rule` commands.
+func deleteForwardRuleCmds(rules []forwardRule) [][]string {
+	cmds := make([][]string, 0, len(rules))
+	for _, r := range rules {
+		cmds = append(cmds, []string{"delete", "rule", "ip", "coi", "forward", "handle", r.handle})
+	}
+	return cmds
+}
+
+// openModeRuleText is how nft lists EnsureOpenModeRules' accept rule.
+func openModeRuleText(ip string) string {
+	return fmt.Sprintf(`ip saddr %s accept comment "coi-%s"`, ip, ip)
+}
+
+// applyOpenRules installs open mode's single accept rule for ip. A reused
+// container whose rules are already exactly that is left untouched; anything
+// else is replaced in one transaction. Non-fatal, like the code it replaces.
+func (m *Manager) applyOpenRules(ip string) {
+	if err := EnsureBaseRules(); err != nil {
+		m.logger.Errorf("Warning: failed to ensure base rules: %v", err)
+	}
+	rules, err := forwardRulesWithComment("coi-" + ip)
+	if err == nil && len(rules) == 1 && rules[0].text == openModeRuleText(ip) {
+		m.purgeStaleSideStateForIP(ip)
+		return // already in place (a reused container): nothing to do
+	}
+	if err == nil {
+		cmds := deleteForwardRuleCmds(rules)
+		cmds = append(cmds, []string{
+			"add", "rule", "ip", "coi", "forward",
+			"ip", "saddr", ip, "accept", "comment", fmt.Sprintf(`"coi-%s"`, ip),
+		})
+		if runNFTScript(cmds) == nil {
+			m.purgeStaleSideStateForIP(ip)
+			return
+		}
+	}
+	// Fallback: the original purge-then-add sequence.
+	m.purgeStaleRulesForIP(ip)
+	if err := EnsureOpenModeRules(ip); err != nil {
+		m.logger.Errorf("Warning: could not add open mode rules: %v", err)
+	}
+}
+
+// applyRestrictedReplacing applies restricted mode for ip with the deletes of
+// the IP's existing forward rules in the same transaction (see setupRestricted).
+// If the rules can't be listed, or the combined transaction fails (e.g. a rule
+// vanished meanwhile), it falls back to the original purge-then-apply.
+func (m *Manager) applyRestrictedReplacing(ip string) error {
+	nft, ok := m.nft.(*NftManager)
+	if !ok { // a test double: original sequence
+		m.purgeStaleRulesForIP(ip)
+		return m.nft.ApplyRestricted(m.config)
+	}
+	if rules, err := forwardRulesWithComment("coi-" + ip); err == nil {
+		if err := nft.applyRestricted(m.config, deleteForwardRuleCmds(rules)); err == nil {
+			m.purgeStaleSideStateForIP(ip)
+			return nil
+		} else if len(rules) == 0 {
+			return err // nothing was being replaced: a real rule error
+		}
+	}
+	m.purgeStaleRulesForIP(ip)
+	return m.nft.ApplyRestricted(m.config)
+}
+
+// purgeStaleSideStateForIP removes what DeleteCOIFilterRulesForIP removes
+// besides forward rules — input-chain rules and allowlist sets a previous
+// holder of this IP may have left. Runs after the forward rules referencing
+// those sets are gone.
+func (m *Manager) purgeStaleSideStateForIP(ip string) {
+	if err := removeInputRulesForIP(ip); err != nil {
+		m.logger.Errorf("Warning: failed to purge stale input rules for %s: %v", ip, err)
+	}
+	if err := removeAllowlistSetsForIP(ip); err != nil {
+		m.logger.Errorf("Warning: failed to purge stale nft sets for %s: %v", ip, err)
+	}
+}
+
 // setupRestricted configures restricted mode using nftables
 func (m *Manager) setupRestricted(ctx context.Context, containerName string) error {
 	m.logger.Println("Network mode: restricted (blocking local/internal networks)")
@@ -235,10 +352,13 @@ func (m *Manager) setupRestricted(ctx context.Context, containerName string) err
 
 	// Create nft manager
 	m.nft = NewNftManager(containerIP, gatewayIP)
-	m.purgeStaleRulesForIP(containerIP)
 
-	// Apply restricted mode rules
-	if err := m.nft.ApplyRestricted(m.config); err != nil {
+	// Replace any rules this IP still carries (a previous session of this
+	// container, or a prior holder of a recycled DHCP lease) with this
+	// container's policy in ONE transaction: the stale-rule deletes and the
+	// new rules commit together, so even on an already-running container
+	// (no boot block) there is never a moment with no filter in place.
+	if err := m.applyRestrictedReplacing(containerIP); err != nil {
 		return fmt.Errorf("failed to apply nft rules: %w", err)
 	}
 
@@ -687,7 +807,26 @@ func getContainerGatewayIP(containerName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	gatewayMu.Lock()
+	defer gatewayMu.Unlock()
+	if gw, ok := gatewayByNetwork[networkName]; ok {
+		return gw, nil
+	}
+	gw, err := lookupNetworkGateway(networkName)
+	if err == nil {
+		gatewayByNetwork[networkName] = gw
+	}
+	return gw, err
+}
 
+// gatewayByNetwork memoizes each bridge's IPv4 gateway for the process (it is
+// the bridge's own address; successes only).
+var (
+	gatewayMu        sync.Mutex
+	gatewayByNetwork = map[string]string{}
+)
+
+func lookupNetworkGateway(networkName string) (string, error) {
 	// Get network configuration
 	networkOutput, err := container.IncusOutput("network", "show", networkName)
 	if err != nil {
