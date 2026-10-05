@@ -307,27 +307,6 @@ func resolveForwardedEnvVarNames(names []string) []string {
 	return resolved
 }
 
-// ensureTmuxServer starts the tmux server and polls until it is ready (up to 2 seconds).
-// This is critical in CI and for newly started containers where the tmux server might not be running yet.
-func ensureTmuxServer(mgr container.ContainerExecution, userPtr *int) {
-	serverStartCmd := "tmux start-server 2>/dev/null || true; sleep 0.1"
-	serverOpts := container.ExecCommandOptions{
-		Capture: true,
-		User:    userPtr,
-	}
-	_, _ = mgr.ExecCommand(serverStartCmd, serverOpts) // Best-effort server start.
-
-	// Poll to ensure server is ready (up to 2 seconds)
-	for i := 0; i < 20; i++ {
-		checkServerCmd := "tmux list-sessions 2>&1 | grep -v 'no server running' || true"
-		_, err := mgr.ExecCommand(checkServerCmd, serverOpts)
-		if err == nil {
-			break // Server is ready
-		}
-		_, _ = mgr.ExecCommand("sleep 0.1", serverOpts) // Best-effort sleep.
-	}
-}
-
 // mergeToolEnv adds tool-specific environment variables (if the tool implements ToolWithContainerEnv).
 func mergeToolEnv(env map[string]string, t tool.Tool, workspacePath string) {
 	if twce, ok := t.(tool.ToolWithContainerEnv); ok {
@@ -544,135 +523,86 @@ func (a *App) runCLIInTmux(result *session.SetupResult, sessionID string, detach
 	// for both a new tmux session and a command sent into an existing one.
 	cliCmd = withUserPreLaunch(result.Manager, a.cfg.Tool.PreLaunch, cliCmd)
 
-	// Ensure tmux server is running first (critical for CI and new containers)
-	ensureTmuxServer(result.Manager, userPtr)
-
-	// applyTmuxEnv populates the session's update-environment so windows and
-	// panes opened later inherit the forwarded variables. Idempotent: safe to
-	// call on a session that was already populated.
-	applyTmuxEnv := func() {
-		for _, cmd := range buildTmuxSetEnvironmentCmds(tmuxSessionName, containerEnv) {
-			if _, err := result.Manager.ExecCommand(cmd, container.ExecCommandOptions{
-				Capture: true,
-				User:    userPtr,
-			}); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to set tmux session env (%s): %v\n", cmd, err)
-			}
-		}
+	// One exec prepares the session: reuse it if it exists, else create it
+	// (detached, so the tmux server owns it and a detach only ends the attach
+	// process), then (re)apply the forwarded env so panes opened later inherit
+	// it — even on a session created by an older binary that didn't populate
+	// the update-environment. `new-session -d` starts the server itself and
+	// returns once the session exists, so no server warm-up or readiness poll
+	// is needed. This replaces ~6 sequential incus round trips.
+	// When the tool exits the pane falls back to bash so the user can still
+	// interact: exit (leaves container running), Ctrl+b d (detach), or
+	// sudo shutdown 0 (stop). trap : INT keeps bash alive on Ctrl+C while
+	// Ctrl+C still works in the tool; exec bash avoids nested shells.
+	createCmd := buildTmuxNewSessionCmd(tmuxSessionName, workspacePath, cliCmd, containerEnv)
+	prepOut, prepErr := result.Manager.ExecCommand(
+		buildTmuxPrepScript(tmuxSessionName, createCmd, buildTmuxSetEnvironmentCmds(tmuxSessionName, containerEnv)),
+		container.ExecCommandOptions{Capture: true, User: userPtr, Cwd: workspacePath},
+	)
+	existing := strings.Contains(prepOut, tmuxPrepExisting)
+	if !existing && !strings.Contains(prepOut, tmuxPrepCreated) {
+		return fmt.Errorf("failed to create tmux session: %w", prepErr)
+	}
+	if strings.Contains(prepOut, tmuxPrepEnvFailed) {
+		fmt.Fprintf(os.Stderr, "warning: failed to set some tmux session env vars on %s\n", tmuxSessionName)
 	}
 
-	// Check if tmux session already exists
-	checkSessionCmd := fmt.Sprintf("tmux has-session -t %s 2>/dev/null", tmuxSessionName)
-	_, err = result.Manager.ExecCommand(checkSessionCmd, container.ExecCommandOptions{
-		Capture: true,
-		User:    userPtr,
-	})
-
-	if err == nil {
-		// Re-apply forwarded env so panes opened from now on inherit it,
-		// even if the session was created by an older binary that didn't
-		// populate the update-environment.
-		applyTmuxEnv()
-
-		// Session exists - attach or send command
-		if detached {
-			// Send command to existing session
-			sendCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", tmuxSessionName, cliCmd)
-			_, err := result.Manager.ExecCommand(sendCmd, container.ExecCommandOptions{
-				Capture: true,
-				User:    userPtr,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to send command to existing tmux session: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Sent command to existing tmux session: %s\n", tmuxSessionName)
-			fmt.Fprintf(os.Stderr, "Use 'coi tmux capture %s' to view output\n", result.ContainerName)
-			return nil
-		} else {
-			// Attach to existing session
-			fmt.Fprintf(os.Stderr, "Attaching to existing tmux session: %s\n", tmuxSessionName)
-			attachCmd := fmt.Sprintf("tmux attach -t %s", tmuxSessionName)
-			opts := container.ExecCommandOptions{
-				User:        userPtr,
-				Cwd:         workspacePath,
-				Interactive: true,
-			}
-			_, err := result.Manager.ExecCommand(attachCmd, opts)
-			return err
-		}
-	}
-
-	// Create new tmux session
-	// When claude exits, fall back to bash so user can still interact
-	// User can then: exit (leaves container running), Ctrl+b d (detach), or sudo shutdown 0 (stop)
-	// Use trap to prevent bash from exiting on SIGINT while allowing Ctrl+C to work in claude
-	if detached {
-		// Background mode: create detached session
-		createCmd := buildTmuxNewSessionCmd(tmuxSessionName, workspacePath, cliCmd, containerEnv)
-		opts := container.ExecCommandOptions{
+	switch {
+	case existing && detached:
+		// Send command to existing session
+		sendCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", tmuxSessionName, cliCmd)
+		if _, err := result.Manager.ExecCommand(sendCmd, container.ExecCommandOptions{
 			Capture: true,
 			User:    userPtr,
+		}); err != nil {
+			return fmt.Errorf("failed to send command to existing tmux session: %w", err)
 		}
-		_, err := result.Manager.ExecCommand(createCmd, opts)
-		if err != nil {
-			return fmt.Errorf("failed to create tmux session: %w", err)
-		}
-		applyTmuxEnv()
-
+		fmt.Fprintf(os.Stderr, "Sent command to existing tmux session: %s\n", tmuxSessionName)
+		fmt.Fprintf(os.Stderr, "Use 'coi tmux capture %s' to view output\n", result.ContainerName)
+		return nil
+	case existing:
+		fmt.Fprintf(os.Stderr, "Attaching to existing tmux session: %s\n", tmuxSessionName)
+		_, err := result.Manager.ExecCommand(fmt.Sprintf("tmux attach -t %s", tmuxSessionName), container.ExecCommandOptions{
+			User:        userPtr,
+			Cwd:         workspacePath,
+			Interactive: true,
+		})
+		return err
+	case detached:
 		fmt.Fprintf(os.Stderr, "Created background tmux session: %s\n", tmuxSessionName)
 		fmt.Fprintf(os.Stderr, "Use 'coi tmux capture %s' to view output\n", result.ContainerName)
 		fmt.Fprintf(os.Stderr, "Use 'coi tmux send %s \"<command>\"' to send commands\n", result.ContainerName)
 		return nil
-	} else {
-		// Interactive mode: create detached session, then attach
-		// This ensures tmux server owns the session, not the incus exec process
-		// When we detach, only the attach process exits, not the session
-		// trap : INT prevents bash from exiting on Ctrl+C, exec bash replaces (no nested shells)
-
-		// Check if session already exists (it was checked above but may have been
-		// created by another process in the meantime)
-		checkCmd := fmt.Sprintf("tmux has-session -t %s 2>/dev/null", tmuxSessionName)
-		checkOpts := container.ExecCommandOptions{
-			User:    userPtr,
-			Capture: true,
-		}
-		_, checkErr := result.Manager.ExecCommand(checkCmd, checkOpts)
-
-		// Create detached session if it doesn't exist
-		if checkErr != nil {
-			createCmd := buildTmuxNewSessionCmd(tmuxSessionName, workspacePath, cliCmd, containerEnv)
-			createOpts := container.ExecCommandOptions{
-				User:    userPtr,
-				Cwd:     workspacePath,
-				Capture: true,
-			}
-			if _, err := result.Manager.ExecCommand(createCmd, createOpts); err != nil {
-				return fmt.Errorf("failed to create tmux session: %w", err)
-			}
-
-			// Poll until tmux reports the session is ready (up to 3s).
-			deadline := time.Now().Add(3 * time.Second)
-			for time.Now().Before(deadline) {
-				_, pollErr := result.Manager.ExecCommand(checkCmd, checkOpts)
-				if pollErr == nil {
-					break
-				}
-				time.Sleep(50 * time.Millisecond)
-			}
-		}
-		applyTmuxEnv()
-
-		// Attach to the session
-		attachCmd := fmt.Sprintf("tmux attach -t %s", tmuxSessionName)
-		attachOpts := container.ExecCommandOptions{
+	default:
+		_, err := result.Manager.ExecCommand(fmt.Sprintf("tmux attach -t %s", tmuxSessionName), container.ExecCommandOptions{
 			User:        userPtr,
 			Cwd:         workspacePath,
 			Interactive: true,
 			Env:         containerEnv,
-		}
-		_, err := result.Manager.ExecCommand(attachCmd, attachOpts)
+		})
 		return err
 	}
+}
+
+// Markers buildTmuxPrepScript prints to report what it did.
+const (
+	tmuxPrepExisting  = "coi:tmux-existing"
+	tmuxPrepCreated   = "coi:tmux-created"
+	tmuxPrepEnvFailed = "coi:tmux-env-failed"
+)
+
+// buildTmuxPrepScript returns one shell script that reuses the named tmux
+// session or creates it with createCmd, then runs the set-environment
+// commands. It prints tmuxPrepExisting or tmuxPrepCreated (nothing if the
+// create failed) and tmuxPrepEnvFailed if any env command failed.
+func buildTmuxPrepScript(sessionName, createCmd string, envCmds []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "if tmux has-session -t %s 2>/dev/null; then echo %s; else %s || exit 1; echo %s; fi\n",
+		shellQuote(sessionName), tmuxPrepExisting, createCmd, tmuxPrepCreated)
+	for _, c := range envCmds {
+		fmt.Fprintf(&b, "%s || echo %s\n", c, tmuxPrepEnvFailed)
+	}
+	return b.String()
 }
 
 // resolveTimezone determines the timezone to apply to the container.

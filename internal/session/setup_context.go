@@ -11,17 +11,33 @@ import (
 	"github.com/coipond/coi/internal/tool"
 )
 
-// injectContextFile creates ~/SANDBOX_CONTEXT.md inside the container.
-// If customPath is provided, it reads the file from the host and uses its content.
-// Otherwise, it renders the default embedded template with dynamic environment info.
-func injectContextFile(mgr container.ContainerManager, info tool.ContextInfo, customPath, homeDir string, logger func(string)) error {
+// homeFileOwner is the owner for files coi writes into the session user's
+// home: the code user, unless the session runs as root.
+func homeFileOwner(homeDir string) int {
+	if homeDir == "/root" {
+		return 0
+	}
+	return container.CodeUID
+}
+
+// homeFileOp is a write of a file into the session user's home, owned by that
+// user (mode 0600, as the per-file push it replaces left it).
+func homeFileOp(path, content, homeDir string) guestOp {
+	owner := homeFileOwner(homeDir)
+	return guestFile(path, content, owner, owner, "0600")
+}
+
+// contextFileOp builds the write of ~/SANDBOX_CONTEXT.md. If customPath is
+// provided, it reads the file from the host and uses its content. Otherwise,
+// it renders the default embedded template with dynamic environment info.
+func contextFileOp(info tool.ContextInfo, customPath, homeDir string, logger func(string)) (guestOp, error) {
 	destPath := filepath.Join(homeDir, "SANDBOX_CONTEXT.md")
 
 	var content string
 	if customPath != "" {
 		data, err := os.ReadFile(customPath)
 		if err != nil {
-			return fmt.Errorf("failed to read custom context file %s: %w", customPath, err)
+			return guestOp{}, fmt.Errorf("failed to read custom context file %s: %w", customPath, err)
 		}
 		content = string(data)
 		logger(fmt.Sprintf("Using custom context file: %s", customPath))
@@ -29,50 +45,20 @@ func injectContextFile(mgr container.ContainerManager, info tool.ContextInfo, cu
 		content = tool.RenderContextFileContent(info)
 		logger("Injecting default sandbox context file")
 	}
-
-	// Create the file
-	if err := mgr.CreateFile(destPath, content); err != nil {
-		return fmt.Errorf("failed to create context file %s: %w", destPath, err)
-	}
-
-	// Fix ownership if running as non-root user
-	if homeDir != "/root" {
-		if err := mgr.Chown(destPath, container.CodeUID, container.CodeUID); err != nil {
-			return fmt.Errorf("failed to set context file ownership: %w", err)
-		}
-	}
-
-	logger(fmt.Sprintf("Context file injected at %s", destPath))
-	return nil
+	return homeFileOp(destPath, content, homeDir), nil
 }
 
-// injectContextJSONFile creates ~/SANDBOX_CONTEXT.json inside the container: the
+// contextJSONFileOp builds the write of ~/SANDBOX_CONTEXT.json: the
 // machine-readable companion to SANDBOX_CONTEXT.md for programmatic consumers
 // (#705). If customPath is provided ([tool] context_json_file), that host file
 // is injected verbatim; otherwise the JSON is rendered from the resolved
-// ContextInfo (the real sandbox facts). Reuses the same container write path as
-// injectContextFile.
-func injectContextJSONFile(mgr container.ContainerManager, info tool.ContextInfo, customPath, homeDir string, logger func(string)) error {
-	destPath := filepath.Join(homeDir, "SANDBOX_CONTEXT.json")
-
+// ContextInfo (the real sandbox facts).
+func contextJSONFileOp(info tool.ContextInfo, customPath, homeDir string, logger func(string)) (guestOp, error) {
 	content, err := resolveContextJSON(customPath, info, logger)
 	if err != nil {
-		return err
+		return guestOp{}, err
 	}
-
-	if err := mgr.CreateFile(destPath, content); err != nil {
-		return fmt.Errorf("failed to create context JSON file %s: %w", destPath, err)
-	}
-
-	// Fix ownership if running as non-root user (mirrors injectContextFile).
-	if homeDir != "/root" {
-		if err := mgr.Chown(destPath, container.CodeUID, container.CodeUID); err != nil {
-			return fmt.Errorf("failed to set context JSON file ownership: %w", err)
-		}
-	}
-
-	logger(fmt.Sprintf("Context JSON file injected at %s", destPath))
-	return nil
+	return homeFileOp(filepath.Join(homeDir, "SANDBOX_CONTEXT.json"), content, homeDir), nil
 }
 
 // resolveContextJSON returns the content for ~/SANDBOX_CONTEXT.json. A custom
@@ -234,34 +220,57 @@ func stripLegacyAutoContext(s string) string {
 // file does not grow a new copy every session (#674). Non-managed content in the
 // file is preserved.
 func injectAutoContextFile(mgr container.ContainerManager, acf tool.ToolWithAutoContextFile, contextContent, homeDir string, logger func(string)) error {
+	op, err := autoContextFileOp(mgr, acf, contextContent, homeDir, logger)
+	if err != nil {
+		return err
+	}
+	if err := runGuestOps(mgr, []guestOp{op}, container.ExecCommandOptions{}); err != nil {
+		return fmt.Errorf("failed to write %s: %w", acf.AutoContextFile(), err)
+	}
+	logger(fmt.Sprintf("Auto-context injected at %s", op.write.path))
+	return nil
+}
+
+// autoContextExistsMarker / autoContextMissingMarker are the first line of
+// autoContextReadCmd's output.
+const (
+	autoContextExistsMarker  = "coi:exists"
+	autoContextMissingMarker = "coi:missing"
+)
+
+// autoContextReadCmd creates the auto-context file's directory and prints the
+// file's current content (after an exists/missing marker line) in one exec.
+func autoContextReadCmd(destPath string) string {
+	return fmt.Sprintf("mkdir -p %s && if [ -f %s ]; then echo %s; cat %s; else echo %s; fi",
+		shellEscape(filepath.Dir(destPath)), shellEscape(destPath), autoContextExistsMarker,
+		shellEscape(destPath), autoContextMissingMarker)
+}
+
+// autoContextFileOp reads the tool's auto-load file (one exec) and returns the
+// write that reconciles it to a single fresh managed block. The write is
+// returned rather than run so callers can batch it with the other context files.
+func autoContextFileOp(mgr container.ContainerManager, acf tool.ToolWithAutoContextFile, contextContent, homeDir string, logger func(string)) (guestOp, error) {
 	relPath := acf.AutoContextFile()
 	destPath := filepath.Join(homeDir, relPath)
-	destDir := filepath.Dir(destPath)
-
-	// Ensure parent directory exists
-	mkdirCmd := fmt.Sprintf("mkdir -p %s", destDir)
-	if _, err := mgr.ExecCommand(mkdirCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-		return fmt.Errorf("failed to create directory for %s: %w", relPath, err)
-	}
 
 	managedBlock := autoCtxBeginMarker + "\n" + contextContent + "\n" + autoCtxEndMarker + "\n"
 
-	// Check if the file already exists in the container (e.g., host's CLAUDE.md was
-	// copied, or the container is persistent and a prior session already wrote one).
-	checkCmd := fmt.Sprintf("test -f %s && echo exists || echo missing", destPath)
-	checkResult, err := mgr.ExecCommand(checkCmd, container.ExecCommandOptions{Capture: true})
+	// Ensure the parent directory exists and read the file if it is already
+	// there (e.g., host's CLAUDE.md was copied, or the container is persistent
+	// and a prior session already wrote one).
+	out, err := mgr.ExecCommand(autoContextReadCmd(destPath), container.ExecCommandOptions{Capture: true})
+	if err != nil {
+		return guestOp{}, fmt.Errorf("failed to read %s: %w", relPath, err)
+	}
+	status, existing, _ := strings.Cut(out, "\n")
 
 	var newContent string
-	if err == nil && strings.TrimSpace(checkResult) == "exists" {
-		// Read the current file, drop any prior managed block AND any old-format
-		// copies from before #674, then re-attach a single fresh block. This keeps
-		// exactly one always-current copy while preserving any user/host content,
-		// instead of appending a new copy every session (#674) — and heals files
-		// that already accumulated many copies under the old code.
-		existing, readErr := mgr.ExecCommand(fmt.Sprintf("cat %s", destPath), container.ExecCommandOptions{Capture: true})
-		if readErr != nil {
-			return fmt.Errorf("failed to read %s: %w", relPath, readErr)
-		}
+	if strings.TrimSpace(status) == autoContextExistsMarker {
+		// Drop any prior managed block AND any old-format copies from before
+		// #674, then re-attach a single fresh block. This keeps exactly one
+		// always-current copy while preserving any user/host content, instead
+		// of appending a new copy every session (#674) — and heals files that
+		// already accumulated many copies under the old code.
 		preserved := strings.TrimRight(stripLegacyAutoContext(stripManagedAutoContext(existing)), "\n")
 		if preserved == "" {
 			logger(fmt.Sprintf("Refreshing sandbox context in %s", relPath))
@@ -274,19 +283,5 @@ func injectAutoContextFile(mgr container.ContainerManager, acf tool.ToolWithAuto
 		logger(fmt.Sprintf("Creating %s with sandbox context", relPath))
 		newContent = managedBlock
 	}
-
-	// Overwrite the file with the reconciled content (single managed block).
-	if err := mgr.CreateFile(destPath, newContent); err != nil {
-		return fmt.Errorf("failed to write %s: %w", relPath, err)
-	}
-
-	// Fix ownership if running as non-root user
-	if homeDir != "/root" {
-		if err := mgr.Chown(destPath, container.CodeUID, container.CodeUID); err != nil {
-			return fmt.Errorf("failed to set %s ownership: %w", relPath, err)
-		}
-	}
-
-	logger(fmt.Sprintf("Auto-context injected at %s", destPath))
-	return nil
+	return homeFileOp(destPath, newContent, homeDir), nil
 }

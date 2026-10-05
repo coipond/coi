@@ -1,7 +1,9 @@
 package session
 
 import (
+	"encoding/base64"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -29,7 +31,31 @@ func newFakeAutoCtxManager() *fakeAutoCtxManager {
 	return &fakeAutoCtxManager{files: map[string]string{}}
 }
 
+var (
+	fakeReadRe  = regexp.MustCompile(`if \[ -f '([^']*)' \]`)
+	fakeWriteRe = regexp.MustCompile(`printf '%s' '([A-Za-z0-9+/=]*)' \| base64 -d > .* mv -f '[^']*' '([^']*)'$`)
+)
+
 func (f *fakeAutoCtxManager) ExecCommand(cmd string, _ container.ExecCommandOptions) (string, error) {
+	// Batched writes (renderGuestScript) and the combined mkdir+read probe.
+	if strings.HasPrefix(cmd, "set -e\n") {
+		for _, line := range strings.Split(cmd, "\n") {
+			if m := fakeWriteRe.FindStringSubmatch(line); m != nil {
+				data, err := base64.StdEncoding.DecodeString(m[1])
+				if err != nil {
+					return "", err
+				}
+				f.files[m[2]] = string(data)
+			}
+		}
+		return "", nil
+	}
+	if m := fakeReadRe.FindStringSubmatch(cmd); m != nil {
+		if content, ok := f.files[m[1]]; ok {
+			return autoContextExistsMarker + "\n" + content, nil
+		}
+		return autoContextMissingMarker + "\n", nil
+	}
 	fields := strings.Fields(cmd)
 	switch {
 	case strings.HasPrefix(cmd, "mkdir -p"):

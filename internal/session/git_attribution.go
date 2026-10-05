@@ -407,86 +407,14 @@ func effectiveAttributionPatterns(configured []string) []string {
 // agent from editing its own policy. Non-fatal: logs a warning on failure and
 // never blocks a session.
 func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentity, stripAttribution bool, patterns []string, lockIdentity, setHooksPath bool, protectedBranches []string, logger func(string)) {
-	files := []struct {
-		path, content, mode string
-	}{
-		{GitHooksDir + "/delegate", gitDelegateHookScript, "0755"},
-	}
-	if stripAttribution {
-		files = append(files,
-			struct{ path, content, mode string }{GitHooksDir + "/commit-msg", gitCommitMsgHookScript, "0755"},
-			struct{ path, content, mode string }{gitAttributionPatternsPath, renderAttributionPatternsFile(effectiveAttributionPatterns(patterns)), "0644"},
-		)
-	}
-	if _, err := mgr.ExecCommand("mkdir -p "+GitHooksDir, container.ExecCommandOptions{Capture: true}); err != nil {
-		logger(fmt.Sprintf("Warning: failed to create %s: %v", GitHooksDir, err))
+	// Everything goes in ONE exec: it used to be ~16 sequential incus round
+	// trips (a third of a reused container's setup time).
+	ops := gitHooksOps(homeDir, id, stripAttribution, patterns, lockIdentity, setHooksPath, protectedBranches)
+	if err := runGuestOps(mgr, ops, container.ExecCommandOptions{}); err != nil {
+		logger(fmt.Sprintf("Warning: failed to install git hooks in %s: %v", GitHooksDir, err))
 		return
 	}
-	for _, f := range files {
-		if err := mgr.CreateFileWithOwner(f.path, f.content, 0, 0, f.mode); err != nil {
-			logger(fmt.Sprintf("Warning: failed to write %s: %v", f.path, err))
-			return
-		}
-	}
-	// Delegation wrappers as symlinks to the single delegate script (ln -sf is
-	// idempotent for persistent reuse).
-	var links strings.Builder
-	for _, name := range delegatedHookNames {
-		fmt.Fprintf(&links, "ln -sf delegate %s/%s && ", GitHooksDir, name)
-	}
-	if _, err := mgr.ExecCommand(links.String()+"true", container.ExecCommandOptions{Capture: true}); err != nil {
-		logger(fmt.Sprintf("Warning: failed to link delegation hooks: %v", err))
-		return
-	}
-	// post-commit: a real re-stamp file when locking, else a delegation symlink.
-	// Remove any prior form first so CreateFileWithOwner can't follow an existing
-	// symlink and clobber the delegate script, and so a lock->unlock switch on a
-	// reused container converges.
-	postCommit := GitHooksDir + "/post-commit"
-	if _, err := mgr.ExecCommand("rm -f "+postCommit, container.ExecCommandOptions{Capture: true}); err != nil {
-		logger(fmt.Sprintf("Warning: failed to reset %s: %v", postCommit, err))
-		return
-	}
-	if lockIdentity {
-		if err := mgr.CreateFileWithOwner(postCommit, renderPostCommitRestampScript(id), 0, 0, "0755"); err != nil {
-			logger(fmt.Sprintf("Warning: failed to write %s: %v", postCommit, err))
-			return
-		}
-	} else if _, err := mgr.ExecCommand("ln -sf delegate "+postCommit, container.ExecCommandOptions{Capture: true}); err != nil {
-		logger(fmt.Sprintf("Warning: failed to link post-commit delegation hook: %v", err))
-		return
-	}
-	// Branch-guard hooks (pre-commit / pre-merge-commit / pre-push): a real guard
-	// script when protectedBranches is non-empty, else a delegation symlink (like
-	// post-commit above). rm -f first so CreateFileWithOwner can't follow a stale
-	// symlink and a guard->off switch on a reused container converges.
 	guardOn := len(protectedBranches) > 0
-	for _, name := range branchGuardHooks {
-		hookPath := GitHooksDir + "/" + name
-		if _, err := mgr.ExecCommand("rm -f "+hookPath, container.ExecCommandOptions{Capture: true}); err != nil {
-			logger(fmt.Sprintf("Warning: failed to reset %s: %v", hookPath, err))
-			return
-		}
-		if guardOn {
-			if err := mgr.CreateFileWithOwner(hookPath, renderBranchGuardScript(name, protectedBranches), 0, 0, "0755"); err != nil {
-				logger(fmt.Sprintf("Warning: failed to write %s: %v", hookPath, err))
-				return
-			}
-		} else if name == refTxHook {
-			continue // removed above; never delegated (high-frequency hook)
-		} else if _, err := mgr.ExecCommand("ln -sf delegate "+hookPath, container.ExecCommandOptions{Capture: true}); err != nil {
-			logger(fmt.Sprintf("Warning: failed to link %s delegation hook: %v", name, err))
-			return
-		}
-	}
-	if setHooksPath {
-		cmd := fmt.Sprintf(`HOME=%s git config --global core.hooksPath %s`,
-			shellEscape(homeDir), shellEscape(GitHooksDir))
-		if _, err := mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true}); err != nil {
-			logger(fmt.Sprintf("Warning: failed to set core.hooksPath: %v", err))
-			return
-		}
-	}
 	switch {
 	case stripAttribution && lockIdentity:
 		logger("Installed git hooks: AI-attribution strip + commit-identity re-stamp (identity locked)")
@@ -498,6 +426,63 @@ func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentit
 	if guardOn {
 		logger("Installed git branch guard (protected: " + strings.Join(protectedBranches, ", ") + ") — no direct commits/pushes to these branches")
 	}
+}
+
+// gitHooksOps builds SetupGitHooks' in-container steps. Every step is
+// idempotent, so re-running it on a reused persistent container converges to
+// the current policy (a lock->unlock or guard->off switch included).
+func gitHooksOps(homeDir string, id GitIdentity, stripAttribution bool, patterns []string, lockIdentity, setHooksPath bool, protectedBranches []string) []guestOp {
+	ops := []guestOp{
+		guestCmd("mkdir -p " + GitHooksDir),
+		guestFile(GitHooksDir+"/delegate", gitDelegateHookScript, 0, 0, "0755"),
+	}
+	if stripAttribution {
+		ops = append(ops,
+			guestFile(GitHooksDir+"/commit-msg", gitCommitMsgHookScript, 0, 0, "0755"),
+			guestFile(gitAttributionPatternsPath, renderAttributionPatternsFile(effectiveAttributionPatterns(patterns)), 0, 0, "0644"),
+		)
+	}
+	// Delegation wrappers as symlinks to the single delegate script (ln -sf is
+	// idempotent for persistent reuse).
+	var links strings.Builder
+	for _, name := range delegatedHookNames {
+		fmt.Fprintf(&links, "ln -sf delegate %s/%s && ", GitHooksDir, name)
+	}
+	ops = append(ops, guestCmd(links.String()+"true"))
+
+	// post-commit: a real re-stamp file when locking, else a delegation symlink.
+	// Remove any prior form first so a lock->unlock switch on a reused
+	// container converges (the write itself renames over, never follows, a link).
+	postCommit := GitHooksDir + "/post-commit"
+	ops = append(ops, guestCmd("rm -f "+postCommit))
+	if lockIdentity {
+		ops = append(ops, guestFile(postCommit, renderPostCommitRestampScript(id), 0, 0, "0755"))
+	} else {
+		ops = append(ops, guestCmd("ln -sf delegate "+postCommit))
+	}
+
+	// Branch-guard hooks (pre-commit / pre-merge-commit / pre-push): a real guard
+	// script when protectedBranches is non-empty, else a delegation symlink (like
+	// post-commit above). rm -f first so a guard->off switch on a reused
+	// container converges.
+	guardOn := len(protectedBranches) > 0
+	for _, name := range branchGuardHooks {
+		hookPath := GitHooksDir + "/" + name
+		ops = append(ops, guestCmd("rm -f "+hookPath))
+		switch {
+		case guardOn:
+			ops = append(ops, guestFile(hookPath, renderBranchGuardScript(name, protectedBranches), 0, 0, "0755"))
+		case name == refTxHook:
+			// removed above; never delegated (high-frequency hook)
+		default:
+			ops = append(ops, guestCmd("ln -sf delegate "+hookPath))
+		}
+	}
+	if setHooksPath {
+		ops = append(ops, guestCmd(fmt.Sprintf(`HOME=%s git config --global core.hooksPath %s`,
+			shellEscape(homeDir), shellEscape(GitHooksDir))))
+	}
+	return ops
 }
 
 // RemoveGitAttributionHookConfig best-effort unsets core.hooksPath so a

@@ -745,23 +745,30 @@ func GetContainerIPFast(containerName string) (string, error) {
 	return GetContainerIPWithRetries(containerName, 3)
 }
 
-// GetContainerIPWithRetries retrieves the IPv4 address with configurable retry count
+// GetContainerIPWithRetries retrieves the IPv4 address, waiting up to
+// maxRetries seconds for DHCP. It polls every ipPollInterval rather than once
+// a second: on a just-(re)started container the lease usually lands a few
+// hundred ms after start, and a 1 s step turned that into a full extra second
+// of every launch.
 func GetContainerIPWithRetries(containerName string, maxRetries int) (string, error) {
-	const retryDelay = time.Second
-
+	deadline := time.Now().Add(time.Duration(maxRetries) * time.Second)
 	var lastErr error
-	for i := 0; i < maxRetries; i++ {
+	for {
 		ip, err := getContainerIPOnce(containerName)
 		if err == nil {
 			return ip, nil
 		}
 		lastErr = err
-		if i < maxRetries-1 {
-			time.Sleep(retryDelay)
+		if maxRetries <= 1 || !time.Now().Add(ipPollInterval).Before(deadline) {
+			break
 		}
+		time.Sleep(ipPollInterval)
 	}
 	return "", fmt.Errorf("timeout waiting for container IP after %d seconds: %w", maxRetries, lastErr)
 }
+
+// ipPollInterval is how often GetContainerIPWithRetries re-checks for a lease.
+const ipPollInterval = 200 * time.Millisecond
 
 func getContainerIPOnce(containerName string) (string, error) {
 	output, err := container.IncusOutput("list", containerName, "--format=json")

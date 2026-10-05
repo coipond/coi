@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coipond/coi/internal/timing"
@@ -964,11 +965,29 @@ func PublishContainer(containerName, aliasName, description, compression string)
 
 // DeleteImage deletes an image by alias
 func DeleteImage(aliasName string) error {
+	knownImages.Delete(aliasName)
 	return IncusExecQuiet("image", "delete", aliasName)
 }
 
+// knownImages remembers aliases ImageExists has already found in this
+// process, so a launch that checks the same image twice (the CLI's auto-build
+// check, then session setup) pays for one image list, not two. Only positive
+// answers are cached: a missing image may be built moments later.
+var knownImages sync.Map
+
 // ImageExists checks if an image with the given alias exists
 func ImageExists(aliasName string) (bool, error) {
+	if _, ok := knownImages.Load(aliasName); ok {
+		return true, nil
+	}
+	exists, err := imageExistsUncached(aliasName)
+	if exists {
+		knownImages.Store(aliasName, struct{}{})
+	}
+	return exists, err
+}
+
+func imageExistsUncached(aliasName string) (bool, error) {
 	output, err := IncusOutput("image", "list", "--format=json")
 	if err != nil {
 		return false, err
