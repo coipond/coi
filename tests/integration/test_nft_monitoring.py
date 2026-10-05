@@ -675,18 +675,21 @@ class TestAuditLogging:
                 # Wait for the NFT monitoring daemon to actually start before
                 # triggering traffic. Without this, the curl may fire before the
                 # daemon is ready to observe it and write audit logs.
+                # The session supervisor runs the daemon and writes to the session
+                # log; coi shell's stderr covers the in-process fallback.
                 daemon_started = False
+                output = ""
                 for _ in range(30):
                     time.sleep(1)
-                    stderr_content = stderr_file.read_text()
-                    if "[security] NFT network monitoring started" in stderr_content:
+                    output = stderr_file.read_text() + coi_session_logs(container_name)
+                    if "[security] NFT network monitoring started" in output:
                         daemon_started = True
                         break
 
                 if not daemon_started:
                     pytest.fail(
                         "NFT monitoring daemon did not start in time. "
-                        f"stderr:\n{stderr_file.read_text()}"
+                        f"coi shell stderr and session logs:\n{output}"
                     )
 
                 # Trigger some network activity
