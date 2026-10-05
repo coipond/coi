@@ -13,6 +13,7 @@
 ### Bug Fixes
 
 - [Bug Fix] **Git identity is now seeded from the Mac user's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — inside a macOS VM coi reads the identity from your Mac home (shared under `/Users`), including `include.path` files, and falls back to the VM's config. On a multi-user Mac it only uses your own home, never another account's.
+- [Bug Fix] **Background and detached sessions are now protected** — security monitoring and the runtime limit keep running after `coi shell --background`, or when you detach or leave the agent with the container still running, and stop when the container does. Before, they stopped as soon as `coi shell` returned. `coi shell` prints a `[supervisor]` line confirming what is covered and where it logs.
 - [Bug Fix] **Profiles can set `[git] protected_branches` and `[limits.disk] size`** — a profile containing either no longer fails to load (which made every coi command fail).
 - [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as they already were in project config.
 - [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable (for example a wrapper script) instead of silently ignoring the setting.

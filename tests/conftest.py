@@ -216,6 +216,14 @@ def pytest_report_teststatus(report, config):
         # Format duration nicely
         duration_str = f"{duration:.2f}s" if duration < 1 else f"{duration:.1f}s"
 
+        # Expected failures keep their own category: reporting an xfail as
+        # "skipped" breaks the -rs summary, which expects a skip's
+        # (path, line, reason).
+        if hasattr(report, "wasxfail"):
+            if report.skipped:
+                return "xfailed", "x", f"XFAIL ({duration_str})"
+            return "xpassed", "X", f"XPASS ({duration_str})"
+
         # Append duration to the word (status)
         if report.passed:
             word = f"PASSED ({duration_str})"

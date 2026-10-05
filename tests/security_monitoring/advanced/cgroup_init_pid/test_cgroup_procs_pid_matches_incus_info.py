@@ -34,10 +34,10 @@ def test_cgroup_procs_pid_matches_incus_info(test_workspace, coi_binary):
             pytest.fail(f"Container {container_name} did not start")
 
         cgroup_path = find_container_cgroup_path(container_name)
-        if cgroup_path is None:
-            pytest.skip(
-                f"Container cgroup path not found under /sys/fs/cgroup for {container_name}"
-            )
+        assert cgroup_path is not None, (
+            f"Container cgroup path not found under /sys/fs/cgroup for {container_name}"
+        )
+        print(f"cgroup path: {cgroup_path}")
 
         # Collect minimum PID from all cgroup.procs files in the tree.
         procs_files = glob.glob(f"{cgroup_path}/**/cgroup.procs", recursive=True)

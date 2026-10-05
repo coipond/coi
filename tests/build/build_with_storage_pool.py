@@ -23,11 +23,11 @@ def test_build_with_storage_pool(coi_binary, tmp_path):
 
     # Skip if base image isn't available
     result = subprocess.run(
-        [coi_binary, "image", "exists", "coi-sandbox"],
+        [coi_binary, "image", "exists", "coi-default"],
         capture_output=True,
     )
     if result.returncode != 0:
-        pytest.skip("coi-sandbox base image not present")
+        pytest.skip("coi-default image not built")
 
     ok, err = create_storage_pool(pool_name)
     if not ok:
