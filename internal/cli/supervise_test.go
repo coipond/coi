@@ -92,3 +92,52 @@ func TestContainerGoneFromStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestSupervisorNotice(t *testing.T) {
+	const log = "/home/u/.coi/logs/coi-x-1.stderr.log"
+	tests := []struct {
+		name       string
+		monitoring bool
+		maxDur     string
+		already    bool
+		logPath    string
+		want       string
+	}{
+		{
+			"monitoring only", true, "", false, log,
+			"[supervisor] Running security monitoring until the container stops (log: " + log + ")",
+		},
+		{
+			"runtime limit only", false, "2h", false, log,
+			"[supervisor] Running the 2h max_duration limit until the container stops (log: " + log + ")",
+		},
+		{
+			"both", true, "30m", false, log,
+			"[supervisor] Running security monitoring and the 30m max_duration limit until the container stops (log: " + log + ")",
+		},
+		{
+			"re-attach to a running supervisor", true, "", true, log,
+			"[supervisor] Already running for this container (security monitoring) (log: " + log + ")",
+		},
+		{
+			"no log path", true, "", false, "",
+			"[supervisor] Running security monitoring until the container stops",
+		},
+		{
+			"unparseable limit is not claimed", true, "soon", false, "",
+			"[supervisor] Running security monitoring until the container stops",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := supervisorNotice(tt.monitoring, tt.maxDur, tt.already, tt.logPath)
+			if got != tt.want {
+				t.Errorf("supervisorNotice() =\n  %q\nwant\n  %q", got, tt.want)
+			}
+			// Runtime-limit diagnostics must stay off the terminal (#372).
+			if strings.Contains(got, "[limits]") || strings.Contains(got, "Runtime limit reached") {
+				t.Errorf("notice uses a terminal-forbidden runtime-limit marker: %q", got)
+			}
+		})
+	}
+}

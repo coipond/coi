@@ -516,7 +516,7 @@ func (a *App) startMonitoringPhase(s *shellState) session.Phase {
 				runtime = s.setupOpts.LimitsConfig.Runtime
 			}
 			if needsSupervisor(a.cfg, runtime) {
-				err := startSessionSupervisor(supervisorState{
+				already, err := startSessionSupervisor(supervisorState{
 					ContainerName: s.result.ContainerName,
 					WorkspacePath: s.absWorkspace,
 					Incus:         a.cfg.Incus,
@@ -526,6 +526,7 @@ func (a *App) startMonitoringPhase(s *shellState) session.Phase {
 					Runtime:       runtime,
 				}, s.result.Logger)
 				if err == nil {
+					fmt.Fprintln(os.Stderr, supervisorNotice(config.BoolVal(a.cfg.Monitoring.Enabled), runtime.MaxDuration, already, s.result.Logger.ErrPath()))
 					// The supervisor enforces max_duration from here on.
 					if s.result.TimeoutMonitor != nil {
 						s.result.TimeoutMonitor.Stop()

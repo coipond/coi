@@ -780,6 +780,15 @@ class TestDaemonLifecycle:
                     f"session logs:\n{output}"
                 )
 
+                # The user's terminal (coi shell's stderr) must still confirm that
+                # monitoring is running: the supervisor's notice, or the monitors'
+                # own lines when coi shell fell back to running them in-process.
+                terminal = stderr_file.read_text()
+                assert (
+                    "[supervisor] Running security monitoring" in terminal
+                    or "[security] NFT network monitoring started" in terminal
+                ), f"no monitoring confirmation on the terminal:\n{terminal}"
+
             finally:
                 proc.terminate()
                 try:

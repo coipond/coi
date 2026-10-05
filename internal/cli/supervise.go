@@ -99,34 +99,35 @@ func lockSupervisor(lockPath string) (*os.File, error) {
 
 // startSessionSupervisor starts the container's supervisor unless one is
 // already running for it (a re-attach keeps the existing one, so its runtime
-// limit keeps counting from the original start).
-func startSessionSupervisor(state supervisorState, log *logger.SessionLogger) error {
+// limit keeps counting from the original start). alreadyRunning reports the
+// latter.
+func startSessionSupervisor(state supervisorState, log *logger.SessionLogger) (alreadyRunning bool, err error) {
 	statePath, lockPath, err := supervisorPaths(state.ContainerName)
 	if err != nil {
-		return err
+		return false, err
 	}
 	held, err := lockSupervisor(lockPath)
 	if err != nil {
-		return fmt.Errorf("supervisor lock: %w", err)
+		return false, fmt.Errorf("supervisor lock: %w", err)
 	}
 	if held == nil {
 		log.Printf("[supervisor] already running for %s", state.ContainerName)
-		return nil
+		return true, nil
 	}
 	// Probe only: the supervisor takes the lock itself.
 	_ = held.Close()
 
 	data, err := json.Marshal(state)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := os.WriteFile(statePath, data, 0o600); err != nil {
-		return err
+		return false, err
 	}
 
 	exe, err := os.Executable()
 	if err != nil {
-		return err
+		return false, err
 	}
 	cmd := exec.Command(exe, "supervise", "--state", statePath) //nolint:gosec // our own binary
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -138,11 +139,36 @@ func startSessionSupervisor(state supervisorState, log *logger.SessionLogger) er
 		defer out.Close()
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start supervisor: %w", err)
+		return false, fmt.Errorf("start supervisor: %w", err)
 	}
 	_ = cmd.Process.Release()
 	log.Printf("[supervisor] started for %s", state.ContainerName)
-	return nil
+	return false, nil
+}
+
+// supervisorNotice is the line coi shell prints once the session supervisor
+// owns the monitoring and runtime limit. The monitors used to announce
+// themselves on the terminal from inside coi shell; the supervisor writes to
+// the session log instead, so this says what it covers, that it outlives this
+// command, and where to look. It never uses the [limits] prefix: runtime-limit
+// diagnostics are kept off the terminal (#372).
+func supervisorNotice(monitoring bool, maxDuration string, alreadyRunning bool, logPath string) string {
+	var covers []string
+	if monitoring {
+		covers = append(covers, "security monitoring")
+	}
+	if d, err := limits.ParseDuration(maxDuration); err == nil && d > 0 {
+		covers = append(covers, "the "+maxDuration+" max_duration limit")
+	}
+	what := strings.Join(covers, " and ")
+	msg := "[supervisor] Running " + what + " until the container stops"
+	if alreadyRunning {
+		msg = "[supervisor] Already running for this container (" + what + ")"
+	}
+	if logPath != "" {
+		msg += " (log: " + logPath + ")"
+	}
+	return msg
 }
 
 var superviseStatePath string
