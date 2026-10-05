@@ -481,3 +481,14 @@ process_spawn_rate_threshold = 9999
         elif config_path.exists():
             config_path.unlink()
         cleanup_container(container_name, coi_binary)
+
+
+def coi_session_logs(container_name, tail=4000):
+    """Tail of coi's session logs (~/.coi/logs/<container>*), for failure messages."""
+    out = ""
+    for log in sorted((Path.home() / ".coi" / "logs").glob(f"{container_name}*")):
+        try:
+            out += f"\n--- {log.name} ---\n" + log.read_text()[-tail:]
+        except OSError:
+            pass
+    return out or "\n(no coi session logs)"

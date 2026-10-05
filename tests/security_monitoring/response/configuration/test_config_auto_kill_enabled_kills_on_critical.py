@@ -8,6 +8,7 @@ import pytest
 
 from support.monitoring import (
     cleanup_container,
+    coi_session_logs,
     container_absent,
     get_container_name_from_workspace,
     get_container_state,
@@ -107,7 +108,8 @@ file_read_rate_mb_per_sec = 1000
 
         assert killed, (
             "auto_kill_on_critical=true in config should kill (stop AND delete) the "
-            f"container on a critical threat; final observed state was {final_state!r}"
+            f"container on a critical threat; final observed state was {final_state!r}. "
+            f"Events: {get_threat_events(container_name)}{coi_session_logs(container_name)}"
         )
 
         # The monitoring daemon writes to the audit log and kills the

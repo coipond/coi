@@ -7,6 +7,7 @@ import time
 
 from support.monitoring import (
     cleanup_container,
+    coi_session_logs,
     disk_space_warnings,
     fill_tmp,
     get_container_name_from_workspace,
@@ -51,7 +52,7 @@ def test_tmp_over_80_percent_warns_with_disk_space_evidence(
 
         assert warnings, (
             "expected a disk-space WARNING once /tmp is ~90% full; "
-            f"events: {get_threat_events(container_name)}"
+            f"events: {get_threat_events(container_name)}{coi_session_logs(container_name)}"
         )
         warning = warnings[0]
         disk = warning["evidence"]["disk_space"]
