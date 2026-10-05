@@ -29,13 +29,27 @@ from pathlib import Path
 
 import pytest
 
+# Sensitive-file monitoring needs CAP_SYS_ADMIN for fanotify_init, which a
+# standard (non-root) coi install doesn't have: every session logs
+# "filewatcher: fanotify_init: operation not permitted (sensitive file
+# monitoring disabled)" and nothing is detected. Expected to fail until coi
+# gets that privilege some other way (e.g. a sudo helper, like the nft
+# monitor). strict=True: once it works, these XPASS and fail, so the marker
+# gets removed.
+pytestmark = pytest.mark.xfail(
+    os.geteuid() != 0,
+    reason="fanotify needs CAP_SYS_ADMIN, which a non-root coi doesn't have",
+    strict=True,
+)
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _container_name(workspace: str) -> str:
+def _container_name(workspace: str, slot: int) -> str:
     abs_path = os.path.abspath(workspace)
     digest = hashlib.sha256(abs_path.encode()).hexdigest()[:8]
-    return f"coi-{digest}-1"
+    return f"coi-{digest}-{slot}"
 
 
 def _wait_running(name: str, timeout: int = 60) -> bool:
@@ -156,7 +170,7 @@ class TestFileWatcherFanotify:
         """
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
-        container_name = _container_name(workspace)
+        container_name = _container_name(workspace, 71)
 
         proc = subprocess.Popen(
             [coi_binary, "shell", "--workspace", workspace, "--slot", "71"],
@@ -167,7 +181,7 @@ class TestFileWatcherFanotify:
 
         try:
             if not _wait_running(container_name):
-                pytest.skip(f"Container {container_name} not ready")
+                pytest.fail(f"Container {container_name} did not start")
 
             # Wait for: daemon init (5 s) + 30 s grace period + 2 s safety margin.
             # Reads during the grace window are silently dropped to avoid triggering
@@ -216,7 +230,7 @@ class TestFileWatcherFanotify:
         """
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
-        container_name = _container_name(workspace)
+        container_name = _container_name(workspace, 72)
 
         proc = subprocess.Popen(
             [coi_binary, "shell", "--workspace", workspace, "--slot", "72"],
@@ -227,7 +241,7 @@ class TestFileWatcherFanotify:
 
         try:
             if not _wait_running(container_name):
-                pytest.skip(f"Container {container_name} not ready")
+                pytest.fail(f"Container {container_name} did not start")
 
             time.sleep(5)
 
@@ -281,7 +295,7 @@ class TestFileWatcherFanotify:
         """
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
-        container_name = _container_name(workspace)
+        container_name = _container_name(workspace, 73)
 
         proc = subprocess.Popen(
             [coi_binary, "shell", "--workspace", workspace, "--slot", "73"],
@@ -292,7 +306,7 @@ class TestFileWatcherFanotify:
 
         try:
             if not _wait_running(container_name):
-                pytest.skip(f"Container {container_name} not ready")
+                pytest.fail(f"Container {container_name} did not start")
 
             time.sleep(5)
 

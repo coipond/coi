@@ -33,10 +33,10 @@ def test_cgroup_path_exists_for_running_container(test_workspace, coi_binary):
             pytest.fail(f"Container {container_name} did not start")
 
         cgroup_path = find_container_cgroup_path(container_name)
-        if cgroup_path is None:
-            pytest.skip(
-                f"Container cgroup path not found under /sys/fs/cgroup for {container_name}"
-            )
+        assert cgroup_path is not None, (
+            f"Container cgroup path not found under /sys/fs/cgroup for {container_name}"
+        )
+        print(f"cgroup path: {cgroup_path}")
         assert os.path.isdir(cgroup_path), f"cgroup path {cgroup_path} is not a directory"
     finally:
         proc.terminate()
