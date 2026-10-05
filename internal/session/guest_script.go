@@ -66,22 +66,31 @@ func renderGuestScript(ops []guestOp) string {
 // otherwise). A batch too large for one argv element falls back to one call
 // per op, preserving the old behavior.
 func runGuestOps(mgr container.ContainerManager, ops []guestOp, opts container.ExecCommandOptions) error {
+	_, err := runGuestOpsOutput(mgr, ops, opts)
+	return err
+}
+
+// runGuestOpsOutput is runGuestOps that also returns the commands' combined
+// stdout, for ops that report what they did.
+func runGuestOpsOutput(mgr container.ContainerManager, ops []guestOp, opts container.ExecCommandOptions) (string, error) {
 	opts.Capture = true
 	if script := renderGuestScript(ops); len(script) <= maxGuestScriptBytes {
-		_, err := mgr.ExecCommand(script, opts)
-		return err
+		return mgr.ExecCommand(script, opts)
 	}
+	var out strings.Builder
 	for _, op := range ops {
 		if op.write != nil {
 			w := op.write
 			if err := mgr.CreateFileWithOwner(w.path, w.content, w.uid, w.gid, w.mode); err != nil {
-				return fmt.Errorf("failed to write %s: %w", w.path, err)
+				return out.String(), fmt.Errorf("failed to write %s: %w", w.path, err)
 			}
 			continue
 		}
-		if _, err := mgr.ExecCommand(op.cmd, opts); err != nil {
-			return err
+		o, err := mgr.ExecCommand(op.cmd, opts)
+		out.WriteString(o)
+		if err != nil {
+			return out.String(), err
 		}
 	}
-	return nil
+	return out.String(), nil
 }

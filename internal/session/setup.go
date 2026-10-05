@@ -843,8 +843,12 @@ func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestO
 // and (when [tool] auto_context is on and the tool has one) the tool's native
 // auto-load file, all in ONE exec. Runs for both new and resumed sessions so
 // dynamic info stays current.
-func injectSandboxContextFiles(result *SetupResult, opts SetupOptions) {
-	contextContent, ops := sandboxContextOps(result, opts)
+//
+// preOps run first in the same exec (other phases' deferred steps); the
+// combined output is returned so their callers can report what happened.
+func injectSandboxContextFiles(result *SetupResult, opts SetupOptions, preOps ...guestOp) string {
+	contextContent, contextOps := sandboxContextOps(result, opts)
+	ops := append(append([]guestOp{}, preOps...), contextOps...)
 
 	if opts.Tool != nil && config.BoolVal(opts.Context.Auto) && contextContent != "" {
 		if acf, ok := opts.Tool.(tool.ToolWithAutoContextFile); ok {
@@ -856,15 +860,19 @@ func injectSandboxContextFiles(result *SetupResult, opts SetupOptions) {
 		}
 	}
 	if len(ops) == 0 {
-		return
+		return ""
 	}
-	if err := runGuestOps(result.Manager, ops, container.ExecCommandOptions{}); err != nil {
+	out, err := runGuestOpsOutput(result.Manager, ops, container.ExecCommandOptions{})
+	if err != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to write sandbox context files: %v", err))
-		return
+		return out
 	}
 	for _, op := range ops {
-		opts.Logger(fmt.Sprintf("Context file injected at %s", op.write.path))
+		if op.write != nil {
+			opts.Logger(fmt.Sprintf("Context file injected at %s", op.write.path))
+		}
 	}
+	return out
 }
 
 // remapContainerUser remaps the container's `code` user to a non-default

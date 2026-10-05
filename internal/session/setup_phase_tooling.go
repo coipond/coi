@@ -136,6 +136,8 @@ func (st *setupState) phaseSetupCredentials(_ context.Context) (Teardown, error)
 // that support it, the native auto-context file (e.g. Claude's ~/.claude/CLAUDE.md).
 func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	// Runs for both new and resumed sessions so dynamic info stays current.
-	injectSandboxContextFiles(st.result, st.opts)
+	out := injectSandboxContextFiles(st.result, st.opts, st.pendingGuestOps...)
+	st.pendingGuestOps = nil
+	reportTimezone(out, st.opts.Timezone, st.opts.Logger)
 	return nil, nil
 }
