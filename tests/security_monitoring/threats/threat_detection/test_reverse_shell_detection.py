@@ -12,6 +12,7 @@ from support.monitoring import (
     get_container_name_from_workspace,
     get_container_state,
     get_threat_events,
+    wait_for_container_running,
 )
 
 
@@ -32,18 +33,11 @@ def test_reverse_shell_detection(test_workspace, enable_monitoring, coi_binary):
     # Wait for container to be created and running (may take longer on first run
     # when the image is not yet cached)
     container_name = get_container_name_from_workspace(test_workspace)
-    ready = False
-    for _ in range(30):
-        time.sleep(1)
+    if not wait_for_container_running(container_name):
         state = get_container_state(container_name)
-        if state == "Running":
-            ready = True
-            break
-
-    if not ready:
         proc.terminate()
         stderr_fd.close()
-        pytest.skip(f"Container {container_name} not ready, state: {state}")
+        pytest.fail(f"Container {container_name} did not start, state: {state}")
 
     # Inject malicious command (simulate reverse shell)
     subprocess.Popen(

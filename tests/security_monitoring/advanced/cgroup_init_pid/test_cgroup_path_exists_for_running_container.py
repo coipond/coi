@@ -30,7 +30,7 @@ def test_cgroup_path_exists_for_running_container(test_workspace, coi_binary):
     )
     try:
         if not wait_for_container_running(container_name):
-            pytest.skip(f"Container {container_name} not ready")
+            pytest.fail(f"Container {container_name} did not start")
 
         cgroup_path = find_container_cgroup_path(container_name)
         if cgroup_path is None:
