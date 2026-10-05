@@ -353,6 +353,7 @@ func init() {
 	rootCmd.AddCommand(shutdownCmd)
 	rootCmd.AddCommand(monitorCmd)
 	rootCmd.AddCommand(topCmd)
+	rootCmd.AddCommand(superviseCmd) // hidden: runs a shell session's monitoring + runtime limit
 }
 
 var versionCmd = &cobra.Command{

@@ -498,13 +498,43 @@ func (a *App) setupContainerPhase(s *shellState) session.Phase {
 	}
 }
 
-// startMonitoringPhase starts the traditional and NFT monitoring daemons when
-// enabled in config (see startSessionMonitoring — shared with the run
-// pipeline). Its teardown stops both daemons.
+// startMonitoringPhase starts the session's security monitoring and runtime
+// limit in a per-container supervisor (see supervise.go) that outlives this
+// command. If the supervisor can't start, it falls back to running the
+// monitors in-process (startSessionMonitoring, shared with the run pipeline),
+// whose teardown stops them.
 func (a *App) startMonitoringPhase(s *shellState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "start-monitoring",
 		RunFn: func(ctx context.Context) (session.Teardown, error) {
+			// Hand monitoring and the runtime limit to a supervisor that lives
+			// as long as the container, so they keep running after this
+			// command returns (--background, detach, or exiting the agent
+			// with the container kept running).
+			var runtime config.RuntimeLimits
+			if s.setupOpts.LimitsConfig != nil {
+				runtime = s.setupOpts.LimitsConfig.Runtime
+			}
+			if needsSupervisor(a.cfg, runtime) {
+				err := startSessionSupervisor(supervisorState{
+					ContainerName: s.result.ContainerName,
+					WorkspacePath: s.absWorkspace,
+					Incus:         a.cfg.Incus,
+					Network:       a.cfg.Network,
+					Monitoring:    a.cfg.Monitoring,
+					Detection:     a.cfg.Detection,
+					Runtime:       runtime,
+				}, s.result.Logger)
+				if err == nil {
+					// The supervisor enforces max_duration from here on.
+					if s.result.TimeoutMonitor != nil {
+						s.result.TimeoutMonitor.Stop()
+						s.result.TimeoutMonitor = nil
+					}
+					return nil, nil
+				}
+				fmt.Fprintf(os.Stderr, "Warning: could not start the session supervisor (%v); monitoring and the runtime limit stop when this command exits\n", err)
+			}
 			teardown := a.startSessionMonitoring(ctx, s.result.ContainerName, s.absWorkspace, s.result.Logger, &s.monitorDaemon, &s.nftDaemon)
 			return teardown, nil
 		},

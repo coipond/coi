@@ -245,7 +245,8 @@ class TestNFTRuleManagement:
             cleanup_container(container_name, coi_binary, env=coi_monitoring_env)
 
     def test_rules_removed_on_session_end(self, test_workspace, coi_binary, coi_monitoring_env):
-        """Verify nftables rules are cleaned up when session ends."""
+        """nftables rules outlive the coi shell command and are removed when the
+        session's container stops."""
         slot = 51
         container_name = get_container_name_from_workspace(test_workspace, slot)
 
@@ -282,22 +283,33 @@ class TestNFTRuleManagement:
                 time.sleep(2)
             assert nft_ready, "Rules should exist while monitoring"
 
-            # Stop session
+            # End the coi shell command. The container keeps running, and so
+            # does its monitoring (the session supervisor owns it), so the
+            # rules must stay.
             proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
-            time.sleep(3)
-
-            # Check rules are gone
-            result = subprocess.run(
-                ["sudo", "-n", "nft", "list", "ruleset"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            time.sleep(5)
+            assert check_nft_rules_exist(container_ip), (
+                "monitoring rules disappeared while the container was still running"
             )
-            assert f"NFT_COI[{container_ip}]" not in result.stdout, "Rules not cleaned up"
+
+            # Stopping the container ends the session: the supervisor removes
+            # the rules.
+            subprocess.run(
+                ["incus", "stop", "--force", container_name],
+                capture_output=True,
+                timeout=60,
+            )
+            gone = False
+            for _ in range(30):
+                if not check_nft_rules_exist(container_ip):
+                    gone = True
+                    break
+                time.sleep(1)
+            assert gone, f"NFT rules for {container_ip} not cleaned up after the container stopped"
 
         finally:
             proc.terminate()
