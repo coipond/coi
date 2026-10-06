@@ -228,6 +228,21 @@ func shellEscape(s string) string {
 // errors (e.g. to attach cause hints — see AnnotateReadyTimeout).
 var ErrNotReady = errors.New("container failed to become ready")
 
+// ErrStoppedDuringBoot is the sentinel for a container that stopped while
+// WaitForReady was waiting for it, i.e. its start failed. It is reported at once
+// with the start log's errors instead of after the whole readiness window.
+var ErrStoppedDuringBoot = errors.New("container stopped during boot")
+
+// stoppedConfirmations is how many consecutive "not running" probes make
+// WaitForReady give up early, so a single odd status answer can't end a wait.
+const stoppedConfirmations = 3
+
+// startLogReader is implemented by *container.Manager; kept out of
+// container.ContainerManager so test fakes needn't grow it.
+type startLogReader interface {
+	StartLogErrors(maxLines int) []string
+}
+
 // WaitForReady waits for the container to be ready: running AND able to
 // execute a command. It probes once per second for up to maxRetries seconds
 // and honors ctx cancellation between probes (a SIGINT-cancelled context
@@ -251,6 +266,7 @@ func waitForReady(ctx context.Context, mgr container.ContainerManager, timeout, 
 	start := time.Now()
 	deadline := start.Add(timeout)
 	nextNote := 5 * time.Second
+	notRunning := 0
 	for {
 		// A command that runs proves the container is running AND usable, so
 		// try it first: on an already-running container that is the only call.
@@ -259,8 +275,21 @@ func waitForReady(ctx context.Context, mgr container.ContainerManager, timeout, 
 		}
 		// Not usable yet. Surface a real status-query failure (incus down)
 		// as an error rather than waiting out the window.
-		if _, err := mgr.Running(); err != nil {
+		running, err := mgr.Running()
+		if err != nil {
 			return fmt.Errorf("failed to check container status: %w", err)
+		}
+		// Every caller waits on a container it has just started, so one that is
+		// not running is not booting slowly: its start failed. Report that now,
+		// with the reason from the start log, instead of probing a stopped
+		// container until the window runs out.
+		if running {
+			notRunning = 0
+		} else {
+			notRunning++
+			if notRunning >= stoppedConfirmations {
+				return stoppedDuringBootError(mgr)
+			}
 		}
 
 		// No sleep after the final probe — it would delay the error for
@@ -280,6 +309,18 @@ func waitForReady(ctx context.Context, mgr container.ContainerManager, timeout, 
 	}
 
 	return fmt.Errorf("%w after %d seconds", ErrNotReady, int(timeout.Seconds()))
+}
+
+// stoppedDuringBootError builds the ErrStoppedDuringBoot error, quoting the
+// errors of the container's start log when they can be read.
+func stoppedDuringBootError(mgr container.ContainerManager) error {
+	const reason = "it is not running, so its start most likely failed"
+	if r, ok := mgr.(startLogReader); ok {
+		if lines := r.StartLogErrors(6); len(lines) > 0 {
+			return fmt.Errorf("%w: %s; start log errors:\n  %s", ErrStoppedDuringBoot, reason, strings.Join(lines, "\n  "))
+		}
+	}
+	return fmt.Errorf("%w: %s (see `incus info --show-log <container>`)", ErrStoppedDuringBoot, reason)
 }
 
 // AnnotateReadyTimeout appends a cause hint to a WaitForReady timeout when

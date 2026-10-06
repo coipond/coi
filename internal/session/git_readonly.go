@@ -3,7 +3,9 @@ package session
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,46 +74,58 @@ func renderReadonlyGitConfig(id GitIdentity, hooksPath string) string {
 }
 
 // readonlyGitConfigHostPath returns the host path Coi writes the generated config
-// to, keyed on the identity AND the hooksPath so distinct configurations never
-// collide (two parallel slots differing only in strip_attribution must not race
-// on one file with different contents) and the file is stable across sessions.
-// Lives under ~/.coi so it persists for the container's life (an Incus disk
-// device references it) and is not swept from /tmp.
+// to. The name is a hash of the rendered CONTENT, so a given path only ever holds
+// one content: distinct identities / hooksPaths (two parallel slots differing
+// only in strip_attribution) get distinct files, and a file never needs
+// rewriting once it exists. Lives under ~/.coi so it persists for the
+// container's life (an Incus disk device references it) and is not swept from
+// /tmp.
 func readonlyGitConfigHostPath(hostHome string, id GitIdentity, hooksPath string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(id.Name) + "\x00" + strings.TrimSpace(id.Email) + "\x00" + hooksPath))
+	sum := sha256.Sum256([]byte(renderReadonlyGitConfig(id, hooksPath)))
 	name := hex.EncodeToString(sum[:])[:16] + ".gitconfig"
 	return filepath.Join(hostHome, ".coi", "git-identity", name)
 }
 
-// writeReadonlyGitConfigHostFile writes the generated config to the host and
-// returns its path.
+// writeReadonlyGitConfigHostFile makes sure the generated config exists on the
+// host and returns its path.
+//
+// The file is the source of an Incus disk device on EVERY container that uses
+// this identity, running or stopped, so it must never be replaced: Incus binds
+// the source when a container starts, and a rename landing in that window
+// unlinks the inode being mounted, which aborts the start ("Failed to mount
+// .../disk.git--identity...: No such file or directory"). With hundreds of
+// containers on one identity, one launch's rewrite regularly overlapped another
+// container's start. So an existing file with the right content is left alone
+// (the content-addressed name makes that the steady state), and a missing one is
+// installed with link(2), which never replaces an existing path.
 func writeReadonlyGitConfigHostFile(id GitIdentity, hooksPath string) (string, error) {
 	hostHome, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve host home: %w", err)
 	}
+	content := renderReadonlyGitConfig(id, hooksPath)
 	hostPath := readonlyGitConfigHostPath(hostHome, id, hooksPath)
+	if ok, err := readonlyGitConfigInstalled(hostPath, content); err != nil || ok {
+		return hostPath, err
+	}
 	dir := filepath.Dir(hostPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("failed to create git.readonly dir: %w", err)
 	}
-	// Write atomically (temp in the same dir + rename), so a crash mid-write or two
-	// concurrent launches (parallel slots with the same identity race on the same
-	// hash-keyed file) can never leave a torn config that then gets mounted into a
-	// container. The content is deterministic, so whichever rename wins is correct.
+	// Write to a temp file in the same dir first, so the installed file is never
+	// torn: a crash mid-write leaves only the temp file behind.
 	tmp, err := os.CreateTemp(dir, ".gitconfig-*.tmp")
 	if err != nil {
 		return "", fmt.Errorf("failed to create git.readonly temp file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds
-	if _, err := tmp.WriteString(renderReadonlyGitConfig(id, hooksPath)); err != nil {
+	defer os.Remove(tmpName) // the installed file is a separate link (or a rename)
+	if _, err := tmp.WriteString(content); err != nil {
 		tmp.Close()
 		return "", fmt.Errorf("failed to write git.readonly config: %w", err)
 	}
 	// os.CreateTemp makes the file 0600; set 0644 explicitly so the container's code
-	// user can read it regardless of uid shift (and unlike os.WriteFile this applies
-	// even when an install file already existed).
+	// user can read it regardless of uid shift.
 	if err := tmp.Chmod(0o644); err != nil {
 		tmp.Close()
 		return "", fmt.Errorf("failed to chmod git.readonly config: %w", err)
@@ -119,10 +133,52 @@ func writeReadonlyGitConfigHostFile(id GitIdentity, hooksPath string) (string, e
 	if err := tmp.Close(); err != nil {
 		return "", fmt.Errorf("failed to close git.readonly temp file: %w", err)
 	}
-	if err := os.Rename(tmpName, hostPath); err != nil {
-		return "", fmt.Errorf("failed to install git.readonly config: %w", err)
+	if err := installReadonlyGitConfig(tmpName, hostPath, content); err != nil {
+		return "", err
 	}
 	return hostPath, nil
+}
+
+// readonlyGitConfigInstalled reports whether hostPath already holds content. A
+// readable mode is restored in place (chmod keeps the inode, so containers
+// mounting it are unaffected).
+func readonlyGitConfigInstalled(hostPath, content string) (bool, error) {
+	existing, err := os.ReadFile(hostPath)
+	if err != nil || string(existing) != content {
+		return false, nil
+	}
+	fi, err := os.Stat(hostPath)
+	if err != nil {
+		return false, nil
+	}
+	if fi.Mode().Perm() != 0o644 {
+		if err := os.Chmod(hostPath, 0o644); err != nil {
+			return false, fmt.Errorf("failed to chmod git.readonly config: %w", err)
+		}
+	}
+	return true, nil
+}
+
+// installReadonlyGitConfig puts the finished temp file at hostPath without ever
+// replacing a file a container may be mounting. link(2) fails when hostPath
+// exists; that is a concurrent launch that installed the same content first
+// (the name is content-addressed), which is success. Only a file with the WRONG
+// content (left by a crash of an older Coi, so no container can be using it as
+// intended) is replaced. Filesystems without hard links fall back to rename.
+func installReadonlyGitConfig(tmpName, hostPath, content string) error {
+	err := os.Link(tmpName, hostPath)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, fs.ErrExist) {
+		if ok, _ := readonlyGitConfigInstalled(hostPath, content); ok {
+			return nil
+		}
+	}
+	if err := os.Rename(tmpName, hostPath); err != nil {
+		return fmt.Errorf("failed to install git.readonly config: %w", err)
+	}
+	return nil
 }
 
 // SetupGitIdentityReadonly locks the identity by mounting a generated gitconfig
