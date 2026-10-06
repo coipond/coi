@@ -28,6 +28,10 @@
         "type": "string"
       },
       "description": "AI agents to install in the base image (e.g. [\"claude\", \"opencode\"]); empty/unset installs all supported agents"
+    },
+    "cloud_init": {
+      "type": "boolean",
+      "description": "Keep cloud-init enabled in the built coi image (default: false). Disabled by default because it runs on every container boot before the network comes up, delaying each start; coi containers do not need it. Takes effect on the next `coi build --force`."
     }
   }
 }

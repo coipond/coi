@@ -135,6 +135,17 @@ type BuildConfig struct {
 	// excluded — request them explicitly, #698). Names are validated against
 	// the tool registry at build time. Issue #454.
 	Agents []string `toml:"agents"`
+	// CloudInit keeps cloud-init enabled in the built coi image. Off by default:
+	// coi containers don't need it (Incus sets the hostname, the image ships
+	// its own DHCP config), and it runs on every boot ahead of the network,
+	// delaying each container start. Set true (and rebuild) to keep it.
+	CloudInit *bool `toml:"cloud_init"`
+}
+
+// IsCloudInitEnabled reports whether the coi image should keep cloud-init
+// enabled (default false).
+func (b *BuildConfig) IsCloudInitEnabled() bool {
+	return b.CloudInit != nil && *b.CloudInit
 }
 
 // HasBuildConfig returns true if a build configuration is defined (script or commands)

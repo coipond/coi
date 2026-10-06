@@ -934,6 +934,50 @@ install_selected_agents() {
     done
 }
 
+#######################################
+# Boot: own the network config and disable cloud-init (by default)
+#
+# The base is Ubuntu's cloud image, where cloud-init runs on EVERY boot and
+# cloud-init-local is ordered before the network comes up — so each start of
+# a coi container waits for it before DHCP can begin, and coi's network setup
+# waits for that lease. coi containers don't need cloud-init: Incus sets the
+# hostname, and the DHCP config below replaces the netplan file cloud-init
+# would otherwise (re)generate. Keep it with [container.build] cloud_init =
+# true (COI_CLOUD_INIT=1); in an existing container, re-enable it with
+# `sudo rm /etc/cloud/cloud-init.disabled`.
+#######################################
+configure_boot() {
+    log "Writing coi network config (eth0 DHCP)..."
+    mkdir -p /etc/netplan
+    if [[ ! -f /etc/netplan/01-coi-dhcp.yaml ]]; then
+        cat > /etc/netplan/01-coi-dhcp.yaml <<'NETPLAN_EOF'
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      dhcp6: false
+NETPLAN_EOF
+    fi
+    chmod 600 /etc/netplan/01-coi-dhcp.yaml
+
+    if [[ "${COI_CLOUD_INIT:-}" == "1" ]]; then
+        log "Keeping cloud-init enabled ([container.build] cloud_init = true)"
+        rm -f /etc/cloud/cloud-init.disabled
+        return
+    fi
+    if [[ -d /etc/cloud ]] || command -v cloud-init >/dev/null 2>&1; then
+        log "Disabling cloud-init (faster container boot; set [container.build] cloud_init = true to keep it)..."
+        mkdir -p /etc/cloud
+        touch /etc/cloud/cloud-init.disabled
+        # cloud-init rendered this for the BUILD container and would re-render
+        # it per instance; disabled, it goes stale — and netplan merges it with
+        # the eth0 entry above, so a leftover MAC match would keep every new
+        # container from getting a lease. The coi file is the only config.
+        rm -f /etc/netplan/50-cloud-init.yaml
+    fi
+}
+
 main() {
     log "Starting coi image build..."
 
@@ -949,6 +993,7 @@ main() {
     configure_power_wrappers
     configure_tmp_cleanup
     configure_tmux
+    configure_boot
     install_selected_agents
     install_dummy
     install_docker
