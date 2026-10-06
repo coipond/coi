@@ -481,6 +481,31 @@ func ContainerUsesRawIdmap(containerName string) bool {
 	return strings.TrimSpace(out) != ""
 }
 
+// startSettleTimeout and startSettleInterval bound the poll that checks whether
+// a container came up despite an error from `incus start`. Variables so tests
+// can shorten them.
+var (
+	startSettleTimeout  = 5 * time.Second
+	startSettleInterval = 500 * time.Millisecond
+)
+
+// cameUpAnyway reports whether a container whose `incus start` returned an
+// error is nevertheless up: RUNNING and able to run a command. The status alone
+// is not proof. A start that aborts (e.g. a disk device whose source can't be
+// mounted) leaves the container's LXC monitor answering state queries for a
+// moment, so a poll landing in that window saw RUNNING and the failed start
+// was taken for a soft forkstart error; the session then waited out the whole
+// readiness window against a stopped container. Only called after a failed
+// start, so the extra exec never slows a normal start.
+func cameUpAnyway(containerName string) bool {
+	if running, _ := ContainerRunning(containerName); !running {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return IncusExecQuietContext(ctx, "exec", containerName, "--", "true") == nil
+}
+
 // startWithIdmapRecovery is the start sequence shared by every non-ephemeral
 // start path: start, poll, retry, and on a #678 idmapped-mount failure convert
 // the shift mounts to raw.idmap and retry again. Returns nil once the container
@@ -488,18 +513,18 @@ func ContainerUsesRawIdmap(containerName string) bool {
 // and what callers match on to decide whether a further fallback applies.
 //
 // On some hosts (nested containers, CI runners), forkstart exits non-zero even
-// though the LXC process started successfully, so ContainerRunning is polled for
-// up to 5 s before deciding the container failed to start.
+// though the LXC process started successfully, so cameUpAnyway is polled for up
+// to 5 s before deciding the container failed to start.
 func startWithIdmapRecovery(containerName string) error {
 	firstErr := startCapture(containerName)
 	if firstErr == nil {
 		return nil
 	}
 	// Poll: maybe it came up despite the forkstart error (soft error on some hosts).
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(startSettleTimeout)
 	for time.Now().Before(deadline) {
-		time.Sleep(500 * time.Millisecond)
-		if running, _ := ContainerRunning(containerName); running {
+		time.Sleep(startSettleInterval)
+		if cameUpAnyway(containerName) {
 			return nil
 		}
 	}
@@ -508,7 +533,7 @@ func startWithIdmapRecovery(containerName string) error {
 	if retryErr := startCapture(containerName); retryErr == nil {
 		return nil
 	}
-	if running, _ := ContainerRunning(containerName); running {
+	if cameUpAnyway(containerName) {
 		return nil
 	}
 
@@ -521,7 +546,7 @@ func startWithIdmapRecovery(containerName string) error {
 		if retryErr := startCapture(containerName); retryErr == nil {
 			return nil
 		}
-		if running, _ := ContainerRunning(containerName); running {
+		if cameUpAnyway(containerName) {
 			return nil
 		}
 	}
@@ -579,7 +604,7 @@ func StartWithIsolationFallback(containerName string) error {
 	fmt.Fprintf(os.Stderr, "Warning: UID namespace isolation not available in this environment, disabling and retrying\n")
 	_ = IncusExecQuiet("config", "unset", containerName, "security.idmap.isolated")
 	if retryErr := startCapture(containerName); retryErr != nil {
-		if running, _ := ContainerRunning(containerName); running {
+		if cameUpAnyway(containerName) {
 			return nil
 		}
 		// The fallback didn't help — the failure is not isolation-related.
@@ -646,10 +671,10 @@ func LaunchContainerWithPreStartPolicy(imageAlias, containerName, pool string, e
 	}
 	// Start failed. Poll briefly to distinguish a soft forkstart error (container
 	// comes up anyway) from Incus async cleanup (ephemeral container gets deleted).
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(startSettleTimeout)
 	for time.Now().Before(deadline) {
-		time.Sleep(500 * time.Millisecond)
-		if running, _ := ContainerRunning(containerName); running {
+		time.Sleep(startSettleInterval)
+		if cameUpAnyway(containerName) {
 			return nil // soft forkstart error; container is up
 		}
 		// Check for deletion: stopped ephemeral containers are deleted by Incus.
@@ -669,7 +694,7 @@ func LaunchContainerWithPreStartPolicy(imageAlias, containerName, pool string, e
 			// nested/CI hosts the initial start does; treat a running container as
 			// success before reporting failure, matching the other retry branches.
 			if recreateErr != nil {
-				if running, _ := ContainerRunning(containerName); running {
+				if cameUpAnyway(containerName) {
 					return nil
 				}
 			}
@@ -686,7 +711,7 @@ func LaunchContainerWithPreStartPolicy(imageAlias, containerName, pool string, e
 		if retryErr := startCapture(containerName); retryErr == nil {
 			return nil
 		}
-		if running, _ := ContainerRunning(containerName); running {
+		if cameUpAnyway(containerName) {
 			return nil
 		}
 	}
@@ -695,7 +720,7 @@ func LaunchContainerWithPreStartPolicy(imageAlias, containerName, pool string, e
 	fmt.Fprintf(os.Stderr, "Warning: UID namespace isolation not supported in this environment, retrying\n")
 	_ = IncusExecQuiet("config", "unset", containerName, "security.idmap.isolated")
 	if retryErr := startCapture(containerName); retryErr != nil {
-		if running, _ := ContainerRunning(containerName); running {
+		if cameUpAnyway(containerName) {
 			return nil
 		}
 		return startRetryError(firstErr, retryErr)

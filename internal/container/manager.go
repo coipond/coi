@@ -103,6 +103,12 @@ func (m *Manager) Running() (bool, error) {
 	return ContainerRunning(m.ContainerName)
 }
 
+// StartLogErrors returns the first ERROR lines of the container's last start
+// log, at most maxLines (see StartLogErrors).
+func (m *Manager) StartLogErrors(maxLines int) []string {
+	return StartLogErrors(m.ContainerName, maxLines)
+}
+
 // Exists checks if container exists (running or stopped)
 func (m *Manager) Exists() (bool, error) {
 	output, err := IncusOutput("list", "^"+m.ContainerName+"$", "--format=csv", "--columns=n")

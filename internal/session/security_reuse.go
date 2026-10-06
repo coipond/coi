@@ -23,7 +23,10 @@ type diskDeviceLister interface {
 //
 // Devices whose host source has disappeared are removed up front, before any
 // other config change touches the container — the #610 "Missing source path"
-// wedge — exactly as StripSecurityDevices did.
+// wedge — exactly as StripSecurityDevices did. The git-identity device gets the
+// same check: its source is a file under ~/.coi, and with it gone every start of
+// the container would abort on the mount. It is otherwise left to the
+// git-identity step, which re-establishes it after start.
 type SecurityDeviceReconciler struct {
 	container.ContainerManager
 	existing map[string]container.DiskDevice // security devices only
@@ -48,7 +51,8 @@ func NewSecurityDeviceReconciler(mgr container.ContainerManager, logger func(str
 		return r
 	}
 	for name, d := range disks {
-		if !isSecurityDevice(name) {
+		security := isSecurityDevice(name)
+		if !security && name != gitReadonlyDeviceName {
 			continue
 		}
 		if _, statErr := os.Lstat(d.Source); statErr != nil {
@@ -57,7 +61,9 @@ func NewSecurityDeviceReconciler(mgr container.ContainerManager, logger func(str
 			}
 			continue
 		}
-		r.existing[name] = d
+		if security {
+			r.existing[name] = d
+		}
 	}
 	return r
 }

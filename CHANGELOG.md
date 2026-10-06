@@ -16,6 +16,9 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Containers no longer fail to start at random when many share one git identity** - with `[git] readonly`, every launch rewrote the shared `~/.coi/git-identity/*.gitconfig` that each container mounts, and a rewrite landing while another container started aborted that start ("Failed to mount ... disk.git--identity ..."). The file is now written once and never replaced. A persistent container whose git-identity file was deleted also starts again instead of failing on every start.
+- [Bug Fix] **A container whose start failed is reported as such, at once** - a start that aborted could still show as running for a moment, so coi carried on and waited out the full readiness window (30 s) before a bare "failed to become ready". coi now checks that the container can run a command, stops waiting as soon as the container is no longer running, and quotes the errors from its start log (`lxc.log`).
+- [Bug Fix] **The network allowlist cache is written atomically** - a launch reading it while the refresher rewrote it could see a torn file.
 - [Bug Fix] **Attaching to an already-running restricted-mode container no longer leaves it briefly unfiltered** — its firewall rules are now replaced in one atomic transaction instead of being deleted and then re-added.
 - [Bug Fix] **A failed session save no longer deletes the previous saved copy** — the new copy replaces the old one only once it is complete.
 - [Bug Fix] **An auto-killed container is now always deleted** — the kill could leave it behind, stopped, when the session hosting the monitor (notably a `coi shell --background` supervisor) ended between the stop and the delete. The kill is now a single `incus delete --force`.
