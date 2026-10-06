@@ -166,3 +166,57 @@ func TestSSHAgentSocketEntry_SkipsWhenUnset(t *testing.T) {
 		t.Fatal("sshAgentSocketEntry should report ok=false when SSH_AUTH_SOCK is unset")
 	}
 }
+
+// fakeForwarderWithDevices also exposes existing device config, like the
+// real manager does from the instance config cache.
+type fakeForwarderWithDevices struct {
+	*fakeForwarder
+	devices map[string]map[string]string
+}
+
+func (f *fakeForwarderWithDevices) DeviceConfig(name string) (map[string]string, bool) {
+	cfg, ok := f.devices[name]
+	return cfg, ok
+}
+
+func existingSocketDevice(host, listen string) map[string]string {
+	uid := fmt.Sprintf("%d", container.CodeUID)
+	return map[string]string{
+		"type": "proxy", "connect": "unix:" + host, "listen": "unix:" + listen,
+		"bind": "container", "uid": uid, "gid": uid, "mode": "0600",
+	}
+}
+
+// A reused container whose proxy device is already identical keeps it: no
+// remove, no re-add.
+func TestForwardSocket_KeepsIdenticalDevice(t *testing.T) {
+	host := newTestSocket(t, "same.sock")
+	f := &fakeForwarderWithDevices{
+		fakeForwarder: &fakeForwarder{presentAfter: 0},
+		devices:       map[string]map[string]string{"socket-0": existingSocketDevice(host, "/run/same.sock")},
+	}
+	e := SocketEntry{HostPath: host, ContainerPath: "/run/same.sock", DeviceName: "socket-0"}
+	path, ok, err := forwardSocket(f, e, func(string) {})
+	if err != nil || !ok || path != "/run/same.sock" {
+		t.Fatalf("path=%q ok=%v err=%v", path, ok, err)
+	}
+	if len(f.removed) != 0 || f.addCalls != 0 {
+		t.Errorf("identical device must be kept: removed=%v adds=%d", f.removed, f.addCalls)
+	}
+}
+
+// A changed host socket path (new login, new SSH_AUTH_SOCK) is re-forwarded.
+func TestForwardSocket_ReplacesChangedDevice(t *testing.T) {
+	host := newTestSocket(t, "new.sock")
+	f := &fakeForwarderWithDevices{
+		fakeForwarder: &fakeForwarder{presentAfter: 1},
+		devices:       map[string]map[string]string{"socket-0": existingSocketDevice("/tmp/old-agent.sock", "/run/x.sock")},
+	}
+	e := SocketEntry{HostPath: host, ContainerPath: "/run/x.sock", DeviceName: "socket-0"}
+	if _, ok, err := forwardSocket(f, e, func(string) {}); err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if len(f.removed) != 1 || f.addCalls != 1 || f.added[0].connect != "unix:"+host {
+		t.Errorf("changed device must be replaced: removed=%v added=%+v", f.removed, f.added)
+	}
+}

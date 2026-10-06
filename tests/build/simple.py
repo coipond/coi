@@ -10,19 +10,20 @@ Tests:
 import subprocess
 import time
 
+import pytest
+
 
 def test_build_custom_simple(coi_binary, tmp_path):
     """Test building a custom image with a simple script via profile."""
     image_name = "coi-test-custom-simple"
 
-    # Build custom image (skip if coi-sandbox doesn't exist)
+    # Build custom image (needs the coi-default image)
     result = subprocess.run(
-        [coi_binary, "image", "exists", "coi-sandbox"],
+        [coi_binary, "image", "exists", "coi-default"],
         capture_output=True,
     )
     if result.returncode != 0:
-        # Skip test if base image doesn't exist
-        return
+        pytest.skip("coi-default image not built")
 
     # Cleanup any existing image from previous run
     subprocess.run([coi_binary, "image", "delete", image_name], check=False, capture_output=True)

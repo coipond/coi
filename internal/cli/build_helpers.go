@@ -150,6 +150,7 @@ func runInlineBuild(cfg *config.Config, imageName string) error {
 			Description: "coi image (Docker + build tools + AI agents + GitHub CLI)",
 			StoragePool: buildPool,
 			Agents:      cfg.Container.Build.Agents,
+			CloudInit:   cfg.Container.Build.IsCloudInitEnabled(),
 			Logger:      stderrLogFn,
 		}
 		fmt.Fprintf(os.Stderr, "Building image '%s'...\n", imageName)

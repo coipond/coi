@@ -55,7 +55,9 @@ func (st *setupState) phaseMountsAndContextPath(_ context.Context) (Teardown, er
 
 	// Auto-trust mise config files in the workspace so mise doesn't
 	// prompt or error when the workspace contains mise.toml / .tool-versions.
-	SetupMiseTrust(st.result.Manager, st.result.ContainerWorkspacePath, st.opts.Logger)
+	// Deferred into the context-files exec (phaseInjectContext), like the
+	// timezone, instead of a round trip of its own.
+	st.pendingGuestOps = append(st.pendingGuestOps, miseTrustOp(st.result.ContainerWorkspacePath))
 
 	// Set auto-context path for config-based tools (must happen before setupCLIConfig
 	// so the path is included in GetSandboxSettings output)
@@ -136,14 +138,9 @@ func (st *setupState) phaseSetupCredentials(_ context.Context) (Teardown, error)
 // that support it, the native auto-context file (e.g. Claude's ~/.claude/CLAUDE.md).
 func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	// Runs for both new and resumed sessions so dynamic info stays current.
-	contextContent := injectSandboxContext(st.result, st.opts)
-
-	if st.opts.Tool != nil && config.BoolVal(st.opts.Context.Auto) && contextContent != "" {
-		if acf, ok := st.opts.Tool.(tool.ToolWithAutoContextFile); ok {
-			if err := injectAutoContextFile(st.result.Manager, acf, contextContent, st.result.HomeDir, st.opts.Logger); err != nil {
-				st.opts.Logger(fmt.Sprintf("Warning: Failed to inject auto-context file: %v", err))
-			}
-		}
-	}
+	out := injectSandboxContextFiles(st.result, st.opts, st.pendingGuestOps...)
+	st.pendingGuestOps = nil
+	reportTimezone(out, st.opts.Timezone, st.opts.Logger)
+	reportMiseTrust(out, st.opts.Logger)
 	return nil, nil
 }

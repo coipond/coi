@@ -43,18 +43,30 @@ func TestBuildScriptExecOpts(t *testing.T) {
 // the stock mirrors), independent of the agent selection.
 func TestBuildScriptEnv_AptMirror(t *testing.T) {
 	t.Setenv("COI_APT_MIRROR", "http://azure.archive.ubuntu.com/ubuntu")
-	env := buildScriptEnv(nil)
+	env := buildScriptEnv(nil, false)
 	if env["COI_APT_MIRROR"] != "http://azure.archive.ubuntu.com/ubuntu" {
 		t.Errorf("COI_APT_MIRROR not forwarded, got %v", env)
 	}
 	// Forwarded alongside an agent selection, not instead of it.
-	env = buildScriptEnv([]string{"claude"})
+	env = buildScriptEnv([]string{"claude"}, false)
 	if env["COI_AGENTS"] != "claude" || env["COI_APT_MIRROR"] == "" {
 		t.Errorf("expected both COI_AGENTS and COI_APT_MIRROR, got %v", env)
 	}
 
 	t.Setenv("COI_APT_MIRROR", "")
-	if env := buildScriptEnv(nil); env != nil {
+	if env := buildScriptEnv(nil, false); env != nil {
 		t.Errorf("unset mirror + no agents should yield nil env, got %v", env)
+	}
+}
+
+// [container.build] cloud_init = true reaches build.sh as COI_CLOUD_INIT=1;
+// the default passes nothing (build.sh then disables cloud-init).
+func TestBuildScriptEnv_CloudInit(t *testing.T) {
+	t.Setenv("COI_APT_MIRROR", "")
+	if env := buildScriptEnv(nil, true); env["COI_CLOUD_INIT"] != "1" {
+		t.Errorf("cloud_init=true must set COI_CLOUD_INIT=1, got %v", env)
+	}
+	if env := buildScriptEnv(nil, false); env != nil {
+		t.Errorf("default must pass no env, got %v", env)
 	}
 }

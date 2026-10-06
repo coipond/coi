@@ -329,6 +329,7 @@ func coiImageBuildOptions(p *config.ProfileConfig, force bool, pool string, logg
 		Compression: p.Container.Build.Compression,
 		StoragePool: pool,
 		Agents:      p.Container.Build.Agents,
+		CloudInit:   p.Container.Build.IsCloudInitEnabled(),
 		Logger:      logger,
 	}
 }
