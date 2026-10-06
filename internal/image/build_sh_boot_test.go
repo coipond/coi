@@ -39,7 +39,18 @@ func TestConfigureBoot_DisablesCloudInitByDefault(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "etc", "cloud"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A cloud-init-rendered config from the build container (MAC-pinned).
+	stale := filepath.Join(root, "etc", "netplan", "50-cloud-init.yaml")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("network:\n  ethernets:\n    eth0:\n      match:\n        macaddress: 00:16:3e:aa:bb:cc\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	runConfigureBoot(t, root, false)
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("the stale cloud-init netplan config must be removed when cloud-init is disabled")
+	}
 
 	netplan := filepath.Join(root, "etc", "netplan", "01-coi-dhcp.yaml")
 	b, err := os.ReadFile(netplan)
@@ -65,7 +76,17 @@ func TestConfigureBoot_KeepsCloudInitWhenRequested(t *testing.T) {
 	if err := os.WriteFile(marker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	cloudNetplan := filepath.Join(root, "etc", "netplan", "50-cloud-init.yaml")
+	if err := os.MkdirAll(filepath.Dir(cloudNetplan), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cloudNetplan, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out := runConfigureBoot(t, root, true)
+	if _, err := os.Stat(cloudNetplan); err != nil {
+		t.Error("with cloud-init kept, its netplan config is left for it to manage")
+	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("cloud_init = true must leave cloud-init enabled")
 	}

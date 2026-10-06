@@ -970,6 +970,11 @@ NETPLAN_EOF
         log "Disabling cloud-init (faster container boot; set [container.build] cloud_init = true to keep it)..."
         mkdir -p /etc/cloud
         touch /etc/cloud/cloud-init.disabled
+        # cloud-init rendered this for the BUILD container and would re-render
+        # it per instance; disabled, it goes stale — and netplan merges it with
+        # the eth0 entry above, so a leftover MAC match would keep every new
+        # container from getting a lease. The coi file is the only config.
+        rm -f /etc/netplan/50-cloud-init.yaml
     fi
 }
 
