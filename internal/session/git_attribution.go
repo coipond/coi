@@ -414,18 +414,7 @@ func SetupGitHooks(mgr container.ContainerManager, homeDir string, id GitIdentit
 		logger(fmt.Sprintf("Warning: failed to install git hooks in %s: %v", GitHooksDir, err))
 		return
 	}
-	guardOn := len(protectedBranches) > 0
-	switch {
-	case stripAttribution && lockIdentity:
-		logger("Installed git hooks: AI-attribution strip + commit-identity re-stamp (identity locked)")
-	case lockIdentity:
-		logger("Installed git commit-identity re-stamp hook (identity locked; overrides cannot change the author)")
-	case stripAttribution:
-		logger("Installed AI-attribution strip hook (git commit messages keep only the configured author)")
-	}
-	if guardOn {
-		logger("Installed git branch guard (protected: " + strings.Join(protectedBranches, ", ") + ") — no direct commits/pushes to these branches")
-	}
+	logGitHooksInstalled(stripAttribution, lockIdentity, len(protectedBranches) > 0, protectedBranches, logger)
 }
 
 // gitHooksOps builds SetupGitHooks' in-container steps. Every step is
@@ -485,12 +474,30 @@ func gitHooksOps(homeDir string, id GitIdentity, stripAttribution bool, patterns
 	return ops
 }
 
+// removeHooksPathCmd is RemoveGitAttributionHookConfig's (never-failing) command.
+func removeHooksPathCmd(homeDir string) string {
+	return fmt.Sprintf(`HOME=%s git config --global --unset core.hooksPath 2>/dev/null || true`, shellEscape(homeDir))
+}
+
 // RemoveGitAttributionHookConfig best-effort unsets core.hooksPath so a
 // persistent container reused after [git] strip_attribution was turned off
 // converges instead of keeping the hook active. The hook directory itself is
 // left in place (inert without the config).
 func RemoveGitAttributionHookConfig(mgr container.ContainerExecution, homeDir string) {
-	cmd := fmt.Sprintf(`HOME=%s git config --global --unset core.hooksPath 2>/dev/null || true`,
-		shellEscape(homeDir))
-	_, _ = mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true})
+	_, _ = mgr.ExecCommand(removeHooksPathCmd(homeDir), container.ExecCommandOptions{Capture: true})
+}
+
+// logGitHooksInstalled reports which git hook policies were installed.
+func logGitHooksInstalled(stripAttribution, lockIdentity, guardOn bool, protectedBranches []string, logger func(string)) {
+	switch {
+	case stripAttribution && lockIdentity:
+		logger("Installed git hooks: AI-attribution strip + commit-identity re-stamp (identity locked)")
+	case lockIdentity:
+		logger("Installed git commit-identity re-stamp hook (identity locked; overrides cannot change the author)")
+	case stripAttribution:
+		logger("Installed AI-attribution strip hook (git commit messages keep only the configured author)")
+	}
+	if guardOn {
+		logger("Installed git branch guard (protected: " + strings.Join(protectedBranches, ", ") + ") — no direct commits/pushes to these branches")
+	}
 }

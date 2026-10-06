@@ -237,38 +237,49 @@ var ErrNotReady = errors.New("container failed to become ready")
 // probes) — private copies of this loop drift, as coi run's no-sleep variant
 // proved.
 func WaitForReady(ctx context.Context, mgr container.ContainerManager, maxRetries int, logger func(string)) error {
+	return waitForReady(ctx, mgr, time.Duration(maxRetries)*time.Second, readyPollInterval, logger)
+}
+
+// readyPollInterval is how often WaitForReady re-probes. It used to be a full
+// second, so a container that became ready a moment after the first probe
+// (the usual case right after a start) cost almost a second of nothing.
+const readyPollInterval = 200 * time.Millisecond
+
+func waitForReady(ctx context.Context, mgr container.ContainerManager, timeout, interval time.Duration, logger func(string)) error {
 	defer timing.Start(timing.CatStep, "wait-for-ready")()
 	logger("Waiting for container to be ready...")
-	for i := 0; i < maxRetries; i++ {
-		running, err := mgr.Running()
-		if err != nil {
+	start := time.Now()
+	deadline := start.Add(timeout)
+	nextNote := 5 * time.Second
+	for {
+		// A command that runs proves the container is running AND usable, so
+		// try it first: on an already-running container that is the only call.
+		if _, err := mgr.ExecCommand("echo ready", container.ExecCommandOptions{Capture: true}); err == nil {
+			return nil
+		}
+		// Not usable yet. Surface a real status-query failure (incus down)
+		// as an error rather than waiting out the window.
+		if _, err := mgr.Running(); err != nil {
 			return fmt.Errorf("failed to check container status: %w", err)
 		}
 
-		if running {
-			// Additional check: try to execute a simple command
-			_, err := mgr.ExecCommand("echo ready", container.ExecCommandOptions{Capture: true})
-			if err == nil {
-				return nil
-			}
-		}
-
 		// No sleep after the final probe — it would delay the error for
-		// nothing. The last iteration falls straight through to the timeout.
-		if i == maxRetries-1 {
+		// nothing.
+		if !time.Now().Add(interval).Before(deadline) {
 			break
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(1 * time.Second):
+		case <-time.After(interval):
 		}
-		if (i+1)%5 == 0 {
-			logger(fmt.Sprintf("Still waiting... (%ds)", i+1))
+		if waited := time.Since(start); waited >= nextNote {
+			logger(fmt.Sprintf("Still waiting... (%ds)", int(waited.Seconds())))
+			nextNote += 5 * time.Second
 		}
 	}
 
-	return fmt.Errorf("%w after %d seconds", ErrNotReady, maxRetries)
+	return fmt.Errorf("%w after %d seconds", ErrNotReady, int(timeout.Seconds()))
 }
 
 // AnnotateReadyTimeout appends a cause hint to a WaitForReady timeout when
@@ -843,8 +854,12 @@ func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestO
 // and (when [tool] auto_context is on and the tool has one) the tool's native
 // auto-load file, all in ONE exec. Runs for both new and resumed sessions so
 // dynamic info stays current.
-func injectSandboxContextFiles(result *SetupResult, opts SetupOptions) {
-	contextContent, ops := sandboxContextOps(result, opts)
+//
+// preOps run first in the same exec (other phases' deferred steps); the
+// combined output is returned so their callers can report what happened.
+func injectSandboxContextFiles(result *SetupResult, opts SetupOptions, preOps ...guestOp) string {
+	contextContent, contextOps := sandboxContextOps(result, opts)
+	ops := append(append([]guestOp{}, preOps...), contextOps...)
 
 	if opts.Tool != nil && config.BoolVal(opts.Context.Auto) && contextContent != "" {
 		if acf, ok := opts.Tool.(tool.ToolWithAutoContextFile); ok {
@@ -856,15 +871,19 @@ func injectSandboxContextFiles(result *SetupResult, opts SetupOptions) {
 		}
 	}
 	if len(ops) == 0 {
-		return
+		return ""
 	}
-	if err := runGuestOps(result.Manager, ops, container.ExecCommandOptions{}); err != nil {
+	out, err := runGuestOpsOutput(result.Manager, ops, container.ExecCommandOptions{})
+	if err != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to write sandbox context files: %v", err))
-		return
+		return out
 	}
 	for _, op := range ops {
-		opts.Logger(fmt.Sprintf("Context file injected at %s", op.write.path))
+		if op.write != nil {
+			opts.Logger(fmt.Sprintf("Context file injected at %s", op.write.path))
+		}
 	}
+	return out
 }
 
 // remapContainerUser remaps the container's `code` user to a non-default
@@ -942,17 +961,17 @@ func configureGitIdentity(ctx context.Context, result *SetupResult, opts SetupOp
 		if opts.Git.Readonly {
 			opts.Logger("Warning: git.readonly is set but no identity is resolvable — set [git] name/email (or enable seed_host_identity); nothing to lock")
 		}
-		SetupGitIdentityGuard(result.Manager, result.HomeDir, opts.Logger)
-		SetupGitIdentity(result.Manager, result.HomeDir, opts.Git.Identity, opts.Logger)
+		// Guard + identity + (when any hook policy is on) the hooks, in one exec.
+		var hookOps []guestOp
+		if opts.Git.StripAttribution || identityLock || guardOn {
+			hookOps = gitHooksOps(result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, true, guardBranches)
+		}
+		setupWritableGitConfig(result.Manager, result.HomeDir, opts.Git.Identity, hookOps, guardBranches, opts.Git.StripAttribution, identityLock, opts.Logger)
 	}
-	if opts.Git.StripAttribution || identityLock || guardOn {
+	if readonlyLock && (opts.Git.StripAttribution || identityLock || guardOn) {
 		// The hook dir is needed on every hook path; core.hooksPath is written
 		// live only on the writable path (the readonly mount already carries it).
-		SetupGitHooks(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, !readonlyLock, guardBranches, opts.Logger)
-	} else if !readonlyLock {
-		// Converge a reused persistent container after every hook policy was turned
-		// off: drop the stale core.hooksPath (best-effort).
-		RemoveGitAttributionHookConfig(result.Manager, result.HomeDir)
+		SetupGitHooks(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, false, guardBranches, opts.Logger)
 	}
 	// Layer 1: pin GIT_AUTHOR_*/GIT_COMMITTER_* as container-level env so `-c
 	// user.*` overrides lose without rewriting history. No-op (and unsets stale

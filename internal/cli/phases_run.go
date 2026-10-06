@@ -572,11 +572,10 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 				return nil, err
 			}
 
-			s.tz = a.applyContainerTimezone(s.mgr)
-
-			session.SetupMiseTrust(s.mgr, s.containerWorkspace, func(msg string) {
-				fmt.Fprintf(os.Stderr, "%s\n", msg)
-			})
+			// Timezone ("" = UTC, resetting a reused container) and workspace
+			// mise trust in one exec.
+			s.tz = resolveTimezone(a.cfg)
+			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, logFn)
 
 			if nm == nil {
 				return nil, nil

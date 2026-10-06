@@ -127,10 +127,7 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 	result.Timezone = opts.Timezone
 	if opts.Timezone != "" {
 		opts.Logger(fmt.Sprintf("Setting timezone to %s...", opts.Timezone))
-		tzCmd := fmt.Sprintf(
-			"ln -sf /usr/share/zoneinfo/%s /etc/localtime && echo %s > /etc/timezone",
-			opts.Timezone, opts.Timezone,
-		)
+		tzCmd := timezoneCmd(opts.Timezone)
 		if _, err := mgr.ExecCommand(tzCmd, container.ExecCommandOptions{Capture: true}); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: Failed to set timezone: %v", err))
 		}

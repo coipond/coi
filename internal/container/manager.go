@@ -188,6 +188,17 @@ func (m *Manager) ListDevices() ([]string, error) {
 	return names, nil
 }
 
+// DeviceConfig returns one of the instance's own devices' config (from the
+// instance config cache when fresh) and whether it exists.
+func (m *Manager) DeviceConfig(name string) (map[string]string, bool) {
+	devices, err := InstanceDevices(m.ContainerName)
+	if err != nil {
+		return nil, false
+	}
+	cfg, ok := devices[name]
+	return cfg, ok
+}
+
 // DiskDevice is the part of a disk device's config coi compares when deciding
 // whether an existing device already matches what it would add.
 type DiskDevice struct {
@@ -198,11 +209,11 @@ type DiskDevice struct {
 // DiskDevices returns the container's own (non-profile) disk devices by name,
 // from one `incus config show`. Works on stopped containers.
 func (m *Manager) DiskDevices() (map[string]DiskDevice, error) {
-	out, err := IncusOutput("config", "show", m.ContainerName)
+	devices, err := InstanceDevices(m.ContainerName)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDiskDevices(out)
+	return diskDevicesFrom(devices), nil
 }
 
 // ParseDiskDevices extracts the disk devices from `incus config show` YAML.
@@ -213,8 +224,13 @@ func ParseDiskDevices(configYAML string) (map[string]DiskDevice, error) {
 	if err := yaml.Unmarshal([]byte(configYAML), &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse container config: %w", err)
 	}
+	return diskDevicesFrom(cfg.Devices), nil
+}
+
+// diskDevicesFrom picks the disk devices out of a device config map.
+func diskDevicesFrom(devices map[string]map[string]string) map[string]DiskDevice {
 	disks := make(map[string]DiskDevice)
-	for name, d := range cfg.Devices {
+	for name, d := range devices {
 		if d["type"] != "disk" {
 			continue
 		}
@@ -225,7 +241,7 @@ func ParseDiskDevices(configYAML string) (map[string]DiskDevice, error) {
 			Readonly: isTrue(d["readonly"]),
 		}
 	}
-	return disks, nil
+	return disks
 }
 
 // isTrue reads an Incus boolean config value.

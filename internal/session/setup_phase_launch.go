@@ -21,8 +21,7 @@ func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) 
 	// Set/update alias metadata on container (for running-container lookup).
 	// This runs for both new and reused containers so alias changes are propagated.
 	if st.opts.Alias != "" {
-		if err := container.IncusExec("config", "set", st.result.ContainerName,
-			fmt.Sprintf("user.coi.alias=%s", st.opts.Alias)); err != nil {
+		if _, err := container.ConfigSetIfChanged(context.Background(), st.result.ContainerName, "user.coi.alias", st.opts.Alias); err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Failed to set alias metadata: %v", err))
 		}
 	}

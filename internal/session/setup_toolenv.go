@@ -41,16 +41,16 @@ func applyToolContainerEnv(ctx context.Context, containerName, workspacePath str
 		logger(fmt.Sprintf("Warning: skipping tool env %s (unsafe value)", k))
 	}
 	for _, k := range plan.unset {
-		_ = container.ConfigUnset(ctx, containerName, "environment."+k)
+		_ = container.ConfigUnsetIfSet(ctx, containerName, "environment."+k)
 	}
 	for _, k := range plan.setKeys {
-		if err := container.ConfigSet(ctx, containerName, "environment."+k, plan.set[k]); err != nil {
+		if _, err := container.ConfigSetIfChanged(ctx, containerName, "environment."+k, plan.set[k]); err != nil {
 			logger(fmt.Sprintf("Warning: failed to set container env %s: %v", k, err))
 		}
 	}
 	switch {
 	case plan.marker != "":
-		if err := container.ConfigSet(ctx, containerName, toolEnvMarkerKey, plan.marker); err != nil {
+		if _, err := container.ConfigSetIfChanged(ctx, containerName, toolEnvMarkerKey, plan.marker); err != nil {
 			logger(fmt.Sprintf("Warning: failed to record tool env marker: %v", err))
 		}
 	case prevMarker != "":

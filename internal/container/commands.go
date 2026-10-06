@@ -59,14 +59,24 @@ func execIncusCommandContext(ctx context.Context, argv []string) *exec.Cmd {
 // outputIncus) so the timing report accounts for all subprocess time without
 // each call site having to opt in.
 func runIncus(cmd *exec.Cmd) error {
+	defer noteIncusCommand(incusArgv(cmd))()
 	defer timing.Start(timing.CatIncus, incusLabel(cmd))()
 	return cmd.Run()
 }
 
 // outputIncus is runIncus for the CombinedOutput form.
 func outputIncus(cmd *exec.Cmd) ([]byte, error) {
+	defer noteIncusCommand(incusArgv(cmd))()
 	defer timing.Start(timing.CatIncus, incusLabel(cmd))()
 	return cmd.CombinedOutput()
+}
+
+// incusArgv is cmd's argv without the binary.
+func incusArgv(cmd *exec.Cmd) []string {
+	if len(cmd.Args) == 0 {
+		return nil
+	}
+	return cmd.Args[1:]
 }
 
 // incusLabel is the timing label for a command built by buildIncusCommand: the
@@ -167,8 +177,18 @@ func toExitError(err error, stderr string) error {
 	return ClassifyIncusErr(err, stderr)
 }
 
-// IncusOutputContext executes an Incus command with context support and returns the output (trimmed)
+// IncusOutputContext executes an Incus command with context support and returns the output (trimmed).
+// Simple instance-config reads are answered from the config cache (see
+// config_cache.go).
 func IncusOutputContext(ctx context.Context, args ...string) (string, error) {
+	if out, ok := cachedConfigRead(ctx, args); ok {
+		return out, nil
+	}
+	return incusOutputUncached(ctx, args...)
+}
+
+// incusOutputUncached is IncusOutputContext without the config cache.
+func incusOutputUncached(ctx context.Context, args ...string) (string, error) {
 	cmdArgs := buildIncusCommand(args...)
 	cmd := execIncusCommandContext(ctx, cmdArgs)
 
@@ -896,29 +916,28 @@ func DeleteContainer(containerName string) error {
 	return IncusExecQuiet("delete", containerName, "--force")
 }
 
-// ContainerRunning checks if a container is running
+// ContainerRunning checks if a container is running. It asks Incus for the
+// name and status columns only (CSV): `--format=json` makes the daemon fetch
+// the full instance state (disk usage, network counters, processes), which
+// was a measurable part of every launch and exit for a yes/no answer.
 func ContainerRunning(containerName string) (bool, error) {
-	output, err := IncusOutput("list", containerName, "--format=json")
+	output, err := IncusOutput("list", "^"+regexp.QuoteMeta(containerName)+"$", "--format=csv", "--columns=ns")
 	if err != nil {
 		return false, err
 	}
+	return runningFromCSV(output, containerName), nil
+}
 
-	var containers []struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
-	}
-
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		return false, err
-	}
-
-	for _, c := range containers {
-		if c.Name == containerName && StatusIsRunning(c.Status) {
-			return true, nil
+// runningFromCSV reports whether `incus list --format=csv --columns=ns`
+// output lists containerName as running.
+func runningFromCSV(output, containerName string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		name, status, ok := strings.Cut(strings.TrimSpace(line), ",")
+		if ok && name == containerName && StatusIsRunning(status) {
+			return true
 		}
 	}
-
-	return false, nil
+	return false
 }
 
 // PublishContainer publishes a stopped container as an image
@@ -1062,6 +1081,24 @@ func ConfigSet(ctx context.Context, containerName, key, value string) error {
 func ConfigGet(ctx context.Context, containerName, key string) (string, error) {
 	out, err := IncusOutputContext(ctx, "config", "get", containerName, key)
 	return strings.TrimSpace(out), err
+}
+
+// ConfigSetIfChanged sets key only when its current instance-local value
+// differs, so a reused container whose config already matches costs one
+// (cached) read instead of a write. Returns whether it wrote.
+func ConfigSetIfChanged(ctx context.Context, containerName, key, value string) (bool, error) {
+	if cur, err := ConfigGet(ctx, containerName, key); err == nil && value == strings.TrimSpace(value) && cur == value {
+		return false, nil
+	}
+	return true, ConfigSet(ctx, containerName, key, value)
+}
+
+// ConfigUnsetIfSet removes key only when it currently has a value.
+func ConfigUnsetIfSet(ctx context.Context, containerName, key string) error {
+	if cur, err := ConfigGet(ctx, containerName, key); err == nil && cur == "" {
+		return nil
+	}
+	return ConfigUnset(ctx, containerName, key)
 }
 
 // ConfigUnset removes a configuration key from a container.

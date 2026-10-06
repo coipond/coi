@@ -767,26 +767,3 @@ func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (
 	fmt.Fprintf(os.Stderr, "Network isolation applied: %s\n", networkConfig.Mode)
 	return nm, nil
 }
-
-// applyContainerTimezone resolves the timezone and configures it inside the container.
-// Returns the resolved timezone name (empty for UTC).
-func (a *App) applyContainerTimezone(mgr container.ContainerManager) string {
-	tz := resolveTimezone(a.cfg)
-	if tz != "" {
-		tzCmd := fmt.Sprintf(
-			"ln -sf /usr/share/zoneinfo/%s /etc/localtime && echo %s > /etc/timezone",
-			tz, tz,
-		)
-		if _, err := mgr.ExecCommand(tzCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to set timezone: %v\n", err)
-		}
-	} else {
-		// Explicitly reset to UTC — important for persistent containers that may
-		// have had a different timezone applied in a previous session.
-		resetCmd := "ln -sf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone"
-		if _, err := mgr.ExecCommand(resetCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to reset timezone to UTC: %v\n", err)
-		}
-	}
-	return tz
-}

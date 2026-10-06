@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -62,6 +63,12 @@ func ConfigureUIDMapping(containerName string, sources []string, disableShift bo
 		} else {
 			logger(fmt.Sprintf("Host UID %d matches container code UID but shift is off and the guest doesn't map it, using raw.idmap: %s",
 				os.Getuid(), idmap))
+		}
+		// Skip the write when the map is already in place (every reuse of the
+		// same container); a failed read just falls through to the write, so
+		// the #838 fail-fast below still fires on a real failure.
+		if cur, getErr := container.ConfigGet(context.Background(), containerName, "raw.idmap"); getErr == nil && cur == strings.TrimSpace(idmap) {
+			return useShift, true, nil
 		}
 		if setErr := container.IncusExec("config", "set", containerName, "raw.idmap", idmap); setErr != nil {
 			// Fail fast (#838): without this map the workspace mounts with no UID
@@ -429,16 +436,118 @@ func mergeJSONSettings(existingContent []byte, settings map[string]interface{}) 
 // to /etc/bash.bashrc (non-login interactive shells, sourced before ~/.bashrc
 // where mise activates). Non-fatal: logs a warning on failure.
 func SetupMiseTrust(mgr container.ContainerExecution, containerWorkspacePath string, logger func(string)) {
+	if _, err := mgr.ExecCommand(miseTrustCmd(containerWorkspacePath), container.ExecCommandOptions{Capture: true}); err != nil {
+		logger(fmt.Sprintf("Warning: Failed to configure mise workspace trust: %v", err))
+	}
+}
+
+// miseTrustCmd is SetupMiseTrust's in-container command.
+func miseTrustCmd(containerWorkspacePath string) string {
 	exportLine := fmt.Sprintf(`export MISE_TRUSTED_CONFIG_PATHS="%s"`, containerWorkspacePath)
-	trustCmd := fmt.Sprintf(
+	return fmt.Sprintf(
 		`printf '%%s\n' '%s' > /etc/profile.d/coi-mise-trust.sh && `+
 			`sed -i '/MISE_TRUSTED_CONFIG_PATHS/d' /etc/bash.bashrc && `+
 			`sed -i '1i %s' /etc/bash.bashrc`,
 		exportLine, exportLine,
 	)
-	if _, err := mgr.ExecCommand(trustCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-		logger(fmt.Sprintf("Warning: Failed to configure mise workspace trust: %v", err))
+}
+
+// miseTrustFailedMarker is printed by miseTrustOp when the trust setup fails.
+const miseTrustFailedMarker = "coi:mise-trust-failed"
+
+// miseTrustOp is SetupMiseTrust as a batchable op that never fails its batch:
+// a failure prints miseTrustFailedMarker instead (see reportMiseTrust).
+func miseTrustOp(containerWorkspacePath string) guestOp {
+	return guestCmd("{ " + miseTrustCmd(containerWorkspacePath) + "; } || echo " + miseTrustFailedMarker)
+}
+
+// reportMiseTrust logs a mise-trust failure from a batched exec's output.
+func reportMiseTrust(out string, logger func(string)) {
+	if strings.Contains(out, miseTrustFailedMarker) {
+		logger("Warning: Failed to configure mise workspace trust")
 	}
+}
+
+// ConfigureTimezoneAndMiseTrust sets the container timezone ("" = UTC) and the
+// workspace mise trust in ONE exec (the run path; the shell path batches the
+// same ops into its context-files exec). Both are non-fatal and idempotent:
+// a matching timezone writes nothing, and only a change or failure is logged.
+func ConfigureTimezoneAndMiseTrust(mgr container.ContainerManager, tz, containerWorkspacePath string, logger func(string)) {
+	out, err := runGuestOpsOutput(mgr, []guestOp{timezoneOp(tz), miseTrustOp(containerWorkspacePath)}, container.ExecCommandOptions{})
+	if err != nil {
+		logger(fmt.Sprintf("Warning: Failed to configure timezone and mise workspace trust: %v", err))
+		return
+	}
+	reportTimezone(out, tz, logger)
+	reportMiseTrust(out, logger)
+}
+
+// gitIdentityGuardCmd is SetupGitIdentityGuard's in-container command.
+func gitIdentityGuardCmd(homeDir string) string {
+	return fmt.Sprintf(`HOME=%s git config --global user.useConfigOnly true`, shellEscape(homeDir))
+}
+
+// gitIdentityCmd is SetupGitIdentity's in-container command.
+func gitIdentityCmd(homeDir string, identity GitIdentity) string {
+	return fmt.Sprintf(
+		`HOME=%s git config --global user.name %s && HOME=%s git config --global user.email %s`,
+		shellEscape(homeDir),
+		shellEscape(strings.TrimSpace(identity.Name)),
+		shellEscape(homeDir),
+		shellEscape(strings.TrimSpace(identity.Email)),
+	)
+}
+
+// Markers setupWritableGitConfig's steps print.
+const (
+	gitGuardOKMarker    = "coi:git-guard-ok"
+	gitIdentityOKMarker = "coi:git-identity-ok"
+)
+
+// setupWritableGitConfig does SetupGitIdentityGuard + SetupGitIdentity and
+// either SetupGitHooks (hookOps non-empty) or RemoveGitAttributionHookConfig
+// in ONE exec instead of three. The guard and identity steps stay non-fatal
+// and are each reported from their own marker; the hook install is
+// all-or-nothing as in SetupGitHooks.
+func setupWritableGitConfig(mgr container.ContainerManager, homeDir string, identity GitIdentity, hookOps []guestOp, protectedBranches []string, stripAttribution, lockIdentity bool, logger func(string)) {
+	ops := []guestOp{guestCmd("{ " + gitIdentityGuardCmd(homeDir) + " && echo " + gitGuardOKMarker + "; } || true")}
+	if identity.Complete() {
+		ops = append(ops, guestCmd("{ "+gitIdentityCmd(homeDir, identity)+" && echo "+gitIdentityOKMarker+"; } || true"))
+	}
+	if len(hookOps) > 0 {
+		ops = append(ops, hookOps...)
+	} else {
+		// Converge a reused persistent container after every hook policy was
+		// turned off: drop the stale core.hooksPath (best-effort).
+		ops = append(ops, guestCmd(removeHooksPathCmd(homeDir)))
+	}
+	out, err := runGuestOpsOutput(mgr, ops, container.ExecCommandOptions{})
+	if !strings.Contains(out, gitGuardOKMarker) {
+		logger("Warning: Failed to set git user.useConfigOnly" + errSuffix(err))
+	}
+	if identity.Complete() {
+		if strings.Contains(out, gitIdentityOKMarker) {
+			logger("Configured container git identity from host global git config")
+		} else {
+			logger("Warning: Failed to configure git identity" + errSuffix(err))
+		}
+	}
+	if len(hookOps) == 0 {
+		return
+	}
+	if err != nil {
+		logger(fmt.Sprintf("Warning: failed to install git hooks in %s: %v", GitHooksDir, err))
+		return
+	}
+	logGitHooksInstalled(stripAttribution, lockIdentity, len(protectedBranches) > 0, protectedBranches, logger)
+}
+
+// errSuffix renders ": <err>" for a non-nil error, else "".
+func errSuffix(err error) string {
+	if err == nil {
+		return ""
+	}
+	return ": " + err.Error()
 }
 
 // GitIdentity is a concrete git author identity resolved outside the container.
@@ -458,11 +567,7 @@ func (i GitIdentity) Complete() bool {
 // (--global) so it covers all repos inside the container.
 // Non-fatal: logs a warning on failure.
 func SetupGitIdentityGuard(mgr container.ContainerExecution, homeDir string, logger func(string)) {
-	cmd := fmt.Sprintf(
-		`HOME=%s git config --global user.useConfigOnly true`,
-		shellEscape(homeDir),
-	)
-	if _, err := mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true}); err != nil {
+	if _, err := mgr.ExecCommand(gitIdentityGuardCmd(homeDir), container.ExecCommandOptions{Capture: true}); err != nil {
 		logger(fmt.Sprintf("Warning: Failed to set git user.useConfigOnly: %v", err))
 	}
 }
@@ -475,14 +580,7 @@ func SetupGitIdentity(mgr container.ContainerExecution, homeDir string, identity
 	if !identity.Complete() {
 		return
 	}
-	cmd := fmt.Sprintf(
-		`HOME=%s git config --global user.name %s && HOME=%s git config --global user.email %s`,
-		shellEscape(homeDir),
-		shellEscape(strings.TrimSpace(identity.Name)),
-		shellEscape(homeDir),
-		shellEscape(strings.TrimSpace(identity.Email)),
-	)
-	if _, err := mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true}); err != nil {
+	if _, err := mgr.ExecCommand(gitIdentityCmd(homeDir, identity), container.ExecCommandOptions{Capture: true}); err != nil {
 		logger(fmt.Sprintf("Warning: Failed to configure git identity: %v", err))
 		return
 	}
@@ -546,6 +644,9 @@ func renderClaudeManagedSettings(suppressAutoMode, stripAttribution bool) string
 	return "{" + strings.Join(parts, ", ") + "}\n"
 }
 
+// claudeManagedSettingsPath is Claude Code's system-wide managed policy file.
+const claudeManagedSettingsPath = "/etc/claude-code/managed-settings.json"
+
 // SetupClaudeManagedSettings writes /etc/claude-code/managed-settings.json
 // inside the container — Claude Code's highest-precedence settings tier, which
 // no user/project setting can override. Used for disableAutoMode (the only
@@ -558,18 +659,17 @@ func SetupClaudeManagedSettings(mgr container.ContainerManager, suppressAutoMode
 	if content == "" {
 		return
 	}
-	mkdirCmd := "mkdir -p /etc/claude-code"
-	if _, err := mgr.ExecCommand(mkdirCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-		logger(fmt.Sprintf("Warning: Failed to create Claude managed settings directory: %v", err))
-		return
+	// One exec: create the directory and write the file root-owned and
+	// world-readable. A plain CreateFile inherits the host temp file's 0600
+	// mode and UID, which the container code user cannot read when the host
+	// UID differs (macOS 501, CI 1001) — Claude Code then refuses OAuth on the
+	// unreadable policy file. Root ownership also keeps the sandboxed agent
+	// from rewriting its own managed policy.
+	ops := []guestOp{
+		guestCmd("mkdir -p /etc/claude-code"),
+		guestFile(claudeManagedSettingsPath, content, 0, 0, "0644"),
 	}
-	// Root-owned and world-readable, applied atomically by the push: a plain
-	// CreateFile inherits the host temp file's 0600 mode and UID, which the
-	// container code user cannot read when the host UID differs (macOS 501,
-	// CI 1001) — Claude Code then refuses OAuth on the unreadable policy file.
-	// Root ownership also keeps the sandboxed agent from rewriting its own
-	// managed policy.
-	if err := mgr.CreateFileWithOwner("/etc/claude-code/managed-settings.json", content, 0, 0, "0644"); err != nil {
+	if err := runGuestOps(mgr, ops, container.ExecCommandOptions{}); err != nil {
 		logger(fmt.Sprintf("Warning: Failed to write Claude managed settings: %v", err))
 	}
 }
