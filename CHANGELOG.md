@@ -4,6 +4,10 @@
 
 ### Changed
 
+- [Change] **Restarting a stopped persistent container with `coi run` is faster** — protected-path devices that already match are kept instead of removed and re-added (as `coi shell` already did), the boot block reads the container's network device from its config instead of a full state query that could stall for seconds right after start, git setup is one call, and network teardown is one atomic `nft` transaction. `COI_TIMING_DEBUG` now also shows startup time before the first phase.
+- [Change] **The coi image boots faster: cloud-init is disabled by default** — it ran on every container start ahead of the network, delaying the DHCP lease coi waits for. coi containers don't need it; keep it with `[container.build] cloud_init = true` (then `coi build --force`), or re-enable it inside an existing container with `sudo rm /etc/cloud/cloud-init.disabled`. Takes effect on the next image build.
+- [Change] **Reusing a persistent container is faster again, on start and on exit** — the container's config is read once instead of ~10 times, unchanged env/alias/UID-map/SSH-agent settings are no longer rewritten, git setup and Claude's managed settings take one call each, readiness and IP polling react within 200 ms, network rules are applied as a single atomic `nft` transaction (with no 300 ms waits), and on exit the session state is streamed as one tar instead of copied file by file.
+- [Change] **`coi shell` starts and exits faster, especially on a reused persistent container** — fewer and cheaper Incus calls throughout: slot lookup no longer fetches every container's full state, git hooks and the sandbox context files are each installed in one call (the timezone and mise-trust steps ride along with the latter; `coi run` does those two in one call), tmux setup is one call, protected-path devices that already match are kept instead of re-created, the container IP is polled every 200 ms instead of every second, and `exit` is recognised in one check instead of a ~1.5 s confirmation window. The faster `exit` detection needs a rebuilt image (`coi build`).
 - [Change] **Primary name is now `Coi`** — `Coi` (Code on Incus) is the product name and `coi` the command. Cosmetic only.
 
 ### Breaking
@@ -13,6 +17,9 @@
 ### Bug Fixes
 
 - [Bug Fix] **Git identity is now seeded from the Mac user's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — inside a macOS VM coi reads the identity from your Mac home (shared under `/Users`), including `include.path` files, and falls back to the VM's config. On a multi-user Mac it only uses your own home, never another account's.
+- [Bug Fix] **Attaching to an already-running restricted-mode container no longer leaves it briefly unfiltered** — its firewall rules are now replaced in one atomic transaction instead of being deleted and then re-added.
+- [Bug Fix] **A failed session save no longer deletes the previous saved copy** — the new copy replaces the old one only once it is complete.
+- [Bug Fix] **An auto-killed container is now always deleted** — the kill could leave it behind, stopped, when the session hosting the monitor (notably a `coi shell --background` supervisor) ended between the stop and the delete. The kill is now a single `incus delete --force`.
 - [Bug Fix] **Background and detached sessions are now protected** — security monitoring and the runtime limit keep running after `coi shell --background`, or when you detach or leave the agent with the container still running, and stop when the container does. Before, they stopped as soon as `coi shell` returned. `coi shell` prints a `[supervisor]` line confirming what is covered and where it logs.
 - [Bug Fix] **Profiles can set `[git] protected_branches` and `[limits.disk] size`** — a profile containing either no longer fails to load (which made every coi command fail).
 - [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as they already were in project config.

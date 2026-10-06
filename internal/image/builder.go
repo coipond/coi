@@ -33,6 +33,7 @@ type BuildOptions struct {
 	Compression string   // Compression algorithm (e.g., "none", "gzip", "xz")
 	StoragePool string   // Storage pool for the build container ("" = Incus default)
 	Agents      []string // AI agents to install (empty = default set; opt-in agents like codex excluded, #698); passed as COI_AGENTS (#454)
+	CloudInit   bool     // Keep cloud-init enabled in the image (default: disabled); passed as COI_CLOUD_INIT=1
 	Logger      func(string)
 }
 
@@ -704,13 +705,19 @@ func agentEnv(agents []string) map[string]string {
 // apt at a fast in-region mirror instead of the intermittently-slow default
 // archive.ubuntu.com; unset means the build keeps the stock mirrors. Kept
 // separate from agentEnv so the forwarding is unit-testable.
-func buildScriptEnv(agents []string) map[string]string {
+func buildScriptEnv(agents []string, cloudInit bool) map[string]string {
 	env := agentEnv(agents)
-	if mirror := os.Getenv("COI_APT_MIRROR"); mirror != "" {
+	set := func(k, v string) {
 		if env == nil {
 			env = map[string]string{}
 		}
-		env["COI_APT_MIRROR"] = mirror
+		env[k] = v
+	}
+	if mirror := os.Getenv("COI_APT_MIRROR"); mirror != "" {
+		set("COI_APT_MIRROR", mirror)
+	}
+	if cloudInit {
+		set("COI_CLOUD_INIT", "1")
 	}
 	return env
 }
@@ -719,5 +726,5 @@ func buildScriptEnv(agents []string) map[string]string {
 // container. It threads the agent selection through COI_AGENTS (#454); kept as a
 // method so the wiring is unit-testable without launching a container.
 func (b *Builder) buildScriptExecOpts() container.ExecCommandOptions {
-	return container.ExecCommandOptions{Capture: false, Env: buildScriptEnv(b.opts.Agents)}
+	return container.ExecCommandOptions{Capture: false, Env: buildScriptEnv(b.opts.Agents, b.opts.CloudInit)}
 }

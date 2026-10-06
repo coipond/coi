@@ -117,6 +117,18 @@ func forwardSocket(mgr socketForwarder, e SocketEntry, logger func(string)) (str
 		return "", false, nil
 	}
 
+	// A reused persistent container usually still has this exact device from
+	// the previous session: keep it when it is identical and the socket is
+	// there, instead of remove + re-add + poll on every launch.
+	if r, ok := mgr.(deviceConfigReader); ok {
+		if cfg, found := r.DeviceConfig(e.DeviceName); found && socketDeviceMatches(cfg, hostSocket, e.ContainerPath) {
+			if waitForContainerSocket(mgr, e.ContainerPath, time.Second) {
+				logger(fmt.Sprintf("Forwarding socket: %s -> %s (device unchanged)", hostSocket, e.ContainerPath))
+				return e.ContainerPath, true, nil
+			}
+		}
+	}
+
 	// Remove any existing device of this name (host socket path may have changed
 	// between sessions on a reused persistent container).
 	_ = mgr.RemoveDevice(e.DeviceName)
@@ -143,6 +155,25 @@ func forwardSocket(mgr socketForwarder, e SocketEntry, logger func(string)) (str
 	return e.ContainerPath, true, nil
 }
 
+// deviceConfigReader is implemented by *container.Manager (kept out of the
+// fakes' interfaces): one device's config, from the instance config cache.
+type deviceConfigReader interface {
+	DeviceConfig(name string) (map[string]string, bool)
+}
+
+// socketDeviceMatches reports whether an existing device is exactly the proxy
+// addSocketProxyDevice would create for hostSocket -> containerSocket. The
+// host path is compared exactly: SSH_AUTH_SOCK changes between logins.
+func socketDeviceMatches(cfg map[string]string, hostSocket, containerSocket string) bool {
+	uid := fmt.Sprintf("%d", container.CodeUID)
+	return cfg["type"] == "proxy" &&
+		cfg["connect"] == "unix:"+hostSocket &&
+		cfg["listen"] == "unix:"+containerSocket &&
+		cfg["bind"] == "container" &&
+		cfg["uid"] == uid && cfg["gid"] == uid &&
+		cfg["mode"] == "0600"
+}
+
 // addSocketProxyDevice adds a proxy device forwarding hostSocket -> containerSocket.
 func addSocketProxyDevice(mgr container.ContainerDevices, deviceName, hostSocket, containerSocket string) error {
 	return mgr.AddProxyDevice(
@@ -162,7 +193,7 @@ func waitForContainerSocket(mgr container.ContainerExecution, socketPath string,
 		if _, err := mgr.ExecCommand(checkCmd, container.ExecCommandOptions{Capture: true}); err == nil {
 			return true
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	return false
 }

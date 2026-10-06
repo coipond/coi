@@ -16,6 +16,11 @@ type setupState struct {
 	skipLaunch    bool
 	hasCodeUser   bool
 	resolvedPorts []PublishedPort
+
+	// pendingGuestOps are small in-container steps from earlier phases that
+	// ride along with phaseInjectContext's exec instead of paying their own
+	// incus round trip.
+	pendingGuestOps []guestOp
 }
 
 // phase adapts a setupState method to the Phase interface.

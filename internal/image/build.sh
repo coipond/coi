@@ -411,6 +411,24 @@ WantedBy=multi-user.target
 UNIT_EOF
     systemctl enable coi-fix-hostname.service
 
+    # Shared power helper. It touches /run/coi-shutdown-requested right before
+    # asking systemd to power off, so coi's session cleanup can tell a `close`
+    # from a plain `exit` with one probe instead of waiting out a confirmation
+    # window (internal/session/cleanup.go, ShutdownMarkerPath). /run is tmpfs,
+    # and the marker is removed again if the request fails.
+    mkdir -p /usr/local/libexec
+    cat > /usr/local/libexec/coi-power << 'WRAPPER_EOF'
+#!/bin/bash
+marker=/run/coi-shutdown-requested
+case "$1" in
+    poweroff | reboot) ;;
+    *) echo "usage: coi-power poweroff|reboot" >&2; exit 2 ;;
+esac
+touch "$marker"
+systemctl --force "$1" || { rc=$?; rm -f "$marker"; exit "$rc"; }
+WRAPPER_EOF
+    chmod 755 /usr/local/libexec/coi-power
+
     # Power-off wrappers.
     #
     # In Ubuntu 24.04 containers systemd-logind can be mid-start when a shutdown
@@ -420,20 +438,20 @@ UNIT_EOF
     for cmd in poweroff halt; do
         cat > "/usr/local/bin/${cmd}" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force poweroff
+exec sudo /usr/local/libexec/coi-power poweroff
 WRAPPER_EOF
         chmod 755 "/usr/local/bin/${cmd}"
     done
 
     cat > "/usr/local/bin/reboot" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force reboot
+exec sudo /usr/local/libexec/coi-power reboot
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/reboot"
 
     cat > "/usr/local/bin/shutdown" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force poweroff
+exec sudo /usr/local/libexec/coi-power poweroff
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/shutdown"
 
@@ -442,7 +460,7 @@ WRAPPER_EOF
     # preventing accidental host shutdowns when typed outside the container
     cat > "/usr/local/bin/close" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force poweroff
+exec sudo /usr/local/libexec/coi-power poweroff
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/close"
 
@@ -452,7 +470,7 @@ WRAPPER_EOF
     # easy to confuse and are used interchangeably.
     cat > "/usr/local/bin/stop" << 'WRAPPER_EOF'
 #!/bin/bash
-exec sudo systemctl --force poweroff
+exec sudo /usr/local/libexec/coi-power poweroff
 WRAPPER_EOF
     chmod 755 "/usr/local/bin/stop"
 
@@ -916,6 +934,50 @@ install_selected_agents() {
     done
 }
 
+#######################################
+# Boot: own the network config and disable cloud-init (by default)
+#
+# The base is Ubuntu's cloud image, where cloud-init runs on EVERY boot and
+# cloud-init-local is ordered before the network comes up — so each start of
+# a coi container waits for it before DHCP can begin, and coi's network setup
+# waits for that lease. coi containers don't need cloud-init: Incus sets the
+# hostname, and the DHCP config below replaces the netplan file cloud-init
+# would otherwise (re)generate. Keep it with [container.build] cloud_init =
+# true (COI_CLOUD_INIT=1); in an existing container, re-enable it with
+# `sudo rm /etc/cloud/cloud-init.disabled`.
+#######################################
+configure_boot() {
+    log "Writing coi network config (eth0 DHCP)..."
+    mkdir -p /etc/netplan
+    if [[ ! -f /etc/netplan/01-coi-dhcp.yaml ]]; then
+        cat > /etc/netplan/01-coi-dhcp.yaml <<'NETPLAN_EOF'
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      dhcp6: false
+NETPLAN_EOF
+    fi
+    chmod 600 /etc/netplan/01-coi-dhcp.yaml
+
+    if [[ "${COI_CLOUD_INIT:-}" == "1" ]]; then
+        log "Keeping cloud-init enabled ([container.build] cloud_init = true)"
+        rm -f /etc/cloud/cloud-init.disabled
+        return
+    fi
+    if [[ -d /etc/cloud ]] || command -v cloud-init >/dev/null 2>&1; then
+        log "Disabling cloud-init (faster container boot; set [container.build] cloud_init = true to keep it)..."
+        mkdir -p /etc/cloud
+        touch /etc/cloud/cloud-init.disabled
+        # cloud-init rendered this for the BUILD container and would re-render
+        # it per instance; disabled, it goes stale — and netplan merges it with
+        # the eth0 entry above, so a leftover MAC match would keep every new
+        # container from getting a lease. The coi file is the only config.
+        rm -f /etc/netplan/50-cloud-init.yaml
+    fi
+}
+
 main() {
     log "Starting coi image build..."
 
@@ -931,6 +993,7 @@ main() {
     configure_power_wrappers
     configure_tmp_cleanup
     configure_tmux
+    configure_boot
     install_selected_agents
     install_dummy
     install_docker

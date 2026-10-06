@@ -67,17 +67,9 @@ func SeedToolConfigForRun(ctx context.Context, result *SetupResult, opts SetupOp
 	// launch exec inherits it.
 	applyToolContainerEnv(ctx, result.ContainerName, result.ContainerWorkspacePath, opts.Tool, opts.Logger)
 
-	// 12. Sandbox context (~/SANDBOX_CONTEXT.md + optional .json).
-	contextContent := injectSandboxContext(result, opts)
-
-	// 13. Auto-context file (tool's native auto-load file, e.g. ~/.claude/CLAUDE.md).
-	if config.BoolVal(opts.Context.Auto) && contextContent != "" {
-		if acf, ok := opts.Tool.(tool.ToolWithAutoContextFile); ok {
-			if err := injectAutoContextFile(result.Manager, acf, contextContent, result.HomeDir, opts.Logger); err != nil {
-				opts.Logger(fmt.Sprintf("Warning: Failed to inject auto-context file: %v", err))
-			}
-		}
-	}
+	// 12-13. Sandbox context (~/SANDBOX_CONTEXT.md + optional .json) and the
+	// tool's native auto-load file (e.g. ~/.claude/CLAUDE.md), in one exec.
+	injectSandboxContextFiles(result, opts)
 
 	return nil
 }

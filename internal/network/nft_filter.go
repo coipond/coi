@@ -1,8 +1,10 @@
 package network
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -28,7 +30,32 @@ type NftManager struct {
 	dynMu         sync.Mutex
 	dynSeen       map[string]time.Time
 	dynSeenTuples map[string]time.Time
+
+	// batch, when non-nil, collects the rule adds of ApplyRestricted /
+	// ApplyAllowlist so they apply as ONE nft transaction (see runNFTScript)
+	// instead of one sudo+nft exec per rule. Setup-only: the background
+	// refresher never adds rules, it only touches set elements.
+	batch [][]string
 }
+
+// beginBatch starts collecting rule adds. prefix commands (e.g. deletes of a
+// previous session's rules for this IP) run first in the same transaction, so
+// replacing a container's rules never passes through a moment with neither
+// the old nor the new rules in place.
+func (f *NftManager) beginBatch(prefix [][]string) {
+	f.batch = append([][]string{}, prefix...)
+}
+
+// commitBatch applies the collected commands in one transaction and stops
+// batching. On failure nothing was applied (nft transactions are atomic).
+func (f *NftManager) commitBatch() error {
+	cmds := f.batch
+	f.batch = nil
+	return runNFTScript(cmds)
+}
+
+// abortBatch drops the collected commands without applying them.
+func (f *NftManager) abortBatch() { f.batch = nil }
 
 // NewNftManager creates a new nft manager for a container
 func NewNftManager(containerIP, gatewayIP string) *NftManager {
@@ -47,6 +74,12 @@ func NewNftManager(containerIP, gatewayIP string) *NftManager {
 //   - dns_servers: pin the resolvers reachable on port 53 (see pinDNSForward).
 //   - allowed_ports: cap the otherwise-open internet egress to specific dports.
 func (f *NftManager) ApplyRestricted(cfg *config.NetworkConfig) error {
+	return f.applyRestricted(cfg, nil)
+}
+
+// applyRestricted is ApplyRestricted with prefix commands (stale-rule deletes)
+// applied in the same transaction as the new rules.
+func (f *NftManager) applyRestricted(cfg *config.NetworkConfig, prefix [][]string) error {
 	// Validate the optional egress controls up front. Setup is fail-closed, so a
 	// bad dns_servers/allowed_ports value aborts here with the boot block still in
 	// place rather than installing a half-applied policy.
@@ -63,6 +96,21 @@ func (f *NftManager) ApplyRestricted(cfg *config.NetworkConfig) error {
 		logWarnf("Warning: failed to ensure base rules: %v", err)
 	}
 
+	// Every rule below is collected and applied as one transaction (together
+	// with the prefix deletes): all of the policy or none of it.
+	f.beginBatch(prefix)
+	if err := f.addRestrictedRules(cfg, dnsServers, allowedPorts); err != nil {
+		f.abortBatch()
+		return err
+	}
+	if err := f.commitBatch(); err != nil {
+		return fmt.Errorf("failed to apply restricted rules: %w", err)
+	}
+	return nil
+}
+
+// addRestrictedRules emits restricted mode's rules, in order.
+func (f *NftManager) addRestrictedRules(cfg *config.NetworkConfig, dnsServers []string, allowedPorts []int) error {
 	if f.gatewayIP != "" {
 		if err := f.addRule(f.containerIP, f.gatewayIP+"/32", "accept"); err != nil {
 			return fmt.Errorf("failed to add gateway allow rule: %w", err)
@@ -190,6 +238,23 @@ func (f *NftManager) ApplyAllowlist(cfg *config.NetworkConfig, _ []string) error
 		return err
 	}
 
+	// The remaining rules are collected and applied as ONE transaction, after
+	// the DNS block above is already in place (so ordering is unchanged): all
+	// of them apply, or none do and the boot block keeps the container dark.
+	f.beginBatch(nil)
+	if err := f.addAllowlistRules(cfg, allowedPorts); err != nil {
+		f.abortBatch()
+		return err
+	}
+	if err := f.commitBatch(); err != nil {
+		return fmt.Errorf("failed to apply allowlist rules: %w", err)
+	}
+	return nil
+}
+
+// addAllowlistRules emits allowlist mode's forward rules after the DNS block,
+// in order.
+func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts []int) error {
 	// DHCP still has to work. The lease is what gives the container the address
 	// every one of these rules is keyed on. The gateway is guaranteed present by
 	// the guard above, so this rule is unconditional.
@@ -575,6 +640,10 @@ func (f *NftManager) addRuleWithMatch(source, destination string, match []string
 	}
 	args = append(args, match...)
 	args = append(args, action, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
+	if f.batch != nil {
+		f.batch = append(f.batch, args)
+		return nil
+	}
 	if _, err := runNFTCommand(args...); err != nil {
 		return fmt.Errorf("nft rule add failed: %w", err)
 	}
@@ -657,13 +726,20 @@ func deleteNFTRulesByCommentFamily(family, comment string) error {
 		maxRounds = 8
 		delay     = 300 * time.Millisecond
 	)
+	// Back off only after a failed list or delete (a transient nft lock). A
+	// clean round re-lists at once: the re-list is the verification that
+	// every matching rule is gone, and sleeping before it cost 300 ms on
+	// every boot-block lift and stale-rule purge for nothing.
+	backoff := false
 	for round := 0; round < maxRounds; round++ {
-		if round > 0 {
+		if backoff {
 			time.Sleep(delay)
 		}
+		backoff = false
 		handles, err := nftGetHandlesByCommentFamily(family, comment)
 		if err != nil {
 			logWarnf("Warning: nft list failed (round %d/%d): %v, retrying...", round+1, maxRounds, err)
+			backoff = true
 			continue
 		}
 		if len(handles) == 0 {
@@ -672,6 +748,7 @@ func deleteNFTRulesByCommentFamily(family, comment string) error {
 		for _, h := range handles {
 			if _, delErr := runNFTCommand("delete", "rule", family, "coi", "forward", "handle", h); delErr != nil {
 				logWarnf("Warning: failed to delete nft rule handle %s (round %d/%d): %v", h, round+1, maxRounds, delErr)
+				backoff = true
 			}
 		}
 	}
@@ -745,34 +822,99 @@ func GetContainerIPFast(containerName string) (string, error) {
 	return GetContainerIPWithRetries(containerName, 3)
 }
 
-// GetContainerIPWithRetries retrieves the IPv4 address with configurable retry count
+// GetContainerIPWithRetries retrieves the IPv4 address, waiting up to
+// maxRetries seconds for DHCP. It polls every ipPollInterval rather than once
+// a second: on a just-(re)started container the lease usually lands a few
+// hundred ms after start, and a 1 s step turned that into a full extra second
+// of every launch.
 func GetContainerIPWithRetries(containerName string, maxRetries int) (string, error) {
-	const retryDelay = time.Second
-
+	deadline := time.Now().Add(time.Duration(maxRetries) * time.Second)
 	var lastErr error
-	for i := 0; i < maxRetries; i++ {
+	for {
 		ip, err := getContainerIPOnce(containerName)
 		if err == nil {
 			return ip, nil
 		}
 		lastErr = err
-		if i < maxRetries-1 {
-			time.Sleep(retryDelay)
+		if maxRetries <= 1 || !time.Now().Add(ipPollInterval).Before(deadline) {
+			break
 		}
+		time.Sleep(ipPollInterval)
 	}
 	return "", fmt.Errorf("timeout waiting for container IP after %d seconds: %w", maxRetries, lastErr)
 }
 
+// ipPollInterval is how often GetContainerIPWithRetries re-checks for a lease.
+const ipPollInterval = 200 * time.Millisecond
+
 func getContainerIPOnce(containerName string) (string, error) {
+	ip, _, err := lookupInstanceNet(containerName)
+	if err != nil {
+		return "", err
+	}
+	if ip == "" {
+		return "", fmt.Errorf("no IPv4 address found for container %s", containerName)
+	}
+	return ip, nil
+}
+
+// instanceNet is a container's eth0 IPv4 address and host-side veth name.
+type instanceNet struct {
+	ip, veth string
+	at       time.Time
+}
+
+// instanceNetCache remembers complete (IPv4 + veth) answers briefly: one
+// launch asks for the IP and the veth 3-4 times (boot block, mode setup,
+// IPv6 block, [[network.hosts]]), each a full-state `incus list` (~100-200 ms).
+// Only complete answers are cached, so a container still waiting for its DHCP
+// lease is always re-queried, and the short TTL covers just one launch.
+var instanceNetCache sync.Map // container name -> instanceNet
+
+const instanceNetTTL = 5 * time.Second
+
+// lookupInstanceNet returns the container's eth0 IPv4 address and veth name
+// (either may be empty) from one `incus list`.
+func lookupInstanceNet(containerName string) (ip, veth string, err error) {
+	if v, ok := instanceNetCache.Load(containerName); ok {
+		// The veth is recreated on every container start: only trust a cached
+		// answer whose veth still exists on the host.
+		if n, ok := v.(instanceNet); ok && time.Since(n.at) < instanceNetTTL && hostInterfaceExists(n.veth) {
+			return n.ip, n.veth, nil
+		}
+		instanceNetCache.Delete(containerName)
+	}
 	output, err := container.IncusOutput("list", containerName, "--format=json")
 	if err != nil {
-		return "", fmt.Errorf("failed to get container info: %w", err)
+		return "", "", fmt.Errorf("failed to get container info: %w", err)
 	}
+	ip, veth, err = parseInstanceNet(output, containerName)
+	if err != nil {
+		return "", "", err
+	}
+	if ip != "" && veth != "" {
+		instanceNetCache.Store(containerName, instanceNet{ip: ip, veth: veth, at: time.Now()})
+	}
+	return ip, veth, nil
+}
 
+// hostInterfaceExists reports whether a network interface exists on the host.
+func hostInterfaceExists(name string) bool {
+	if name == "" || strings.ContainsAny(name, "/.") {
+		return false
+	}
+	_, err := os.Stat("/sys/class/net/" + name)
+	return err == nil
+}
+
+// parseInstanceNet extracts eth0's IPv4 address and host_name for
+// containerName from `incus list --format=json` output.
+func parseInstanceNet(output, containerName string) (ip, veth string, err error) {
 	var containers []struct {
 		Name  string `json:"name"`
 		State struct {
 			Network map[string]struct {
+				HostName  string `json:"host_name"`
 				Addresses []struct {
 					Family  string `json:"family"`
 					Address string `json:"address"`
@@ -780,23 +922,26 @@ func getContainerIPOnce(containerName string) (string, error) {
 			} `json:"network"`
 		} `json:"state"`
 	}
-
 	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		return "", fmt.Errorf("failed to parse container info: %w", err)
+		return "", "", fmt.Errorf("failed to parse container info: %w", err)
 	}
-
 	for _, c := range containers {
-		if c.Name == containerName {
-			if eth0, ok := c.State.Network["eth0"]; ok {
-				for _, addr := range eth0.Addresses {
-					if addr.Family == "inet" {
-						return addr.Address, nil
-					}
-				}
+		if c.Name != containerName {
+			continue
+		}
+		eth0, ok := c.State.Network["eth0"]
+		if !ok {
+			continue
+		}
+		veth = eth0.HostName
+		for _, addr := range eth0.Addresses {
+			if addr.Family == "inet" {
+				ip = addr.Address
+				break
 			}
 		}
 	}
-	return "", fmt.Errorf("no IPv4 address found for container %s", containerName)
+	return ip, veth, nil
 }
 
 // NftInstalled checks if the nft binary is installed
@@ -939,6 +1084,27 @@ func NeedsIptablesFallback() bool {
 
 // GetIncusBridgeName extracts the bridge/network name from the Incus default profile
 func GetIncusBridgeName() (string, error) {
+	bridgeNameMu.Lock()
+	defer bridgeNameMu.Unlock()
+	if bridgeName != "" {
+		return bridgeName, nil
+	}
+	name, err := lookupIncusBridgeName()
+	if err == nil {
+		bridgeName = name
+	}
+	return name, err
+}
+
+// bridgeName memoizes GetIncusBridgeName's answer for the process: the default
+// profile's network doesn't change under a running coi, and a launch asked
+// for it twice (bridge trust check, gateway lookup). Only successes are kept.
+var (
+	bridgeNameMu sync.Mutex
+	bridgeName   string
+)
+
+func lookupIncusBridgeName() (string, error) {
 	profileOutput, err := container.IncusOutput("profile", "device", "show", "default")
 	if err != nil {
 		return "", fmt.Errorf("failed to get default profile: %w", err)
@@ -1030,32 +1196,20 @@ func IsDockerRunning() bool {
 
 // GetContainerVethName retrieves the host-side veth interface name for a container
 func GetContainerVethName(containerName string) (string, error) {
-	output, err := container.IncusOutput("list", containerName, "--format=json")
+	// Incus records the host-side veth in volatile.eth0.host_name when the
+	// NIC starts. Reading that one key is cheap; the full-state query below
+	// can block for seconds against a container that is still starting
+	// (measured: 2.7 s in half of restart runs). Trusted only while the
+	// interface really exists on the host.
+	if veth, err := container.ConfigGetUncached(context.Background(), containerName, "volatile.eth0.host_name"); err == nil && hostInterfaceExists(veth) {
+		return veth, nil
+	}
+	_, veth, err := lookupInstanceNet(containerName)
 	if err != nil {
-		return "", fmt.Errorf("failed to get container info: %w", err)
+		return "", err
 	}
-
-	var containers []struct {
-		Name  string `json:"name"`
-		State struct {
-			Network map[string]struct {
-				HostName string `json:"host_name"`
-			} `json:"network"`
-		} `json:"state"`
+	if veth == "" {
+		return "", fmt.Errorf("no veth interface found for container %s", containerName)
 	}
-
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		return "", fmt.Errorf("failed to parse container info: %w", err)
-	}
-
-	for _, c := range containers {
-		if c.Name == containerName {
-			if eth0, ok := c.State.Network["eth0"]; ok {
-				if eth0.HostName != "" {
-					return eth0.HostName, nil
-				}
-			}
-		}
-	}
-	return "", fmt.Errorf("no veth interface found for container %s", containerName)
+	return veth, nil
 }

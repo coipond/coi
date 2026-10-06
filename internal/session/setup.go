@@ -237,38 +237,49 @@ var ErrNotReady = errors.New("container failed to become ready")
 // probes) — private copies of this loop drift, as coi run's no-sleep variant
 // proved.
 func WaitForReady(ctx context.Context, mgr container.ContainerManager, maxRetries int, logger func(string)) error {
+	return waitForReady(ctx, mgr, time.Duration(maxRetries)*time.Second, readyPollInterval, logger)
+}
+
+// readyPollInterval is how often WaitForReady re-probes. It used to be a full
+// second, so a container that became ready a moment after the first probe
+// (the usual case right after a start) cost almost a second of nothing.
+const readyPollInterval = 200 * time.Millisecond
+
+func waitForReady(ctx context.Context, mgr container.ContainerManager, timeout, interval time.Duration, logger func(string)) error {
 	defer timing.Start(timing.CatStep, "wait-for-ready")()
 	logger("Waiting for container to be ready...")
-	for i := 0; i < maxRetries; i++ {
-		running, err := mgr.Running()
-		if err != nil {
+	start := time.Now()
+	deadline := start.Add(timeout)
+	nextNote := 5 * time.Second
+	for {
+		// A command that runs proves the container is running AND usable, so
+		// try it first: on an already-running container that is the only call.
+		if _, err := mgr.ExecCommand("echo ready", container.ExecCommandOptions{Capture: true}); err == nil {
+			return nil
+		}
+		// Not usable yet. Surface a real status-query failure (incus down)
+		// as an error rather than waiting out the window.
+		if _, err := mgr.Running(); err != nil {
 			return fmt.Errorf("failed to check container status: %w", err)
 		}
 
-		if running {
-			// Additional check: try to execute a simple command
-			_, err := mgr.ExecCommand("echo ready", container.ExecCommandOptions{Capture: true})
-			if err == nil {
-				return nil
-			}
-		}
-
 		// No sleep after the final probe — it would delay the error for
-		// nothing. The last iteration falls straight through to the timeout.
-		if i == maxRetries-1 {
+		// nothing.
+		if !time.Now().Add(interval).Before(deadline) {
 			break
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(1 * time.Second):
+		case <-time.After(interval):
 		}
-		if (i+1)%5 == 0 {
-			logger(fmt.Sprintf("Still waiting... (%ds)", i+1))
+		if waited := time.Since(start); waited >= nextNote {
+			logger(fmt.Sprintf("Still waiting... (%ds)", int(waited.Seconds())))
+			nextNote += 5 * time.Second
 		}
 	}
 
-	return fmt.Errorf("%w after %d seconds", ErrNotReady, maxRetries)
+	return fmt.Errorf("%w after %d seconds", ErrNotReady, int(timeout.Seconds()))
 }
 
 // AnnotateReadyTimeout appends a cause hint to a WaitForReady timeout when
@@ -414,7 +425,7 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 		opts.Logger(fmt.Sprintf("Warning: git worktree not resolved (%v); its git dirs are skipped by the UID-mapping check and git commands may fail in the container", reuseWtErr))
 	}
 	reuseWritableHooks := !containsGitHooksPath(opts.Security.ProtectedPaths)
-	StripSecurityDevices(result.Manager, opts.Logger)
+	secDevices := NewSecurityDeviceReconciler(result.Manager, opts.Logger)
 	// Reconcile the kernel-surface policy while the container is stopped —
 	// the only window where security.nesting and security.syscalls.deny can
 	// change — so a persistent container converges to the CURRENT
@@ -477,7 +488,8 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 			result.ContainerWorkspacePath = cwp
 		}
 	}
-	reusePaths, reuseImmutable, reuseErr := applySessionSecurity(result.Manager, *opts, reuseCWP, reuseUseShift, reuseLayout, reuseWritableHooks, containerName)
+	reusePaths, reuseImmutable, reuseErr := applySessionSecurity(secDevices, *opts, reuseCWP, reuseUseShift, reuseLayout, reuseWritableHooks, containerName)
+	secDevices.Finish()
 	opts.Security.ProtectedPaths = reusePaths
 	if reuseImmutable {
 		result.HasImmutableProtection = true
@@ -742,7 +754,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 // facts, injects ~/SANDBOX_CONTEXT.md (and the optional .json companion), and
 // returns the rendered context content for the auto-context step. Extracted
 // verbatim from Setup's phase-12 block.
-func injectSandboxContext(result *SetupResult, opts SetupOptions) string {
+func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestOp) {
 	networkMode := ""
 	var allowedPorts []int
 	var dnsServers, allowedDomains []string
@@ -818,19 +830,60 @@ func injectSandboxContext(result *SetupResult, opts SetupOptions) string {
 		DockerUnavailable:  !hardeningPolicyFrom(&opts).DockerEnabled(),
 	}
 	contextContent := resolveContextContent(ctxInfo, opts.Context.FilePath, opts.Logger)
-	if err := injectContextFile(result.Manager, ctxInfo, opts.Context.FilePath, result.HomeDir, opts.Logger); err != nil {
+	var ops []guestOp
+	if op, err := contextFileOp(ctxInfo, opts.Context.FilePath, result.HomeDir, opts.Logger); err != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to inject context file: %v", err))
+	} else {
+		ops = append(ops, op)
 	}
 	// Machine-readable companion for programmatic consumers (#705), enabled
 	// by default. Written from ctxInfo (the real facts) unless [tool]
 	// context_json_file provides a custom JSON to inject verbatim; disable
 	// entirely with context_json = false.
 	if config.BoolVal(opts.Context.JSON) {
-		if err := injectContextJSONFile(result.Manager, ctxInfo, opts.Context.JSONFilePath, result.HomeDir, opts.Logger); err != nil {
+		if op, err := contextJSONFileOp(ctxInfo, opts.Context.JSONFilePath, result.HomeDir, opts.Logger); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: Failed to inject context JSON file: %v", err))
+		} else {
+			ops = append(ops, op)
 		}
 	}
-	return contextContent
+	return contextContent, ops
+}
+
+// injectSandboxContextFiles writes ~/SANDBOX_CONTEXT.md, the optional .json,
+// and (when [tool] auto_context is on and the tool has one) the tool's native
+// auto-load file, all in ONE exec. Runs for both new and resumed sessions so
+// dynamic info stays current.
+//
+// preOps run first in the same exec (other phases' deferred steps); the
+// combined output is returned so their callers can report what happened.
+func injectSandboxContextFiles(result *SetupResult, opts SetupOptions, preOps ...guestOp) string {
+	contextContent, contextOps := sandboxContextOps(result, opts)
+	ops := append(append([]guestOp{}, preOps...), contextOps...)
+
+	if opts.Tool != nil && config.BoolVal(opts.Context.Auto) && contextContent != "" {
+		if acf, ok := opts.Tool.(tool.ToolWithAutoContextFile); ok {
+			if op, err := autoContextFileOp(result.Manager, acf, contextContent, result.HomeDir, opts.Logger); err != nil {
+				opts.Logger(fmt.Sprintf("Warning: Failed to inject auto-context file: %v", err))
+			} else {
+				ops = append(ops, op)
+			}
+		}
+	}
+	if len(ops) == 0 {
+		return ""
+	}
+	out, err := runGuestOpsOutput(result.Manager, ops, container.ExecCommandOptions{})
+	if err != nil {
+		opts.Logger(fmt.Sprintf("Warning: Failed to write sandbox context files: %v", err))
+		return out
+	}
+	for _, op := range ops {
+		if op.write != nil {
+			opts.Logger(fmt.Sprintf("Context file injected at %s", op.write.path))
+		}
+	}
+	return out
 }
 
 // remapContainerUser remaps the container's `code` user to a non-default
@@ -908,17 +961,13 @@ func configureGitIdentity(ctx context.Context, result *SetupResult, opts SetupOp
 		if opts.Git.Readonly {
 			opts.Logger("Warning: git.readonly is set but no identity is resolvable — set [git] name/email (or enable seed_host_identity); nothing to lock")
 		}
-		SetupGitIdentityGuard(result.Manager, result.HomeDir, opts.Logger)
-		SetupGitIdentity(result.Manager, result.HomeDir, opts.Git.Identity, opts.Logger)
+		// Guard + identity + (when any hook policy is on) the hooks, in one exec.
+		SetupWritableGitConfig(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, guardBranches, opts.Logger)
 	}
-	if opts.Git.StripAttribution || identityLock || guardOn {
+	if readonlyLock && (opts.Git.StripAttribution || identityLock || guardOn) {
 		// The hook dir is needed on every hook path; core.hooksPath is written
 		// live only on the writable path (the readonly mount already carries it).
-		SetupGitHooks(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, !readonlyLock, guardBranches, opts.Logger)
-	} else if !readonlyLock {
-		// Converge a reused persistent container after every hook policy was turned
-		// off: drop the stale core.hooksPath (best-effort).
-		RemoveGitAttributionHookConfig(result.Manager, result.HomeDir)
+		SetupGitHooks(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, false, guardBranches, opts.Logger)
 	}
 	// Layer 1: pin GIT_AUTHOR_*/GIT_COMMITTER_* as container-level env so `-c
 	// user.*` overrides lose without rewriting history. No-op (and unsets stale

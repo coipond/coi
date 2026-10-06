@@ -162,6 +162,14 @@ def test_persistent_opencode_session_with_resume(coi_binary, cleanup_containers,
     else:
         output2 = ""
 
+    # For opencode the "Resuming session" line comes from coi's own setup log
+    # ("[setup] Resuming session - using restored opencode config"), printed
+    # before the tmux attach takes over the screen. A faster setup can clear it
+    # from the screen before the poll above sees it, so also accept it in the
+    # full captured output — the same evidence, without the race.
+    if not resumed and "Resuming session" in output2:
+        resumed = True
+
     # Cleanup: exit and delete container
     child2.send("exit")
     time.sleep(0.3)

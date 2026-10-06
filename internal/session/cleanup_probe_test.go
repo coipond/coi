@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -217,5 +218,63 @@ func TestGuestShutdownInProgress_CloseExecGoesDark_Regression(t *testing.T) {
 	if !fastShutdown(f) {
 		t.Error("issue #616: a close whose container reaches 'stopped' after the old retry budget " +
 			"must still be detected — observe the outside (incus) state until it stops")
+	}
+}
+
+// ---- marker-aware probe: one probe instead of a 3x500ms confirmation ----
+
+func TestClassifyGuestProbe(t *testing.T) {
+	cases := []struct {
+		name, out string
+		err       error
+		state     string
+		capable   bool
+	}{
+		{"healthy capable", "running\ncoi:marker-capable\n", nil, "running", true},
+		{"healthy legacy image", "running\n", nil, "running", false},
+		{"close marker", "running\ncoi:marker\ncoi:marker-capable\n", errors.New("exit 1"), guestStateShutdownRequested, true},
+		{"queued poweroff job", "running\ncoi:queued\n", nil, guestStateShutdownRequested, false},
+		{"stopping", "stopping\ncoi:marker-capable\n", nil, "stopping", true},
+		{"bus down", "", busDownErr(), guestStateBusDown, false},
+		{"bus down, flags only", "coi:marker-capable\n", busDownErr(), guestStateBusDown, true},
+		{"no systemd", "", noSystemdErr(), guestStateNoSystemd, false},
+		{"transport error", "", errors.New("connection reset"), guestStateNoAnswer, false},
+	}
+	for _, c := range cases {
+		got := classifyGuestProbe(c.out, c.err)
+		if got.state != c.state || got.markerCapable != c.capable {
+			t.Errorf("%s: got %+v, want state=%q capable=%v", c.name, got, c.state, c.capable)
+		}
+	}
+}
+
+// On a marker-capable image a healthy answer with no marker is a plain exit:
+// decided on the first probe, with no confirmation sleeps.
+func TestGuestShutdownInProgress_MarkerCapableHealthyExitsFast(t *testing.T) {
+	f := &fakeProber{outs: []string{"running\ncoi:marker-capable"}}
+	if shutdownInProgress(f, time.Hour, time.Hour, healthyConfirmChecks) {
+		t.Error("healthy, no marker, capable image: must be a normal exit")
+	}
+	if f.execs != 1 {
+		t.Errorf("one probe should suffice on a marker-capable image, got %d", f.execs)
+	}
+}
+
+// A close on a marker-capable image is caught on the first probe even while
+// systemd still says "running" (the #616 pre-stopping window).
+func TestGuestShutdownInProgress_MarkerDetectsCloseInPreStoppingWindow(t *testing.T) {
+	f := &fakeProber{outs: []string{"running\ncoi:marker\ncoi:marker-capable"}}
+	if !shutdownInProgress(f, time.Hour, time.Hour, healthyConfirmChecks) {
+		t.Error("a fresh shutdown marker must classify as shutdown in progress")
+	}
+}
+
+// The probe script must stay one exec and carry every signal the classifier
+// expects.
+func TestGuestProbeScriptSignals(t *testing.T) {
+	for _, want := range []string{"systemctl is-system-running", ShutdownMarkerPath, "coi:marker", "coi:queued", "coi:marker-capable", "list-jobs"} {
+		if !strings.Contains(guestProbeScript, want) {
+			t.Errorf("probe script missing %q", want)
+		}
 	}
 }

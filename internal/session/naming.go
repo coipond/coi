@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/coipond/coi/internal/container"
 )
@@ -64,6 +65,77 @@ func ContainerName(workspacePath, sessionName string, slot int) string {
 	return fmt.Sprintf("%s%s-%d", prefix, hash, slot)
 }
 
+// slotInstance is one instance as seen by slot allocation: just its name and
+// status, which is all the slot logic needs.
+type slotInstance struct {
+	Name   string
+	Status string
+}
+
+// listSlotInstances lists instance names and statuses. It asks Incus for the
+// name and status columns only (CSV), so the daemon skips the per-instance
+// state fetch (network counters, processes, disk usage) that `--format=json`
+// always pays for — that fetch grows with every container on the host and
+// dominated launch latency. A variable so tests can stub Incus.
+var listSlotInstances = func() ([]slotInstance, error) {
+	output, err := container.IncusOutput("list", "--format=csv", "--columns=ns")
+	if err != nil {
+		return nil, err
+	}
+	return parseSlotInstancesCSV(output), nil
+}
+
+// parseSlotInstancesCSV parses `incus list --format=csv --columns=ns` output
+// ("name,STATUS" per line). Instance names cannot contain commas.
+func parseSlotInstancesCSV(output string) []slotInstance {
+	var out []slotInstance
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		name, status, _ := strings.Cut(line, ",")
+		out = append(out, slotInstance{Name: name, Status: status})
+	}
+	return out
+}
+
+// slotOf returns the slot number of an instance name for the given identity
+// prefix, or (0, false) when the name is not one of that identity's slots.
+func slotOf(re *regexp.Regexp, name string) (int, bool) {
+	m := re.FindStringSubmatch(name)
+	if len(m) < 2 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func slotNameRegexp(workspacePath, sessionName string) *regexp.Regexp {
+	prefix := fmt.Sprintf("%s%s-", GetContainerPrefix(), IdentityHash(workspacePath, sessionName))
+	return regexp.MustCompile(fmt.Sprintf(`^%s(\d+)$`, regexp.QuoteMeta(prefix)))
+}
+
+// usedSlots lists the slots that have an instance (in any state) for the
+// identity.
+func usedSlots(workspacePath, sessionName string) (map[int]bool, error) {
+	instances, err := listSlotInstances()
+	if err != nil {
+		return nil, err
+	}
+	re := slotNameRegexp(workspacePath, sessionName)
+	used := make(map[int]bool)
+	for _, c := range instances {
+		if n, ok := slotOf(re, c.Name); ok {
+			used[n] = true
+		}
+	}
+	return used, nil
+}
+
 // AllocateSlot finds the next available slot for a session identity
 // (workspace path, or session_name when set)
 // Returns the slot number (1, 2, 3, ...) or 0 if no slots available
@@ -71,54 +143,15 @@ func AllocateSlot(workspacePath, sessionName string, maxSlots int) (int, error) 
 	if maxSlots == 0 {
 		maxSlots = 10 // Default max 10 parallel sessions
 	}
-
-	hash := IdentityHash(workspacePath, sessionName)
-	prefix := fmt.Sprintf("%s%s-", GetContainerPrefix(), hash)
-
-	// Get all containers matching our workspace
-	output, err := container.IncusOutput("list", "--format=json")
+	used, err := usedSlots(workspacePath, sessionName)
 	if err != nil {
 		return 0, err
 	}
-
-	// Parse running containers using proper JSON parsing
-	runningSlots := make(map[int]bool)
-	re := regexp.MustCompile(fmt.Sprintf(`^%s(\d+)$`, regexp.QuoteMeta(prefix)))
-
-	// Parse JSON array of containers
-	var containers []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		// Fallback: if JSON parsing fails, try regex on raw output
-		nameMatches := regexp.MustCompile(`"name"\s*:\s*"([^"]+)"`).FindAllStringSubmatch(output, -1)
-		for _, match := range nameMatches {
-			if len(match) > 1 {
-				containerName := match[1]
-				if matches := re.FindStringSubmatch(containerName); len(matches) > 1 {
-					if slotNum, err := strconv.Atoi(matches[1]); err == nil {
-						runningSlots[slotNum] = true
-					}
-				}
-			}
-		}
-	} else {
-		for _, c := range containers {
-			if matches := re.FindStringSubmatch(c.Name); len(matches) > 1 {
-				if slotNum, err := strconv.Atoi(matches[1]); err == nil {
-					runningSlots[slotNum] = true
-				}
-			}
-		}
-	}
-
-	// Find first available slot
 	for slot := 1; slot <= maxSlots; slot++ {
-		if !runningSlots[slot] {
+		if !used[slot] {
 			return slot, nil
 		}
 	}
-
 	return 0, fmt.Errorf("all %d slots are in use", maxSlots)
 }
 
@@ -134,32 +167,19 @@ func FindReusablePersistentSlot(workspacePath, sessionName string, maxSlots int)
 	if maxSlots == 0 {
 		maxSlots = 10
 	}
-	hash := IdentityHash(workspacePath, sessionName)
-	prefix := fmt.Sprintf("%s%s-", GetContainerPrefix(), hash)
-
-	output, err := container.IncusOutput("list", "--format=json")
+	instances, err := listSlotInstances()
 	if err != nil {
 		return 0, false
 	}
-	var containers []struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		return 0, false
-	}
-
-	re := regexp.MustCompile(fmt.Sprintf(`^%s(\d+)$`, regexp.QuoteMeta(prefix)))
+	re := slotNameRegexp(workspacePath, sessionName)
 	best := 0
-	for _, c := range containers {
+	for _, c := range instances {
 		if !container.StatusIsStopped(c.Status) {
 			continue
 		}
-		if m := re.FindStringSubmatch(c.Name); len(m) > 1 {
-			if n, err := strconv.Atoi(m[1]); err == nil && n >= 1 && n <= maxSlots {
-				if best == 0 || n < best {
-					best = n
-				}
+		if n, ok := slotOf(re, c.Name); ok && n >= 1 && n <= maxSlots {
+			if best == 0 || n < best {
+				best = n
 			}
 		}
 	}
@@ -172,54 +192,15 @@ func AllocateSlotFrom(workspacePath, sessionName string, startSlot, maxSlots int
 	if maxSlots == 0 {
 		maxSlots = 10 // Default max 10 parallel sessions
 	}
-
-	hash := IdentityHash(workspacePath, sessionName)
-	prefix := fmt.Sprintf("%s%s-", GetContainerPrefix(), hash)
-
-	// Get all containers matching our workspace
-	output, err := container.IncusOutput("list", "--format=json")
+	used, err := usedSlots(workspacePath, sessionName)
 	if err != nil {
 		return 0, err
 	}
-
-	// Parse running containers using proper JSON parsing
-	runningSlots := make(map[int]bool)
-	re := regexp.MustCompile(fmt.Sprintf(`^%s(\d+)$`, regexp.QuoteMeta(prefix)))
-
-	// Parse JSON array of containers
-	var containers []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		// Fallback: if JSON parsing fails, try regex on raw output
-		nameMatches := regexp.MustCompile(`"name"\s*:\s*"([^"]+)"`).FindAllStringSubmatch(output, -1)
-		for _, match := range nameMatches {
-			if len(match) > 1 {
-				containerName := match[1]
-				if matches := re.FindStringSubmatch(containerName); len(matches) > 1 {
-					if slotNum, err := strconv.Atoi(matches[1]); err == nil {
-						runningSlots[slotNum] = true
-					}
-				}
-			}
-		}
-	} else {
-		for _, c := range containers {
-			if matches := re.FindStringSubmatch(c.Name); len(matches) > 1 {
-				if slotNum, err := strconv.Atoi(matches[1]); err == nil {
-					runningSlots[slotNum] = true
-				}
-			}
-		}
-	}
-
-	// Find first available slot starting from startSlot
 	for slot := startSlot; slot <= maxSlots; slot++ {
-		if !runningSlots[slot] {
+		if !used[slot] {
 			return slot, nil
 		}
 	}
-
 	return 0, fmt.Errorf("no available slots from %d to %d", startSlot, maxSlots)
 }
 

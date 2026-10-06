@@ -3,9 +3,9 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/coipond/coi/internal/config"
-	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/limits"
 	"github.com/coipond/coi/internal/network"
 )
@@ -45,28 +45,57 @@ func (st *setupState) phaseClaudeSettings(_ context.Context) (Teardown, error) {
 }
 
 // 6.7 Configure the timezone inside the container (or reset to UTC).
+//
+// No exec of its own: the (idempotent) command rides along with the context
+// files' exec in phaseInjectContext, which every session runs anyway, so a
+// reused container whose zone already matches pays nothing for it.
 func (st *setupState) phaseConfigureTimezone(_ context.Context) (Teardown, error) {
 	// Always set result.Timezone so the TZ env var is applied even if the
 	// filesystem configuration fails (some programs only check TZ).
 	st.result.Timezone = st.opts.Timezone
-	if st.opts.Timezone != "" {
-		st.opts.Logger(fmt.Sprintf("Setting container timezone to %s...", st.opts.Timezone))
-		tzCmd := fmt.Sprintf(
-			"ln -sf /usr/share/zoneinfo/%s /etc/localtime && echo %s > /etc/timezone",
-			st.opts.Timezone, st.opts.Timezone,
-		)
-		if _, err := st.result.Manager.ExecCommand(tzCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-			st.opts.Logger(fmt.Sprintf("Warning: Failed to set timezone: %v", err))
-		}
-	} else {
-		// Explicitly reset to UTC — important for persistent containers that may
-		// have had a different timezone applied in a previous session.
-		resetCmd := "ln -sf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone"
-		if _, err := st.result.Manager.ExecCommand(resetCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-			st.opts.Logger(fmt.Sprintf("Warning: Failed to reset timezone to UTC: %v", err))
-		}
-	}
+	// Empty means UTC: reset explicitly — important for persistent containers
+	// that may have had a different timezone applied in a previous session.
+	st.pendingGuestOps = append(st.pendingGuestOps, timezoneOp(st.opts.Timezone))
 	return nil, nil
+}
+
+// Markers timezoneOp prints.
+const (
+	timezoneSetMarker    = "coi:tz-set"
+	timezoneFailedMarker = "coi:tz-failed"
+)
+
+// timezoneOp sets the container's zone ("" = UTC). It writes nothing when the
+// zone already matches (the usual case on a reused persistent container),
+// prints timezoneSetMarker when it changed it, and never fails the batch it
+// rides in: a failure prints timezoneFailedMarker instead.
+func timezoneOp(tz string) guestOp {
+	if tz == "" {
+		tz = "UTC"
+	}
+	return guestCmd(timezoneCmd(tz) + " || echo " + timezoneFailedMarker)
+}
+
+// timezoneCmd sets the container's zone, writing nothing when it is already
+// set, and prints timezoneSetMarker when it did write.
+func timezoneCmd(tz string) string {
+	return fmt.Sprintf(
+		`{ [ "$(readlink /etc/localtime)" = /usr/share/zoneinfo/%[1]s ] && [ "$(cat /etc/timezone 2>/dev/null)" = %[1]s ]; } || { ln -sf /usr/share/zoneinfo/%[1]s /etc/localtime && echo %[1]s > /etc/timezone && echo %[2]s; }`,
+		tz, timezoneSetMarker,
+	)
+}
+
+// reportTimezone logs what the batched timezoneOp did, from the exec output.
+func reportTimezone(out, tz string, logger func(string)) {
+	if tz == "" {
+		tz = "UTC"
+	}
+	switch {
+	case strings.Contains(out, timezoneFailedMarker):
+		logger(fmt.Sprintf("Warning: Failed to set timezone to %s", tz))
+	case strings.Contains(out, timezoneSetMarker):
+		logger(fmt.Sprintf("Set container timezone to %s", tz))
+	}
 }
 
 // 7. Start the timeout monitor if max_duration is configured.
