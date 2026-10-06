@@ -17,6 +17,7 @@ import (
 	"github.com/coipond/coi/internal/logger"
 	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/timing"
 	"github.com/spf13/cobra"
 )
 
@@ -177,6 +178,7 @@ func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 		s.runScript = true
 	}
 
+	timing.SinceStart(timing.CatStep, "startup (until run pipeline)")
 	pipeline := &session.Pipeline{}
 	defer pipeline.Teardown()
 

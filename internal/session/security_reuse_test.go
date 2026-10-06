@@ -72,7 +72,7 @@ func TestSecurityDeviceReconciler_Converges(t *testing.T) {
 		"protect-husky":       {Source: dropped, Path: "/workspace/.husky", Readonly: true},
 		"mask-secret-missing": {Source: gone, Path: "/workspace/missing", Readonly: true},
 	}}
-	r := newSecurityDeviceReconciler(f, func(string) {})
+	r := NewSecurityDeviceReconciler(f, func(string) {})
 	if got := sorted(f.removes); len(got) != 1 || got[0] != "mask-secret-missing" {
 		t.Fatalf("a device with a missing source must be removed up front, got removes=%v", got)
 	}
@@ -81,7 +81,7 @@ func TestSecurityDeviceReconciler_Converges(t *testing.T) {
 	must(t, r.MountDisk("protect-vscode", changed, "/workspace/.vscode", false, true))    // shift differs: replaced
 	must(t, r.MountDisk("protect-new", same, "/workspace/new", false, true))              // new: added
 	must(t, r.MountDisk("workspace", dir, "/workspace", false, false))                    // not a security device: passes through
-	r.finish()
+	r.Finish()
 
 	if got := sorted(f.adds); len(got) != 3 || got[0] != "protect-new" || got[1] != "protect-vscode" || got[2] != "workspace" {
 		t.Errorf("adds = %v, want [protect-new protect-vscode workspace]", got)
@@ -105,12 +105,12 @@ func TestSecurityDeviceReconciler_FallsBackToStrip(t *testing.T) {
 		listErr: errors.New("incus down"),
 		names:   []string{"workspace", "protect-a", "mask-b", "gitc-c"},
 	}
-	r := newSecurityDeviceReconciler(f, func(string) {})
+	r := NewSecurityDeviceReconciler(f, func(string) {})
 	if got := sorted(f.removes); len(got) != 3 {
 		t.Fatalf("fallback must strip all security devices, got %v", got)
 	}
 	must(t, r.MountDisk("protect-a", "/src", "/dst", false, true))
-	r.finish()
+	r.Finish()
 	if len(f.adds) != 1 {
 		t.Errorf("fallback must re-add, got adds=%v", f.adds)
 	}

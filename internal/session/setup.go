@@ -425,7 +425,7 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 		opts.Logger(fmt.Sprintf("Warning: git worktree not resolved (%v); its git dirs are skipped by the UID-mapping check and git commands may fail in the container", reuseWtErr))
 	}
 	reuseWritableHooks := !containsGitHooksPath(opts.Security.ProtectedPaths)
-	secDevices := newSecurityDeviceReconciler(result.Manager, opts.Logger)
+	secDevices := NewSecurityDeviceReconciler(result.Manager, opts.Logger)
 	// Reconcile the kernel-surface policy while the container is stopped —
 	// the only window where security.nesting and security.syscalls.deny can
 	// change — so a persistent container converges to the CURRENT
@@ -489,7 +489,7 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 		}
 	}
 	reusePaths, reuseImmutable, reuseErr := applySessionSecurity(secDevices, *opts, reuseCWP, reuseUseShift, reuseLayout, reuseWritableHooks, containerName)
-	secDevices.finish()
+	secDevices.Finish()
 	opts.Security.ProtectedPaths = reusePaths
 	if reuseImmutable {
 		result.HasImmutableProtection = true
@@ -962,11 +962,7 @@ func configureGitIdentity(ctx context.Context, result *SetupResult, opts SetupOp
 			opts.Logger("Warning: git.readonly is set but no identity is resolvable — set [git] name/email (or enable seed_host_identity); nothing to lock")
 		}
 		// Guard + identity + (when any hook policy is on) the hooks, in one exec.
-		var hookOps []guestOp
-		if opts.Git.StripAttribution || identityLock || guardOn {
-			hookOps = gitHooksOps(result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, true, guardBranches)
-		}
-		setupWritableGitConfig(result.Manager, result.HomeDir, opts.Git.Identity, hookOps, guardBranches, opts.Git.StripAttribution, identityLock, opts.Logger)
+		SetupWritableGitConfig(result.Manager, result.HomeDir, opts.Git.Identity, opts.Git.StripAttribution, opts.Git.StripAttributionPatterns, identityLock, guardBranches, opts.Logger)
 	}
 	if readonlyLock && (opts.Git.StripAttribution || identityLock || guardOn) {
 		// The hook dir is needed on every hook path; core.hooksPath is written

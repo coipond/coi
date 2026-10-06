@@ -550,6 +550,18 @@ func errSuffix(err error) string {
 	return ": " + err.Error()
 }
 
+// SetupWritableGitConfig is the writable-gitconfig git setup — identity guard,
+// identity, and the hook install (when strip, identity lock or the branch guard
+// is on) or the stale core.hooksPath cleanup — in ONE exec. Shared by the shell
+// and run paths; the read-only (git.readonly) path stays separate.
+func SetupWritableGitConfig(mgr container.ContainerManager, homeDir string, identity GitIdentity, stripAttribution bool, patterns []string, lockIdentity bool, protectedBranches []string, logger func(string)) {
+	var hookOps []guestOp
+	if stripAttribution || lockIdentity || len(protectedBranches) > 0 {
+		hookOps = gitHooksOps(homeDir, identity, stripAttribution, patterns, lockIdentity, true, protectedBranches)
+	}
+	setupWritableGitConfig(mgr, homeDir, identity, hookOps, protectedBranches, stripAttribution, lockIdentity, logger)
+}
+
 // GitIdentity is a concrete git author identity resolved outside the container.
 type GitIdentity struct {
 	Name  string

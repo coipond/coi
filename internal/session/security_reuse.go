@@ -14,7 +14,7 @@ type diskDeviceLister interface {
 	DiskDevices() (map[string]container.DiskDevice, error)
 }
 
-// securityDeviceReconciler converges a STOPPED reused container's security
+// SecurityDeviceReconciler converges a STOPPED reused container's security
 // disk devices (protect-*, mask-*, gitc-*, ...) to the current workspace
 // without the old strip-everything-then-re-add round trips: a device that
 // would be re-added with the identical source, path, shift and readonly is
@@ -24,18 +24,18 @@ type diskDeviceLister interface {
 // Devices whose host source has disappeared are removed up front, before any
 // other config change touches the container — the #610 "Missing source path"
 // wedge — exactly as StripSecurityDevices did.
-type securityDeviceReconciler struct {
+type SecurityDeviceReconciler struct {
 	container.ContainerManager
 	existing map[string]container.DiskDevice // security devices only
 	wanted   map[string]bool
 	logger   func(string)
 }
 
-// newSecurityDeviceReconciler snapshots mgr's security devices. When the
+// NewSecurityDeviceReconciler snapshots mgr's security devices. When the
 // devices cannot be read in detail it falls back to StripSecurityDevices and
 // returns a reconciler that adds everything (the old behavior).
-func newSecurityDeviceReconciler(mgr container.ContainerManager, logger func(string)) *securityDeviceReconciler {
-	r := &securityDeviceReconciler{ContainerManager: mgr, existing: map[string]container.DiskDevice{}, wanted: map[string]bool{}, logger: logger}
+func NewSecurityDeviceReconciler(mgr container.ContainerManager, logger func(string)) *SecurityDeviceReconciler {
+	r := &SecurityDeviceReconciler{ContainerManager: mgr, existing: map[string]container.DiskDevice{}, wanted: map[string]bool{}, logger: logger}
 	lister, ok := mgr.(diskDeviceLister)
 	if !ok {
 		StripSecurityDevices(mgr, logger)
@@ -73,7 +73,7 @@ func isSecurityDevice(name string) bool {
 
 // MountDisk keeps an identical existing security device, replaces a
 // differing one, and adds a new one. Non-security devices pass through.
-func (r *securityDeviceReconciler) MountDisk(name, source, path string, shift, readonly bool) error {
+func (r *SecurityDeviceReconciler) MountDisk(name, source, path string, shift, readonly bool) error {
 	if !isSecurityDevice(name) {
 		return r.ContainerManager.MountDisk(name, source, path, shift, readonly)
 	}
@@ -90,10 +90,10 @@ func (r *securityDeviceReconciler) MountDisk(name, source, path string, shift, r
 	return r.ContainerManager.MountDisk(name, source, path, shift, readonly)
 }
 
-// finish removes the snapshot's security devices this session did not
+// Finish removes the snapshot's security devices this session did not
 // request (e.g. a protected path the config dropped, or one whose host path
 // turned into a symlink). Must run before the container starts.
-func (r *securityDeviceReconciler) finish() {
+func (r *SecurityDeviceReconciler) Finish() {
 	for name := range r.existing {
 		if r.wanted[name] {
 			continue

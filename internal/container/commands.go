@@ -1083,6 +1083,14 @@ func ConfigGet(ctx context.Context, containerName, key string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// ConfigGetUncached is ConfigGet that always asks Incus (never the config
+// cache) — for volatile keys that change underneath a running process, e.g.
+// volatile.eth0.host_name, which Incus sets on each start.
+func ConfigGetUncached(ctx context.Context, containerName, key string) (string, error) {
+	out, err := incusOutputUncached(ctx, "config", "get", containerName, key)
+	return strings.TrimSpace(out), err
+}
+
 // ConfigSetIfChanged sets key only when its current instance-local value
 // differs, so a reused container whose config already matches costs one
 // (cached) read instead of a write. Returns whether it wrote.

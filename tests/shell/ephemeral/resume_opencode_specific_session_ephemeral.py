@@ -146,6 +146,11 @@ def test_resume_specific_opencode_session(coi_binary, cleanup_containers, worksp
         resumed = True
     except TimeoutError:
         resumed = False
+    # For opencode the line comes from coi's setup log, printed before the tmux
+    # attach takes over the screen; a fast setup can clear it from the screen
+    # before the poll sees it. Also accept it in the full captured output.
+    if not resumed and hasattr(child3.logfile_read, "get_raw_output"):
+        resumed = "Resuming session" in child3.logfile_read.get_raw_output()
 
     # === Phase 4: Cleanup ===
 

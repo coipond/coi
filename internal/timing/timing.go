@@ -109,6 +109,18 @@ func Start(category, label string) func() {
 	}
 }
 
+// SinceStart records a span from process start until now — for time spent
+// before any instrumented code ran (runtime/package init, CLI parsing).
+func SinceStart(category, label string) {
+	if !enabled {
+		return
+	}
+	dur := time.Since(processStart)
+	mu.Lock()
+	records = append(records, Record{Category: category, Label: label, Duration: dur, DurMS: ms(dur)})
+	mu.Unlock()
+}
+
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 
 // Records returns a copy of everything recorded so far, in completion order.

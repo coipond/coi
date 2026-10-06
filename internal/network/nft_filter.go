@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1195,6 +1196,14 @@ func IsDockerRunning() bool {
 
 // GetContainerVethName retrieves the host-side veth interface name for a container
 func GetContainerVethName(containerName string) (string, error) {
+	// Incus records the host-side veth in volatile.eth0.host_name when the
+	// NIC starts. Reading that one key is cheap; the full-state query below
+	// can block for seconds against a container that is still starting
+	// (measured: 2.7 s in half of restart runs). Trusted only while the
+	// interface really exists on the host.
+	if veth, err := container.ConfigGetUncached(context.Background(), containerName, "volatile.eth0.host_name"); err == nil && hostInterfaceExists(veth) {
+		return veth, nil
+	}
 	_, veth, err := lookupInstanceNet(containerName)
 	if err != nil {
 		return "", err

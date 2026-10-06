@@ -311,6 +311,36 @@ func (m *Manager) purgeStaleSideStateForIP(ip string) {
 	}
 }
 
+// teardownRulesAtomically removes the container's forward rules (both
+// families) in one transaction, then its input-chain rules and allowlist
+// sets (unreferenced once the forward rules are gone). Reports whether it
+// handled everything; false means the caller must fall back.
+func (m *Manager) teardownRulesAtomically(containerName string) bool {
+	nft, ok := m.nft.(*NftManager)
+	if !ok || nft.containerIP == "" || !SudoEnabled() {
+		return false
+	}
+	ip := nft.containerIP
+	v4, err := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
+	if err != nil {
+		return false
+	}
+	cmds := deleteForwardRuleCmds(parseForwardRules(string(v4), "coi-"+ip))
+	cmds = append(cmds, deleteForwardRuleCmds(parseForwardRules(string(v4), bootBlockComment(containerName)))...)
+	if v6, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward"); err == nil {
+		for _, r := range parseForwardRules(string(v6), ipv6BlockComment(containerName)) {
+			cmds = append(cmds, []string{"delete", "rule", "ip6", "coi", "forward", "handle", r.handle})
+		}
+	} else if !strings.Contains(err.Error(), "No such file or directory") {
+		return false
+	}
+	if err := runNFTScript(cmds); err != nil {
+		return false
+	}
+	m.purgeStaleSideStateForIP(ip)
+	return true
+}
+
 // setupRestricted configures restricted mode using nftables
 func (m *Manager) setupRestricted(ctx context.Context, containerName string) error {
 	m.logger.Println("Network mode: restricted (blocking local/internal networks)")
@@ -767,6 +797,15 @@ func (m *Manager) Teardown(ctx context.Context, containerName string) error {
 		if m.nft == nil {
 			m.nft = NewNftManager(m.containerIP, "")
 		}
+	}
+
+	// Fast path: every forward rule this container owns — its coi-<IP> policy,
+	// the IPv6 drop, any residual boot block — deleted in ONE nft transaction
+	// (two listings + one exec instead of ~15 sudo nft calls). Any problem
+	// falls through to the step-by-step removal below, which is idempotent.
+	if m.teardownRulesAtomically(containerName) {
+		m.logger.Printf("nft rules removed for container %s", containerName)
+		return nil
 	}
 
 	// Remove nft rules for ALL modes
