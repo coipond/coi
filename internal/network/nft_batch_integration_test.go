@@ -141,3 +141,39 @@ func TestApplyOpenRules_ReuseIsNoop_Integration(t *testing.T) {
 		t.Errorf("leftover restricted rules must be replaced by the open rule, got %v", got)
 	}
 }
+
+// Teardown removes everything the container owns — its policy rules, the
+// IPv6 drop and a residual boot block — in one transaction.
+func TestTeardownRulesAtomically_Integration(t *testing.T) {
+	requireNft(t)
+	const name = "coi-batch-teardown-test"
+	if err := NewNftManager(batchTestIP, "10.253.7.1").ApplyRestricted(restrictedTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runNFTCommand("add", "rule", "ip", "coi", "forward", "iifname", "vethbatchtest", "drop",
+		"comment", `"`+bootBlockComment(name)+`"`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureCOIIP6TableAndChain(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runNFTCommand("add", "rule", "ip6", "coi", "forward", "iifname", "vethbatchtest", "drop",
+		"comment", `"`+ipv6BlockComment(name)+`"`); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(restrictedTestConfig(), logger.NewDiscard())
+	m.nft = NewNftManager(batchTestIP, "10.253.7.1")
+	if !m.teardownRulesAtomically(name) {
+		t.Fatal("atomic teardown did not handle it")
+	}
+	if got := ruleTexts(t); len(got) != 0 {
+		t.Errorf("policy rules left: %v", got)
+	}
+	if boot, _ := forwardRulesWithComment(bootBlockComment(name)); len(boot) != 0 {
+		t.Errorf("boot block left: %v", boot)
+	}
+	if v6, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward"); err == nil && strings.Contains(string(v6), ipv6BlockComment(name)) {
+		t.Errorf("IPv6 drop left:\n%s", v6)
+	}
+}

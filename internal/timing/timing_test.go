@@ -163,3 +163,23 @@ func TestTruthy(t *testing.T) {
 		}
 	}
 }
+
+// SinceStart records a span from process start, and nothing when disabled.
+func TestSinceStart(t *testing.T) {
+	prev := enabled
+	t.Cleanup(func() { enabled = prev; Reset() })
+
+	enabled = false
+	Reset()
+	SinceStart(CatStep, "startup")
+	if len(Records()) != 0 {
+		t.Fatal("disabled: must record nothing")
+	}
+
+	enabled = true
+	SinceStart(CatStep, "startup")
+	recs := Records()
+	if len(recs) != 1 || recs[0].Label != "startup" || recs[0].Start != 0 || recs[0].Duration <= 0 {
+		t.Errorf("got %+v", recs)
+	}
+}

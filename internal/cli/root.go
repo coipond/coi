@@ -135,13 +135,20 @@ Examples:
 		// commands that don't need Incus or must observe the real session state
 		// (e.g. `coi health` diagnoses the stale-group condition; completion must
 		// never fork a sudo). On success the process is replaced here.
+		// Startup cost before any instrumented work (runtime init, flag
+		// parsing), and the pre-run steps below, under COI_TIMING_DEBUG.
+		timing.SinceStart(timing.CatStep, "startup (until pre-run)")
 		if commandUsesIncusGroup(cmd.Name()) {
+			stop := timing.Start(timing.CatStep, "incus-admin group check")
 			container.MaybeReexecUnderIncusGroup()
+			stop()
 		}
 
 		// Load config
 		var err error
+		stopLoad := timing.Start(timing.CatStep, "config load")
 		app.cfg, err = config.Load()
+		stopLoad()
 		if err != nil {
 			// Allow health command to run with defaults even if config is broken
 			if cmd.Name() == "health" {

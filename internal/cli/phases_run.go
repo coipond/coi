@@ -305,7 +305,12 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				// path in session.Setup): the conversion scan inside
 				// ResolveReuseUIDMapping then never enumerates security devices
 				// that are about to be re-created with the new flag anyway.
-				session.StripSecurityDevices(mgr, logFn)
+				//
+				// The reconciler keeps devices that would be re-added identically
+				// (the usual reuse: same workspace, same config) instead of a
+				// remove + add round trip per device; devices whose host source
+				// vanished are removed right here, before anything else (#610).
+				secDevices := session.NewSecurityDeviceReconciler(mgr, logFn)
 				// Apply the fresh-launch mapping decision to the reused container,
 				// mirroring the shell reuse path: an existing raw.idmap wins over
 				// the config (#685), and creation-time shift=true devices are
@@ -329,7 +334,9 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				} else if moved {
 					s.containerWorkspace = cwp
 				}
-				return a.applySecurityMounts(mgr, s.absWorkspace, s.containerWorkspace, s.containerName, s.useShift, layout)
+				secErr := a.applySecurityMounts(secDevices, s.absWorkspace, s.containerWorkspace, s.containerName, s.useShift, layout)
+				secDevices.Finish() // before the start: drop devices not requested this run
+				return secErr
 			}
 
 			s.mgr = mgr
@@ -499,16 +506,15 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 					return nil, fmt.Errorf("git.readonly: could not lock the commit identity read-only: %w", err)
 				}
 			} else {
-				session.SetupGitIdentityGuard(s.mgr, homeDir, logFn)
-				session.SetupGitIdentity(s.mgr, homeDir, gitID, logFn)
+				// Guard + identity + hooks (strip #788, identity re-stamp, branch
+				// guard) or the stale core.hooksPath cleanup — one exec, as on the
+				// shell path.
+				session.SetupWritableGitConfig(s.mgr, homeDir, gitID, stripAttribution, a.cfg.Git.StripAttributionPatterns, identityLock, guardBranches, logFn)
 			}
-			// Git hooks (strip #788 + identity re-stamp + branch guard), mirroring
-			// the shell path: the hook dir is needed on every path; core.hooksPath
-			// is written live only when the gitconfig is writable.
-			if stripAttribution || identityLock || guardOn {
-				session.SetupGitHooks(s.mgr, homeDir, gitID, stripAttribution, a.cfg.Git.StripAttributionPatterns, identityLock, !readonlyLock, guardBranches, logFn)
-			} else if !readonlyLock {
-				session.RemoveGitAttributionHookConfig(s.mgr, homeDir)
+			// Read-only gitconfig: the hook dir is still needed; core.hooksPath
+			// rides inside the mounted gitconfig.
+			if readonlyLock && (stripAttribution || identityLock || guardOn) {
+				session.SetupGitHooks(s.mgr, homeDir, gitID, stripAttribution, a.cfg.Git.StripAttributionPatterns, identityLock, false, guardBranches, logFn)
 			}
 			// Layer 1: pin GIT_AUTHOR_*/GIT_COMMITTER_* container-level env so a
 			// `-c user.*` override loses; no-op / unset when identity isn't locked.

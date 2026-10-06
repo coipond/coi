@@ -20,6 +20,7 @@ import (
 	"github.com/coipond/coi/internal/nftmonitor"
 	"github.com/coipond/coi/internal/session"
 	"github.com/coipond/coi/internal/terminal"
+	"github.com/coipond/coi/internal/timing"
 	"github.com/coipond/coi/internal/tool"
 	"github.com/spf13/cobra"
 )
@@ -84,6 +85,7 @@ func (a *App) shellCommand(cmd *cobra.Command, args []string) error {
 		s.aliasArg = args[0]
 	}
 
+	timing.SinceStart(timing.CatStep, "startup (until shell pipeline)")
 	pipeline := &session.Pipeline{}
 	defer pipeline.Teardown()
 
