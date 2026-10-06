@@ -587,6 +587,7 @@ func mergeBuildInto(dst *BuildConfig, src *BuildConfig) {
 	if len(src.Agents) > 0 {
 		dst.Agents = src.Agents
 	}
+	mergePtr(&dst.CloudInit, src.CloudInit)
 }
 
 func mergeNetworkInto(dst *NetworkConfig, src *NetworkConfig) {
