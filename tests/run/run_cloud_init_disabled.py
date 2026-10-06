@@ -22,6 +22,7 @@ def test_cloud_init_disabled_and_network_up(coi_binary, cleanup_containers, work
             "run",
             "--workspace",
             workspace_dir,
+            "--",
             "sh",
             "-c",
             "test -f /etc/cloud/cloud-init.disabled && echo CI_DISABLED; "
