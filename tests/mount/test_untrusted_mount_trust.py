@@ -41,6 +41,33 @@ def make_host_dir(tmp_path):
     return host
 
 
+TRUSTED_PREFIX = "Trusted out-of-workspace mounts, forwarded sockets, credential entries, and published ports from "
+
+
+def trusted_sources(output):
+    """The source files `coi trust` reported, one per "Trusted ... from <src>" line."""
+    return [
+        line[len(TRUSTED_PREFIX) :].strip()
+        for line in output.splitlines()
+        if line.startswith(TRUSTED_PREFIX)
+    ]
+
+
+def assert_trusted_exactly_workspace_config(t, workspace_dir):
+    """`coi trust` must report exactly one source — this workspace's
+    .coi/config.toml — and never an empty one (a spurious "" entry would also
+    land in the trust store)."""
+    sources = trusted_sources(t.stdout + t.stderr)
+    expected = {
+        str(pathlib.Path(workspace_dir) / ".coi" / "config.toml"),
+        os.path.realpath(pathlib.Path(workspace_dir) / ".coi" / "config.toml"),
+    }
+    assert len(sources) == 1 and sources[0] in expected, (
+        f"coi trust should report exactly the workspace config, got {sources!r}\n"
+        f"output: {t.stdout}{t.stderr}"
+    )
+
+
 def probe(coi_binary, workspace_dir, env, container=CONTAINER_PATH):
     """Run `coi run` and read the sentinel through the (maybe-mounted) path."""
     return subprocess.run(
@@ -84,6 +111,7 @@ def test_untrusted_escaping_mount_gated_until_trusted(
         env=env,
     )
     assert t.returncode == 0, f"coi trust should succeed. stderr: {t.stderr}"
+    assert_trusted_exactly_workspace_config(t, workspace_dir)
     assert "trusted" in (t.stdout + t.stderr).lower(), (
         f"unexpected trust output: {t.stdout}{t.stderr}"
     )
@@ -140,6 +168,7 @@ def test_trust_list_and_untrust_roundtrip(coi_binary, workspace_dir, cleanup_con
         env=env,
     )
     assert t.returncode == 0, f"trust failed: {t.stderr}"
+    assert_trusted_exactly_workspace_config(t, workspace_dir)
 
     r = probe(coi_binary, workspace_dir, env)
     assert SENTINEL in r.stdout, "mount should be present after trust"
@@ -154,6 +183,21 @@ def test_trust_list_and_untrust_roundtrip(coi_binary, workspace_dir, cleanup_con
     )
     assert listing.returncode == 0
     assert "config.toml" in listing.stdout, f"trust --list should show the entry: {listing.stdout}"
+    # Each line is "<fingerprint>  <path>". The store is shared with other tests
+    # (same HOME), so count only this workspace's entry — exactly one — and
+    # require that no entry anywhere has an empty path.
+    entries = [line.split(None, 1) for line in listing.stdout.splitlines() if line.strip()]
+    assert all(len(e) == 2 and e[1].strip() for e in entries), (
+        f"trust --list must not contain an entry with an empty path:\n{listing.stdout}"
+    )
+    workspace_cfgs = {
+        str(pathlib.Path(workspace_dir) / ".coi" / "config.toml"),
+        os.path.realpath(pathlib.Path(workspace_dir) / ".coi" / "config.toml"),
+    }
+    mine = [e for e in entries if e[1].strip() in workspace_cfgs]
+    assert len(mine) == 1, (
+        f"trust --list should list this workspace's config exactly once:\n{listing.stdout}"
+    )
 
     u = subprocess.run(
         [coi_binary, "untrust"],
