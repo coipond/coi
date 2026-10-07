@@ -39,6 +39,13 @@ mounts:
   # mounted checkout, and the provisioning script write-probes the mount.
   - location: "~"
     writable: true
+  # Stand-in for a Mac user's home shared under /Users (#853): on macOS,
+  # Colima/Lima/OrbStack expose the Mac home at /Users/<user>, and coi seeds the
+  # git identity from there. Created on the runner before `limactl start`;
+  # tests/run/test_mac_host_git_identity.py writes its fixtures into it.
+  - location: "/tmp/coi-mac-home"
+    mountPoint: "/Users/runner"
+    writable: true
 
 # We use Incus inside the guest; skip Lima's containerd provisioning entirely.
 containerd:

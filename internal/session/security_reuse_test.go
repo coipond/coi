@@ -97,6 +97,40 @@ func TestSecurityDeviceReconciler_Converges(t *testing.T) {
 	}
 }
 
+// The git-identity device's source is a file under ~/.coi. If it is gone, the
+// next start aborts on the mount, so it is removed before start like a stale
+// security device; while present it is left for the post-start git-identity step
+// (never kept, replaced or finished by the reconciler).
+func TestSecurityDeviceReconciler_GitIdentity(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "present.gitconfig")
+	if err := os.WriteFile(present, []byte("[user]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("missing source is removed before start", func(t *testing.T) {
+		f := &fakeDiskDevices{devices: map[string]container.DiskDevice{
+			gitReadonlyDeviceName: {Source: filepath.Join(dir, "gone.gitconfig"), Path: "/home/code/.gitconfig", Readonly: true},
+		}}
+		r := NewSecurityDeviceReconciler(f, func(string) {})
+		r.Finish()
+		if got := f.removes; len(got) != 1 || got[0] != gitReadonlyDeviceName {
+			t.Fatalf("removes = %v, want [%s]", got, gitReadonlyDeviceName)
+		}
+	})
+
+	t.Run("present source is left alone", func(t *testing.T) {
+		f := &fakeDiskDevices{devices: map[string]container.DiskDevice{
+			gitReadonlyDeviceName: {Source: present, Path: "/home/code/.gitconfig", Readonly: true},
+		}}
+		r := NewSecurityDeviceReconciler(f, func(string) {})
+		r.Finish()
+		if len(f.removes) != 0 {
+			t.Fatalf("a git-identity device with its source present must be kept, removes=%v", f.removes)
+		}
+	})
+}
+
 // When the device config can't be read, fall back to the old strip-all and
 // re-add everything.
 func TestSecurityDeviceReconciler_FallsBackToStrip(t *testing.T) {

@@ -74,7 +74,27 @@ func (c *CacheManager) Save(containerName string, cache *IPCache) error {
 		return fmt.Errorf("failed to marshal cache: %w", err)
 	}
 
-	if err := os.WriteFile(cachePath, data, 0o644); err != nil {
+	// Temp file + rename: the refresher rewrites this while a launch of the same
+	// container may be reading it, and a plain WriteFile (truncate, then write)
+	// lets that reader see a torn file.
+	tmp, err := os.CreateTemp(c.cacheDir, ".cache-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create cache temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to write cache file: %w", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to chmod cache file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close cache file: %w", err)
+	}
+	if err := os.Rename(tmpName, cachePath); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 

@@ -22,6 +22,7 @@ import (
 	"github.com/coipond/coi/internal/terminal"
 	"github.com/coipond/coi/internal/timing"
 	"github.com/coipond/coi/internal/tool"
+	"github.com/coipond/coi/internal/vmhost"
 	"github.com/spf13/cobra"
 )
 
@@ -194,22 +195,56 @@ func resolveGitIdentity(gitCfg *config.GitConfig) session.GitIdentity {
 	if !gitCfg.IsSeedHostIdentityEnabled() {
 		return session.GitIdentity{}
 	}
-	identity := session.GitIdentity{
-		Name:  hostGlobalGitConfig("user.name"),
-		Email: hostGlobalGitConfig("user.email"),
+	// Inside a macOS VM, `git config --global` reads the VM's gitconfig, not the
+	// Mac user's. Read the Mac home's config first, the way git itself would for
+	// that user (HOME pointed at it, so ~ in include.path/includeIf resolves to
+	// the Mac home, not the guest's), then fall back to the guest's global
+	// config. Each source must yield a complete identity on its own so name and
+	// email never come from different hosts.
+	if home := macHostHome(); home != "" {
+		if id := gitIdentityFrom(macHomeEnv(home), "--includes"); id.Complete() {
+			return id
+		}
 	}
-	if !identity.Complete() {
-		return session.GitIdentity{}
+	if id := gitIdentityFrom(nil); id.Complete() {
+		return id
 	}
-	return identity
+	return session.GitIdentity{}
 }
 
-func hostGlobalGitConfig(key string) string {
-	out, err := exec.Command("git", "config", "--global", "--get", key).Output()
-	if err != nil {
-		return ""
+// macHostHome is a seam for tests.
+var macHostHome = vmhost.MacHostHome
+
+// macHomeEnv returns an environment under which `git config --global` resolves
+// against the Mac home: HOME and XDG_CONFIG_HOME point there, and any
+// GIT_CONFIG_GLOBAL override (which would otherwise win over HOME and belongs to
+// the guest) is dropped.
+func macHomeEnv(home string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "XDG_CONFIG_HOME=") || strings.HasPrefix(kv, "GIT_CONFIG_GLOBAL=") {
+			continue
+		}
+		env = append(env, kv)
 	}
-	return strings.TrimSpace(string(out))
+	return append(env, "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"))
+}
+
+// gitIdentityFrom reads user.name/user.email via `git config --global` under env
+// (nil inherits the process environment), with any extra flags.
+func gitIdentityFrom(env []string, extra ...string) session.GitIdentity {
+	get := func(key string) string {
+		args := append([]string{"config", "--global"}, extra...)
+		args = append(args, "--get", key)
+		cmd := exec.Command("git", args...)
+		cmd.Env = env
+		out, err := cmd.Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+	return session.GitIdentity{Name: get("user.name"), Email: get("user.email")}
 }
 
 // buildCLICommand builds the CLI command string to execute in the container.
