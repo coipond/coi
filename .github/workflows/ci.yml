@@ -751,6 +751,9 @@ jobs:
           cp /tmp/coi-image.tar.gz "$HOME/" 2>/dev/null || echo "no cached coi image (will build inside the guest)"
           cp /tmp/ubuntu-base-image.tar.gz "$HOME/" 2>/dev/null || echo "no cached base image (smoke tests don't need it)"
 
+      - name: Create the stand-in Mac home (mounted at /Users/runner, #853)
+        run: mkdir -p /tmp/coi-mac-home
+
       - name: Start the Lima VM (retry x3, refuse TCG fallback)
         run: |
           started=0
@@ -798,8 +801,10 @@ jobs:
             set -euo pipefail
             export COI_BINARY=/usr/local/bin/coi
             export COI_TEST_VIRTIOFS_DIR="'"$HOME"'"
+            export COI_TEST_MAC_HOME=/Users/runner
             exec "$HOME/venv/bin/python" -m pytest \
               tests/run/test_uid_mapping.py tests/run/test_run_script.py tests/run/test_virtiofs_workspace.py \
+              tests/run/test_mac_host_git_identity.py \
               -v --tb=short --durations=0
           '
 

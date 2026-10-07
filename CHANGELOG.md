@@ -14,6 +14,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Git identity on macOS comes from your Mac's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — including `include.path` files; on a multi-user Mac only your own home is used.
 - [Bug Fix] **Parallel launches of the same workspace no longer collide (#876)** — each launch gets its own container instead of failing or disturbing another launch.
 - [Bug Fix] **Containers no longer fail to start at random when many share one git identity (#875)** — the shared `[git] readonly` identity file is no longer rewritten on every launch.
 - [Bug Fix] **A failed container start is reported right away (#875)** — with the errors from the container's start log, instead of a 30 s wait and "failed to become ready".
