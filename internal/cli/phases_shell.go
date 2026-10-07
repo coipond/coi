@@ -156,7 +156,7 @@ func (a *App) validateEnvPhase(cmd *cobra.Command, s *shellState) session.Phase 
 func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "configure-session",
-		RunFn: func(_ context.Context) (session.Teardown, error) {
+		RunFn: func(ctx context.Context) (_ session.Teardown, retErr error) {
 			ti, err := getConfiguredTool(a.cfg)
 			if err != nil {
 				return nil, err
@@ -271,6 +271,20 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				s.sessionID = id
 			}
 
+			// Serialise slot selection with concurrent launches of the same
+			// workspace/session_name until our container is up (see
+			// session.AcquireLaunchLock); released via SetupOptions.OnContainerUp,
+			// or below / at teardown if anything fails first.
+			releaseLaunchLock, err := session.AcquireLaunchLock(ctx, s.absWorkspace, a.sessionName(), func(m string) { fmt.Fprintln(os.Stderr, m) })
+			if err != nil {
+				return nil, err
+			}
+			defer func() {
+				if retErr != nil {
+					releaseLaunchLock()
+				}
+			}()
+
 			// Allocate slot.
 			slotNum := a.slot
 			if resumeSlot > 0 && slotNum == 0 {
@@ -384,6 +398,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 			}
 
 			s.setupOpts = session.SetupOptions{
+				OnContainerUp:         releaseLaunchLock,
 				WorkspacePath:         s.absWorkspace,
 				SessionName:           a.sessionName(),
 				Image:                 img,
@@ -437,7 +452,8 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				},
 			}
 			warnDockerHardeningConflict(a.cfg)
-			return nil, nil
+			// Teardown releases the lock if setup never reached container-up.
+			return func() { releaseLaunchLock() }, nil
 		},
 	}
 }

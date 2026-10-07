@@ -97,6 +97,11 @@ type SetupOptions struct {
 	ReadyTimeout          int                  // Seconds to wait for the container to become ready (<=0 = default 30)
 	ContainerName         string               // Use existing container (for testing) - skips container creation
 	Logger                func(string)
+	// OnContainerUp, when set, is called once the session's container exists
+	// and is running (created, restarted or reused) — the caller releases the
+	// launch lock here so a concurrent launch can pick its slot. Called at
+	// most once; not called if setup fails before that point.
+	OnContainerUp func()
 
 	Git      GitOptions      // Git identity + commit-attribution policy applied inside the container
 	Security SecurityOptions // Read-only/masked paths, host immutability, docker/kernel-surface hardening
@@ -150,6 +155,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		phase("filter-trusted", st.phaseFilterTrusted),
 		phase("preflight-ports", st.phasePreflightPorts),
 		phase("create-container", st.phaseCreateContainer),
+		phase("container-up", st.phaseContainerUp),
 		phase("wait-ready", st.phaseWaitReady),
 		phase("configure-docker-bridge", st.phaseConfigureDockerBridge),
 		phase("size-tmpfs", st.phaseSizeTmpfs),

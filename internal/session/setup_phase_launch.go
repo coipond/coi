@@ -28,6 +28,15 @@ func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) 
 	return nil, nil
 }
 
+// 5.1 The container now exists and is running: let the caller release the
+// launch lock (see AcquireLaunchLock).
+func (st *setupState) phaseContainerUp(_ context.Context) (Teardown, error) {
+	if st.opts.OnContainerUp != nil {
+		st.opts.OnContainerUp()
+	}
+	return nil, nil
+}
+
 // 6. Wait for the container to become ready.
 func (st *setupState) phaseWaitReady(ctx context.Context) (Teardown, error) {
 	readyTimeout := st.opts.ReadyTimeout
