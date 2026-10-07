@@ -156,7 +156,7 @@ func (a *App) validateEnvPhase(cmd *cobra.Command, s *shellState) session.Phase 
 func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "configure-session",
-		RunFn: func(_ context.Context) (_ session.Teardown, retErr error) {
+		RunFn: func(ctx context.Context) (_ session.Teardown, retErr error) {
 			ti, err := getConfiguredTool(a.cfg)
 			if err != nil {
 				return nil, err
@@ -275,7 +275,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 			// workspace/session_name until our container is up (see
 			// session.AcquireLaunchLock); released via SetupOptions.OnContainerUp,
 			// or below / at teardown if anything fails first.
-			releaseLaunchLock, err := session.AcquireLaunchLock(s.absWorkspace, a.sessionName(), func(m string) { fmt.Fprintln(os.Stderr, m) })
+			releaseLaunchLock, err := session.AcquireLaunchLock(ctx, s.absWorkspace, a.sessionName(), func(m string) { fmt.Fprintln(os.Stderr, m) })
 			if err != nil {
 				return nil, err
 			}

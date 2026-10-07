@@ -1,8 +1,10 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -45,7 +47,7 @@ var launchLocksDir = func() (string, error) {
 // its slot selection and container start. The returned release is idempotent
 // and safe to call from any path (defer it, and call it early once the
 // container is up). The kernel drops the lock if the process dies.
-func AcquireLaunchLock(workspacePath, sessionName string, logger func(string)) (release func(), err error) {
+func AcquireLaunchLock(ctx context.Context, workspacePath, sessionName string, logger func(string)) (release func(), err error) {
 	dir, err := launchLocksDir()
 	if err != nil {
 		return nil, fmt.Errorf("launch lock: %w", err)
@@ -62,7 +64,7 @@ func AcquireLaunchLock(workspacePath, sessionName string, logger func(string)) (
 	}
 
 	deadline := time.Now().Add(launchLockTimeout)
-	noted := false
+	var interrupted chan os.Signal // set up only once we actually have to wait
 	for {
 		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
@@ -76,11 +78,26 @@ func AcquireLaunchLock(workspacePath, sessionName string, logger func(string)) (
 			_ = f.Close()
 			return nil, fmt.Errorf("timed out after %s waiting for another coi launch of this workspace to start its container (lock %s)", launchLockTimeout, path)
 		}
-		if !noted && logger != nil {
-			logger("Waiting for another coi launch of this workspace to pick its slot...")
-			noted = true
+		if interrupted == nil {
+			// Ctrl-C / SIGTERM must abort the wait: the pipeline's own signal
+			// handler only runs teardowns, so without this a cancelled launch
+			// would keep waiting and then launch anyway.
+			interrupted = make(chan os.Signal, 1)
+			signal.Notify(interrupted, os.Interrupt, syscall.SIGTERM)
+			defer signal.Stop(interrupted)
+			if logger != nil {
+				logger("Waiting for another coi launch of this workspace to pick its slot...")
+			}
 		}
-		time.Sleep(launchLockPoll)
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-interrupted:
+			_ = f.Close()
+			return nil, fmt.Errorf("interrupted while waiting for another coi launch of this workspace")
+		case <-time.After(launchLockPoll):
+		}
 	}
 
 	var once sync.Once

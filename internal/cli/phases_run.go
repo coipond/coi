@@ -80,7 +80,7 @@ type runState struct {
 func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "validate-env",
-		RunFn: func(_ context.Context) (_ session.Teardown, retErr error) {
+		RunFn: func(ctx context.Context) (_ session.Teardown, retErr error) {
 			if !container.Available() {
 				return nil, container.IncusNotAvailableError()
 			}
@@ -95,7 +95,7 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 			// workspace/session_name until our container is up (see
 			// session.AcquireLaunchLock); released by launch-container, or
 			// here / at teardown if anything fails first.
-			release, err := session.AcquireLaunchLock(s.absWorkspace, a.sessionName(), stderrLogFn)
+			release, err := session.AcquireLaunchLock(ctx, s.absWorkspace, a.sessionName(), stderrLogFn)
 			if err != nil {
 				return nil, err
 			}
