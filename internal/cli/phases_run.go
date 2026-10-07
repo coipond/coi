@@ -26,6 +26,10 @@ type runState struct {
 	// After resolve-workspace
 	absWorkspace string
 
+	// releaseLaunchLock releases the per-workspace launch lock taken at slot
+	// selection (session.AcquireLaunchLock); called once the container is up.
+	releaseLaunchLock func()
+
 	// Run-script mode (coi run with no command): execute <workspace>/coi-run
 	// from the workspace mount. The file is required to be executable, so it
 	// runs directly and its shebang decides the interpreter.
@@ -76,7 +80,7 @@ type runState struct {
 func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "validate-env",
-		RunFn: func(_ context.Context) (session.Teardown, error) {
+		RunFn: func(_ context.Context) (_ session.Teardown, retErr error) {
 			if !container.Available() {
 				return nil, container.IncusNotAvailableError()
 			}
@@ -87,8 +91,22 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 				fmt.Fprintf(os.Stderr, "%s\n", warning)
 			}
 
+			// Serialise slot selection with concurrent launches of the same
+			// workspace/session_name until our container is up (see
+			// session.AcquireLaunchLock); released by launch-container, or
+			// here / at teardown if anything fails first.
+			release, err := session.AcquireLaunchLock(s.absWorkspace, a.sessionName(), stderrLogFn)
+			if err != nil {
+				return nil, err
+			}
+			s.releaseLaunchLock = release
+			defer func() {
+				if retErr != nil {
+					release()
+				}
+			}()
+
 			slotNum := a.slot
-			var err error
 			if slotNum == 0 {
 				// Persistent mode: prefer the stopped container from a
 				// previous run — plain AllocateSlot treats it as occupying
@@ -129,7 +147,8 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 				return nil, err
 			}
 			s.effectiveAlias = effectiveAlias
-			return nil, nil
+			// Teardown releases the lock if the run never reached launch-container.
+			return func() { release() }, nil
 		},
 	}
 }
@@ -363,6 +382,11 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			stopLaunch := timing.Start(timing.CatStep, "launch-or-reuse")
 			launchErr := launchOrReuseContainer(mgr, s.img, a.cfg.Container.StoragePool, s.containerName, containerExists, a.persistent, preStart, preRestart, hardening)
 			stopLaunch()
+			// The slot is now visibly ours (container created and running) or
+			// the launch failed: either way a concurrent launch may go ahead.
+			if s.releaseLaunchLock != nil {
+				s.releaseLaunchLock()
+			}
 			if launchErr != nil {
 				// No teardown on a failed launch: launchOrReuseContainer already
 				// removed the half-created container when it was safe to (never a
