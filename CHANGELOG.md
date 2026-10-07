@@ -4,10 +4,8 @@
 
 ### Changed
 
-- [Change] **Restarting a stopped persistent container with `coi run` is faster** — protected-path devices that already match are kept instead of removed and re-added (as `coi shell` already did), the boot block reads the container's network device from its config instead of a full state query that could stall for seconds right after start, git setup is one call, and network teardown is one atomic `nft` transaction. `COI_TIMING_DEBUG` now also shows startup time before the first phase.
-- [Change] **The coi image boots faster: cloud-init is disabled by default** — it ran on every container start ahead of the network, delaying the DHCP lease coi waits for. coi containers don't need it; keep it with `[container.build] cloud_init = true` (then `coi build --force`), or re-enable it inside an existing container with `sudo rm /etc/cloud/cloud-init.disabled`. Takes effect on the next image build.
-- [Change] **Reusing a persistent container is faster again, on start and on exit** — the container's config is read once instead of ~10 times, unchanged env/alias/UID-map/SSH-agent settings are no longer rewritten, git setup and Claude's managed settings take one call each, readiness and IP polling react within 200 ms, network rules are applied as a single atomic `nft` transaction (with no 300 ms waits), and on exit the session state is streamed as one tar instead of copied file by file.
-- [Change] **`coi shell` starts and exits faster, especially on a reused persistent container** — fewer and cheaper Incus calls throughout: slot lookup no longer fetches every container's full state, git hooks and the sandbox context files are each installed in one call (the timezone and mise-trust steps ride along with the latter; `coi run` does those two in one call), tmux setup is one call, protected-path devices that already match are kept instead of re-created, the container IP is polled every 200 ms instead of every second, and `exit` is recognised in one check instead of a ~1.5 s confirmation window. The faster `exit` detection needs a rebuilt image (`coi build`).
+- [Change] **Faster start and exit for `coi shell` and `coi run`, especially when reusing a persistent container (#871, #872, #874)** — far fewer Incus and firewall calls per launch, and session state is saved in one step on exit. Rebuild the image (`coi build`) to also get instant `exit` detection.
+- [Change] **Faster container boot: cloud-init is disabled in the coi image (#873)** — keep it with `[container.build] cloud_init = true`. Takes effect on the next `coi build`.
 - [Change] **Primary name is now `Coi`** — `Coi` (Code on Incus) is the product name and `coi` the command. Cosmetic only.
 
 ### Breaking
@@ -16,24 +14,27 @@
 
 ### Bug Fixes
 
-- [Bug Fix] **Git identity is now seeded from the Mac user's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — inside a macOS VM coi reads the identity from your Mac home (shared under `/Users`), including `include.path` files, and falls back to the VM's config. On a multi-user Mac it only uses your own home, never another account's.
-- [Bug Fix] **Attaching to an already-running restricted-mode container no longer leaves it briefly unfiltered** — its firewall rules are now replaced in one atomic transaction instead of being deleted and then re-added.
-- [Bug Fix] **A failed session save no longer deletes the previous saved copy** — the new copy replaces the old one only once it is complete.
-- [Bug Fix] **An auto-killed container is now always deleted** — the kill could leave it behind, stopped, when the session hosting the monitor (notably a `coi shell --background` supervisor) ended between the stop and the delete. The kill is now a single `incus delete --force`.
-- [Bug Fix] **Background and detached sessions are now protected** — security monitoring and the runtime limit keep running after `coi shell --background`, or when you detach or leave the agent with the container still running, and stop when the container does. Before, they stopped as soon as `coi shell` returned. `coi shell` prints a `[supervisor]` line confirming what is covered and where it logs.
-- [Bug Fix] **Profiles can set `[git] protected_branches` and `[limits.disk] size`** — a profile containing either no longer fails to load (which made every coi command fail).
-- [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as they already were in project config.
-- [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable (for example a wrapper script) instead of silently ignoring the setting.
+- [Bug Fix] **Git identity on macOS comes from your Mac's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — including `include.path` files; on a multi-user Mac only your own home is used.
+- [Bug Fix] **Parallel launches of the same workspace no longer collide (#876)** — each launch gets its own container instead of failing or disturbing another launch.
+- [Bug Fix] **Containers no longer fail to start at random when many share one git identity (#875)** — the shared `[git] readonly` identity file is no longer rewritten on every launch.
+- [Bug Fix] **A failed container start is reported right away (#875)** — with the errors from the container's start log, instead of a 30 s wait and "failed to become ready".
+- [Bug Fix] **Attaching to a running restricted-mode container no longer leaves it briefly unfiltered (#872)** — its firewall rules are replaced atomically.
+- [Bug Fix] **A failed session save no longer deletes the previous saved copy (#872)**.
+- [Bug Fix] **An auto-killed container is always removed (#871)** — it could be left behind, stopped.
+- [Bug Fix] **Background and detached sessions stay protected (#869)** — security monitoring and the runtime limit keep running until the container stops, not just while `coi shell` runs.
+- [Bug Fix] **Profiles can set `[git] protected_branches` and `[limits.disk] size`** — a profile containing either no longer fails to load.
+- [Bug Fix] **A repository's profiles can no longer pull files from your machine into the container** — `context_file` and `context_json_file` are ignored in project profiles, as in project config.
+- [Bug Fix] **`[tool] binary` now works** — coi launches the configured executable instead of ignoring it.
 - [Bug Fix] **Installer works on fresh container and minimal images** — building from source no longer fails on missing package lists.
-- [Bug Fix] **Setting up passwordless sudo can no longer break sudo** — the installer and `coi health --fix` validate the rule before installing it; the iptables rule is shown for you to apply rather than added automatically.
-- [Bug Fix] **`coi health` accepts its own UID-mapping fix** — once the suggested fix is applied it stops reporting the problem, and tells you which step is still missing until then.
+- [Bug Fix] **Setting up passwordless sudo can no longer break sudo** — the installer and `coi health --fix` validate the rule before installing it.
+- [Bug Fix] **`coi health` accepts its own UID-mapping fix** — it stops reporting the problem once the suggested fix is applied.
 - [Bug Fix] **`coi health` no longer misses missing sudo rules** — a recently typed sudo password no longer hides them.
-- [Bug Fix] **Security monitor no longer stops containers for everyday commands** — searching code, waiting for a local service, or installing networking tools no longer looks like a reverse shell. Real reverse shells are still caught.
-- [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield an unwritable workspace (#838)** — coi stops with a clear explanation instead of continuing with a broken `/workspace`.
+- [Bug Fix] **Security monitor no longer stops containers for everyday commands** — searching code, waiting for a local service, or installing networking tools no longer looks like a reverse shell.
+- [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield an unwritable workspace (#838)** — coi stops with a clear explanation instead.
 
 ### Features
 
-- [Feature] **Run commands before the agent starts: `[tool] pre_launch` (#852)** — e.g. `pre_launch = ["claude update"]` keeps the agent current without rebuilding the image. A failing or slow command never blocks the session.
+- [Feature] **Run commands before the agent starts: `[tool] pre_launch` (#852)** — e.g. `pre_launch = ["claude update"]` keeps the agent current without rebuilding the image.
 
 ## 0.13.0 (2026-09-28)
 
