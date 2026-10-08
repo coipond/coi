@@ -1,12 +1,13 @@
 # CHANGELOG
 
-## Unreleased
+## 0.14.0 (2026-10-08)
 
 ### Changed
 
 - [Change] **Faster start and exit for `coi shell` and `coi run`, especially when reusing a persistent container (#871, #872, #874)** — far fewer Incus and firewall calls per launch, and session state is saved in one step on exit. Rebuild the image (`coi build`) to also get instant `exit` detection.
 - [Change] **Faster container boot: cloud-init is disabled in the coi image (#873)** — keep it with `[container.build] cloud_init = true`. Takes effect on the next `coi build`.
 - [Change] **Primary name is now `Coi`** — `Coi` (Code on Incus) is the product name and `coi` the command. Cosmetic only.
+- [Change] **The project moved to [github.com/coipond/coi](https://github.com/coipond/coi) (#848)** — install, update and wiki links point there; old links redirect, and `coi update` from earlier versions keeps working.
 
 ### Breaking
 
@@ -15,7 +16,7 @@
 ### Bug Fixes
 
 - [Bug Fix] **Network monitoring rules are removed when a monitored session ends (#882)** — a race in the session's watcher teardown could leave them behind, and the next container given the same IP inherited them.
-- [Bug Fix] **coi commands no longer fail at random when another process removes a profile** - every command loads every profile in `~/.coi/profiles/`, reading each file three times; a profile deleted between those reads (an orchestrator creates and removes one per session) failed the whole command with "failed to parse profile". Each profile is now read once, and one that is gone by then is skipped.
+- [Bug Fix] **coi commands no longer fail when a profile is removed while they run (#885)** — e.g. by an orchestrator that creates and deletes a profile per session; the missing profile is skipped.
 - [Bug Fix] **macOS: no Keychain login hint when `CLAUDE_CODE_OAUTH_TOKEN` is set (#851)** — a long-lived `claude setup-token` token needs no Keychain login.
 - [Bug Fix] **Git identity on macOS comes from your Mac's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — including `include.path` files; on a multi-user Mac only your own home is used.
 - [Bug Fix] **Parallel launches of the same workspace no longer collide (#876)** — each launch gets its own container instead of failing or disturbing another launch.
@@ -32,7 +33,8 @@
 - [Bug Fix] **Setting up passwordless sudo can no longer break sudo** — the installer and `coi health --fix` validate the rule before installing it.
 - [Bug Fix] **`coi health` accepts its own UID-mapping fix** — it stops reporting the problem once the suggested fix is applied.
 - [Bug Fix] **`coi health` no longer misses missing sudo rules** — a recently typed sudo password no longer hides them.
-- [Bug Fix] **Security monitor no longer stops containers for everyday commands** — searching code, waiting for a local service, or installing networking tools no longer looks like a reverse shell.
+- [Bug Fix] **Security monitor no longer stops containers for everyday commands (#846, #855)** — searching code, waiting for a local service, or installing networking tools no longer looks like a reverse shell.
+- [Bug Fix] **Reverse-shell detection is harder to evade (#856–#859)** — `/dev/tcp` connections written with quotes, variables or command substitution, and less common shells, are caught.
 - [Bug Fix] **Large host UIDs (e.g. Google Cloud OS Login) no longer yield an unwritable workspace (#838)** — coi stops with a clear explanation instead.
 
 ### Features
