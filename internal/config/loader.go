@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -684,8 +686,19 @@ func loadProfileDirectories(cfg *Config, configDir string, trusted bool) error {
 		profileName := entry.Name()
 		profileConfigPath := filepath.Join(profilesDir, profileName, "config.toml")
 
-		if _, err := os.Stat(profileConfigPath); err != nil {
-			continue // No config.toml in this subdirectory
+		// Read the file once and decode that content for every check below.
+		// Other processes add and remove profiles while this scan runs (an
+		// orchestrator launching many sessions creates and deletes one per
+		// session), so separate reads could each see a different file, or
+		// none: a profile removed between a stat and a later read used to
+		// fail this whole command with "failed to parse profile". A profile
+		// that is gone when it is read is skipped, as if never listed.
+		data, err := os.ReadFile(profileConfigPath)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // No config.toml in this subdirectory (or it was just removed)
+			}
+			return fmt.Errorf("failed to read profile %q config at %s: %w", profileName, profileConfigPath, err)
 		}
 
 		// Detect duplicate profile name across scan locations. The same path
@@ -700,21 +713,21 @@ func loadProfileDirectories(cfg *Config, configDir string, trusted bool) error {
 		}
 
 		var profileCfg ProfileConfig
-		if _, err := toml.DecodeFile(profileConfigPath, &profileCfg); err != nil {
+		if _, err := toml.Decode(string(data), &profileCfg); err != nil {
 			return fmt.Errorf("failed to parse profile %q config at %s: %w", profileName, profileConfigPath, err)
 		}
 
 		// Detect pre-0.8.0 profile layouts and refuse to load with a friendly
 		// message before schema validation runs (deprecated fields would
 		// otherwise surface as unhelpful "additionalProperties not allowed").
-		if err := checkDeprecatedProfileFields(profileConfigPath); err != nil {
+		if err := checkDeprecatedProfileData(profileConfigPath, data); err != nil {
 			return err
 		}
 
 		// Validate the raw TOML against the JSON Schema to catch unknown keys,
 		// wrong types, and invalid enum values with precise error paths.
 		var rawMap map[string]any
-		if _, err := toml.DecodeFile(profileConfigPath, &rawMap); err != nil {
+		if _, err := toml.Decode(string(data), &rawMap); err != nil {
 			return fmt.Errorf("failed to re-read profile %q for schema validation: %w", profileName, err)
 		}
 		if schemaErr := coischema.ValidateProfileMap(rawMap); schemaErr != nil {
