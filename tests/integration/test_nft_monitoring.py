@@ -1394,3 +1394,189 @@ class TestHealthChecks:
         assert "network" in output_lower, (
             f"No network checks found in health output:\n{result.stdout}"
         )
+
+
+# ── NetworkDetector classification (#5): DNS threshold, non-standard DNS,
+# gateway is not "private network" ──
+#
+# Packets are sent with bash's /dev/tcp and /dev/udp (no client tools needed);
+# the nft LOG rules fire whether or not the coi firewall later accepts them.
+# One packet can be logged by several coi LOG rules (suspicious + DNS +
+# general), so DNS counts are asserted with margin, never exactly.
+
+DNS_THRESHOLD = 20
+PUBLIC_RESOLVER = "8.8.8.8"
+
+
+@pytest.fixture
+def detector_workspace(tmp_path):
+    workspace = tmp_path / "nft-detector-workspace"
+    (workspace / ".coi").mkdir(parents=True)
+    (workspace / ".coi" / "config.toml").write_text(f"""
+[monitoring]
+enabled = true
+auto_kill_on_critical = true
+auto_pause_on_high = true
+
+[monitoring.nft]
+enabled = true
+dns_query_threshold = {DNS_THRESHOLD}
+""")
+    env = os.environ.copy()
+    env["COI_CONFIG"] = str(workspace / ".coi" / "config.toml")
+    return str(workspace), env
+
+
+def _start_monitored_shell(coi_binary, workspace, env, slot):
+    """Start `coi shell` and wait until its NFT monitoring rules are live.
+    Returns (proc, container_name, container_ip)."""
+    container_name = get_container_name_from_workspace(workspace, slot)
+    proc = subprocess.Popen(
+        [coi_binary, "shell", "--workspace", workspace, "--slot", str(slot)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+    )
+    if not wait_for_container_ready(container_name, timeout=60):
+        _stop_shell(proc, container_name, coi_binary, env)
+        pytest.fail(f"Container {container_name} did not start")
+    container_ip = wait_for_container_ip(container_name)
+    if not container_ip:
+        _stop_shell(proc, container_name, coi_binary, env)
+        pytest.fail(f"Container {container_name} got no IP address")
+    for _ in range(15):
+        if check_nft_rules_exist(container_ip):
+            break
+        time.sleep(1)
+    else:
+        _stop_shell(proc, container_name, coi_binary, env)
+        pytest.fail(f"NFT monitoring rules never appeared for {container_ip}")
+    time.sleep(2)  # let the journal reader settle before generating traffic
+    return proc, container_name, container_ip
+
+
+def _stop_shell(proc, container_name, coi_binary, env):
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    cleanup_container(container_name, coi_binary, env=env)
+
+
+def _container_gateway(container_name):
+    r = subprocess.run(
+        ["incus", "exec", container_name, "--", "ip", "-4", "route", "show", "default"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    parts = r.stdout.split()
+    return parts[parts.index("via") + 1] if "via" in parts else None
+
+
+def _send(container_name, proto, ip, port, count=1):
+    """Send `count` packets from the container with bash's /dev/<proto>."""
+    script = (
+        f"for i in $(seq {count}); do "
+        f"timeout 1 bash -c 'echo x > /dev/{proto}/{ip}/{port}' 2>/dev/null; done; true"
+    )
+    subprocess.run(
+        ["incus", "exec", container_name, "--", "bash", "-c", script],
+        capture_output=True,
+        timeout=30 + 2 * count,
+    )
+
+
+def _wait_for_events(container_name, predicate, timeout=30):
+    events = []
+    for _ in range(timeout):
+        events = get_nft_threat_events(container_name)
+        if any(predicate(e) for e in events):
+            return events
+        time.sleep(1)
+    return events
+
+
+def _remote_host(event):
+    return ((event.get("evidence") or {}).get("network") or {}).get("remote_host")
+
+
+class TestNetworkDetectorClassification:
+    """End-to-end checks for the NetworkDetector rules in #5."""
+
+    @pytest.fixture(autouse=True)
+    def check_nft_available(self, nft_monitoring_available):
+        pass
+
+    def test_dns_to_non_standard_server_warns(self, coi_binary, detector_workspace):
+        """A UDP/53 query to a resolver that is neither the gateway nor
+        allowlisted raises a WARNING "DNS query to non-standard server"."""
+        workspace, env = detector_workspace
+        proc, name, _ = _start_monitored_shell(coi_binary, workspace, env, slot=65)
+        try:
+            _send(name, "udp", PUBLIC_RESOLVER, 53)
+            events = _wait_for_events(
+                name, lambda e: e.get("title") == "DNS query to non-standard server"
+            )
+            hits = [e for e in events if e.get("title") == "DNS query to non-standard server"]
+            assert hits, f"expected a non-standard DNS warning. Events: {events}"
+            assert all(e.get("level") == "warning" for e in hits), hits
+            assert _remote_host(hits[0]) == PUBLIC_RESOLVER, hits[0]
+            assert get_container_state(name) == "Running"
+        finally:
+            _stop_shell(proc, name, coi_binary, env)
+
+    def test_dns_query_threshold_enforced(self, coi_binary, detector_workspace):
+        """DNS to the gateway (the expected resolver) only alerts once the
+        per-minute count exceeds dns_query_threshold, and never at or below it."""
+        workspace, env = detector_workspace
+        proc, name, _ = _start_monitored_shell(coi_binary, workspace, env, slot=66)
+        try:
+            gateway = _container_gateway(name)
+            assert gateway, f"could not find the default gateway of {name}"
+            _send(name, "udp", gateway, 53, count=DNS_THRESHOLD + 10)
+            events = _wait_for_events(name, lambda e: e.get("title") == "High DNS query volume")
+            hits = [e for e in events if e.get("title") == "High DNS query volume"]
+            assert hits, (
+                f"expected a 'High DNS query volume' warning after {DNS_THRESHOLD + 10} "
+                f"queries (threshold {DNS_THRESHOLD}). Events: {events}"
+            )
+            for e in hits:
+                assert e.get("level") == "warning", e
+                count = int(e.get("description", "").split()[0])
+                assert count > DNS_THRESHOLD, f"alerted at {count} <= threshold: {e}"
+            assert not [
+                e for e in events if e.get("title") == "DNS query to non-standard server"
+            ], f"DNS to the gateway must not count as a non-standard server. Events: {events}"
+        finally:
+            _stop_shell(proc, name, coi_binary, env)
+
+    def test_gateway_traffic_is_not_private_network(self, coi_binary, detector_workspace):
+        """TCP to the gateway (an RFC1918 address) must not raise "Connection to
+        private network". A later non-standard DNS query is the anchor proving the
+        pipeline processed the gateway packet before we look."""
+        workspace, env = detector_workspace
+        proc, name, _ = _start_monitored_shell(coi_binary, workspace, env, slot=67)
+        try:
+            gateway = _container_gateway(name)
+            assert gateway, f"could not find the default gateway of {name}"
+            _send(name, "tcp", gateway, 80)
+            time.sleep(1)
+            _send(name, "udp", PUBLIC_RESOLVER, 53)
+            events = _wait_for_events(
+                name, lambda e: e.get("title") == "DNS query to non-standard server"
+            )
+            assert any(e.get("title") == "DNS query to non-standard server" for e in events), (
+                f"anchor event never arrived; pipeline not processing. Events: {events}"
+            )
+            false_pos = [
+                e
+                for e in events
+                if e.get("title") == "Connection to private network" and _remote_host(e) == gateway
+            ]
+            assert not false_pos, f"gateway {gateway} flagged as private network: {false_pos}"
+            assert get_container_state(name) == "Running", "gateway traffic must not pause"
+        finally:
+            _stop_shell(proc, name, coi_binary, env)
