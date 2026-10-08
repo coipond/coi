@@ -83,18 +83,28 @@ func TestMacKeychainHint_Gating(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthConfigured(t *testing.T) {
+func TestEnvAuthConfigured(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "") // ensure a clean baseline
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 
-	if apiKeyAuthConfigured(nil) {
-		t.Error("no API key set or forwarded -> should be false")
+	if envAuthConfigured(nil, nil) {
+		t.Error("nothing set or forwarded -> should be false")
 	}
-	if !apiKeyAuthConfigured([]string{"GITHUB_TOKEN", "ANTHROPIC_API_KEY"}) {
+	if !envAuthConfigured([]string{"GITHUB_TOKEN", "ANTHROPIC_API_KEY"}, nil) {
 		t.Error("ANTHROPIC_API_KEY in forward list -> should be true")
 	}
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-xxx")
-	if !apiKeyAuthConfigured(nil) {
-		t.Error("ANTHROPIC_API_KEY set in env -> should be true")
+	if !envAuthConfigured(nil, map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-x"}) {
+		t.Error("CLAUDE_CODE_OAUTH_TOKEN in defaults.environment -> should be true")
+	}
+	if envAuthConfigured(nil, map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": ""}) {
+		t.Error("empty CLAUDE_CODE_OAUTH_TOKEN in defaults.environment -> should be false")
+	}
+	if !envAuthConfigured([]string{"CLAUDE_CODE_OAUTH_TOKEN"}, nil) {
+		t.Error("CLAUDE_CODE_OAUTH_TOKEN in forward list -> should be true")
+	}
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-x")
+	if !envAuthConfigured(nil, nil) {
+		t.Error("CLAUDE_CODE_OAUTH_TOKEN set in env -> should be true")
 	}
 }
 

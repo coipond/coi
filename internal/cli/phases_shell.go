@@ -364,9 +364,9 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				cliConfigPath, vmKind = vmhost.HostToolConfigDir(homeDir, configDirName, configFiles)
 				// macOS: if the tool's credential lives in the Keychain (no file to
 				// seed), tell the user how to materialize it on the Mac (#818). Stay
-				// quiet for API-key auth or a resumed session (already logged in).
+				// quiet for env-based auth (API key / OAuth token) or a resumed session (already logged in).
 				printMacKeychainHint(ti, cliConfigPath, vmKind,
-					apiKeyAuthConfigured(a.cfg.Defaults.ForwardEnv), resumeFlagSet)
+					envAuthConfigured(a.cfg.Defaults.ForwardEnv, a.cfg.Defaults.Environment), resumeFlagSet)
 			}
 
 			resolvedForwardedEnvVars := resolveForwardedEnvVarNames(a.cfg.Defaults.ForwardEnv)

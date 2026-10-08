@@ -64,20 +64,30 @@ func printMacKeychainHint(t tool.Tool, cliConfigPath string, kind vmhost.Kind, a
 	}
 }
 
-// anthropicAPIKeyEnv is the env var whose presence means Claude Code will
-// authenticate with an API key and needs no Keychain-stored OAuth token.
-const anthropicAPIKeyEnv = "ANTHROPIC_API_KEY" //nolint:gosec // G101 false positive: this is an env var NAME, not a credential value
+// Env vars whose presence means Claude Code authenticates without a
+// Keychain-stored OAuth token: an API key, or a long-lived token from
+// `claude setup-token` (set e.g. via [defaults.environment]).
+var claudeAuthEnvVars = []string{
+	"ANTHROPIC_API_KEY",       //nolint:gosec // G101 false positive: env var NAME, not a credential value
+	"CLAUDE_CODE_OAUTH_TOKEN", //nolint:gosec // G101 false positive: env var NAME, not a credential value
+}
 
-// apiKeyAuthConfigured reports whether an API-key auth path is set up, so the
-// Keychain hint should stay quiet. True when ANTHROPIC_API_KEY is set in the
-// current environment or is listed for forwarding into the container.
-func apiKeyAuthConfigured(forwardEnv []string) bool {
-	if os.Getenv(anthropicAPIKeyEnv) != "" {
-		return true
-	}
-	for _, name := range forwardEnv {
-		if name == anthropicAPIKeyEnv {
+// envAuthConfigured reports whether env-based auth is set up, so the Keychain
+// hint should stay quiet. True when an auth env var is set in the current
+// environment, listed for forwarding into the container, or set in
+// [defaults.environment].
+func envAuthConfigured(forwardEnv []string, environment map[string]string) bool {
+	for _, name := range claudeAuthEnvVars {
+		if os.Getenv(name) != "" {
 			return true
+		}
+		if v, ok := environment[name]; ok && v != "" {
+			return true
+		}
+		for _, f := range forwardEnv {
+			if f == name {
+				return true
+			}
 		}
 	}
 	return false

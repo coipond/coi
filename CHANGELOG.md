@@ -14,6 +14,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **macOS: no Keychain login hint when `CLAUDE_CODE_OAUTH_TOKEN` is set (#851)** — a long-lived `claude setup-token` token needs no Keychain login.
 - [Bug Fix] **Git identity on macOS comes from your Mac's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — including `include.path` files; on a multi-user Mac only your own home is used.
 - [Bug Fix] **Parallel launches of the same workspace no longer collide (#876)** — each launch gets its own container instead of failing or disturbing another launch.
 - [Bug Fix] **Containers no longer fail to start at random when many share one git identity (#875)** — the shared `[git] readonly` identity file is no longer rewritten on every launch.
