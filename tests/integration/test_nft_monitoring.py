@@ -1396,13 +1396,15 @@ class TestHealthChecks:
         )
 
 
-# ── NetworkDetector classification (#5): DNS threshold, non-standard DNS,
-# gateway is not "private network" ──
+# ── NetworkDetector classification (#5): DNS threshold, non-standard DNS ──
 #
-# Packets are sent with bash's /dev/tcp and /dev/udp (no client tools needed);
-# the nft LOG rules fire whether or not the coi firewall later accepts them.
-# One packet can be logged by several coi LOG rules (suspicious + DNS +
-# general), so DNS counts are asserted with margin, never exactly.
+# Packets are sent with bash's /dev/udp (no client tools needed); the nft LOG
+# rules fire whether or not the coi firewall later accepts them. They hook
+# FORWARD only, so the target must be a routed address: the gateway (the bridge's
+# own host-side address) is delivered via INPUT and never reaches the detector,
+# which is also why the gateway RFC1918 exclusion is unit-tested only. One
+# packet can be logged by several coi LOG rules (DNS + general), so DNS counts
+# are asserted with margin, never exactly.
 
 DNS_THRESHOLD = 20
 PUBLIC_RESOLVER = "8.8.8.8"
@@ -1465,17 +1467,6 @@ def _stop_shell(proc, container_name, coi_binary, env):
     cleanup_container(container_name, coi_binary, env=env)
 
 
-def _container_gateway(container_name):
-    r = subprocess.run(
-        ["incus", "exec", container_name, "--", "ip", "-4", "route", "show", "default"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    parts = r.stdout.split()
-    return parts[parts.index("via") + 1] if "via" in parts else None
-
-
 def _send(container_name, proto, ip, port, count=1):
     """Send `count` packets from the container with bash's /dev/<proto>."""
     script = (
@@ -1529,14 +1520,12 @@ class TestNetworkDetectorClassification:
             _stop_shell(proc, name, coi_binary, env)
 
     def test_dns_query_threshold_enforced(self, coi_binary, detector_workspace):
-        """DNS to the gateway (the expected resolver) only alerts once the
-        per-minute count exceeds dns_query_threshold, and never at or below it."""
+        """Once the per-minute DNS count exceeds dns_query_threshold the query
+        raises "High DNS query volume" — and never at or below the threshold."""
         workspace, env = detector_workspace
         proc, name, _ = _start_monitored_shell(coi_binary, workspace, env, slot=66)
         try:
-            gateway = _container_gateway(name)
-            assert gateway, f"could not find the default gateway of {name}"
-            _send(name, "udp", gateway, 53, count=DNS_THRESHOLD + 10)
+            _send(name, "udp", PUBLIC_RESOLVER, 53, count=DNS_THRESHOLD + 10)
             events = _wait_for_events(name, lambda e: e.get("title") == "High DNS query volume")
             hits = [e for e in events if e.get("title") == "High DNS query volume"]
             assert hits, (
@@ -1547,36 +1536,9 @@ class TestNetworkDetectorClassification:
                 assert e.get("level") == "warning", e
                 count = int(e.get("description", "").split()[0])
                 assert count > DNS_THRESHOLD, f"alerted at {count} <= threshold: {e}"
-            assert not [
-                e for e in events if e.get("title") == "DNS query to non-standard server"
-            ], f"DNS to the gateway must not count as a non-standard server. Events: {events}"
-        finally:
-            _stop_shell(proc, name, coi_binary, env)
-
-    def test_gateway_traffic_is_not_private_network(self, coi_binary, detector_workspace):
-        """TCP to the gateway (an RFC1918 address) must not raise "Connection to
-        private network". A later non-standard DNS query is the anchor proving the
-        pipeline processed the gateway packet before we look."""
-        workspace, env = detector_workspace
-        proc, name, _ = _start_monitored_shell(coi_binary, workspace, env, slot=67)
-        try:
-            gateway = _container_gateway(name)
-            assert gateway, f"could not find the default gateway of {name}"
-            _send(name, "tcp", gateway, 80)
-            time.sleep(1)
-            _send(name, "udp", PUBLIC_RESOLVER, 53)
-            events = _wait_for_events(
-                name, lambda e: e.get("title") == "DNS query to non-standard server"
-            )
+            # Below the threshold the same queries are only "non-standard server".
             assert any(e.get("title") == "DNS query to non-standard server" for e in events), (
-                f"anchor event never arrived; pipeline not processing. Events: {events}"
+                f"queries under the threshold should be classified as non-standard. Events: {events}"
             )
-            false_pos = [
-                e
-                for e in events
-                if e.get("title") == "Connection to private network" and _remote_host(e) == gateway
-            ]
-            assert not false_pos, f"gateway {gateway} flagged as private network: {false_pos}"
-            assert get_container_state(name) == "Running", "gateway traffic must not pause"
         finally:
             _stop_shell(proc, name, coi_binary, env)
