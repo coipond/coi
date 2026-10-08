@@ -37,3 +37,13 @@ def test_health_storage_pools_missing(coi_binary, workspace_dir):
     assert entry.get("status") == "failed", (
         f"Missing pool entry should have status=failed. Got: {entry}"
     )
+    # An unresolvable pool (no driver) is reported as "missing" — not as
+    # "usage unavailable", which is reserved for a pool that exists (driver
+    # known) but whose usage query failed.
+    message = data["checks"]["incus_storage_pools"]["message"]
+    assert f"{missing_pool}: missing" in message, (
+        f"an unresolvable pool should be reported as missing. Message: {message}"
+    )
+    assert (
+        f"{missing_pool}: usage unavailable" not in message and f"{missing_pool} (" not in message
+    ), f"an unresolvable pool has no driver and is not 'usage unavailable'. Message: {message}"
