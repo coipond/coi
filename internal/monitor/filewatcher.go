@@ -190,7 +190,20 @@ func (w *FileWatcher) Run(ctx context.Context) {
 
 	// Background goroutine: poll the fanotify fd and decode events into evCh.
 	evCh := make(chan rawFanEvent, 64)
-	go w.readEvents(ctx, ifd, evCh)
+	// The deferred Close of ifd above must not run while readEvents can still
+	// poll/read it: once closed, the number can be reused (e.g. by an nft
+	// child's pidfd during the parallel NFT teardown) and readEvents would read
+	// that fd and close the "event fds" it parses out of it. Stop it first.
+	readCtx, stopReading := context.WithCancel(ctx)
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		w.readEvents(readCtx, ifd, evCh)
+	}()
+	defer func() {
+		stopReading()
+		<-readDone
+	}()
 
 	backstop := time.NewTicker(30 * time.Second)
 	defer backstop.Stop()

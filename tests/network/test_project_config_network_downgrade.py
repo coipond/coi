@@ -8,12 +8,14 @@ project scope (with a warning); only the user's ~/.coi/config.toml or an
 explicit COI_CONFIG may relax them.
 """
 
+import json
+import re
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from support.helpers import wait_for_firewall_rules
+from support.helpers import wait_for_firewall_rules, write_trusted_coi_config
 
 
 def test_project_config_network_downgrade_refused(coi_binary, cleanup_containers, workspace_dir):
@@ -54,13 +56,14 @@ def test_project_config_network_downgrade_refused(coi_binary, cleanup_containers
 # the gateway responds, so it can.)
 
 
-def _start_background_shell(coi_binary, workspace_dir):
+def _start_background_shell(coi_binary, workspace_dir, env=None):
     """Start a `--background` shell for the workspace; return (container_name, stderr)."""
     r = subprocess.run(
         [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
         capture_output=True,
         text=True,
         timeout=90,
+        env=env,
     )
     assert r.returncode == 0, f"background shell should start. stderr: {r.stderr}"
     name = None
@@ -168,4 +171,92 @@ def test_untrusted_mode_open_downgrade_ignored(coi_binary, cleanup_containers, w
     combined = setup_stderr.lower()
     assert "ignoring security-downgrading" in combined and "network.mode=open" in combined, (
         f"expected the mode=open downgrade warning during setup.\n{setup_stderr}"
+    )
+
+
+# ── block_metadata_endpoint: dropped when false, kept when true ──
+#
+# CI has no cloud metadata service, so curling 169.254.169.254 fails whether or
+# not it is blocked and proves nothing. Instead assert on the container's own
+# `ip daddr 169.254.0.0/16 reject` rule in the coi forward chain, and use a
+# trusted COI_CONFIG that turns the block OFF as the baseline, so a rule can
+# only be present because the untrusted project's `true` was honored.
+
+METADATA_REJECT = "ip daddr 169.254.0.0/16 reject"
+
+
+def _container_ip(container_name):
+    r = subprocess.run(
+        ["incus", "list", container_name, "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    info = json.loads(r.stdout)
+    if not info:
+        return None
+    for addr in info[0].get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
+        if addr.get("family") == "inet":
+            return addr["address"]
+    return None
+
+
+def _metadata_reject_rules(container_name):
+    """The container's metadata-block reject rules in the ip coi forward chain."""
+    ip = _container_ip(container_name)
+    assert ip, f"could not resolve the IPv4 address of {container_name}"
+    r = subprocess.run(
+        ["sudo", "-n", "nft", "list", "chain", "ip", "coi", "forward"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, f"nft list failed: {r.stderr}"
+    src = re.compile(r"ip saddr " + re.escape(ip) + r"(?![\d.])")
+    return [ln.strip() for ln in r.stdout.splitlines() if src.search(ln) and METADATA_REJECT in ln]
+
+
+@pytest.mark.parametrize(
+    "trusted, project, want_rule, want_warning",
+    [
+        # The untrusted downgrade is dropped: the secure default still blocks.
+        (None, "block_metadata_endpoint = false", True, True),
+        # Control: a TRUSTED config can turn the block off.
+        ("block_metadata_endpoint = false", None, False, False),
+        # The untrusted strengthening is kept: it re-enables the block the
+        # trusted config turned off, silently.
+        ("block_metadata_endpoint = false", "block_metadata_endpoint = true", True, False),
+    ],
+    ids=["project-false-dropped", "trusted-false-control", "project-true-kept"],
+)
+def test_untrusted_block_metadata_endpoint_sanitized(
+    coi_binary, cleanup_containers, workspace_dir, trusted, project, want_rule, want_warning
+):
+    """An untrusted `block_metadata_endpoint = false` is dropped and `= true` is
+    kept, proven by the container's actual nft metadata reject rule (#7)."""
+    env = None
+    if trusted:
+        env = write_trusted_coi_config(f'[network]\nmode = "restricted"\n{trusted}\n')
+    if project:
+        config_dir = Path(workspace_dir) / ".coi"
+        config_dir.mkdir(exist_ok=True)
+        (config_dir / "config.toml").write_text(f'[network]\nmode = "restricted"\n{project}\n')
+
+    container_name, setup_stderr = _start_background_shell(coi_binary, workspace_dir, env)
+    assert wait_for_firewall_rules(container_name), f"no firewall rules for {container_name}"
+
+    rules = _metadata_reject_rules(container_name)
+    if want_rule:
+        assert rules, (
+            f"expected a 169.254.0.0/16 reject rule for {container_name} "
+            f"(trusted={trusted!r}, project={project!r})\n{setup_stderr}"
+        )
+    else:
+        assert not rules, f"trusted block_metadata_endpoint=false should leave no rule, got {rules}"
+
+    warned = "network.block_metadata_endpoint=false" in setup_stderr
+    assert warned == want_warning, (
+        f"downgrade warning expected={want_warning}, got={warned}\n{setup_stderr}"
     )

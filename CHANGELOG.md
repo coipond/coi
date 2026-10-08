@@ -14,6 +14,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Network monitoring rules are removed when a monitored session ends (#882)** — a race in the session's watcher teardown could leave them behind, and the next container given the same IP inherited them.
 - [Bug Fix] **coi commands no longer fail at random when another process removes a profile** - every command loads every profile in `~/.coi/profiles/`, reading each file three times; a profile deleted between those reads (an orchestrator creates and removes one per session) failed the whole command with "failed to parse profile". Each profile is now read once, and one that is gone by then is skipped.
 - [Bug Fix] **macOS: no Keychain login hint when `CLAUDE_CODE_OAUTH_TOKEN` is set (#851)** — a long-lived `claude setup-token` token needs no Keychain login.
 - [Bug Fix] **Git identity on macOS comes from your Mac's gitconfig, not the Colima/Lima/OrbStack VM's (#853)** — including `include.path` files; on a multi-user Mac only your own home is used.

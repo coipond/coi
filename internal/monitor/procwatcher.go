@@ -190,23 +190,46 @@ func (pw *ProcEventWatcher) Run(ctx context.Context) {
 		return
 	}
 
-	go func() {
-		<-ctx.Done()
-		unix.Close(sock)
-	}()
-
-	buf := make([]byte, 4096)
-	for {
-		n, err := unix.Read(sock, buf)
-		if err != nil {
-			if err == syscall.EINTR {
-				continue
-			}
-			return // socket closed (ctx cancelled) or unrecoverable error
+	// This loop is the socket's only closer (the deferred Close above). It used
+	// to be closed a second time by a ctx-watching goroutine: closing a socket
+	// does not wake a read blocked on it, so the deferred Close ran later on an
+	// fd number the process had meanwhile reused — e.g. the pidfd of the nft
+	// child the parallel NFT teardown was waiting on ("waitid: bad file
+	// descriptor"), which left the session's monitoring rules behind. Instead,
+	// time reads out so cancellation is noticed here.
+	if err := readSocketUntilDone(ctx, sock, func(msg []byte) { pw.processMessages(msg, relCgroup) }); err != nil {
+		if pw.onError != nil {
+			pw.onError(fmt.Errorf("procwatcher: %w", err))
 		}
-		pw.processMessages(buf[:n], relCgroup)
 	}
 }
+
+// readSocketUntilDone reads datagrams from sock and hands each to handle until
+// ctx is cancelled, polling ctx every procReadTimeout. It never closes sock.
+func readSocketUntilDone(ctx context.Context, sock int, handle func([]byte)) error {
+	tv := unix.NsecToTimeval(procReadTimeout.Nanoseconds())
+	if err := unix.SetsockoptTimeval(sock, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
+		return fmt.Errorf("set read timeout: %w", err)
+	}
+	buf := make([]byte, 4096)
+	for ctx.Err() == nil {
+		n, err := unix.Read(sock, buf)
+		if err != nil {
+			if err == syscall.EINTR || err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
+				continue
+			}
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("read: %w", err)
+		}
+		handle(buf[:n])
+	}
+	return nil
+}
+
+// procReadTimeout bounds how long Run takes to notice cancellation.
+const procReadTimeout = 500 * time.Millisecond
 
 // procSubscribe sends the PROC_CN_MCAST_LISTEN message to enable proc events.
 //
