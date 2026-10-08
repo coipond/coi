@@ -1398,7 +1398,7 @@ class TestHealthChecks:
 
 # ── NetworkDetector classification (#5): DNS threshold, non-standard DNS ──
 #
-# Packets are sent with bash's /dev/udp (no client tools needed); the nft LOG
+# Packets are sent with a small python3 UDP script; the nft LOG
 # rules fire whether or not the coi firewall later accepts them. They hook
 # FORWARD only, so the target must be a routed address: the gateway (the bridge's
 # own host-side address) is delivered via INPUT and never reaches the detector,
@@ -1467,16 +1467,42 @@ def _stop_shell(proc, container_name, coi_binary, env):
     cleanup_container(container_name, coi_binary, env=env)
 
 
-def _send(container_name, proto, ip, port, count=1):
-    """Send `count` packets from the container with bash's /dev/<proto>."""
-    script = (
-        f"for i in $(seq {count}); do "
-        f"timeout 1 bash -c 'echo x > /dev/{proto}/{ip}/{port}' 2>/dev/null; done; true"
+# Sent from a script FILE, never `bash -c '... > /dev/udp/...'` or
+# `python3 -c "...socket..."`: those command lines are reverse-shell indicators
+# for the process monitor, which would pause the container mid-burst.
+_UDP_PROBE = """import socket, sys
+ip, port, count = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+for _ in range(count):
+    s.sendto(b"x", (ip, port))
+"""
+
+
+def _send_udp(container_name, ip, port, count=1):
+    """Send `count` UDP datagrams from the container to ip:port."""
+    subprocess.run(
+        ["incus", "exec", container_name, "--", "tee", "/tmp/udp_probe.py"],
+        input=_UDP_PROBE,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=True,
     )
     subprocess.run(
-        ["incus", "exec", container_name, "--", "bash", "-c", script],
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--",
+            "python3",
+            "/tmp/udp_probe.py",
+            ip,
+            str(port),
+            str(count),
+        ],
         capture_output=True,
-        timeout=30 + 2 * count,
+        timeout=30,
+        check=True,
     )
 
 
@@ -1507,7 +1533,7 @@ class TestNetworkDetectorClassification:
         workspace, env = detector_workspace
         proc, name, _ = _start_monitored_shell(coi_binary, workspace, env, slot=65)
         try:
-            _send(name, "udp", PUBLIC_RESOLVER, 53)
+            _send_udp(name, PUBLIC_RESOLVER, 53)
             events = _wait_for_events(
                 name, lambda e: e.get("title") == "DNS query to non-standard server"
             )
@@ -1525,7 +1551,7 @@ class TestNetworkDetectorClassification:
         workspace, env = detector_workspace
         proc, name, _ = _start_monitored_shell(coi_binary, workspace, env, slot=66)
         try:
-            _send(name, "udp", PUBLIC_RESOLVER, 53, count=DNS_THRESHOLD + 10)
+            _send_udp(name, PUBLIC_RESOLVER, 53, count=DNS_THRESHOLD + 10)
             events = _wait_for_events(name, lambda e: e.get("title") == "High DNS query volume")
             hits = [e for e in events if e.get("title") == "High DNS query volume"]
             assert hits, (
