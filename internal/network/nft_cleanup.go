@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -35,25 +36,27 @@ func CleanupNFTMonitoringRules(containerIP string) error {
 
 	// Find and delete all rules with our log prefixes for this IP
 	lines := strings.Split(string(output), "\n")
-	rulesRemoved := 0
-
+	var errs []error
 	for _, line := range lines {
 		if strings.Contains(line, fmt.Sprintf("NFT_COI[%s]", containerIP)) ||
 			strings.Contains(line, fmt.Sprintf("NFT_DNS[%s]", containerIP)) ||
 			strings.Contains(line, fmt.Sprintf("NFT_SUSPICIOUS[%s]", containerIP)) {
 			// Extract handle number from line like: "... # handle 123"
 			if handle := extractNFTHandle(line); handle != "" {
-				if err := deleteNFTRuleByHandle(handle); err != nil {
-					return fmt.Errorf("failed to delete rule handle %s: %w", handle, err)
+				// Keep going on a failed delete: the session supervisor removes
+				// the same rules concurrently, and stopping at the first handle
+				// it already took would strand the rest.
+				if err := deleteNFTRuleByHandle(handle); err != nil &&
+					!strings.Contains(err.Error(), "No such file or directory") {
+					errs = append(errs, fmt.Errorf("failed to delete rule handle %s: %w", handle, err))
 				}
-				rulesRemoved++
 			}
 		}
 	}
 
 	// Not finding any rules is OK during cleanup - the container may not have
 	// had monitoring enabled or rules may have already been cleaned
-	return nil
+	return errors.Join(errs...)
 }
 
 // runNFTCommand executes an nft command with proper sudo handling
