@@ -32,12 +32,21 @@ func debugf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "[NFT-DEBUG] "+format+"\n", args...) // terminal-sink-ok: fallback only when no session logger is set (non-session/CLI use)
 }
 
-// JournalReader wraps systemd journal for reading kernel logs
+// JournalReader wraps systemd journal for reading kernel logs.
+//
+// While StreamLogs runs it owns the sd-journal handle: Close only flags the
+// reader closed and StreamLogs closes the handle on its way out. Closing it
+// from another goroutine while journal.Wait (which runs unlocked, so Close
+// never blocks for its timeout) is inside sd_journal_wait freed the handle
+// under it; the C code then closed file descriptors whose numbers the process
+// had already reused — e.g. the pidfd of the next `sudo nft` child, whose
+// wait then failed with "waitid: bad file descriptor", so the session's
+// monitoring rules were never removed.
 type JournalReader struct {
 	journal   *sdjournal.Journal
 	mu        sync.Mutex
 	closed    bool
-	closeOnce sync.Once
+	streaming bool
 }
 
 // JournalOpenTimeout is the maximum time to wait for journal to open
@@ -105,8 +114,21 @@ func newJournalReaderInternal() (*JournalReader, error) {
 
 // StreamLogs streams kernel log messages to the provided channel
 func (jr *JournalReader) StreamLogs(ctx context.Context, msgChan chan<- string) error {
-	// Close journal when we're done streaming
-	defer jr.Close()
+	jr.mu.Lock()
+	if jr.closed || jr.streaming {
+		jr.mu.Unlock()
+		return nil
+	}
+	jr.streaming = true
+	jr.mu.Unlock()
+	// Close the journal when we're done streaming: we own it until then.
+	defer func() {
+		jr.mu.Lock()
+		defer jr.mu.Unlock()
+		jr.streaming = false
+		jr.closed = true
+		_ = jr.closeLocked()
+	}()
 
 	debugf("StreamLogs started, entering main loop")
 
@@ -222,17 +244,25 @@ func (jr *JournalReader) StreamLogs(ctx context.Context, msgChan chan<- string) 
 	}
 }
 
-// Close closes the journal reader (safe to call multiple times)
+// Close closes the journal reader (safe to call multiple times). While
+// StreamLogs is running it only marks the reader closed; StreamLogs notices
+// within one Wait timeout and closes the handle itself.
 func (jr *JournalReader) Close() error {
-	var closeErr error
-	jr.closeOnce.Do(func() {
-		jr.mu.Lock()
-		defer jr.mu.Unlock()
-		jr.closed = true
-		if jr.journal != nil {
-			closeErr = jr.journal.Close()
-			jr.journal = nil
-		}
-	})
-	return closeErr
+	jr.mu.Lock()
+	defer jr.mu.Unlock()
+	jr.closed = true
+	if jr.streaming {
+		return nil
+	}
+	return jr.closeLocked()
+}
+
+// closeLocked closes the sd-journal handle once. Callers hold jr.mu.
+func (jr *JournalReader) closeLocked() error {
+	if jr.journal == nil {
+		return nil
+	}
+	err := jr.journal.Close()
+	jr.journal = nil
+	return err
 }

@@ -15,9 +15,8 @@ func TestJournalReaderDoubleClose(t *testing.T) {
 	// Create a minimal JournalReader without actually opening the journal
 	// to test the close logic
 	jr := &JournalReader{
-		journal:   nil, // nil journal simulates already-closed or failed state
-		closed:    false,
-		closeOnce: sync.Once{},
+		journal: nil, // nil journal simulates already-closed or failed state
+		closed:  false,
 	}
 
 	// First close should succeed
@@ -39,9 +38,8 @@ func TestJournalReaderDoubleClose(t *testing.T) {
 // TestJournalReaderConcurrentClose tests closing from multiple goroutines
 func TestJournalReaderConcurrentClose(t *testing.T) {
 	jr := &JournalReader{
-		journal:   nil,
-		closed:    false,
-		closeOnce: sync.Once{},
+		journal: nil,
+		closed:  false,
 	}
 
 	var wg sync.WaitGroup
@@ -73,9 +71,8 @@ func TestJournalReaderConcurrentClose(t *testing.T) {
 // TestJournalReaderClosedFlag tests that closed flag prevents operations
 func TestJournalReaderClosedFlag(t *testing.T) {
 	jr := &JournalReader{
-		journal:   nil,
-		closed:    true, // Already closed
-		closeOnce: sync.Once{},
+		journal: nil,
+		closed:  true, // Already closed
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -93,9 +90,8 @@ func TestJournalReaderClosedFlag(t *testing.T) {
 // TestJournalReaderContextCancel tests graceful shutdown on context cancel
 func TestJournalReaderContextCancel(t *testing.T) {
 	jr := &JournalReader{
-		journal:   nil,
-		closed:    false,
-		closeOnce: sync.Once{},
+		journal: nil,
+		closed:  false,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -125,9 +121,8 @@ func TestJournalReaderContextCancel(t *testing.T) {
 func TestLogReaderDoubleClose(t *testing.T) {
 	// Create LogReader with minimal mock
 	jr := &JournalReader{
-		journal:   nil,
-		closed:    false,
-		closeOnce: sync.Once{},
+		journal: nil,
+		closed:  false,
 	}
 
 	lr := &LogReader{
@@ -152,9 +147,8 @@ func TestLogReaderDoubleClose(t *testing.T) {
 // TestLogReaderConcurrentClose tests LogReader with concurrent close calls
 func TestLogReaderConcurrentClose(t *testing.T) {
 	jr := &JournalReader{
-		journal:   nil,
-		closed:    false,
-		closeOnce: sync.Once{},
+		journal: nil,
+		closed:  false,
 	}
 
 	lr := &LogReader{

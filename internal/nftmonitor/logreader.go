@@ -45,14 +45,20 @@ func NewLogReader(cfg *Config) (*LogReader, error) {
 func (lr *LogReader) Start(ctx context.Context) error {
 	debugf("LogReader.Start called, container IP: %s", lr.config.ContainerIP)
 
-	// Start journal streaming in background
+	// Start journal streaming in background. Don't return before it has
+	// stopped: it closes the sd-journal handle on exit, and the daemon's Stop
+	// runs nft right after Start returns — that must not overlap the C
+	// library tearing the journal down (see JournalReader).
+	streamDone := make(chan struct{})
 	go func() {
+		defer close(streamDone)
 		if err := lr.journal.StreamLogs(ctx, lr.journalChan); err != nil {
 			if ctx.Err() == nil && lr.config.OnError != nil {
 				lr.config.OnError(fmt.Errorf("journal streaming error: %w", err))
 			}
 		}
 	}()
+	defer func() { <-streamDone }()
 
 	// Parse incoming log messages
 	for {
