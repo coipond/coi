@@ -66,3 +66,38 @@ func TestAddRules_Idempotent(t *testing.T) {
 		t.Errorf("AddRules is not idempotent: %d rules after first call, %d after second (#696 item 3a)", first, second)
 	}
 }
+
+// TestRemoveRules_ConcurrentRemovers: the session supervisor and coi container
+// delete / kill cleanup remove the same IP's rules at the same time. A remover
+// that loses the race on one handle must still remove the rest, and losing a
+// race (the rule is already gone) is not an error.
+func TestRemoveRules_ConcurrentRemovers(t *testing.T) {
+	if !sudoNftAvailable() {
+		t.Skip("nft with passwordless sudo not available, skipping integration test")
+	}
+
+	const testIP = "203.0.113.8" // TEST-NET-3, safe fingerprint
+	cfg := &Config{ContainerIP: testIP, LogDNSQueries: true}
+	_ = NewRuleManager(cfg).RemoveRules()
+	t.Cleanup(func() { _ = NewRuleManager(cfg).RemoveRules() })
+
+	for i := 0; i < 10; i++ {
+		if err := NewRuleManager(cfg).AddRules(); err != nil {
+			t.Fatalf("AddRules: %v", err)
+		}
+		errs := make(chan error, 2)
+		for j := 0; j < 2; j++ {
+			go func() { errs <- NewRuleManager(cfg).RemoveRules() }()
+		}
+		for j := 0; j < 2; j++ {
+			// "no NFT rules found" is the loser's normal outcome when the other
+			// remover took every rule before it listed.
+			if err := <-errs; err != nil && !strings.Contains(err.Error(), "no NFT rules found") {
+				t.Errorf("iteration %d: concurrent RemoveRules failed: %v", i, err)
+			}
+		}
+		if n := countMonitorRulesForIP(t, testIP); n != 0 {
+			t.Fatalf("iteration %d: %d LOG rules for %s left after concurrent removal", i, n, testIP)
+		}
+	}
+}

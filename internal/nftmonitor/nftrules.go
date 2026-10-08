@@ -2,6 +2,7 @@ package nftmonitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -93,18 +94,28 @@ func (rm *RuleManager) RemoveRules() error {
 	containerIP := rm.config.ContainerIP
 
 	rulesRemoved := 0
+	var errs []error
 	for _, line := range lines {
 		if strings.Contains(line, fmt.Sprintf("NFT_COI[%s]", containerIP)) ||
 			strings.Contains(line, fmt.Sprintf("NFT_DNS[%s]", containerIP)) ||
 			strings.Contains(line, fmt.Sprintf("NFT_SUSPICIOUS[%s]", containerIP)) {
 			// Extract handle number from line like: "... # handle 123"
 			if handle := extractHandle(line); handle != "" {
+				// Keep going on a failed delete: another remover (coi container
+				// delete / kill cleanup) often runs concurrently, and stopping at
+				// the first handle it already took would strand the rest.
 				if err := rm.deleteRuleByHandle(handle); err != nil {
-					return fmt.Errorf("failed to delete rule handle %s: %w", handle, err)
+					if !ruleAlreadyGone(err) {
+						errs = append(errs, fmt.Errorf("failed to delete rule handle %s: %w", handle, err))
+					}
+					continue
 				}
 				rulesRemoved++
 			}
 		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 
 	if rulesRemoved == 0 {
@@ -246,6 +257,12 @@ func (rm *RuleManager) runNFTCommand(args ...string) ([]byte, error) {
 	}
 
 	return output, nil
+}
+
+// ruleAlreadyGone reports whether an nft delete failed only because the rule
+// no longer exists (removed concurrently by another cleanup path).
+func ruleAlreadyGone(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "No such file or directory")
 }
 
 // extractHandle extracts the handle number from a nft rule line

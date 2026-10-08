@@ -16,6 +16,7 @@ NOTE: These tests require systemd journal access and nftables.
 import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -136,6 +137,89 @@ def check_nft_rules_exist(container_ip):
         f"NFT_COI[{container_ip}]" in result.stdout
         or f"NFT_DNS[{container_ip}]" in result.stdout
         or f"NFT_SUSPICIOUS[{container_ip}]" in result.stdout
+    )
+
+
+_MONITOR_RULE_RE = re.compile(r"NFT_(?:COI|DNS|SUSPICIOUS)\[[0-9.]+\]")
+
+
+def _leftover_monitor_rules():
+    """NFT_COI/NFT_DNS/NFT_SUSPICIOUS LOG rule lines (with handles) in ip filter FORWARD."""
+    r = subprocess.run(
+        ["sudo", "-n", "nft", "-a", "list", "chain", "ip", "filter", "FORWARD"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if r.returncode != 0:
+        return []
+    return [ln.strip() for ln in r.stdout.splitlines() if _MONITOR_RULE_RE.search(ln)]
+
+
+def _leak_diagnostics(lines):
+    """Everything that could explain who owns (or should have removed) the rules."""
+
+    def run(cmd):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        return (r.stdout + r.stderr).strip()
+
+    parts = ["leftover rules:", *lines]
+    parts += [
+        "",
+        "coi supervise processes:",
+        run(["pgrep", "-af", "supervise --state"]) or "(none)",
+    ]
+    parts += ["", "containers:", run(["incus", "list", "--format=csv", "-c", "ns4"]) or "(none)"]
+    run_dir = Path.home() / ".coi" / "run"
+    states = sorted(run_dir.glob("*.supervisor.json")) if run_dir.exists() else []
+    parts += ["", "supervisor state files:", *(p.name for p in states)]
+    for p in states:
+        parts.append(coi_session_logs(p.name.removesuffix(".supervisor.json"), tail=3000))
+    return "\n".join(parts)
+
+
+@pytest.fixture(autouse=True)
+def no_leaked_monitor_rules():
+    """Fail the test that leaves NFT monitoring LOG rules behind, and remove them.
+
+    Every test here deletes its container in `finally`, after which the session
+    supervisor must remove that container's NFT_* rules. The rules are keyed by IP
+    only and CI hands every container the same IP, so a leak silently satisfies the
+    next test's "rules exist" checks and then breaks its "rules removed" check
+    (the test_rules_removed_on_session_end flake). Attribute the leak to the test
+    that caused it, with diagnostics, and clean up so it cannot cascade.
+    """
+    yield
+    deadline = time.time() + 20  # supervisor poll (2 s) + teardown, with CI slack
+    lines = _leftover_monitor_rules()
+    while lines and time.time() < deadline:
+        time.sleep(1)
+        lines = _leftover_monitor_rules()
+    if not lines:
+        return
+    diagnostics = _leak_diagnostics(lines)
+    for ln in lines:
+        handle = ln.rsplit("# handle ", 1)[-1].split()[0] if "# handle " in ln else ""
+        if handle.isdigit():
+            subprocess.run(
+                [
+                    "sudo",
+                    "-n",
+                    "nft",
+                    "delete",
+                    "rule",
+                    "ip",
+                    "filter",
+                    "FORWARD",
+                    "handle",
+                    handle,
+                ],
+                capture_output=True,
+                timeout=10,
+            )
+    pytest.fail(
+        "NFT monitoring rules leaked: still present 20s after the test's container was "
+        f"deleted (removed them now).\n{diagnostics}"
     )
 
 
