@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -114,8 +115,18 @@ func checkDeprecatedConfigFields(path string) error {
 // profile trap struct and returns a non-nil error if any pre-0.8.0 root-level
 // fields are present.
 func checkDeprecatedProfileFields(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return checkDeprecatedProfileData(path, data)
+}
+
+// checkDeprecatedProfileData is checkDeprecatedProfileFields for content
+// already read from path (path is only used in the message).
+func checkDeprecatedProfileData(path string, data []byte) error {
 	var trap deprecatedProfileFields
-	if _, err := toml.DecodeFile(path, &trap); err != nil {
+	if _, err := toml.Decode(string(data), &trap); err != nil {
 		return nil
 	}
 
