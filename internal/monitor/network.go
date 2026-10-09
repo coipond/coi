@@ -288,8 +288,10 @@ func checkSuspicious(conn Connection, allowedCIDRs []string) string {
 	}
 
 	// Check RFC1918 addresses only when network is restricted (allowedCIDRs not empty)
-	// In "open" network mode (no restrictions), RFC1918 addresses are expected/allowed
-	if len(allowedCIDRs) > 0 && isRFC1918(remoteIP) {
+	// In "open" network mode (no restrictions), RFC1918 addresses are expected/allowed.
+	// A private address on the allowlist (a [[network.hosts]] LAN entry) is one the
+	// firewall deliberately permits.
+	if len(allowedCIDRs) > 0 && isRFC1918(remoteIP) && !inAllowlist(remoteIP, allowedCIDRs) {
 		return "RFC1918 private address (should be blocked by firewall)"
 	}
 

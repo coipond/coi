@@ -599,7 +599,9 @@ type NetworkConfig struct {
 // gives allowed_domains, so you can open a single LAN service (redmine:443)
 // without widening the rest of egress. Empty inherits the global allowed_ports
 // (else all ports). Applied in restricted and allowlist mode; ignored in open
-// mode, which blocks nothing.
+// mode, which blocks nothing. A private host in allowlist mode requires a port
+// scope (these ports, else allowed_ports) without 53 — see
+// network.checkHostPortsEnforceable.
 type HostEntry struct {
 	IP        string   `toml:"ip"`
 	Hostnames []string `toml:"hostnames"`
