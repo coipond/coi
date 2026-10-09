@@ -14,6 +14,7 @@ type Collector struct {
 	workspacePath     string
 	allowedCIDRs      []string
 	allowedCIDRsFn    func() []string
+	permitted         PermittedDestinationFunc
 	filesystemMonitor *FilesystemMonitor
 }
 
@@ -27,6 +28,12 @@ type Collector struct {
 // the collector uses them, so it is never worse than before.
 func (c *Collector) SetAllowedCIDRsProvider(fn func() []string) {
 	c.allowedCIDRsFn = fn
+}
+
+// SetPermittedDestination supplies the firewall-permit check (see
+// DaemonConfig.PermittedDestination).
+func (c *Collector) SetPermittedDestination(fn PermittedDestinationFunc) {
+	c.permitted = fn
 }
 
 // currentAllowedCIDRs returns the live allowlist when a provider is set and yields
@@ -68,7 +75,7 @@ func (c *Collector) Collect(ctx context.Context) (MonitorSnapshot, error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		networkStats, err := CollectNetworkStats(ctx, c.containerName, c.containerIP, c.currentAllowedCIDRs())
+		networkStats, err := CollectNetworkStats(ctx, c.containerName, c.containerIP, c.currentAllowedCIDRs(), c.permitted)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {

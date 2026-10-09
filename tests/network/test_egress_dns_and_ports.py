@@ -26,7 +26,7 @@ import json
 import re
 import subprocess
 
-from support.helpers import wait_for_firewall_rules, write_trusted_coi_config
+from support.helpers import fake_lan, wait_for_firewall_rules, write_trusted_coi_config
 
 
 def _container_ip(name):
@@ -419,6 +419,92 @@ def test_allowlist_private_host_entry_scoped(coi_binary, workspace_dir, cleanup_
     assert lines.index(host_accepts[0]) < rfc_reject[0], (
         "the host accept must precede the RFC1918 reject:\n" + "\n".join(lines)
     )
+
+
+def _allowlist_with_lan_host(host_ip, ports="[443]"):
+    """Trusted allowlist config: one public allowlist entry plus a LAN
+    [[network.hosts]] entry (redmine.lan) — "only these internet hosts, and on the
+    LAN only redmine"."""
+    return write_trusted_coi_config(
+        "[network]\n"
+        'mode = "allowlist"\n'
+        'allowed_domains = ["1.1.1.1/32"]\n\n'
+        "[[network.hosts]]\n"
+        f'ip = "{host_ip}"\n'
+        'hostnames = ["redmine.lan"]\n'
+        f"ports = {ports}\n"
+    )
+
+
+def test_allowlist_lan_host_real_traffic(coi_binary, workspace_dir, cleanup_containers):
+    """Real traffic through a fake LAN (a netns behind the host's FORWARD path):
+    allowlist + redmine.lan -> <lan>.20 with ports=[443] reaches exactly that
+    service, BY NAME. Each block is paired with an allowed connection to the same
+    host or port, so it can't pass because the target is simply down."""
+    with fake_lan("192.168.201") as (redmine, other):
+        name = _start_background_shell(coi_binary, workspace_dir, _allowlist_with_lan_host(redmine))
+
+        assert _can_connect(coi_binary, name, "redmine.lan", 443), (
+            "redmine.lan:443 must be reachable by name (/etc/hosts + targeted accept)"
+        )
+        assert _can_connect(coi_binary, name, redmine, 443)
+        assert not _can_connect(coi_binary, name, redmine, 8080), (
+            "the LAN host must be reachable on its listed ports only"
+        )
+        assert not _can_connect(coi_binary, name, other, 443), (
+            "no other LAN host may be reachable — the entry must not open the LAN"
+        )
+
+
+def test_allowlist_lan_unreachable_without_host_entry(
+    coi_binary, workspace_dir, cleanup_containers
+):
+    """Control for the test above: the same fake LAN with NO host entry is fully
+    blocked in allowlist mode, so it is the entry that opens redmine:443."""
+    with fake_lan("192.168.202") as (redmine, _other):
+        env = write_trusted_coi_config(
+            '[network]\nmode = "allowlist"\nallowed_domains = ["1.1.1.1/32"]\n'
+        )
+        name = _start_background_shell(coi_binary, workspace_dir, env)
+        assert not _can_connect(coi_binary, name, redmine, 443), (
+            "allowlist mode must block the LAN when no host entry opens it"
+        )
+
+
+def test_coi_hosts_add_opens_lan_host_in_allowlist(coi_binary, workspace_dir, cleanup_containers):
+    """`coi hosts add --ports 443` on a RUNNING allowlist container opens just that
+    LAN service; adding a LAN host without a port scope is refused and opens
+    nothing."""
+    with fake_lan("192.168.203") as (redmine, other):
+        env = write_trusted_coi_config(
+            '[network]\nmode = "allowlist"\nallowed_domains = ["1.1.1.1/32"]\n'
+        )
+        name = _start_background_shell(coi_binary, workspace_dir, env)
+        assert not _can_connect(coi_binary, name, redmine, 443)
+
+        added = subprocess.run(
+            [coi_binary, "hosts", "add", name, redmine, "redmine.lan", "--ports", "443"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert added.returncode == 0, f"coi hosts add should succeed: {added.stderr}"
+        assert _can_connect(coi_binary, name, "redmine.lan", 443)
+        assert not _can_connect(coi_binary, name, redmine, 8080)
+
+        refused = subprocess.run(
+            [coi_binary, "hosts", "add", name, other, "other.lan"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert refused.returncode != 0 and "explicit ports" in refused.stdout + refused.stderr, (
+            f"an unscoped LAN host must be refused.\nstdout: {refused.stdout}\n"
+            f"stderr: {refused.stderr}"
+        )
+        assert not _can_connect(coi_binary, name, other, 443)
 
 
 def _run_fails_closed(coi_binary, workspace_dir, env, expect):

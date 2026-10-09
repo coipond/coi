@@ -43,6 +43,7 @@ func TestCheckHostPortsEnforceable(t *testing.T) {
 		{"allowlist + private with no scope at all is refused", config.NetworkModeAllowlist, noLocal, noPorts("10.50.0.100"), nil, true},
 		{"allowlist + private on 53 is refused", config.NetworkModeAllowlist, noLocal, withPorts("10.50.0.100", 443, 53), nil, true},
 		{"allowlist + private inheriting 53 is refused", config.NetworkModeAllowlist, noLocal, noPorts("10.50.0.100"), []int{53, 443}, true},
+		{"allowlist + private on 853 (DoT) is refused", config.NetworkModeAllowlist, noLocal, withPorts("10.50.0.100", 443, 853), nil, true},
 
 		// allowlist + private WITH allow_local_network_access: the LAN accept covers
 		// it, so a per-host scope cannot narrow anything.

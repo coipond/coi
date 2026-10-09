@@ -674,7 +674,7 @@ func detectHostTimezone() string {
 }
 
 // startMonitoringDaemon starts the background monitoring daemon
-func startMonitoringDaemon(ctx context.Context, containerName, workspacePath string, cfg *config.Config, allowedCIDRs []string, log *logger.SessionLogger, daemon *monitor.MonitorDaemon) error {
+func startMonitoringDaemon(ctx context.Context, containerName, workspacePath string, cfg *config.Config, allowedCIDRs []string, permitted func(ip string, port int) bool, log *logger.SessionLogger, daemon *monitor.MonitorDaemon) error {
 	// Get home directory for audit log
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -693,15 +693,12 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 	var allowedCIDRsProvider func() []string
 	if cfg.Network.Mode == config.NetworkModeAllowlist {
 		if ip, ipErr := network.GetContainerIP(containerName); ipErr == nil && ip != "" {
-			// A private [[network.hosts]] entry is reached through a targeted rule,
-			// not the set, so the live set alone would miss it.
-			hostCIDRs := hostEntryCIDRs(cfg.Network.Hosts)
 			allowedCIDRsProvider = func() []string {
 				cidrs, err := network.CurrentAllowlistCIDRs(ip)
 				if err != nil {
 					return nil // read failed — collector falls back to the static snapshot
 				}
-				return append(cidrs, hostCIDRs...)
+				return cidrs
 			}
 		}
 	}
@@ -714,6 +711,7 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 		AuditLogPath:               auditLogPath,
 		AllowedCIDRs:               allowedCIDRs,
 		AllowedCIDRsProvider:       allowedCIDRsProvider,
+		PermittedDestination:       permitted,
 		AllowedDomains:             cfg.Network.AllowedDomains,
 		GTFOBinsDir:                cfg.Detection.GTFOBinsDir,
 		SigmaDir:                   cfg.Detection.SigmaDir,
@@ -758,7 +756,7 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 }
 
 // startNFTMonitoringDaemon starts the nftables network monitoring daemon
-func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *config.Config, allowedCIDRs []string, log *logger.SessionLogger, daemon *nftmonitor.NFTMonitorDaemon) error {
+func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *config.Config, allowedCIDRs []string, permitted func(ip string, port int) bool, log *logger.SessionLogger, daemon *nftmonitor.NFTMonitorDaemon) error {
 	// Route the nft monitor's COI_NFT_DEBUG diagnostics to the session log
 	// instead of the user's attached terminal (issue #372 class).
 	nftmonitor.SetLogger(log)
@@ -790,16 +788,17 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 
 	// Create NFT daemon config
 	nftCfg := nftmonitor.Config{
-		ContainerName:      containerName,
-		ContainerIP:        containerIP,
-		AllowedCIDRs:       allowedCIDRs,
-		GatewayIP:          gatewayIP,
-		AuditLogPath:       auditLogPath,
-		RateLimitPerSecond: cfg.Monitoring.NFT.RateLimitPerSecond,
-		DNSQueryThreshold:  cfg.Monitoring.NFT.DNSQueryThreshold,
-		LogDNSQueries:      config.BoolVal(cfg.Monitoring.NFT.LogDNSQueries),
-		LimaHost:           cfg.Monitoring.NFT.LimaHost,
-		ForensicsOnKill:    cfg.Monitoring.IsForensicsOnKillEnabled(),
+		ContainerName:        containerName,
+		ContainerIP:          containerIP,
+		AllowedCIDRs:         allowedCIDRs,
+		PermittedDestination: permitted,
+		GatewayIP:            gatewayIP,
+		AuditLogPath:         auditLogPath,
+		RateLimitPerSecond:   cfg.Monitoring.NFT.RateLimitPerSecond,
+		DNSQueryThreshold:    cfg.Monitoring.NFT.DNSQueryThreshold,
+		LogDNSQueries:        config.BoolVal(cfg.Monitoring.NFT.LogDNSQueries),
+		LimaHost:             cfg.Monitoring.NFT.LimaHost,
+		ForensicsOnKill:      cfg.Monitoring.IsForensicsOnKillEnabled(),
 		OnThreat: func(threat nftmonitor.ThreatEvent) {
 			log.Printf("[nft] threat detected: %s severity=%s", threat.Title, threat.Level)
 		},
@@ -841,19 +840,6 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 // like an "Unauthorized connection attempt" at ThreatLevelHigh — which, with
 // auto_pause_on_high, pauses the container mid-task. Wildcards are now rejected
 // outright, and going through the policy is what keeps it that way.
-// hostEntryCIDRs returns the [[network.hosts]] addresses as /32s. In allowlist
-// mode each is reachable by construction (a public one joins the allowlist set,
-// a private one gets a targeted accept), so the monitors must count them as
-// allowed rather than flag a configured LAN service as an unauthorized or
-// private-network connection.
-func hostEntryCIDRs(hosts []config.HostEntry) []string {
-	cidrs := make([]string, 0, len(hosts))
-	for _, h := range hosts {
-		cidrs = append(cidrs, h.IP+"/32")
-	}
-	return cidrs
-}
-
 func resolveDomainsToHostCIDRs(domains []string) []string {
 	if len(domains) == 0 {
 		return nil

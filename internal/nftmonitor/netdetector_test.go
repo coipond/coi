@@ -362,27 +362,45 @@ func TestNetworkDetector_RFC1918StillAlertsWithGateway(t *testing.T) {
 	}
 }
 
-// A private [[network.hosts]] entry in allowlist mode is on AllowedCIDRs: the
-// firewall permits it, so it must not raise the high-severity private-network
-// alert (which auto-pauses the container). Other private addresses still do.
-func TestNetworkDetector_RFC1918AllowlistedHostEntry(t *testing.T) {
+// A destination the firewall permits (a [[network.hosts]] LAN service on its
+// port, possibly added at runtime) raises no private-network, allowlist or
+// DNS-server alert. The exemption is port-aware, and C2-port detection still
+// applies to the permitted host.
+func TestNetworkDetector_FirewallPermittedDestination(t *testing.T) {
+	permitted := func(ip string, port int) bool {
+		return (ip == "10.50.0.100" && (port == 443 || port == 4444)) || (ip == "10.50.0.53" && port == 53)
+	}
 	nd := NewNetworkDetector(&Config{
-		ContainerIP:  "10.47.62.50",
-		GatewayIP:    "10.47.62.1",
-		AllowedCIDRs: []string{"140.82.112.3/32", "10.50.0.100/32"},
+		ContainerIP:          "10.47.62.50",
+		GatewayIP:            "10.47.62.1",
+		AllowedCIDRs:         []string{"140.82.112.3/32"},
+		PermittedDestination: permitted,
 	})
-	event := func(dst string) *NetworkEvent {
+	event := func(dst string, port int) *NetworkEvent {
 		return &NetworkEvent{
 			Timestamp: time.Now(), ContainerIP: "10.47.62.50", SrcIP: "10.47.62.50",
-			DstIP: dst, DstPort: 443, Protocol: "TCP",
+			DstIP: dst, DstPort: port, Protocol: "TCP",
 		}
 	}
-	if threat := nd.Analyze(event("10.50.0.100")); threat != nil {
-		t.Errorf("allowlisted private host should not alert, got %q", threat.Title)
+	if threat := nd.Analyze(event("10.50.0.100", 443)); threat != nil {
+		t.Errorf("permitted LAN service should not alert, got %q", threat.Title)
 	}
-	threat := nd.Analyze(event("10.50.0.101"))
-	if threat == nil || threat.Title != "Connection to private network" {
-		t.Errorf("non-allowlisted private host must still alert, got %v", threat)
+	if threat := nd.Analyze(event("10.50.0.53", 53)); threat != nil {
+		t.Errorf("permitted LAN resolver should not alert, got %q", threat.Title)
+	}
+	for _, tc := range []struct {
+		dst   string
+		port  int
+		title string
+	}{
+		{"10.50.0.100", 22, "Connection to private network"},
+		{"10.50.0.101", 443, "Connection to private network"},
+		{"10.50.0.100", 4444, "Connection to suspicious port"},
+	} {
+		threat := nd.Analyze(event(tc.dst, tc.port))
+		if threat == nil || threat.Title != tc.title {
+			t.Errorf("%s:%d: want %q, got %v", tc.dst, tc.port, tc.title, threat)
+		}
 	}
 }
 

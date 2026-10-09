@@ -4,7 +4,7 @@
 
 ### Features
 
-- [Feature] **Allowlist mode can reach a single LAN service** — a `[[network.hosts]]` entry with a private IP and `ports` (e.g. `ports = [443]`) is now reachable on just those ports, without `allow_local_network_access` opening the whole LAN. Port 53 is refused, since allowlist mode blocks all DNS. Security monitoring no longer flags connections to such an entry.
+- [Feature] **Allowlist mode can reach a single LAN service** — a `[[network.hosts]]` entry with a private IP and `ports` (e.g. `ports = [443]`) is now reachable on just those ports, without `allow_local_network_access` opening the whole LAN. Ports 53 and 853 are refused, since allowlist mode blocks all DNS. Security monitoring, in restricted and allowlist mode, no longer flags (or auto-pauses on) a connection the firewall deliberately allows to a LAN host: a `[[network.hosts]]` service on its ports, one added with `coi hosts add`, or a pinned LAN resolver. Other ports on that host are still flagged.
 
 ## 0.14.0 (2026-10-09)
 

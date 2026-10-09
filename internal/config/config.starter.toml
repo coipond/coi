@@ -89,7 +89,7 @@
 # empty inherits allowed_ports (else all ports). This is what opens ONE LAN
 # service (e.g. redmine:443): in restricted mode alongside open internet, in
 # allowlist mode alongside only allowed_domains. In allowlist mode a private IP
-# needs ports (or allowed_ports), and 53 is refused (allowlist blocks all DNS).
+# needs ports (or allowed_ports), and 53/853 are refused (allowlist blocks all DNS).
 # Trusted-scope only — ignored from a project ./.coi/config.toml. Add on the fly
 # to a running container with `coi hosts add <container> <ip> <hostname...> --ports 443`.
 # [[network.hosts]]

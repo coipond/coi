@@ -9,6 +9,7 @@ import (
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/logger"
 	"github.com/coipond/coi/internal/monitor"
+	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/nftmonitor"
 	"github.com/coipond/coi/internal/session"
 )
@@ -37,18 +38,26 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 
 	var allowedCIDRs []string
 	if a.cfg.Network.Mode == config.NetworkModeAllowlist {
-		allowedCIDRs = append(resolveDomainsToHostCIDRs(a.cfg.Network.AllowedDomains),
-			hostEntryCIDRs(a.cfg.Network.Hosts)...)
+		allowedCIDRs = resolveDomainsToHostCIDRs(a.cfg.Network.AllowedDomains)
 	}
 
-	if err := startMonitoringDaemon(ctx, containerName, workspacePath, a.cfg, allowedCIDRs, log, mon); err != nil {
+	// In the enforcing modes both daemons share one view of what the firewall
+	// deliberately permits, so a configured LAN service is not reported as a
+	// private-network leak (and auto-paused). Read from the live rules, so hosts
+	// added later with `coi hosts add` are covered too.
+	var permitted func(ip string, port int) bool
+	if a.cfg.Network.Mode == config.NetworkModeRestricted || a.cfg.Network.Mode == config.NetworkModeAllowlist {
+		permitted = network.NewEgressPermits(containerName, a.cfg.Network.Hosts, a.cfg.Network.AllowedPorts).Permits
+	}
+
+	if err := startMonitoringDaemon(ctx, containerName, workspacePath, a.cfg, allowedCIDRs, permitted, log, mon); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to start monitoring daemon: %v\n", err)
 	}
 
 	if config.BoolVal(a.cfg.Monitoring.NFT.Enabled) {
 		if !a.cfg.Network.SudoAllowed() {
 			fmt.Fprintf(os.Stderr, "NFT network monitoring skipped: [network] use_sudo = false\n")
-		} else if err := startNFTMonitoringDaemon(ctx, containerName, a.cfg, allowedCIDRs, log, nft); err != nil {
+		} else if err := startNFTMonitoringDaemon(ctx, containerName, a.cfg, allowedCIDRs, permitted, log, nft); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to start NFT monitoring: %v\n", err)
 		}
 	}

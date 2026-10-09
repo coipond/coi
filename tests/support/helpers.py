@@ -40,6 +40,83 @@ def write_trusted_coi_config(content):
     return {**os.environ, "COI_CONFIG": path}
 
 
+_FAKE_LAN_LISTENER = """
+import socket, sys, threading
+
+def serve(port):
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", port))
+    s.listen(64)
+    while True:
+        conn, _ = s.accept()
+        # Hold each connection until the client closes it, so a test can keep an
+        # ESTABLISHED connection open for the monitor to observe.
+        threading.Thread(target=lambda c=conn: (c.recv(1), c.close()), daemon=True).start()
+
+for port in map(int, sys.argv[1:]):
+    threading.Thread(target=serve, args=(port,), daemon=True).start()
+threading.Event().wait()
+"""
+
+
+@contextlib.contextmanager
+def fake_lan(subnet, hosts=(20, 21), ports=(443, 8080)):
+    """A throwaway "LAN" reachable from containers through the host's FORWARD
+    path, so Coi's per-container nft rules apply to it exactly as to a real LAN.
+
+    A network namespace joined to the host by a veth pair: the host side is
+    `<subnet>.1/24`, and each of `hosts` is an address `<subnet>.<n>` in the
+    namespace, where a TCP listener accepts on every port in `ports` on all of
+    them. Yields the list of host IPs. Use a distinct `subnet` per test (e.g.
+    "192.168.201") so concurrent tests never share a route.
+    """
+    tag = subnet.replace(".", "")[-6:]
+    ns, host_if, peer_if = f"coilan{tag}", f"cl{tag}h", f"cl{tag}p"
+    ips = [f"{subnet}.{n}" for n in hosts]
+
+    def sh(*cmd, check=True):
+        return subprocess.run(["sudo", "-n", *cmd], capture_output=True, text=True, check=check)
+
+    listener = None
+    try:
+        sh("ip", "netns", "add", ns)
+        sh("ip", "link", "add", host_if, "type", "veth", "peer", "name", peer_if, "netns", ns)
+        sh("ip", "addr", "add", f"{subnet}.1/24", "dev", host_if)
+        sh("ip", "link", "set", host_if, "up")
+        for ip in ips:
+            sh("ip", "netns", "exec", ns, "ip", "addr", "add", f"{ip}/24", "dev", peer_if)
+        sh("ip", "netns", "exec", ns, "ip", "link", "set", peer_if, "up")
+        sh("ip", "netns", "exec", ns, "ip", "link", "set", "lo", "up")
+        sh("ip", "netns", "exec", ns, "ip", "route", "add", "default", "via", f"{subnet}.1")
+        listener = subprocess.Popen(
+            ["sudo", "-n", "ip", "netns", "exec", ns, sys.executable, "-c", _FAKE_LAN_LISTENER]
+            + [str(p) for p in ports],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            out = sh("ip", "netns", "exec", ns, "ss", "-ltnH", check=False).stdout
+            if all(f":{p} " in out for p in ports):
+                break
+            time.sleep(0.2)
+        else:
+            raise RuntimeError(f"fake LAN listeners on {ports} did not come up in {ns}")
+        yield ips
+    finally:
+        # Deleting the namespace kills the listener's sockets and removes the
+        # veth pair (both ends) with it.
+        if listener is not None:
+            subprocess.run(
+                ["sudo", "-n", "sh", "-c", f"ip netns pids {ns} | xargs -r kill"],
+                capture_output=True,
+            )
+            listener.wait(timeout=10)
+        sh("ip", "netns", "del", ns, check=False)
+        sh("ip", "link", "del", host_if, check=False)
+
+
 def write_workspace_container_config(workspace_dir, persistent=None, image=None):
     """Write [container] settings into <workspace>/.coi/config.toml.
 

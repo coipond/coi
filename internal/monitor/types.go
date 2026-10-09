@@ -221,6 +221,11 @@ type DaemonConfig struct {
 	// stays in lockstep with the firewall rather than drifting from a frozen
 	// snapshot. Falls back to AllowedCIDRs when it returns nothing.
 	AllowedCIDRsProvider func() []string
+	// PermittedDestination, when set, reports whether the container's firewall
+	// deliberately accepts TCP/UDP traffic to ip:port (e.g. a [[network.hosts]] LAN
+	// service, including one added at runtime). Such connections are not flagged
+	// as private-network or allowlist violations; other checks still apply.
+	PermittedDestination PermittedDestinationFunc
 
 	// Detection database directories (populated from config.Detection)
 	GTFOBinsDir string // Local GTFOBins clone directory
@@ -251,3 +256,7 @@ type DaemonConfig struct {
 	OnError  func(error)
 	OnAction func(action, message string) // Called when container is paused/killed
 }
+
+// PermittedDestinationFunc reports whether the firewall accepts TCP/UDP traffic
+// from the container to ip:port.
+type PermittedDestinationFunc func(ip string, port int) bool

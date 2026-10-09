@@ -519,7 +519,7 @@ func TestCheckSuspicious(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reason := checkSuspicious(tt.conn, tt.allowedCIDRs)
+			reason := checkSuspicious(tt.conn, tt.allowedCIDRs, nil)
 			if (reason != "") != (tt.wantReason != "") {
 				t.Errorf("checkSuspicious() reason = %q, want %q", reason, tt.wantReason)
 			}
