@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Features
+
+- [Feature] **Allowlist mode can reach a single LAN service** — a `[[network.hosts]]` entry with a private IP and `ports` (e.g. `ports = [443]`) is now reachable on just those ports, without `allow_local_network_access` opening the whole LAN. Port 53 is refused, since allowlist mode blocks all DNS. Security monitoring no longer flags connections to such an entry.
+
 ## 0.14.0 (2026-10-09)
 
 ### Changed

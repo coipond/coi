@@ -693,12 +693,15 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 	var allowedCIDRsProvider func() []string
 	if cfg.Network.Mode == config.NetworkModeAllowlist {
 		if ip, ipErr := network.GetContainerIP(containerName); ipErr == nil && ip != "" {
+			// A private [[network.hosts]] entry is reached through a targeted rule,
+			// not the set, so the live set alone would miss it.
+			hostCIDRs := hostEntryCIDRs(cfg.Network.Hosts)
 			allowedCIDRsProvider = func() []string {
 				cidrs, err := network.CurrentAllowlistCIDRs(ip)
 				if err != nil {
 					return nil // read failed — collector falls back to the static snapshot
 				}
-				return cidrs
+				return append(cidrs, hostCIDRs...)
 			}
 		}
 	}
@@ -838,6 +841,19 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 // like an "Unauthorized connection attempt" at ThreatLevelHigh — which, with
 // auto_pause_on_high, pauses the container mid-task. Wildcards are now rejected
 // outright, and going through the policy is what keeps it that way.
+// hostEntryCIDRs returns the [[network.hosts]] addresses as /32s. In allowlist
+// mode each is reachable by construction (a public one joins the allowlist set,
+// a private one gets a targeted accept), so the monitors must count them as
+// allowed rather than flag a configured LAN service as an unauthorized or
+// private-network connection.
+func hostEntryCIDRs(hosts []config.HostEntry) []string {
+	cidrs := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		cidrs = append(cidrs, h.IP+"/32")
+	}
+	return cidrs
+}
+
 func resolveDomainsToHostCIDRs(domains []string) []string {
 	if len(domains) == 0 {
 		return nil

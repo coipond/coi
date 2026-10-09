@@ -37,7 +37,8 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 
 	var allowedCIDRs []string
 	if a.cfg.Network.Mode == config.NetworkModeAllowlist {
-		allowedCIDRs = resolveDomainsToHostCIDRs(a.cfg.Network.AllowedDomains)
+		allowedCIDRs = append(resolveDomainsToHostCIDRs(a.cfg.Network.AllowedDomains),
+			hostEntryCIDRs(a.cfg.Network.Hosts)...)
 	}
 
 	if err := startMonitoringDaemon(ctx, containerName, workspacePath, a.cfg, allowedCIDRs, log, mon); err != nil {

@@ -83,11 +83,13 @@
 # allowed_ports = [80, 443]
 
 # Static name→address entries written into the container's /etc/hosts, made
-# reachable to match the mode (restricted punches a targeted allow for a private
-# IP; allowlist adds it to the firewall set and refuses private/metadata IPs).
+# reachable to match the mode (a private IP gets a targeted allow; allowlist adds
+# a public IP to the firewall set; metadata IPs are refused).
 # Add an optional per-entry `ports` to reach that host on specific ports only —
-# empty inherits allowed_ports (else all ports). This is what lets restricted mode
-# open ONE LAN service (e.g. redmine:443) while the rest of egress stays open.
+# empty inherits allowed_ports (else all ports). This is what opens ONE LAN
+# service (e.g. redmine:443): in restricted mode alongside open internet, in
+# allowlist mode alongside only allowed_domains. In allowlist mode a private IP
+# needs ports (or allowed_ports), and 53 is refused (allowlist blocks all DNS).
 # Trusted-scope only — ignored from a project ./.coi/config.toml. Add on the fly
 # to a running container with `coi hosts add <container> <ip> <hostname...> --ports 443`.
 # [[network.hosts]]

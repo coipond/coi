@@ -362,6 +362,30 @@ func TestNetworkDetector_RFC1918StillAlertsWithGateway(t *testing.T) {
 	}
 }
 
+// A private [[network.hosts]] entry in allowlist mode is on AllowedCIDRs: the
+// firewall permits it, so it must not raise the high-severity private-network
+// alert (which auto-pauses the container). Other private addresses still do.
+func TestNetworkDetector_RFC1918AllowlistedHostEntry(t *testing.T) {
+	nd := NewNetworkDetector(&Config{
+		ContainerIP:  "10.47.62.50",
+		GatewayIP:    "10.47.62.1",
+		AllowedCIDRs: []string{"140.82.112.3/32", "10.50.0.100/32"},
+	})
+	event := func(dst string) *NetworkEvent {
+		return &NetworkEvent{
+			Timestamp: time.Now(), ContainerIP: "10.47.62.50", SrcIP: "10.47.62.50",
+			DstIP: dst, DstPort: 443, Protocol: "TCP",
+		}
+	}
+	if threat := nd.Analyze(event("10.50.0.100")); threat != nil {
+		t.Errorf("allowlisted private host should not alert, got %q", threat.Title)
+	}
+	threat := nd.Analyze(event("10.50.0.101"))
+	if threat == nil || threat.Title != "Connection to private network" {
+		t.Errorf("non-allowlisted private host must still alert, got %v", threat)
+	}
+}
+
 // Helper function tests
 func TestIsRFC1918(t *testing.T) {
 	tests := []struct {

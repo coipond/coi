@@ -11,32 +11,50 @@ import (
 // (fail-closed) exactly when the mode/class combination cannot enforce it, and
 // allowed when it can — so a user never gets a silently-ignored port cap.
 func TestCheckHostPortsEnforceable(t *testing.T) {
-	withPorts := func(ip string) config.HostEntry {
-		return config.HostEntry{IP: ip, Hostnames: []string{"h.local"}, Ports: []int{443}}
+	withPorts := func(ip string, ports ...int) config.HostEntry {
+		if len(ports) == 0 {
+			ports = []int{443}
+		}
+		return config.HostEntry{IP: ip, Hostnames: []string{"h.local"}, Ports: ports}
 	}
+	noPorts := func(ip string) config.HostEntry {
+		return config.HostEntry{IP: ip, Hostnames: []string{"h.local"}}
+	}
+	const noLocal, withLocal = false, true
 	cases := []struct {
-		name    string
-		mode    config.NetworkMode
-		entry   config.HostEntry
-		wantErr bool
+		name         string
+		mode         config.NetworkMode
+		local        bool
+		entry        config.HostEntry
+		allowedPorts []int
+		wantErr      bool
 	}{
-		{
-			"no ports is always fine", config.NetworkModeRestricted,
-			config.HostEntry{IP: "8.8.8.8", Hostnames: []string{"h"}},
-			false,
-		},
-		{"restricted + private enforces", config.NetworkModeRestricted, withPorts("192.168.1.50"), false},
-		{"allowlist + public enforces", config.NetworkModeAllowlist, withPorts("1.1.1.1"), false},
-		{"restricted + public cannot", config.NetworkModeRestricted, withPorts("1.1.1.1"), true},
-		{"allowlist + private cannot", config.NetworkModeAllowlist, withPorts("192.168.1.50"), true},
-		{"open mode cannot", config.NetworkModeOpen, withPorts("192.168.1.50"), true},
+		{"no ports is fine for a public host", config.NetworkModeRestricted, noLocal, noPorts("8.8.8.8"), nil, false},
+		{"restricted + private enforces", config.NetworkModeRestricted, noLocal, withPorts("192.168.1.50"), nil, false},
+		{"restricted + private without ports is fine", config.NetworkModeRestricted, noLocal, noPorts("10.0.0.5"), nil, false},
+		{"allowlist + public enforces", config.NetworkModeAllowlist, noLocal, withPorts("1.1.1.1"), nil, false},
+		{"restricted + public cannot", config.NetworkModeRestricted, noLocal, withPorts("1.1.1.1"), nil, true},
+		{"open mode cannot", config.NetworkModeOpen, noLocal, withPorts("192.168.1.50"), nil, true},
+
+		// allowlist + private, no allow_local_network_access: a targeted accept that
+		// must be port-scoped and must not reopen DNS.
+		{"allowlist + private with ports enforces", config.NetworkModeAllowlist, noLocal, withPorts("10.50.0.100"), nil, false},
+		{"allowlist + private inherits allowed_ports", config.NetworkModeAllowlist, noLocal, noPorts("10.50.0.100"), []int{443}, false},
+		{"allowlist + private with no scope at all is refused", config.NetworkModeAllowlist, noLocal, noPorts("10.50.0.100"), nil, true},
+		{"allowlist + private on 53 is refused", config.NetworkModeAllowlist, noLocal, withPorts("10.50.0.100", 443, 53), nil, true},
+		{"allowlist + private inheriting 53 is refused", config.NetworkModeAllowlist, noLocal, noPorts("10.50.0.100"), []int{53, 443}, true},
+
+		// allowlist + private WITH allow_local_network_access: the LAN accept covers
+		// it, so a per-host scope cannot narrow anything.
+		{"allowlist + local access + private without ports is fine", config.NetworkModeAllowlist, withLocal, noPorts("192.168.1.50"), nil, false},
+		{"allowlist + local access + private with ports cannot", config.NetworkModeAllowlist, withLocal, withPorts("192.168.1.50"), nil, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := checkHostPortsEnforceable(c.mode, c.entry)
+			err := checkHostPortsEnforceable(c.mode, c.local, c.entry, c.allowedPorts)
 			if (err != nil) != c.wantErr {
-				t.Fatalf("checkHostPortsEnforceable(%s, %s) err = %v, wantErr %v",
-					c.mode, c.entry.IP, err, c.wantErr)
+				t.Fatalf("checkHostPortsEnforceable(%s, local=%v, %s, %v) err = %v, wantErr %v",
+					c.mode, c.local, c.entry.IP, c.allowedPorts, err, c.wantErr)
 			}
 		})
 	}
@@ -102,45 +120,28 @@ func TestClassifyHostIP(t *testing.T) {
 }
 
 func TestCheckHostReachable(t *testing.T) {
-	const noLocal, withLocal = false, true
-
-	// allowlist, allow_local_network_access=false: only public reachable
-	// (RFC1918/metadata hard-blocked).
-	if err := checkHostReachable(config.NetworkModeAllowlist, noLocal, "1.2.3.4"); err != nil {
-		t.Errorf("allowlist public should be reachable: %v", err)
+	// allowlist: public and private reachable (private via a targeted accept or
+	// allow_local_network_access — the port scope is checkHostPortsEnforceable's
+	// call, see coipond/coi#605); metadata refused.
+	for _, ip := range []string{"1.2.3.4", "10.0.0.5", "192.168.1.50"} {
+		if err := checkHostReachable(config.NetworkModeAllowlist, ip); err != nil {
+			t.Errorf("allowlist %s should be reachable: %v", ip, err)
+		}
 	}
-	if err := checkHostReachable(config.NetworkModeAllowlist, noLocal, "10.0.0.5"); err == nil {
-		t.Error("allowlist private must be refused without allow_local_network_access")
-	}
-	if err := checkHostReachable(config.NetworkModeAllowlist, noLocal, "169.254.169.254"); err == nil {
+	if err := checkHostReachable(config.NetworkModeAllowlist, "169.254.169.254"); err == nil {
 		t.Error("allowlist metadata must be refused")
 	}
 
-	// allowlist, allow_local_network_access=true: RFC1918 becomes reachable
-	// (nft installs an RFC1918 accept), so a private host entry must be allowed —
-	// regression test for coipond/coi#605 (pbarnes-tibco).
-	if err := checkHostReachable(config.NetworkModeAllowlist, withLocal, "192.168.1.50"); err != nil {
-		t.Errorf("allowlist private WITH allow_local_network_access should be reachable: %v", err)
-	}
-	if err := checkHostReachable(config.NetworkModeAllowlist, withLocal, "10.0.0.5"); err != nil {
-		t.Errorf("allowlist private WITH allow_local_network_access should be reachable: %v", err)
-	}
-	// ...but metadata stays refused even with local access on (allowlist installs
-	// an RFC1918 accept, never a metadata one, so it is a genuine SSRF dead-name).
-	if err := checkHostReachable(config.NetworkModeAllowlist, withLocal, "169.254.169.254"); err == nil {
-		t.Error("allowlist metadata must be refused even with allow_local_network_access")
-	}
-
 	// restricted: public + private reachable (private via targeted allow), metadata refused.
-	if err := checkHostReachable(config.NetworkModeRestricted, noLocal, "10.0.0.5"); err != nil {
+	if err := checkHostReachable(config.NetworkModeRestricted, "10.0.0.5"); err != nil {
 		t.Errorf("restricted private should be reachable: %v", err)
 	}
-	if err := checkHostReachable(config.NetworkModeRestricted, noLocal, "169.254.169.254"); err == nil {
+	if err := checkHostReachable(config.NetworkModeRestricted, "169.254.169.254"); err == nil {
 		t.Error("restricted metadata must be refused")
 	}
 	// open: anything goes.
 	for _, ip := range []string{"10.0.0.5", "169.254.169.254", "1.2.3.4"} {
-		if err := checkHostReachable(config.NetworkModeOpen, noLocal, ip); err != nil {
+		if err := checkHostReachable(config.NetworkModeOpen, ip); err != nil {
 			t.Errorf("open should allow %s: %v", ip, err)
 		}
 	}

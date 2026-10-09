@@ -201,6 +201,21 @@ func TestCheckSuspicious_RFC1918_RestrictedMode(t *testing.T) {
 	}
 }
 
+// A private [[network.hosts]] entry in allowlist mode is on the allowlist the
+// firewall permits, so connecting to it is not a threat; any other private
+// address still is.
+func TestCheckSuspicious_RFC1918_AllowlistedHostEntry(t *testing.T) {
+	allowed := []string{"140.82.112.3/32", "10.50.0.100/32"}
+	conn := Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: "10.50.0.100:443", State: "ESTABLISHED"}
+	if reason := checkSuspicious(conn, allowed); reason != "" {
+		t.Errorf("allowlisted private host should not be flagged, got %q", reason)
+	}
+	conn.RemoteAddr = "10.50.0.101:443"
+	if reason := checkSuspicious(conn, allowed); reason == "" {
+		t.Error("a private address not on the allowlist must still be flagged")
+	}
+}
+
 func TestCheckSuspicious_RFC1918_OpenMode(t *testing.T) {
 	conn := Connection{
 		Protocol:   "tcp",

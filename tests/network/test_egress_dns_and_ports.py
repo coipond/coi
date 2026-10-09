@@ -383,6 +383,92 @@ def test_restricted_host_entry_per_entry_ports_decouple(
     )
 
 
+def test_allowlist_private_host_entry_scoped(coi_binary, workspace_dir, cleanup_containers):
+    """allowlist + a private [[network.hosts]] entry with ports=[443] and NO
+    allow_local_network_access: "only GitHub/Anthropic, and on the LAN only
+    redmine:443". The host gets a targeted accept scoped to 443 that sits AHEAD of
+    the RFC1918 reject (else it would be dead), and the rest of the LAN is NOT
+    opened (no RFC1918 accept)."""
+    host_ip = "192.168.77.20"
+    env = write_trusted_coi_config(
+        "[network]\n"
+        'mode = "allowlist"\n'
+        'allowed_domains = ["1.1.1.1/32"]\n\n'
+        "[[network.hosts]]\n"
+        f'ip = "{host_ip}"\n'
+        'hostnames = ["redmine.susanoo.pl"]\n'
+        "ports = [443]\n"
+    )
+    name = _start_background_shell(coi_binary, workspace_dir, env)
+    ip = _container_ip(name)
+    assert ip, f"should resolve container IP for {name}"
+    lines = _container_rule_lines(ip)
+
+    host_accepts = _host_accept_lines(ip, host_ip)
+    assert host_accepts, f"expected a targeted accept for {host_ip}:\n" + "\n".join(lines)
+    for ln in host_accepts:
+        assert "dport" in ln and re.search(r"\b443\b", ln) and not re.search(r"\b53\b", ln), (
+            f"the LAN host must be scoped to 443 only: {ln}"
+        )
+
+    assert not _lan_accept_lines(ip), (
+        "the rest of the LAN must stay closed (no RFC1918 accept):\n" + "\n".join(lines)
+    )
+    rfc_reject = [i for i, ln in enumerate(lines) if "reject" in ln and "192.168.0.0/16" in ln]
+    assert rfc_reject, "allowlist mode must still reject RFC1918:\n" + "\n".join(lines)
+    assert lines.index(host_accepts[0]) < rfc_reject[0], (
+        "the host accept must precede the RFC1918 reject:\n" + "\n".join(lines)
+    )
+
+
+def _run_fails_closed(coi_binary, workspace_dir, env, expect):
+    result = subprocess.run(
+        [coi_binary, "run", "--workspace", workspace_dir, "--", "sh", "-c", "echo SESSION_RAN"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        cwd=workspace_dir,
+        env=env,
+    )
+    assert result.returncode != 0 and "SESSION_RAN" not in result.stdout, (
+        f"coi run must fail closed.\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert expect in result.stdout + result.stderr, (
+        f"failure must mention {expect!r}.\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
+def test_allowlist_private_host_entry_requires_ports(coi_binary, workspace_dir, cleanup_containers):
+    """allowlist + a private host entry with no ports and no allowed_ports is
+    refused: an all-ports hole would include 53 and reopen DNS."""
+    env = write_trusted_coi_config(
+        "[network]\n"
+        'mode = "allowlist"\n'
+        'allowed_domains = ["1.1.1.1/32"]\n\n'
+        "[[network.hosts]]\n"
+        'ip = "192.168.77.20"\n'
+        'hostnames = ["redmine.susanoo.pl"]\n'
+    )
+    _run_fails_closed(coi_binary, workspace_dir, env, "explicit ports")
+
+
+def test_allowlist_private_host_entry_refuses_dns_port(
+    coi_binary, workspace_dir, cleanup_containers
+):
+    """allowlist + a private host entry on port 53 is refused: allowlist mode
+    blocks all DNS, and a LAN resolver on 53 would reopen it."""
+    env = write_trusted_coi_config(
+        "[network]\n"
+        'mode = "allowlist"\n'
+        'allowed_domains = ["1.1.1.1/32"]\n\n'
+        "[[network.hosts]]\n"
+        'ip = "192.168.77.20"\n'
+        'hostnames = ["dns.local"]\n'
+        "ports = [443, 53]\n"
+    )
+    _run_fails_closed(coi_binary, workspace_dir, env, "port 53")
+
+
 def test_context_file_surfaces_network_limitations(coi_binary, workspace_dir, cleanup_containers):
     """The generated SANDBOX_CONTEXT.md (injected into the agent's context/system
     prompt) must state the active egress limits — the port cap and the pinned
