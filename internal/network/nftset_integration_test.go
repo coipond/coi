@@ -202,7 +202,7 @@ func TestHostFirewallPerHostPorts(t *testing.T) {
 	}
 	for _, c := range cases {
 		entry := config.HostEntry{IP: c.ip, Hostnames: []string{"h.local"}, Ports: c.entryPort}
-		if err := applyHostFirewall(config.NetworkModeRestricted, cip, entry, c.global); err != nil {
+		if err := applyHostFirewall(config.NetworkModeRestricted, false, cip, entry, c.global); err != nil {
 			t.Fatalf("applyHostFirewall(%s): %v", c.ip, err)
 		}
 	}
