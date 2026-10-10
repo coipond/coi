@@ -10,7 +10,7 @@ after building, so the tests do not need to actually rebuild the base image.
 
 import json
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -23,7 +23,7 @@ def _make_base_stale(child_alias: str, base_alias: str):
     meta_path = _meta_path()
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     meta[child_alias] = {
         "built_at": (now - timedelta(hours=2)).isoformat(),
         "base_image": base_alias,
