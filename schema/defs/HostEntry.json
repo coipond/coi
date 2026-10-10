@@ -17,7 +17,7 @@
     "ports": {
       "type": "array",
       "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
-      "description": "Optional TCP/UDP destination ports this host is reachable on (e.g. [443]). Scopes the firewall reachability for this host only, so you can open a single LAN service on one port: in restricted mode while the rest of egress stays open, in allowlist mode while everything else stays closed (there a private host requires a port scope, without 53). Empty inherits the global allowed_ports (else all ports). Applied in restricted and allowlist mode; ignored in open mode."
+      "description": "Optional TCP/UDP destination ports this host is reachable on (e.g. [443]). Scopes the firewall reachability for this host only, so you can open a single LAN service on one port: in restricted mode while the rest of egress stays open, in allowlist mode while everything else stays closed (there a private host requires a port scope, without the DNS ports 53 and 853). Empty inherits the global allowed_ports (else all ports). Applied in restricted and allowlist mode; ignored in open mode."
     }
   }
 }

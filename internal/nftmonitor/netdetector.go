@@ -34,9 +34,16 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 	}
 	nd.mu.Unlock()
 
-	// 1. RFC1918 addresses (should be blocked by firewall), except one on the
-	// allowlist — a [[network.hosts]] LAN entry the firewall deliberately permits.
-	if isRFC1918(event.DstIP) && event.DstIP != nd.config.GatewayIP && !inAllowlist(event.DstIP, nd.config.AllowedCIDRs) {
+	// A destination the firewall accepts on this port (a [[network.hosts]] LAN
+	// service, a pinned LAN resolver) is not a leak. Port-aware: a probe of another
+	// port on that host is still blocked, and still flagged. Only asked once a
+	// check would otherwise fire.
+	permitted := func() bool {
+		return nd.config.PermittedDestination != nil && nd.config.PermittedDestination(event.Protocol, event.DstIP, event.DstPort)
+	}
+
+	// 1. RFC1918 addresses (should be blocked by firewall)
+	if isRFC1918(event.DstIP) && event.DstIP != nd.config.GatewayIP && !permitted() {
 		return &ThreatEvent{
 			Timestamp:   event.Timestamp,
 			Level:       ThreatLevelHigh,
@@ -72,7 +79,7 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 	}
 
 	// 4. Allowlist violations (if in allowlist mode)
-	if len(nd.config.AllowedCIDRs) > 0 && !inAllowlist(event.DstIP, nd.config.AllowedCIDRs) {
+	if len(nd.config.AllowedCIDRs) > 0 && !inAllowlist(event.DstIP, nd.config.AllowedCIDRs) && !permitted() {
 		return &ThreatEvent{
 			Timestamp:   event.Timestamp,
 			Level:       ThreatLevelHigh,
@@ -85,14 +92,14 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 
 	// 5. DNS query monitoring
 	if event.DstPort == 53 {
-		return nd.analyzeDNSQuery(event)
+		return nd.analyzeDNSQuery(event, permitted)
 	}
 
 	return nil
 }
 
 // analyzeDNSQuery checks DNS queries for anomalies
-func (nd *NetworkDetector) analyzeDNSQuery(event *NetworkEvent) *ThreatEvent {
+func (nd *NetworkDetector) analyzeDNSQuery(event *NetworkEvent, permitted func() bool) *ThreatEvent {
 	// Track query frequency per container
 	nd.mu.Lock()
 	nd.dnsQueryCount[event.ContainerIP]++
@@ -115,7 +122,7 @@ func (nd *NetworkDetector) analyzeDNSQuery(event *NetworkEvent) *ThreatEvent {
 	// Alert on queries to unexpected DNS servers
 	// Allow gateway IP and allowlisted IPs
 	if nd.config.GatewayIP != "" && event.DstIP != nd.config.GatewayIP {
-		if !inAllowlist(event.DstIP, nd.config.AllowedCIDRs) {
+		if !inAllowlist(event.DstIP, nd.config.AllowedCIDRs) && !permitted() {
 			return &ThreatEvent{
 				Timestamp: event.Timestamp,
 				Level:     ThreatLevelWarning,

@@ -17,19 +17,24 @@ type NetworkEvent struct {
 
 // Config holds the configuration for the NFT monitoring daemon
 type Config struct {
-	ContainerName      string
-	ContainerIP        string
-	AllowedCIDRs       []string
-	GatewayIP          string
-	AuditLogPath       string
-	RateLimitPerSecond int
-	DNSQueryThreshold  int
-	LogDNSQueries      bool
-	LimaHost           string
-	ForensicsOnKill    bool // preserve a forensic copy before the responder's auto-kill deletes the container
-	OnThreat           func(ThreatEvent)
-	OnAction           func(action, message string) // Called when container is paused/killed
-	OnError            func(error)                  // Called on non-fatal errors (avoids stdout corruption)
+	ContainerName string
+	ContainerIP   string
+	AllowedCIDRs  []string
+	// PermittedDestination, when set, reports whether the container's firewall
+	// deliberately accepts proto ("tcp"/"udp") traffic to ip:port (e.g. a [[network.hosts]] LAN
+	// service, including one added at runtime). Such connections are not flagged
+	// as private-network, allowlist or DNS-server violations; other checks apply.
+	PermittedDestination func(proto, ip string, port int) bool
+	GatewayIP            string
+	AuditLogPath         string
+	RateLimitPerSecond   int
+	DNSQueryThreshold    int
+	LogDNSQueries        bool
+	LimaHost             string
+	ForensicsOnKill      bool // preserve a forensic copy before the responder's auto-kill deletes the container
+	OnThreat             func(ThreatEvent)
+	OnAction             func(action, message string) // Called when container is paused/killed
+	OnError              func(error)                  // Called on non-fatal errors (avoids stdout corruption)
 }
 
 // ThreatEvent represents a detected network threat

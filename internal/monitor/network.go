@@ -16,7 +16,7 @@ import (
 // namespaced reads fail, it falls back to host /proc/net/tcp[6] filtered by
 // containerIP (best-effort; requires a non-empty containerIP to avoid returning
 // all host connections).
-func CollectNetworkStats(ctx context.Context, containerName, containerIP string, allowedCIDRs []string) (NetworkStats, error) {
+func CollectNetworkStats(ctx context.Context, containerName, containerIP string, allowedCIDRs []string, permitted PermittedDestinationFunc) (NetworkStats, error) {
 	connections, err := parseConnections(ctx, containerName, containerIP)
 	if err != nil {
 		return NetworkStats{}, err
@@ -25,7 +25,7 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 	// Flag suspicious connections
 	suspicious := 0
 	for i := range connections {
-		reason := checkSuspicious(connections[i], allowedCIDRs)
+		reason := checkSuspicious(connections[i], allowedCIDRs, permitted)
 		if reason != "" {
 			connections[i].Suspicious = true
 			connections[i].SuspectReason = reason
@@ -275,8 +275,10 @@ func tcpStateFromHex(hexState string) string {
 	return "UNKNOWN"
 }
 
-// checkSuspicious determines if a connection is suspicious
-func checkSuspicious(conn Connection, allowedCIDRs []string) string {
+// checkSuspicious determines if a connection is suspicious. permitted (may be
+// nil) reports destinations the firewall deliberately accepts; those are exempt
+// from the private-network and allowlist checks, but not from the others.
+func checkSuspicious(conn Connection, allowedCIDRs []string, permitted PermittedDestinationFunc) string {
 	// Skip local connections (LISTEN state or localhost)
 	if conn.State == "LISTEN" {
 		return ""
@@ -287,11 +289,16 @@ func checkSuspicious(conn Connection, allowedCIDRs []string) string {
 		return ""
 	}
 
+	port := extractPort(conn.RemoteAddr)
+	// A destination the firewall accepts on this port (a [[network.hosts]] LAN
+	// service) is neither a private-network leak nor an allowlist violation. The
+	// match is port-aware, so a probe of another port on that host still counts.
+	// Only asked once a check would otherwise fire.
+	firewallPermits := func() bool { return permitted != nil && permitted(conn.Protocol, remoteIP, port) }
+
 	// Check RFC1918 addresses only when network is restricted (allowedCIDRs not empty)
 	// In "open" network mode (no restrictions), RFC1918 addresses are expected/allowed.
-	// A private address on the allowlist (a [[network.hosts]] LAN entry) is one the
-	// firewall deliberately permits.
-	if len(allowedCIDRs) > 0 && isRFC1918(remoteIP) && !inAllowlist(remoteIP, allowedCIDRs) {
+	if len(allowedCIDRs) > 0 && isRFC1918(remoteIP) && !firewallPermits() {
 		return "RFC1918 private address (should be blocked by firewall)"
 	}
 
@@ -301,12 +308,11 @@ func checkSuspicious(conn Connection, allowedCIDRs []string) string {
 	}
 
 	// Check allowlist (if network is restricted)
-	if len(allowedCIDRs) > 0 && !inAllowlist(remoteIP, allowedCIDRs) {
+	if len(allowedCIDRs) > 0 && !inAllowlist(remoteIP, allowedCIDRs) && !firewallPermits() {
 		return "IP not in network allowlist"
 	}
 
 	// Check suspicious ports
-	port := extractPort(conn.RemoteAddr)
 	if isSuspiciousPort(port) {
 		return fmt.Sprintf("Suspicious port: %d (common C2/backdoor port)", port)
 	}

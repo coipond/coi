@@ -67,10 +67,13 @@ func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 //
 // A private host in allowlist mode without allow_local_network_access gets a
 // targeted accept ahead of the RFC1918 block, which must be port-scoped (the
-// entry's ports, else the global allowed_ports) and must not include 53:
-// allowlist mode blocks all DNS so /etc/hosts stays the container's only
-// resolver, and an all-ports or :53 hole to a LAN resolver would reopen DNS —
-// and with it DNS tunnelling out past the allowlist.
+// entry's ports, else the global allowed_ports) and must not include the DNS
+// ports 53 or 853 (DNS-over-TLS): allowlist mode blocks all DNS so /etc/hosts
+// stays the container's only resolver, and an all-ports or DNS-port hole to a LAN
+// resolver would reopen DNS — and with it DNS tunnelling out past the allowlist.
+// A host that also serves DNS-over-HTTPS on a port the entry opens (typically
+// 443) cannot be told apart from its web service by the firewall, so point
+// entries only at hosts you trust not to resolve for the container.
 func checkHostPortsEnforceable(mode config.NetworkMode, allowLocalNetworkAccess bool, entry config.HostEntry, allowedPorts []int) error {
 	class := classifyHostIP(entry.IP)
 	if mode == config.NetworkModeAllowlist && class == hostPrivate && !allowLocalNetworkAccess {
@@ -83,9 +86,9 @@ func checkHostPortsEnforceable(mode config.NetworkMode, allowLocalNetworkAccess 
 				"explicit ports — set ports (e.g. ports = [443]) on this entry, or a global allowed_ports", entry.IP)
 		}
 		for _, p := range scope {
-			if p == 53 {
-				return fmt.Errorf("network.hosts: %s may not be opened on port 53 in allowlist mode, which blocks "+
-					"all DNS by design (names resolve on the host into /etc/hosts) — drop 53 from its ports", entry.IP)
+			if p == 53 || p == 853 {
+				return fmt.Errorf("network.hosts: %s may not be opened on port %d in allowlist mode, which blocks "+
+					"all DNS by design (names resolve on the host into /etc/hosts) — drop %d from its ports", entry.IP, p, p)
 			}
 		}
 		return nil // enforced by a targeted, port-scoped accept
@@ -210,6 +213,15 @@ func AddUserHost(containerName string, mode config.NetworkMode, allowLocalNetwor
 	// port-scope checks allowlist mode requires. Detect the container's ACTUAL mode
 	// and honor that instead.
 	mode = effectiveContainerMode(containerIP, mode)
+	// Same for allow_local_network_access: it decides whether an allowlist
+	// container already reaches the LAN host (no rule needed, no per-host ports
+	// possible) or needs a targeted, port-scoped accept. Read it from the
+	// container's rules rather than the caller's config.
+	if mode == config.NetworkModeAllowlist {
+		if on, ok := containerLocalNetworkAccess(containerIP); ok {
+			allowLocalNetworkAccess = on
+		}
+	}
 	if err := checkHostReachable(mode, entry.IP); err != nil {
 		return err
 	}

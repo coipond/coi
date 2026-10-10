@@ -8,8 +8,9 @@ import (
 
 // ValidateNetworkHosts checks that [[network.hosts]] entries are structurally
 // sound: each has a valid IPv4 address and at least one syntactically valid
-// hostname. Mode-dependent reachability rules (e.g. refusing RFC1918/metadata
-// IPs in allowlist mode) are enforced later, when the entries are applied.
+// hostname. Mode-dependent rules (refusing metadata IPs in restricted and
+// allowlist modes; requiring an explicit, non-DNS port scope for a LAN host in
+// allowlist mode) are enforced later, when the entries are applied.
 func ValidateNetworkHosts(hosts []HostEntry) error {
 	for i, h := range hosts {
 		if ip := net.ParseIP(h.IP); ip == nil || ip.To4() == nil {
