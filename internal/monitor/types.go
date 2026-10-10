@@ -222,7 +222,7 @@ type DaemonConfig struct {
 	// snapshot. Falls back to AllowedCIDRs when it returns nothing.
 	AllowedCIDRsProvider func() []string
 	// PermittedDestination, when set, reports whether the container's firewall
-	// deliberately accepts TCP/UDP traffic to ip:port (e.g. a [[network.hosts]] LAN
+	// deliberately accepts proto traffic to ip:port (e.g. a [[network.hosts]] LAN
 	// service, including one added at runtime). Such connections are not flagged
 	// as private-network or allowlist violations; other checks still apply.
 	PermittedDestination PermittedDestinationFunc
@@ -257,6 +257,6 @@ type DaemonConfig struct {
 	OnAction func(action, message string) // Called when container is paused/killed
 }
 
-// PermittedDestinationFunc reports whether the firewall accepts TCP/UDP traffic
-// from the container to ip:port.
-type PermittedDestinationFunc func(ip string, port int) bool
+// PermittedDestinationFunc reports whether the firewall accepts proto ("tcp" /
+// "udp") traffic from the container to ip:port.
+type PermittedDestinationFunc func(proto, ip string, port int) bool

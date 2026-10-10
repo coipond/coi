@@ -367,7 +367,7 @@ func TestNetworkDetector_RFC1918StillAlertsWithGateway(t *testing.T) {
 // DNS-server alert. The exemption is port-aware, and C2-port detection still
 // applies to the permitted host.
 func TestNetworkDetector_FirewallPermittedDestination(t *testing.T) {
-	permitted := func(ip string, port int) bool {
+	permitted := func(_, ip string, port int) bool {
 		return (ip == "10.50.0.100" && (port == 443 || port == 4444)) || (ip == "10.50.0.53" && port == 53)
 	}
 	nd := NewNetworkDetector(&Config{

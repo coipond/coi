@@ -21,10 +21,10 @@ type Config struct {
 	ContainerIP   string
 	AllowedCIDRs  []string
 	// PermittedDestination, when set, reports whether the container's firewall
-	// deliberately accepts TCP/UDP traffic to ip:port (e.g. a [[network.hosts]] LAN
+	// deliberately accepts proto ("tcp"/"udp") traffic to ip:port (e.g. a [[network.hosts]] LAN
 	// service, including one added at runtime). Such connections are not flagged
 	// as private-network, allowlist or DNS-server violations; other checks apply.
-	PermittedDestination func(ip string, port int) bool
+	PermittedDestination func(proto, ip string, port int) bool
 	GatewayIP            string
 	AuditLogPath         string
 	RateLimitPerSecond   int

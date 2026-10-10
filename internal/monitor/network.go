@@ -293,11 +293,12 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 	// A destination the firewall accepts on this port (a [[network.hosts]] LAN
 	// service) is neither a private-network leak nor an allowlist violation. The
 	// match is port-aware, so a probe of another port on that host still counts.
-	firewallPermits := permitted != nil && permitted(remoteIP, port)
+	// Only asked once a check would otherwise fire.
+	firewallPermits := func() bool { return permitted != nil && permitted(conn.Protocol, remoteIP, port) }
 
 	// Check RFC1918 addresses only when network is restricted (allowedCIDRs not empty)
 	// In "open" network mode (no restrictions), RFC1918 addresses are expected/allowed.
-	if len(allowedCIDRs) > 0 && isRFC1918(remoteIP) && !firewallPermits {
+	if len(allowedCIDRs) > 0 && isRFC1918(remoteIP) && !firewallPermits() {
 		return "RFC1918 private address (should be blocked by firewall)"
 	}
 
@@ -307,7 +308,7 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 	}
 
 	// Check allowlist (if network is restricted)
-	if len(allowedCIDRs) > 0 && !firewallPermits && !inAllowlist(remoteIP, allowedCIDRs) {
+	if len(allowedCIDRs) > 0 && !inAllowlist(remoteIP, allowedCIDRs) && !firewallPermits() {
 		return "IP not in network allowlist"
 	}
 

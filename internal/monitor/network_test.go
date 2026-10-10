@@ -208,7 +208,7 @@ func TestCheckSuspicious_RFC1918_RestrictedMode(t *testing.T) {
 // flagged, and the other checks (C2 ports) still apply to the permitted host.
 func TestCheckSuspicious_FirewallPermittedDestination(t *testing.T) {
 	allowed := []string{"140.82.112.3/32"}
-	permitted := func(ip string, port int) bool { return ip == "10.50.0.100" && (port == 443 || port == 4444) }
+	permitted := func(_, ip string, port int) bool { return ip == "10.50.0.100" && (port == 443 || port == 4444) }
 	check := func(remote string) string {
 		return checkSuspicious(Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: remote, State: "ESTABLISHED"}, allowed, permitted)
 	}
