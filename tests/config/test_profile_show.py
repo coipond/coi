@@ -7,15 +7,21 @@ Tests that:
 3. Shows directory profile details including resolved paths
 """
 
+import os
 import subprocess
 from pathlib import Path
 
 
-def test_profile_show_full(coi_binary, cleanup_containers, workspace_dir):
+def test_profile_show_full(coi_binary, cleanup_containers, workspace_dir, tmp_path):
     """
     Test that coi profile show displays all fields of a profile.
+
+    The profile lives next to $COI_CONFIG (trusted scope): forward_env is
+    stripped from a project-scoped profile.
     """
-    profile_dir = Path(workspace_dir) / ".coi" / "profiles" / "fullprof"
+    user_config = tmp_path / "config.toml"
+    user_config.write_text("")
+    profile_dir = tmp_path / "profiles" / "fullprof"
     profile_dir.mkdir(parents=True)
     (profile_dir / "config.toml").write_text(
         """
@@ -60,6 +66,7 @@ mode = "restricted"
         text=True,
         timeout=60,
         cwd=workspace_dir,
+        env={**os.environ, "COI_CONFIG": str(user_config)},
     )
 
     assert result.returncode == 0, f"profile show should succeed. stderr: {result.stderr}"

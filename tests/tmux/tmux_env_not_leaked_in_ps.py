@@ -89,6 +89,7 @@ forward_env = ["COI_SECRET_TOKEN"]
     # === Phase 2: Launch shell in background with the secret set ===
 
     env = os.environ.copy()
+    env["COI_CONFIG"] = str(config_dir / "config.toml")  # forward_env is trusted-scope only
     env["COI_USE_DUMMY"] = "1"
     env["COI_SECRET_TOKEN"] = secret_value
 
