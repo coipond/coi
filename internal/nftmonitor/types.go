@@ -32,6 +32,8 @@ type Config struct {
 	LogDNSQueries        bool
 	LimaHost             string
 	ForensicsOnKill      bool // preserve a forensic copy before the responder's auto-kill deletes the container
+	AutoPauseOnHigh      bool // pause the container on a HIGH threat ([monitoring] auto_pause_on_high)
+	AutoKillOnCritical   bool // kill the container on a CRITICAL threat ([monitoring] auto_kill_on_critical)
 	OnThreat             func(ThreatEvent)
 	OnAction             func(action, message string) // Called when container is paused/killed
 	OnError              func(error)                  // Called on non-fatal errors (avoids stdout corruption)

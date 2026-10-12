@@ -38,35 +38,7 @@ func StartDaemon(ctx context.Context, cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("failed to create audit log: %w", err)
 	}
 
-	// Create responder (convert OnThreat callback)
-	responder := monitor.NewResponder(
-		cfg.ContainerName,
-		true, // autoPauseOnHigh
-		true, // autoKillOnCritical
-		auditLog,
-		func(threat monitor.ThreatEvent) {
-			if cfg.OnThreat != nil {
-				// Convert monitor.ThreatEvent to nftmonitor.ThreatEvent
-				cfg.OnThreat(ThreatEvent{
-					Timestamp:   threat.Timestamp,
-					Level:       ThreatLevel(threat.Level),
-					Category:    threat.Category,
-					Title:       threat.Title,
-					Description: threat.Description,
-					Evidence:    nil, // Evidence is not consumed by the callback
-				})
-			}
-		},
-	)
-	responder.SetForensicsOnKill(cfg.ForensicsOnKill)
-
-	// Set action callback for pause/kill notifications
-	if cfg.OnAction != nil {
-		responder.SetOnAction(cfg.OnAction)
-	}
-	// Route the responder's non-fatal cleanup warnings to the session log
-	// instead of the user's attached terminal (issue #372 class).
-	responder.SetOnError(cfg.OnError)
+	responder := newResponder(cfg, auditLog)
 
 	// Create daemon context
 	daemonCtx, cancel := context.WithCancel(ctx)
@@ -102,6 +74,41 @@ func StartDaemon(ctx context.Context, cfg Config) (*Daemon, error) {
 	daemon.start()
 
 	return daemon, nil
+}
+
+// newResponder builds the threat responder for cfg. Pause/kill follow the same
+// [monitoring] auto_pause_on_high / auto_kill_on_critical settings as the
+// process monitor.
+func newResponder(cfg Config, auditLog *monitor.AuditLog) *monitor.Responder {
+	responder := monitor.NewResponder(
+		cfg.ContainerName,
+		cfg.AutoPauseOnHigh,
+		cfg.AutoKillOnCritical,
+		auditLog,
+		func(threat monitor.ThreatEvent) {
+			if cfg.OnThreat != nil {
+				// Convert monitor.ThreatEvent to nftmonitor.ThreatEvent
+				cfg.OnThreat(ThreatEvent{
+					Timestamp:   threat.Timestamp,
+					Level:       ThreatLevel(threat.Level),
+					Category:    threat.Category,
+					Title:       threat.Title,
+					Description: threat.Description,
+					Evidence:    nil, // Evidence is not consumed by the callback
+				})
+			}
+		},
+	)
+	responder.SetForensicsOnKill(cfg.ForensicsOnKill)
+
+	// Set action callback for pause/kill notifications
+	if cfg.OnAction != nil {
+		responder.SetOnAction(cfg.OnAction)
+	}
+	// Route the responder's non-fatal cleanup warnings to the session log
+	// instead of the user's attached terminal (issue #372 class).
+	responder.SetOnError(cfg.OnError)
+	return responder
 }
 
 // start begins the monitoring loops

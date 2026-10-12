@@ -258,3 +258,40 @@ func TestDaemonOnErrorNilSafe(t *testing.T) {
 	// If we get here without panic, the test passes
 	fmt.Fprintln(os.Stderr, "OnError=nil handled safely (no panic)")
 }
+
+// The nft monitor's responder must honor [monitoring] auto_pause_on_high /
+// auto_kill_on_critical like the process monitor: with both off, HIGH and
+// CRITICAL network threats are alerted and logged, never acted on (it used to
+// hard-code both to true).
+func TestNewResponderHonorsAutoResponseSettings(t *testing.T) {
+	auditLogPath := filepath.Join(t.TempDir(), "audit.jsonl")
+	auditLog, err := monitor.NewAuditLog(auditLogPath)
+	if err != nil {
+		t.Fatalf("Failed to create audit log: %v", err)
+	}
+	defer auditLog.Close()
+
+	var actions []string
+	r := newResponder(Config{
+		ContainerName: "coi-test-nonexistent-container",
+		OnAction:      func(action, _ string) { actions = append(actions, action) },
+	}, auditLog)
+
+	for _, level := range []monitor.ThreatLevel{monitor.ThreatLevelHigh, monitor.ThreatLevelCritical} {
+		threat := monitor.ThreatEvent{Level: level, Category: "network", Title: "test " + string(level)}
+		if err := r.Handle(context.Background(), threat); err != nil {
+			t.Fatalf("Handle(%s): %v", level, err)
+		}
+	}
+	if len(actions) != 0 {
+		t.Errorf("with auto-response off, no pause/kill expected, got %v", actions)
+	}
+
+	data, err := os.ReadFile(auditLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(data, []byte(`"action":"alerted"`)); n != 2 {
+		t.Errorf("want both threats logged as alerted, got %d:\n%s", n, data)
+	}
+}
