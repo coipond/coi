@@ -6,6 +6,10 @@
 
 - [Feature] **Allowlist mode can reach a single LAN service** — a `[[network.hosts]]` entry with a private IP and `ports` (e.g. `ports = [443]`) is now reachable on just those ports, without `allow_local_network_access` opening the whole LAN. Ports 53 and 853 are refused, since allowlist mode blocks all DNS. Security monitoring, in restricted and allowlist mode, no longer flags (or auto-pauses on) a connection the firewall deliberately allows to a LAN host: a `[[network.hosts]]` service on its ports, one added with `coi hosts add`, or a pinned LAN resolver. Other ports on that host are still flagged.
 
+### Changed
+
+- [Change] **Image: guest `apparmor.service` is now masked** — profiles from `/etc/apparmor.d` are no longer loaded inside the container. Docker's `docker-default` profile and Playwright are unaffected. What changes: tools whose guest profile granted them unprivileged user namespaces lose that grant when run as a non-root user on hosts that restrict unprivileged user namespaces (Ubuntu 24.04+, `kernel.apparmor_restrict_unprivileged_userns=1`). These include Google Chrome's own sandbox (run it with `--no-sandbox`), rootless Podman and Buildah (run them with `sudo`), and Flatpak. Snaps installed inside a container may also stop working, since snap-confine's profile was part of the masked set. The change reaches only containers created after the next `coi build`. To get the profiles back in one container, run `sudo systemctl unmask apparmor.service && sudo systemctl start apparmor.service` inside it.
+
 ## 0.14.0 (2026-10-09)
 
 ### Changed

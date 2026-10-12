@@ -199,6 +199,22 @@ disable_host_only_services() {
     systemctl disable --now udisks2.service 2>/dev/null || true
     systemctl mask udisks2.service 2>/dev/null || true
 
+    # apparmor.service loads every profile in /etc/apparmor.d (~120 on
+    # Ubuntu) into the container's own AppArmor namespace on each boot.
+    # Guest profiles add nothing to the sandbox: Incus's host-side profile
+    # and seccomp confine the container either way, and Docker loads its own
+    # docker-default profile itself. Skip that work on every container start.
+    #
+    # Fail the build if masking does not take, so the image never ships
+    # with the service silently enabled.
+    systemctl disable apparmor.service 2>/dev/null || true
+    systemctl mask apparmor.service ||
+        { log "ERROR: could not mask apparmor.service"; exit 1; }
+    if [ "$(systemctl is-enabled apparmor.service 2>/dev/null || true)" != "masked" ]; then
+        log "ERROR: apparmor.service is not masked"
+        exit 1
+    fi
+
     log "Host-only services disabled"
 }
 
