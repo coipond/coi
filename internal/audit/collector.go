@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 //go:embed agent/agent.sh
@@ -83,21 +85,7 @@ func HostAuditTail(path string, follow bool, sessionID, container string, out io
 	}
 	defer f.Close()
 
-	enc := json.NewEncoder(out)
-	enc.SetEscapeHTML(false)
-
-	read := func() error {
-		return StreamEvents(f, sessionID, container, func(ev Event) error {
-			// Snapshot/threat objects from the host-side audit log don't
-			// match our event shape; preserve them as raw audit msg blobs.
-			if ev.Type == "" {
-				ev.Type = TypeAudit
-			}
-			return enc.Encode(ev)
-		}, nil)
-	}
-
-	if err := read(); err != nil {
+	if err := copyHostAuditLines(f, sessionID, container, out); err != nil {
 		return err
 	}
 	if !follow {
@@ -106,4 +94,45 @@ func HostAuditTail(path string, follow bool, sessionID, container string, out io
 	// Tail mode: simple sleep-poll loop over the same fd. We don't pull
 	// in a heavy fsnotify dep just for this.
 	return tailFollow(f, sessionID, container, out)
+}
+
+// copyHostAuditLines writes each record of a host-side audit log to out. Lines
+// in the agent's event schema (a recording made with --follow) are re-encoded
+// with sessionID/container stamped on, as StreamEvents does. The monitor's own
+// records (threat events and snapshots, written by internal/monitor.AuditLog)
+// carry no `type` and would be rejected by ParseLine, so a JSON object that is
+// not an agent event is passed through verbatim. Anything else is skipped.
+func copyHostAuditLines(r io.Reader, sessionID, container string, out io.Writer) error {
+	enc := json.NewEncoder(out)
+	enc.SetEscapeHTML(false)
+
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		if ev, err := ParseLine(line); err == nil && ev != nil {
+			if sessionID != "" {
+				ev.SessionID = sessionID
+			}
+			if container != "" {
+				ev.Container = container
+			}
+			if err := enc.Encode(ev); err != nil {
+				return err
+			}
+			continue
+		}
+		if json.Valid([]byte(line)) {
+			if _, err := io.WriteString(out, line+"\n"); err != nil {
+				return err
+			}
+		}
+	}
+	if err := sc.Err(); err != nil && err != io.EOF {
+		return err
+	}
+	return nil
 }
