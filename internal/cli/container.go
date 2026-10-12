@@ -48,6 +48,13 @@ var containerLaunchCmd = &cobra.Command{
 			return fmt.Errorf("failed to launch container: %v", err)
 		}
 
+		// Launch starts the container, so it gets the same isolation as a start
+		// (see isolateStartedContainer); without it the container ran with no
+		// firewall at all, whatever network.mode said.
+		if err := app.isolateStartedContainer(cmd.Context(), name); err != nil {
+			return stopUnisolated(name, err)
+		}
+
 		fmt.Fprintf(os.Stderr, "Container %s launched from %s\n", name, image)
 		return nil
 	},
@@ -89,10 +96,7 @@ var containerStartCmd = &cobra.Command{
 		// back, as `coi shell` and `coi run` do. Fail closed: a coi container that
 		// cannot be isolated is stopped rather than left running unfiltered.
 		if err := app.isolateStartedContainer(cmd.Context(), name); err != nil {
-			if stopErr := container.NewManager(name).Stop(true); stopErr != nil {
-				return fmt.Errorf("failed to apply network isolation (%v), and failed to stop the container: %v", err, stopErr)
-			}
-			return fmt.Errorf("failed to apply network isolation, container stopped: %v", err)
+			return stopUnisolated(name, err)
 		}
 
 		fmt.Fprintf(os.Stderr, "Container %s started\n", name)
@@ -101,7 +105,7 @@ var containerStartCmd = &cobra.Command{
 }
 
 // isolateStartedContainer applies the configured network isolation to a coi
-// container that `coi container start` just started: a boot block first (for
+// container that `coi container start` or `coi container launch` just started: a boot block first (for
 // non-open modes, as the launch path does), then the full rules, which lift it.
 // Containers outside coi's naming scheme are left alone: this command can start
 // any Incus container, and firewalling someone else's would be a surprise.
@@ -120,6 +124,15 @@ func (a *App) isolateStartedContainer(ctx context.Context, name string) error {
 	}
 	_, err := a.applyNetworkIsolationWith(ctx, name, netCfg)
 	return err
+}
+
+// stopUnisolated stops a container whose network isolation could not be
+// applied, so it never keeps running unfiltered, and returns the error to report.
+func stopUnisolated(name string, isolateErr error) error {
+	if stopErr := container.NewManager(name).Stop(true); stopErr != nil {
+		return fmt.Errorf("failed to apply network isolation (%v), and failed to stop the container: %v", isolateErr, stopErr)
+	}
+	return fmt.Errorf("failed to apply network isolation, container stopped: %v", isolateErr)
 }
 
 // containerStopCmd stops a running container

@@ -29,6 +29,8 @@ import time
 
 import pytest
 
+from support.helpers import calculate_container_name
+
 
 def _skip_unless_ready():
     if subprocess.run(["which", "incus"], capture_output=True).returncode != 0:
@@ -317,5 +319,45 @@ def test_ip6_block_follows_new_veth_after_unclean_stop(
             f"precondition: Incus should give the restarted container a new veth ({old_veth!r})"
         )
         _assert_ip6_block_on_current_veth(name)
+    finally:
+        os.unlink(config_file)
+
+
+def test_container_launch_applies_firewall(coi_binary, workspace_dir, cleanup_containers):
+    """`coi container launch` must not start a container with no firewall."""
+    reason = _skip_unless_ready()
+    if reason:
+        pytest.skip(reason)
+
+    config_file = _write_config()
+    try:
+        env = os.environ.copy()
+        env["COI_CONFIG"] = config_file
+        name = calculate_container_name(workspace_dir, 1)
+        launch = subprocess.run(
+            [coi_binary, "container", "launch", "coi-default", name],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=env,
+        )
+        assert launch.returncode == 0, f"container launch failed: {launch.stderr}"
+        assert _container_status(name) == "RUNNING", "launch should leave the container running"
+
+        ip, count = _wait_for_rules_for_ip(coi_binary, name)
+        assert ip and count > 0, f"coi container launch should apply the coi-<ip> rules (ip={ip!r})"
+        _assert_ip6_block_on_current_veth(name)
+        boot_block = f'comment "coi-boot-{name}"'
+        assert _poll_until(
+            lambda: (
+                boot_block
+                not in subprocess.run(
+                    ["sudo", "-n", "nft", "list", "chain", "ip", "coi", "forward"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                ).stdout
+            )
+        ), "the boot block should be lifted once the rules are in place"
     finally:
         os.unlink(config_file)
