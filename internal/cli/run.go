@@ -744,12 +744,7 @@ func (a *App) applyForwardSockets(mgr container.ContainerManager, socketConfig *
 // network.mode is set to something other than "open" in config.
 // Returns the Manager so the caller can Teardown before container deletion.
 func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (*network.Manager, error) {
-	return a.applyNetworkIsolationWith(ctx, containerName, a.cfg.Network)
-}
-
-// applyNetworkIsolationWith is applyNetworkIsolation with an explicit network
-// config, for callers that adjust it (see isolateStartedContainer).
-func (a *App) applyNetworkIsolationWith(ctx context.Context, containerName string, networkConfig config.NetworkConfig) (*network.Manager, error) {
+	networkConfig := a.cfg.Network
 	if networkConfig.Mode == "" || networkConfig.Mode == config.NetworkModeOpen {
 		// Open mode installs no isolation rules, but static [[network.hosts]]
 		// entries still apply — resolution only, since nothing is blocked. (The

@@ -27,5 +27,9 @@ func cleanupContainerFirewall(name, containerIP string) {
 		if err := network.RemoveIPv6BlockForContainer(name); err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: Failed to cleanup IPv6 block rule: %v\n", err)
 		}
+		// A boot block outlives a setup that failed or was interrupted.
+		if err := network.RemoveBootBlockRule(name); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to cleanup boot block rule: %v\n", err)
+		}
 	}
 }

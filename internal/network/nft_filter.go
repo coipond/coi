@@ -566,11 +566,14 @@ func ApplyIPv6BlockForContainer(containerName string) error {
 // this veth; otherwise delete the stale rules and add the new one in one
 // transaction.
 func installVethDropRule(family, comment, vethName string) error {
-	output, err := runNFTCommand("-a", "list", "chain", family, "coi", "forward")
-	if err != nil {
-		return fmt.Errorf("failed to list %s coi forward chain: %w", family, err)
+	// A failed listing (a transient nft/sudo timeout) must not abort setup:
+	// fall back to adding the rule, as the old check did. Stale rules then wait
+	// for the next start or for container cleanup.
+	var current bool
+	var stale []string
+	if output, err := runNFTCommand("-a", "list", "chain", family, "coi", "forward"); err == nil {
+		current, stale = vethRulePlan(string(output), comment, vethName)
 	}
-	current, stale := vethRulePlan(string(output), comment, vethName)
 	if current && len(stale) == 0 {
 		return nil
 	}

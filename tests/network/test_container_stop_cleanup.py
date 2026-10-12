@@ -132,11 +132,11 @@ def _coi_stop(coi_binary, name):
     assert _container_status(name) == "STOPPED", "stop should keep the persistent container"
 
 
-def _write_config():
+def _write_config(mode="restricted"):
     # Persistent so the stopped container stays (and a restart reuses it);
     # restricted so the coi-<ip> bundle and the coi6-<name> block are installed.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-        f.write('[container]\npersistent = true\n[network]\nmode = "restricted"\n')
+        f.write(f'[container]\npersistent = true\n[network]\nmode = "{mode}"\n')
         return f.name
 
 
@@ -359,5 +359,43 @@ def test_container_launch_applies_firewall(coi_binary, workspace_dir, cleanup_co
                 ).stdout
             )
         ), "the boot block should be lifted once the rules are in place"
+    finally:
+        os.unlink(config_file)
+
+
+def test_container_start_after_stop_restores_open_mode_accept_rule(
+    coi_binary, workspace_dir, cleanup_containers
+):
+    """Stop removes open mode's coi-<ip> accept rule; a bare start must put it back."""
+    reason = _skip_unless_ready()
+    if reason:
+        pytest.skip(reason)
+
+    config_file = _write_config(mode="open")
+    try:
+        env = os.environ.copy()
+        env["COI_CONFIG"] = config_file
+        name = _start_background(coi_binary, workspace_dir, env)
+        ip, count = _wait_for_rules_for_ip(coi_binary, name)
+        if not ip:
+            pytest.skip("container never got a DHCP IP; cannot assert rule cleanup")
+        assert count > 0, f"precondition: expected the coi-{ip} accept rule in open mode"
+
+        _coi_stop(coi_binary, name)
+        assert _count_rules_for_ip(ip) == 0, f"coi-{ip} accept rule should be gone after stop"
+
+        start = subprocess.run(
+            [coi_binary, "container", "start", name],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        assert start.returncode == 0, f"container start failed: {start.stderr}"
+        new_ip, new_count = _wait_for_rules_for_ip(coi_binary, name)
+        assert new_ip and new_count > 0, (
+            f"coi container start should re-add the open-mode accept rule (ip={new_ip!r})"
+        )
+        assert _ip6_block_veths(name) == [], "open mode installs no IPv6 block"
     finally:
         os.unlink(config_file)
