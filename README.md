@@ -87,9 +87,11 @@ persistent = true            # keep the box (and its installed packages) between
 [tool]
 name = "claude"
 
-[limits]
-cpu = "4"
-memory = "8GiB"
+[limits.cpu]
+count = "4"
+
+[limits.memory]
+limit = "8GiB"
 
 [network]
 mode = "restricted"          # open / restricted / allowlist
