@@ -551,7 +551,7 @@ type NetworkConfig struct {
 	// entry with no port inherits the global allowed_ports (else all ports), so a
 	// per-entry scope tightens just that destination. IPv4 only; wildcards rejected.
 	AllowedDomains          []string `toml:"allowed_domains"`
-	RefreshIntervalMinutes  *int     `toml:"refresh_interval_minutes"` // 0 = no refresh; a pointer so an explicit 0 overrides the default
+	RefreshIntervalMinutes  *int     `toml:"refresh_interval_minutes"`   // 0 = no refresh; a pointer so an explicit 0 overrides the default
 	AllowLocalNetworkAccess *bool    `toml:"allow_local_network_access"` // Allow established connections from entire local network (not just gateway)
 	// UseSudo controls whether Coi may invoke `sudo` for network operations (nft,
 	// iptables). Defaults to true. When false, Coi never shells out to sudo: it
