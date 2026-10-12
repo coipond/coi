@@ -10,6 +10,10 @@
 
 - [Change] **Image: guest `apparmor.service` is now masked** — profiles from `/etc/apparmor.d` are no longer loaded inside the container. Docker's `docker-default` profile and Playwright are unaffected. What changes: tools whose guest profile granted them unprivileged user namespaces lose that grant when run as a non-root user on hosts that restrict unprivileged user namespaces (Ubuntu 24.04+, `kernel.apparmor_restrict_unprivileged_userns=1`). These include Google Chrome's own sandbox (run it with `--no-sandbox`), rootless Podman and Buildah (run them with `sudo`), and Flatpak. Snaps installed inside a container may also stop working, since snap-confine's profile was part of the masked set. The change reaches only containers created after the next `coi build`. To get the profiles back in one container, run `sudo systemctl unmask apparmor.service && sudo systemctl start apparmor.service` inside it.
 
+### Bug Fixes
+
+- [Bug Fix] **`coi container stop` removes the container's firewall rules** — a container's rules are keyed by its IP, which a stopped container no longer reports, and a `coi shell --background` session never runs the session teardown. So every background session stopped with `coi container stop` left its rules behind, and a later `coi container delete` could not find them: one leaked set per run until `coi clean --orphans` (a host running an orchestrator collected over a hundred). Stop now reads the IP first and removes the rules after stopping; the next start re-applies them, so a persistent container keeps its isolation.
+
 ## 0.14.0 (2026-10-09)
 
 ### Changed

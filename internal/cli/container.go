@@ -97,9 +97,22 @@ var containerStopCmd = &cobra.Command{
 		force, _ := cmd.Flags().GetBool("force")
 
 		mgr := container.NewManager(name)
+
+		// Read the IP while the container still has one: its firewall rules are keyed by it, and
+		// a stopped container reports none, so a later `coi container delete` (or anything else)
+		// could no longer find them. They leaked on every stop of a background session
+		// (`coi shell --background` never runs the session teardown). Removing them here is
+		// safe: every start re-applies the rules for the IP the container gets then.
+		var containerIP string
+		if network.NftAvailable() {
+			containerIP, _ = network.GetContainerIPFast(name)
+		}
+
 		if err := mgr.Stop(force); err != nil {
 			return fmt.Errorf("failed to stop container: %v", err)
 		}
+
+		cleanupContainerFirewall(name, containerIP)
 
 		fmt.Fprintf(os.Stderr, "Container %s stopped\n", name)
 		return nil
