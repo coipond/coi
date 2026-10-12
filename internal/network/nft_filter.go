@@ -471,19 +471,7 @@ func ApplyBootBlockRule(containerName string) error {
 		return fmt.Errorf("veth for container %s did not appear within 2s", containerName)
 	}
 
-	comment := bootBlockComment(containerName)
-
-	// Idempotent: skip if already installed.
-	if exists, err := nftRuleExistsWithComment(comment); err == nil && exists {
-		return nil
-	}
-
-	if _, err := runNFTCommand(
-		"add", "rule", "ip", "coi", "forward",
-		"iifname", vethName,
-		"drop",
-		"comment", fmt.Sprintf(`"%s"`, comment),
-	); err != nil {
+	if err := installVethDropRule("ip", bootBlockComment(containerName), vethName); err != nil {
 		return fmt.Errorf("failed to add boot block rule for %s (veth %s): %w", containerName, vethName, err)
 	}
 	return nil
@@ -561,20 +549,68 @@ func ApplyIPv6BlockForContainer(containerName string) error {
 	if err != nil || vethName == "" {
 		return fmt.Errorf("could not resolve veth for IPv6 block on %s: %w", containerName, err)
 	}
-	comment := ipv6BlockComment(containerName)
-	// Idempotent: skip if already installed.
-	if exists, err := nftRuleExistsWithCommentFamily("ip6", comment); err == nil && exists {
-		return nil
-	}
-	if _, err := runNFTCommand(
-		"add", "rule", "ip6", "coi", "forward",
-		"iifname", vethName,
-		"drop",
-		"comment", fmt.Sprintf(`"%s"`, comment),
-	); err != nil {
-		return fmt.Errorf("failed to add IPv6 block rule for %s (veth %s): %w", containerName, vethName, err)
+	if err := installVethDropRule("ip6", ipv6BlockComment(containerName), vethName); err != nil {
+		return fmt.Errorf("failed to install IPv6 block rule for %s (veth %s): %w", containerName, vethName, err)
 	}
 	return nil
+}
+
+// installVethDropRule makes the `family coi forward` chain hold exactly one
+// rule with comment, and that rule drops traffic from vethName.
+//
+// These rules match the veth by name, and Incus gives the container a new veth
+// on every start. A rule left behind by a stop that skipped cleanup (`incus
+// stop`, a poweroff from inside, a host crash) names a veth that no longer
+// exists, so a bare "comment already present" check kept that dead rule and
+// left the new veth with no drop at all. Keep the rule only if it already names
+// this veth; otherwise delete the stale rules and add the new one in one
+// transaction.
+func installVethDropRule(family, comment, vethName string) error {
+	output, err := runNFTCommand("-a", "list", "chain", family, "coi", "forward")
+	if err != nil {
+		return fmt.Errorf("failed to list %s coi forward chain: %w", family, err)
+	}
+	current, stale := vethRulePlan(string(output), comment, vethName)
+	if current && len(stale) == 0 {
+		return nil
+	}
+	var cmds [][]string
+	for _, h := range stale {
+		cmds = append(cmds, []string{"delete", "rule", family, "coi", "forward", "handle", h})
+	}
+	if !current {
+		cmds = append(cmds, []string{
+			"add", "rule", family, "coi", "forward",
+			"iifname", fmt.Sprintf(`"%s"`, vethName),
+			"drop",
+			"comment", fmt.Sprintf(`"%s"`, comment),
+		})
+	}
+	return runNFTScript(cmds)
+}
+
+// vethRulePlan reads `nft -a list chain <family> coi forward` output and
+// reports whether a rule with comment already drops vethName (current), and
+// the handles of every other rule with that comment (stale: they name a veth
+// from an earlier start, or duplicate the current rule). Pure, for testing.
+func vethRulePlan(output, comment, vethName string) (current bool, stale []string) {
+	marker := fmt.Sprintf(`comment "%s"`, comment)
+	wantIif := fmt.Sprintf(`iifname "%s" `, vethName)
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, marker) {
+			continue
+		}
+		h := extractNFTHandle(line)
+		if h == "" {
+			continue
+		}
+		if !current && strings.Contains(line, wantIif) {
+			current = true
+			continue
+		}
+		stale = append(stale, h)
+	}
+	return current, stale
 }
 
 // RemoveIPv6BlockForContainer removes the host-side IPv6 egress drop rule installed

@@ -9,12 +9,20 @@ longer find it: one leaked bundle per background run until `coi clean --orphans`
 Stop now reads the IP first and removes everything after a successful stop.
 
 Removing them on stop is safe because every start re-applies the rules for the
-IP the container gets then; the second half of this test proves that by
-restarting the persistent container.
+IP the container gets then: through `coi shell` and, since the same fix, through
+a bare `coi container start` too, which used to bring the container back with no
+firewall at all.
+
+The IPv6 block matches the container's veth by name, and every start gets a new
+veth. A stop that skips cleanup (`incus stop`, a poweroff inside the container)
+leaves a coi6-<name> rule naming a dead veth; setup used to see that comment,
+skip, and leave the new veth with no IPv6 block. The tests below check the rule
+names the container's current veth, not just that the comment exists.
 """
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -59,8 +67,9 @@ def _count_rules_for_ip(ip):
         text=True,
         timeout=10,
     )
-    if r.returncode != 0:
-        return 0
+    # A failed listing must not read as "no rules", or a cleanup check passes
+    # without having looked.
+    assert r.returncode == 0, f"nft list chain ip coi forward failed: {r.stderr}"
     marker = f'comment "coi-{ip}"'
     return sum(1 for line in r.stdout.splitlines() if marker in line)
 
@@ -73,6 +82,60 @@ def _ip6_chain():
         timeout=10,
     )
     return r.stdout if r.returncode == 0 else ""
+
+
+def _ip6_block_veths(name):
+    """The veths named by the container's coi6-<name> rules, one per rule."""
+    comment = f'comment "coi6-{name}"'
+    veths = []
+    for line in _ip6_chain().splitlines():
+        if comment in line:
+            m = re.search(r'iifname "([^"]+)"', line)
+            veths.append(m.group(1) if m else line.strip())
+    return veths
+
+
+def _current_veth(name):
+    r = subprocess.run(
+        ["incus", "config", "get", name, "volatile.eth0.host_name"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _assert_ip6_block_on_current_veth(name, timeout=20):
+    """Exactly one coi6-<name> rule, and it drops the veth the container has now."""
+    deadline = time.time() + timeout
+    veth, rules = "", []
+    while time.time() < deadline:
+        veth, rules = _current_veth(name), _ip6_block_veths(name)
+        if veth and rules == [veth]:
+            return
+        time.sleep(1)
+    raise AssertionError(
+        f"coi6-{name} should drop exactly the current veth {veth!r}, got rules for {rules}"
+    )
+
+
+def _coi_stop(coi_binary, name):
+    stop = subprocess.run(
+        [coi_binary, "container", "stop", name, "--force"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert stop.returncode == 0, f"container stop failed: {stop.stderr}"
+    assert _container_status(name) == "STOPPED", "stop should keep the persistent container"
+
+
+def _write_config():
+    # Persistent so the stopped container stays (and a restart reuses it);
+    # restricted so the coi-<ip> bundle and the coi6-<name> block are installed.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
+        f.write('[container]\npersistent = true\n[network]\nmode = "restricted"\n')
+        return f.name
 
 
 def _container_status(name):
@@ -136,12 +199,7 @@ def test_container_stop_removes_firewall_artifacts_and_start_restores_them(
     if reason:
         pytest.skip(reason)
 
-    # Persistent so the stopped container stays (and a restart reuses it);
-    # restricted so the coi-<ip> bundle and the coi6-<name> block are installed.
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-        f.write('[container]\npersistent = true\n[network]\nmode = "restricted"\n')
-        config_file = f.name
-
+    config_file = _write_config()
     try:
         env = os.environ.copy()
         env["COI_CONFIG"] = config_file
@@ -154,14 +212,7 @@ def test_container_stop_removes_firewall_artifacts_and_start_restores_them(
         comment = f"coi6-{name}"
         assert comment in _ip6_chain(), f"precondition: {comment} present while running"
 
-        stop = subprocess.run(
-            [coi_binary, "container", "stop", name, "--force"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        assert stop.returncode == 0, f"container stop failed: {stop.stderr}"
-        assert _container_status(name) == "STOPPED", "stop should keep the persistent container"
+        _coi_stop(coi_binary, name)
 
         assert _poll_until(lambda: _count_rules_for_ip(ip) == 0), (
             f"coi-{ip} IPv4 rules still present after stop"
@@ -175,8 +226,96 @@ def test_container_stop_removes_firewall_artifacts_and_start_restores_them(
         assert again == name, f"expected the persistent container {name} to be reused, got {again}"
         new_ip, new_count = _wait_for_rules_for_ip(coi_binary, name)
         assert new_ip and new_count > 0, f"rules should be re-applied on restart (ip={new_ip!r})"
-        assert _poll_until(lambda: comment in _ip6_chain()), (
-            f"{comment} IPv6 block should be re-applied on restart"
+        _assert_ip6_block_on_current_veth(name)
+    finally:
+        os.unlink(config_file)
+
+
+def test_container_start_after_stop_reapplies_firewall(
+    coi_binary, workspace_dir, cleanup_containers
+):
+    """A bare `coi container start` must not bring a stopped container back unfiltered."""
+    reason = _skip_unless_ready()
+    if reason:
+        pytest.skip(reason)
+
+    config_file = _write_config()
+    try:
+        env = os.environ.copy()
+        env["COI_CONFIG"] = config_file
+        name = _start_background(coi_binary, workspace_dir, env)
+        ip, count = _wait_for_rules_for_ip(coi_binary, name)
+        if not ip:
+            pytest.skip("container never got a DHCP IP; cannot assert rule cleanup")
+        assert count > 0, f"precondition: expected coi-{ip} rules while running"
+
+        _coi_stop(coi_binary, name)
+        assert _count_rules_for_ip(ip) == 0, f"coi-{ip} rules should be gone after stop"
+        assert _ip6_block_veths(name) == [], "coi6 block should be gone after stop"
+
+        start = subprocess.run(
+            [coi_binary, "container", "start", name],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
         )
+        assert start.returncode == 0, f"container start failed: {start.stderr}"
+        assert _container_status(name) == "RUNNING", "start should leave the container running"
+
+        new_ip, new_count = _wait_for_rules_for_ip(coi_binary, name)
+        assert new_ip and new_count > 0, (
+            f"coi container start should re-apply the coi-<ip> rules (ip={new_ip!r})"
+        )
+        _assert_ip6_block_on_current_veth(name)
+        boot_block = f'comment "coi-boot-{name}"'
+        assert _poll_until(
+            lambda: (
+                boot_block
+                not in subprocess.run(
+                    ["sudo", "-n", "nft", "list", "chain", "ip", "coi", "forward"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                ).stdout
+            )
+        ), "the boot block should be lifted once the rules are in place"
+    finally:
+        os.unlink(config_file)
+
+
+def test_ip6_block_follows_new_veth_after_unclean_stop(
+    coi_binary, workspace_dir, cleanup_containers
+):
+    """A coi6 rule left on a dead veth must be replaced, not taken as already installed."""
+    reason = _skip_unless_ready()
+    if reason:
+        pytest.skip(reason)
+
+    config_file = _write_config()
+    try:
+        env = os.environ.copy()
+        env["COI_CONFIG"] = config_file
+        name = _start_background(coi_binary, workspace_dir, env)
+        _assert_ip6_block_on_current_veth(name)
+        old_veth = _current_veth(name)
+
+        # Stop behind coi's back, as `incus stop` or a poweroff inside the
+        # container does: no coi code runs, so the coi6 rule stays on the old veth.
+        r = subprocess.run(
+            ["incus", "stop", name, "--force"], capture_output=True, text=True, timeout=60
+        )
+        assert r.returncode == 0, f"incus stop failed: {r.stderr}"
+        assert _ip6_block_veths(name) == [old_veth], (
+            "precondition: the coi6 rule should be left behind on the old veth"
+        )
+
+        again = _start_background(coi_binary, workspace_dir, env)
+        assert again == name, f"expected the persistent container {name} to be reused, got {again}"
+        new_veth = _current_veth(name)
+        assert new_veth and new_veth != old_veth, (
+            f"precondition: Incus should give the restarted container a new veth ({old_veth!r})"
+        )
+        _assert_ip6_block_on_current_veth(name)
     finally:
         os.unlink(config_file)

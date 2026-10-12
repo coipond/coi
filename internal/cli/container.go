@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/session"
@@ -82,9 +84,42 @@ var containerStartCmd = &cobra.Command{
 			return fmt.Errorf("failed to start container: %v", err)
 		}
 
+		// A stop removes the container's firewall rules (they are keyed by an IP
+		// and a veth that the next start replaces), so a bare start must put them
+		// back, as `coi shell` and `coi run` do. Fail closed: a coi container that
+		// cannot be isolated is stopped rather than left running unfiltered.
+		if err := app.isolateStartedContainer(cmd.Context(), name); err != nil {
+			if stopErr := container.NewManager(name).Stop(true); stopErr != nil {
+				return fmt.Errorf("failed to apply network isolation (%v), and failed to stop the container: %v", err, stopErr)
+			}
+			return fmt.Errorf("failed to apply network isolation, container stopped: %v", err)
+		}
+
 		fmt.Fprintf(os.Stderr, "Container %s started\n", name)
 		return nil
 	},
+}
+
+// isolateStartedContainer applies the configured network isolation to a coi
+// container that `coi container start` just started: a boot block first (for
+// non-open modes, as the launch path does), then the full rules, which lift it.
+// Containers outside coi's naming scheme are left alone: this command can start
+// any Incus container, and firewalling someone else's would be a surprise.
+func (a *App) isolateStartedContainer(ctx context.Context, name string) error {
+	if a.cfg == nil || !strings.HasPrefix(name, session.GetContainerPrefix()) {
+		return nil
+	}
+	netCfg := a.cfg.Network
+	// No coi process stays behind to run the allowlist refresher, so pin the
+	// resolved addresses (refresh disabled) instead of letting them expire.
+	netCfg.RefreshIntervalMinutes = 0
+	if m := netCfg.Mode; m != "" && m != config.NetworkModeOpen {
+		if err := network.ApplyBootBlockRule(name); err != nil {
+			return fmt.Errorf("boot network block failed in %s mode: %w", m, err)
+		}
+	}
+	_, err := a.applyNetworkIsolationWith(ctx, name, netCfg)
+	return err
 }
 
 // containerStopCmd stops a running container
@@ -102,7 +137,8 @@ var containerStopCmd = &cobra.Command{
 		// a stopped container reports none, so a later `coi container delete` (or anything else)
 		// could no longer find them. They leaked on every stop of a background session
 		// (`coi shell --background` never runs the session teardown). Removing them here is
-		// safe: every start re-applies the rules for the IP the container gets then.
+		// safe: `coi shell`, `coi run` and `coi container start` all re-apply the rules for the
+		// IP the container gets on its next start.
 		var containerIP string
 		if network.NftAvailable() {
 			containerIP, _ = network.GetContainerIPFast(name)
