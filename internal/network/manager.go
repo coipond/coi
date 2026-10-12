@@ -29,8 +29,8 @@ To fix this:
      coi health --fix
 
 Alternatively, run with unrestricted network access by setting open mode in
-your config file (.coi/config.toml in your workspace, or the profile's
-config.toml):
+trusted config (~/.coi/config.toml, or a profile under ~/.coi/profiles; a
+workspace .coi/config.toml cannot turn isolation off):
 
   [network]
   mode = "open"
