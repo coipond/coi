@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Bug Fixes
+
+- [Bug Fix] **`refresh_interval_minutes = 0` disables allowlist re-resolution** — an explicit `0` was treated as unset and replaced with the 30-minute default, so allowlist domains kept being re-resolved. `0` now turns refresh off; leaving the key out still means 30.
+
 ## 0.15.0 (2026-10-12)
 
 ### Features
