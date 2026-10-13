@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Bug Fixes
+
+- [Bug Fix] **`auto_pause_on_high` and `auto_kill_on_critical` apply to network threats** — the nftables network monitor always paused on HIGH and killed on CRITICAL, so setting either to `false` only affected the process monitor. Both settings now govern network threats too; both still default to `true`.
+
 ## 0.15.0 (2026-10-12)
 
 ### Features
