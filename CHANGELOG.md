@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Breaking
+
+- [Breaking] **`forward_env` and `[ssh] forward_agent = true` are ignored in project config** — both hand host secrets to the container (named host environment variables, the host SSH agent), so a cloned repo's `.coi/config.toml` or project profile can no longer turn them on; coi prints a warning and drops them. Set them in `~/.coi/config.toml`, a profile under `~/.coi/profiles/`, or the file named by `COI_CONFIG`. `forward_agent = false` in project config is still honored.
+
 ## 0.15.0 (2026-10-12)
 
 ### Features
