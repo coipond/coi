@@ -653,7 +653,7 @@ func (noopAllower) AllowDynamicIPsPorts([]string, []portRange, uint32, time.Dura
 // The configured refresh_interval_minutes acts as a maximum cap.
 // If minTTL is 0 (unknown), the config interval is used as-is.
 func (m *Manager) computeRefreshInterval(minTTL uint32) time.Duration {
-	configInterval := time.Duration(m.config.RefreshIntervalMinutes) * time.Minute
+	configInterval := time.Duration(config.IntVal(m.config.RefreshIntervalMinutes)) * time.Minute
 
 	if minTTL == 0 {
 		return configInterval
@@ -671,7 +671,7 @@ func (m *Manager) computeRefreshInterval(minTTL uint32) time.Duration {
 // startRefresher starts the background IP refresh goroutine with TTL-aware scheduling.
 // It uses time.Timer instead of time.Ticker to allow dynamic rescheduling after each refresh.
 func (m *Manager) startRefresher(ctx context.Context, initialMinTTL uint32) {
-	if m.config.RefreshIntervalMinutes <= 0 {
+	if config.IntVal(m.config.RefreshIntervalMinutes) <= 0 {
 		m.logger.Println("IP refresh disabled (refresh_interval_minutes <= 0)")
 		return
 	}

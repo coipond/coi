@@ -85,8 +85,8 @@ func TestEmbeddedDefaultConfigValues(t *testing.T) {
 	if cfg.Limits.Runtime.AutoStop == nil || !*cfg.Limits.Runtime.AutoStop {
 		t.Error("Expected auto_stop=true")
 	}
-	if cfg.Network.RefreshIntervalMinutes != 30 {
-		t.Errorf("Expected refresh interval 30, got %d", cfg.Network.RefreshIntervalMinutes)
+	if IntVal(cfg.Network.RefreshIntervalMinutes) != 30 {
+		t.Errorf("Expected refresh interval 30, got %d", IntVal(cfg.Network.RefreshIntervalMinutes))
 	}
 }
 
