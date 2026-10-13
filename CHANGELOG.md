@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Bug Fixes
+
+- [Bug Fix] **`coi audit` prints the security monitor's records** — dumping a container's audit log (or a file with `--file`) printed nothing, because the monitor's threat events and snapshots were silently dropped as unrecognized. They are now printed as written.
+
 ## 0.15.0 (2026-10-12)
 
 ### Features
