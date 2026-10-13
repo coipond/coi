@@ -3,6 +3,7 @@ package audit
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,5 +76,69 @@ func TestHostAuditTail_AgentEventsAndNoise(t *testing.T) {
 		if ev.SessionID != "s1" || ev.Container != "c1" {
 			t.Errorf("agent event not stamped: %s", ln)
 		}
+	}
+}
+
+// A monitor snapshot lists every process's command line, so a single record
+// can exceed bufio.Scanner's token cap; it must still be printed rather than
+// aborting the whole dump with "token too long".
+func TestCopyHostAuditLines_OversizedRecord(t *testing.T) {
+	big := `{"container":"c","pad":"` + strings.Repeat("x", 2*1024*1024) + `"}`
+	in := strings.NewReader(big + "\n" + `{"id":"after"}` + "\n")
+	var out bytes.Buffer
+	if err := copyHostAuditLines(in, "", "", &out); err != nil {
+		t.Fatalf("oversized record aborted the dump: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 || lines[0] != big || lines[1] != `{"id":"after"}` {
+		t.Errorf("want the oversized record and the next one, got %d lines", len(lines))
+	}
+}
+
+// In --follow mode a record the monitor is mid-way through writing at EOF must
+// be held until its newline arrives, not split into two halves and dropped.
+func TestHostAuditCopier_PartialLineAcrossPolls(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "coi-test.jsonl")
+	w, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	r, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	var out bytes.Buffer
+	c := newHostAuditCopier(r, "", "", &out)
+	if _, err := w.WriteString(`{"id":"t-1","le`); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.drain(); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("partial line emitted early: %q", out.String())
+	}
+	if _, err := w.WriteString(`vel":"high"}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.drain(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != `{"id":"t-1","level":"high"}` {
+		t.Errorf("record split across polls was not reassembled: %q", got)
+	}
+}
+
+// A dump (no --follow) still prints a final record with no trailing newline.
+func TestCopyHostAuditLines_FinalLineWithoutNewline(t *testing.T) {
+	var out bytes.Buffer
+	if err := copyHostAuditLines(strings.NewReader(`{"id":"last"}`), "", "", &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != `{"id":"last"}` {
+		t.Errorf("final unterminated record dropped: %q", got)
 	}
 }
