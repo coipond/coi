@@ -7,16 +7,21 @@ Tests that:
 3. Default profile reflects project config overrides
 """
 
+import os
 import subprocess
 from pathlib import Path
 
 
-def test_profile_show_extended_sections(coi_binary, cleanup_containers, workspace_dir):
+def test_profile_show_extended_sections(coi_binary, cleanup_containers, workspace_dir, tmp_path):
     """
     Test that coi profile show displays Git/SSH/Security/Timezone/Paths/Incus
     sections when a profile sets them.
     """
-    profile_dir = Path(workspace_dir) / ".coi" / "profiles" / "extprof"
+    # [ssh] forward_agent = true is trusted-scope only: keep the profile next
+    # to $COI_CONFIG rather than in the workspace.
+    user_config = tmp_path / "config.toml"
+    user_config.write_text("")
+    profile_dir = tmp_path / "profiles" / "extprof"
     profile_dir.mkdir(parents=True)
     (profile_dir / "config.toml").write_text(
         """
@@ -57,6 +62,7 @@ project = "myproject"
         text=True,
         timeout=60,
         cwd=workspace_dir,
+        env={**os.environ, "COI_CONFIG": str(user_config)},
     )
 
     assert result.returncode == 0, f"profile show should succeed. stderr: {result.stderr}"
@@ -68,6 +74,9 @@ project = "myproject"
 
     assert "[ssh]" in output, f"Should show [ssh] section. Got:\n{output}"
     assert "forward_agent" in output, f"Should show forward_agent. Got:\n{output}"
+    assert "ignoring '[ssh] forward_agent" not in result.stderr, (
+        f"forward_agent was dropped. stderr: {result.stderr}"
+    )
 
     assert "[security]" in output, f"Should show [security] section. Got:\n{output}"
     assert "/secrets" in output, f"Should show protected path. Got:\n{output}"
@@ -83,12 +92,18 @@ project = "myproject"
     assert "myproject" in output, f"Should show incus project. Got:\n{output}"
 
 
-def test_profile_inheritance_extended_fields(coi_binary, cleanup_containers, workspace_dir):
+def test_profile_inheritance_extended_fields(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
     """
     Test that child profile inherits extended fields (git, ssh, security, timezone)
     from parent via mergeProfiles().
     """
-    coi_dir = Path(workspace_dir) / ".coi" / "profiles"
+    # [ssh] forward_agent = true is trusted-scope only: keep these profiles
+    # next to $COI_CONFIG rather than in the workspace.
+    user_config = tmp_path / "config.toml"
+    user_config.write_text("")
+    coi_dir = tmp_path / "profiles"
 
     parent_dir = coi_dir / "parent"
     parent_dir.mkdir(parents=True)
@@ -136,6 +151,7 @@ name = "Asia/Tokyo"
         text=True,
         timeout=60,
         cwd=workspace_dir,
+        env={**os.environ, "COI_CONFIG": str(user_config)},
     )
 
     assert result.returncode == 0, f"profile show should succeed. stderr: {result.stderr}"
@@ -147,6 +163,9 @@ name = "Asia/Tokyo"
 
     assert "[ssh]" in output, f"Should inherit [ssh] from parent. Got:\n{output}"
     assert "forward_agent" in output, f"Should inherit forward_agent. Got:\n{output}"
+    assert "ignoring '[ssh] forward_agent" not in result.stderr, (
+        f"forward_agent was dropped. stderr: {result.stderr}"
+    )
 
     # Child should inherit security from parent
     assert "[security]" in output, f"Should inherit [security] from parent. Got:\n{output}"
