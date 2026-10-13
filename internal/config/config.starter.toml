@@ -35,7 +35,8 @@
 # clean clone of this config. Trusted (global/COI_CONFIG) scope only — a project
 # config can't redirect your default. Must name an existing profile.
 # profile = "myprofile"
-# Forward host env vars into the container BY NAME (values read at session start, never stored):
+# Forward host env vars into the container BY NAME (values read at session start, never stored).
+# Trusted-scope only: ignored (with a warning) in a workspace .coi/config.toml or project profile.
 # forward_env = ["ANTHROPIC_API_KEY", "GITHUB_TOKEN"]
 # Inject fixed env vars into the container:
 # [defaults.environment]
@@ -165,6 +166,7 @@
 
 [ssh]
 # forward_agent = false          # forward the host SSH agent into the container
+                                 # (true is trusted-scope only; ignored from a project config)
 
 [security]
 # Paths mounted read-only so the container can't tamper with host-executed files.

@@ -166,6 +166,8 @@ def test_run_ssh_agent_forwarding(coi_binary, workspace_dir, cleanup_containers)
         capture_output=True,
         text=True,
         timeout=60,
+        # forward_agent is trusted-scope only: load the config via COI_CONFIG.
+        env={**os.environ, "COI_CONFIG": str(pathlib.Path(workspace_dir) / ".coi" / "config.toml")},
     )
 
     assert result.returncode == 0, (

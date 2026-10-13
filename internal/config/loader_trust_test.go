@@ -428,3 +428,60 @@ func TestLoadProfileDirectories_UntrustedStripsToolContextInjectors(t *testing.T
 		t.Error("a trusted profile keeps context_file")
 	}
 }
+
+const hostExposureConfig = `
+[defaults]
+forward_env = ["AWS_SECRET_ACCESS_KEY"]
+
+[ssh]
+forward_agent = true
+`
+
+// forward_env and [ssh] forward_agent hand host secrets (env values, the SSH
+// agent) to the container, so they are honored only from trusted scope.
+func TestLoadConfigFileScoped_ForwardEnvAndSSHAgentTrustedOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(hostExposureConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, trusted := range []bool{false, true} {
+		cfg := GetDefaultConfig()
+		if err := loadConfigFileScoped(cfg, path, trusted); err != nil {
+			t.Fatalf("loadConfigFileScoped(trusted=%v): %v", trusted, err)
+		}
+		if got := len(cfg.Defaults.ForwardEnv) > 0; got != trusted {
+			t.Errorf("trusted=%v: forward_env = %v", trusted, cfg.Defaults.ForwardEnv)
+		}
+		if got := BoolVal(cfg.SSH.ForwardAgent); got != trusted {
+			t.Errorf("trusted=%v: forward_agent = %v", trusted, got)
+		}
+	}
+}
+
+func TestLoadProfileDirectories_ForwardEnvAndSSHAgentTrustedOnly(t *testing.T) {
+	body := "forward_env = [\"GITHUB_TOKEN\"]\n\n[ssh]\nforward_agent = true\n"
+	for _, trusted := range []bool{false, true} {
+		root, _ := writeProfile(t, body)
+		cfg := GetDefaultConfig()
+		if err := loadProfileDirectories(cfg, root, trusted); err != nil {
+			t.Fatalf("loadProfileDirectories(trusted=%v): %v", trusted, err)
+		}
+		p := cfg.Profiles["dev"]
+		if got := len(p.ForwardEnv) > 0; got != trusted {
+			t.Errorf("trusted=%v: profile forward_env = %v", trusted, p.ForwardEnv)
+		}
+		if got := p.SSH != nil && BoolVal(p.SSH.ForwardAgent); got != trusted {
+			t.Errorf("trusted=%v: profile forward_agent = %v", trusted, got)
+		}
+	}
+}
+
+// forward_agent = false only strengthens, so an untrusted source may set it.
+func TestSanitizeUntrustedSSH_KeepsFalse(t *testing.T) {
+	f := false
+	s := &SSHConfig{ForwardAgent: &f}
+	sanitizeUntrustedSSH(s, "/ws/.coi/config.toml")
+	if s.ForwardAgent == nil || *s.ForwardAgent {
+		t.Errorf("forward_agent = false must be kept, got %v", s.ForwardAgent)
+	}
+}

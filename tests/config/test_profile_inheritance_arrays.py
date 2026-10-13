@@ -5,6 +5,7 @@ Tests that arrays (mounts, forward_env) replace when child defines them
 and are inherited when child does not.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -68,9 +69,14 @@ def test_profile_inheritance_mounts_inherited(coi_binary, cleanup_containers, wo
     assert "~/.ssh" in output, f"Should inherit parent mounts. Got:\n{output}"
 
 
-def test_profile_inheritance_forward_env_replaced(coi_binary, cleanup_containers, workspace_dir):
+def test_profile_inheritance_forward_env_replaced(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
     """Child defines forward_env - replaces parent's."""
-    coi_dir = Path(workspace_dir) / ".coi" / "profiles"
+    # forward_env is trusted-scope only: keep these profiles next to $COI_CONFIG.
+    user_config = tmp_path / "config.toml"
+    user_config.write_text("")
+    coi_dir = tmp_path / "profiles"
 
     parent_dir = coi_dir / "parent"
     parent_dir.mkdir(parents=True)
@@ -86,6 +92,7 @@ def test_profile_inheritance_forward_env_replaced(coi_binary, cleanup_containers
         text=True,
         timeout=60,
         cwd=workspace_dir,
+        env={**os.environ, "COI_CONFIG": str(user_config)},
     )
 
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -94,9 +101,14 @@ def test_profile_inheritance_forward_env_replaced(coi_binary, cleanup_containers
     assert "SSH_AUTH_SOCK" not in output, f"Parent forward_env replaced. Got:\n{output}"
 
 
-def test_profile_inheritance_forward_env_inherited(coi_binary, cleanup_containers, workspace_dir):
+def test_profile_inheritance_forward_env_inherited(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
     """Child without forward_env gets parent's."""
-    coi_dir = Path(workspace_dir) / ".coi" / "profiles"
+    # forward_env is trusted-scope only: keep these profiles next to $COI_CONFIG.
+    user_config = tmp_path / "config.toml"
+    user_config.write_text("")
+    coi_dir = tmp_path / "profiles"
 
     parent_dir = coi_dir / "parent"
     parent_dir.mkdir(parents=True)
@@ -114,6 +126,7 @@ def test_profile_inheritance_forward_env_inherited(coi_binary, cleanup_container
         text=True,
         timeout=60,
         cwd=workspace_dir,
+        env={**os.environ, "COI_CONFIG": str(user_config)},
     )
 
     assert result.returncode == 0, f"stderr: {result.stderr}"
