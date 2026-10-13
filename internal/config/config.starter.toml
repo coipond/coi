@@ -11,7 +11,8 @@
 # Named profiles live under <dir>/profiles/<name>/config.toml and are opt-in via
 # `--profile <name>`. See `coi profile list` / `coi profile create`.
 #
-# The commented values shown below are Coi's current defaults.
+# Commented values are Coi's current defaults where a setting has one; for
+# settings that are unset by default (e.g. model) they are examples.
 
 [container]
 # image = "coi-default"          # base image to launch (built by `coi build`)
@@ -23,10 +24,10 @@
 
 # [container.build]              # how `coi build` builds the base image
 # base = "ubuntu:24.04"          # base image to build from
-# compression = "none"          # image compression: none | gzip | xz ("" = Incus default)
-# agents = ["claude"]            # AI agents to install (any of claude/opencode/pi/codex);
-#                                #   omit to install the default set (claude, opencode, pi —
-#                                #   codex is opt-in and must be listed explicitly, #698)
+# compression = ""              # image compression: none | gzip | xz ("" = Incus default)
+# agents = ["claude", "opencode", "pi"]  # AI agents to install (any of claude/opencode/pi/codex/omp);
+#                                #   omit to install this default set — codex and omp are
+#                                #   opt-in and must be listed explicitly (#698)
 
 [defaults]
 # Profile to apply when --profile is not passed, so your setup applies without
@@ -111,14 +112,14 @@
 # path = "~/.coi/logs/network.log"
 
 [tool]
-# name = "claude"                # claude | opencode | pi | codex
+# name = "claude"                # claude | opencode | pi | codex | omp
 # auto_context = true            # inject SANDBOX_CONTEXT.md into the tool
 # context_json = true            # also write ~/SANDBOX_CONTEXT.json (set false to disable)
 # context_json_file = "~/coi-context.json"  # inject a custom JSON instead of the generated one
 
 # [tool.claude]
 # model = "opus"                 # Claude model (ANTHROPIC_MODEL): alias like "opus" or a full ID
-# effort_level = "high"          # low | medium | high | xhigh | max | auto (unset = you control it)
+# effort_level = ""              # low | medium | high | xhigh | max | auto (unset = you control it)
 
 # [tool.codex]                   # codex is opt-in at image build: [container.build] agents = ["claude", "codex"]
 # model = "gpt-5-codex"          # Codex model (passed as -m); unset = codex's own default
@@ -190,7 +191,7 @@
 # swap = "true"                  # "true" | "false" | size like "1GiB"
 
 [limits.disk]
-# read = ""                      # "10MiB/s", "1000iops"
+# read = ""                      # bytes/sec without "/s" ("10MiB") or "1000iops"
 # write = ""
 # max = ""                       # combined read+write (overrides read/write)
 # priority = 0
@@ -207,7 +208,7 @@
 # enabled = false                # background threat monitoring
 # auto_pause_on_high = true
 # auto_kill_on_critical = true
-# forensics_on_kill = true       # keep a forensic copy (*-forensics-*) before an auto-kill deletes the container
+# forensics_on_kill = false      # true = keep a forensic copy (*-forensics-*) before an auto-kill deletes the container
 # reverse_shell_one_liners = "critical"  # "critical" (default) | "warn" (audit only) | "off"; python -c/perl -e/ruby -e/php -r class (#842)
 # poll_interval_sec = 2
 # file_read_threshold_mb = 50.0

@@ -86,12 +86,13 @@ forward_agent = false
 [security]
 protected_paths = [".git/hooks", ".git/config", ".git/config.worktree", ".git/info/attributes", ".husky", ".vscode", ".coi", ".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml"]
 host_immutable = true
-# writable_agent_config: when false (default), in-workspace agent tool config
-# (.claude/settings.json, .claude/settings.local.json, .codex/config.toml) is
-# mounted read-only so a contained agent cannot plant/modify hooks or commands
-# that a later session would auto-execute.
-# Set to true in trusted-scope config (~/.coi/config.toml) to let the tool write them.
-# writable_agent_config = false
+# In-workspace agent tool config (.claude/settings.json,
+# .claude/settings.local.json, .codex/config.toml) is in protected_paths, so it
+# is mounted read-only and a contained agent cannot plant/modify hooks or
+# commands that a later session would auto-execute. To let the tool write one,
+# remove it from the effective list with writable_paths in trusted-scope config
+# (~/.coi/config.toml or $COI_CONFIG):
+# writable_paths = [".claude/settings.json"]
 # reduce_kernel_surface: opt-in kernel attack-surface hardening. Disables
 # Docker/nesting support (wins over [container] docker) and denies the syscall
 # families behind most recent kernel escape chains (io_uring, bpf, userfaultfd,

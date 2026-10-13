@@ -157,3 +157,37 @@ func TestProfileInheritance_CarriesEgressKeys(t *testing.T) {
 		t.Errorf("child did not inherit allowed_ports, got %v", merged.Network.AllowedPorts)
 	}
 }
+
+// refresh_interval_minutes = 0 disables refreshing (schema + manager), so an
+// explicit 0 from a config file or profile must override the default 30 rather
+// than read as "unset".
+func TestMergeNetworkInto_RefreshIntervalZeroOverridesDefault(t *testing.T) {
+	var file Config
+	if _, err := toml.Decode("[network]\nrefresh_interval_minutes = 0\n", &file); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	cfg := GetDefaultConfig()
+	if got := IntVal(cfg.Network.RefreshIntervalMinutes); got != 30 {
+		t.Fatalf("default refresh interval = %d, want 30", got)
+	}
+	cfg.Merge(&file)
+	if got := IntVal(cfg.Network.RefreshIntervalMinutes); got != 0 {
+		t.Errorf("after merging an explicit 0, refresh interval = %d, want 0", got)
+	}
+
+	cfg = GetDefaultConfig()
+	cfg.Merge(&Config{}) // a file without the key keeps the default
+	if got := IntVal(cfg.Network.RefreshIntervalMinutes); got != 30 {
+		t.Errorf("after merging an empty config, refresh interval = %d, want 30", got)
+	}
+
+	cfg = GetDefaultConfig()
+	zero := 0
+	cfg.Profiles = map[string]ProfileConfig{"pinned": {Network: &NetworkConfig{RefreshIntervalMinutes: &zero}}}
+	if err := cfg.ApplyProfile("pinned"); err != nil {
+		t.Fatalf("ApplyProfile: %v", err)
+	}
+	if got := IntVal(cfg.Network.RefreshIntervalMinutes); got != 0 {
+		t.Errorf("after a profile's explicit 0, refresh interval = %d, want 0", got)
+	}
+}
