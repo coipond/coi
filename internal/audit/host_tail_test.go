@@ -55,7 +55,7 @@ func TestHostAuditTail_MonitorRecords(t *testing.T) {
 }
 
 // A recording made with `coi audit --follow` (agent schema) is still decoded
-// and stamped; non-JSON noise is skipped.
+// and stamped; non-JSON noise is kept as an agent.stderr audit event.
 func TestHostAuditTail_AgentEventsAndNoise(t *testing.T) {
 	in := strings.NewReader(`{"ts":"2026-01-01T00:00:00Z","type":"exec","pid":7,"comm":"sh"}` + "\n" +
 		"bash: some stderr noise\n" +
@@ -65,8 +65,8 @@ func TestHostAuditTail_AgentEventsAndNoise(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("want 2 events, got %d:\n%s", len(lines), out.String())
+	if len(lines) != 3 {
+		t.Fatalf("want 3 events, got %d:\n%s", len(lines), out.String())
 	}
 	for _, ln := range lines {
 		var ev Event
@@ -76,6 +76,13 @@ func TestHostAuditTail_AgentEventsAndNoise(t *testing.T) {
 		if ev.SessionID != "s1" || ev.Container != "c1" {
 			t.Errorf("agent event not stamped: %s", ln)
 		}
+	}
+	var noise Event
+	if err := json.Unmarshal([]byte(lines[1]), &noise); err != nil {
+		t.Fatal(err)
+	}
+	if noise.Type != TypeAudit || noise.Msg != "agent.stderr" || noise.Raw != "bash: some stderr noise" {
+		t.Errorf("non-JSON line not kept as agent.stderr: %s", lines[1])
 	}
 }
 

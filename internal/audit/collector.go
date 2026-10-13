@@ -164,9 +164,8 @@ func (c *hostAuditCopier) flush() error {
 
 func (c *hostAuditCopier) emit(raw []byte) error {
 	line := strings.TrimSpace(string(raw))
-	if !strings.HasPrefix(line, "{") {
-		return nil
-	}
+	// ParseLine turns non-JSON lines into agent.stderr audit events, as the
+	// dump did before monitor records were passed through.
 	if ev, err := ParseLine(line); err == nil && ev != nil {
 		if c.sessionID != "" {
 			ev.SessionID = c.sessionID
