@@ -17,8 +17,9 @@ import (
 // Load loads configuration from all available sources
 // Hierarchy (lowest to highest precedence):
 // 1. Built-in defaults
-// 2. User config (~/.coi/config.toml, or the file $COI_CONFIG points at)
+// 2. User config (~/.coi/config.toml)
 // 3. Project config (./.coi/config.toml)
+// 4. The file $COI_CONFIG points at, if set (trusted, loaded last)
 //
 // There are no env-var config overrides: config-shaped settings live in
 // config files and profiles only.

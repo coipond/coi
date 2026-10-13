@@ -6,6 +6,11 @@
 
 - [Breaking] **`forward_env` and `[ssh] forward_agent = true` are ignored in project config** — both hand host secrets to the container (named host environment variables, the host SSH agent), so a cloned repo's `.coi/config.toml` or project profile can no longer turn them on; coi prints a warning and drops them. Set them in `~/.coi/config.toml`, a profile under `~/.coi/profiles/`, or the file named by `COI_CONFIG`. `forward_agent = false` in project config is still honored.
 
+### Bug Fixes
+
+- [Bug Fix] **`refresh_interval_minutes = 0` disables allowlist re-resolution** — an explicit `0` was treated as unset and replaced with the 30-minute default, so allowlist domains kept being re-resolved. `0` now turns refresh off; leaving the key out still means 30.
+- [Bug Fix] **README profile example loads again (#890)** — the `[limits]` example set `cpu = "4"` and `memory = "8GiB"` directly, which fails to load; it now uses `[limits.cpu] count` and `[limits.memory] limit`. A test now checks that every TOML example in the README loads. Stale comments in the shipped config files are fixed too: the default config named a nonexistent `writable_agent_config` (the opt-out is `writable_paths`), the starter config's disk rate example `"10MiB/s"` failed validation, and the nftables-unavailable hint pointed at the workspace `.coi/config.toml`, which can't change the network mode.
+
 ## 0.15.0 (2026-10-12)
 
 ### Features
