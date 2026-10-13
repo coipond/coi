@@ -201,6 +201,8 @@ func loadConfigFileScoped(cfg *Config, path string, trusted bool) error {
 func sanitizeUntrustedConfig(fileCfg *Config, path string) {
 	sanitizeUntrustedNetwork(&fileCfg.Network, path)
 	sanitizeUntrustedEnvCommands(&fileCfg.Defaults, path)
+	sanitizeUntrustedForwardEnv(&fileCfg.Defaults.ForwardEnv, path)
+	sanitizeUntrustedSSH(&fileCfg.SSH, path)
 	sanitizeUntrustedDefaultProfile(&fileCfg.Defaults, path)
 	sanitizeUntrustedSessionName(&fileCfg.Container, path)
 	sanitizeUntrustedDocker(&fileCfg.Container, path)
@@ -440,6 +442,38 @@ func sanitizeUntrustedEnvCommands(d *DefaultsConfig, path string) {
 			"command is host code execution. Move it to ~/.coi/config.toml or set "+
 			"COI_CONFIG to apply it.\n", path)
 	d.EnvCommands = nil
+}
+
+// sanitizeUntrustedForwardEnv strips forward_env from an untrusted source.
+// Forwarding copies the named HOST env vars (typically tokens and API keys)
+// into the container, where the agent can read them, so a cloned or
+// agent-planted repo must not be able to pick them. Applied to the top-level
+// project config and to project-scoped profiles alike.
+func sanitizeUntrustedForwardEnv(forwardEnv *[]string, path string) {
+	if len(*forwardEnv) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"WARNING: ignoring 'forward_env' in project config %s; it hands host "+
+			"environment variables to the container. Move it to ~/.coi/config.toml "+
+			"(or a profile under ~/.coi/profiles) or set COI_CONFIG to apply it.\n", path)
+	*forwardEnv = nil
+}
+
+// sanitizeUntrustedSSH drops `[ssh] forward_agent = true` from an untrusted
+// source: it lets the container use the host's SSH keys (push to any repo,
+// log in to any host they open). forward_agent = false is a strengthening
+// value and is kept. nil is a no-op.
+func sanitizeUntrustedSSH(s *SSHConfig, path string) {
+	if s == nil || s.ForwardAgent == nil || !*s.ForwardAgent {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"WARNING: ignoring '[ssh] forward_agent = true' in project config %s; it "+
+			"exposes your host SSH agent to the container. Move it to "+
+			"~/.coi/config.toml (or a profile under ~/.coi/profiles) or set "+
+			"COI_CONFIG to apply it.\n", path)
+	s.ForwardAgent = nil
 }
 
 // sanitizeUntrustedDefaultProfile strips `[defaults] profile` from an untrusted
@@ -761,6 +795,8 @@ func loadProfileDirectories(cfg *Config, configDir string, trusted bool) error {
 			sanitizeUntrustedGit(profileCfg.Git, profileConfigPath)
 			sanitizeUntrustedTool(profileCfg.Tool, profileConfigPath)
 			sanitizeUntrustedPrompts(profileCfg.Prompts, profileConfigPath)
+			sanitizeUntrustedForwardEnv(&profileCfg.ForwardEnv, profileConfigPath)
+			sanitizeUntrustedSSH(profileCfg.SSH, profileConfigPath)
 			markUntrustedMounts(profileCfg.Mounts, profileConfigPath)
 			markUntrustedSockets(profileCfg.Sockets, profileConfigPath)
 			markUntrustedPorts(profileCfg.Ports, profileConfigPath)
