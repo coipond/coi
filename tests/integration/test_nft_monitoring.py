@@ -643,6 +643,220 @@ class TestNetworkThreatDetection:
                 proc.kill()
             cleanup_container(container_name, coi_binary, env=coi_monitoring_env)
 
+    def test_metadata_access_not_killed_when_auto_kill_disabled(
+        self, test_workspace, coi_binary, coi_monitoring_env
+    ):
+        """With auto_kill_on_critical = false, a CRITICAL network threat is only alerted.
+
+        The nft monitor used to hard-code both auto-responses to true, so this
+        setting only governed the process monitor and the container was still killed.
+        """
+        slot = 58
+        container_name = get_container_name_from_workspace(test_workspace, slot)
+
+        # coi_monitoring_env points COI_CONFIG at this file
+        Path(test_workspace, ".coi", "config.toml").write_text("""
+[monitoring]
+enabled = true
+auto_kill_on_critical = false
+auto_pause_on_high = false
+
+[monitoring.nft]
+enabled = true
+""")
+
+        proc = subprocess.Popen(
+            [
+                coi_binary,
+                "shell",
+                "--workspace",
+                test_workspace,
+                "--slot",
+                str(slot),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=coi_monitoring_env,
+        )
+
+        try:
+            if not wait_for_container_ready(container_name, timeout=60):
+                pytest.fail(f"Container {container_name} did not start")
+
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
+
+            # Wait for NFT rules to be created (confirms monitoring pipeline is active)
+            nft_ready = False
+            for _ in range(15):
+                if check_nft_rules_exist(container_ip):
+                    nft_ready = True
+                    break
+                time.sleep(1)
+
+            assert nft_ready, f"NFT monitoring rules never appeared for {container_ip}"
+
+            subprocess.run(
+                [
+                    "incus",
+                    "exec",
+                    container_name,
+                    "--",
+                    "curl",
+                    "-m",
+                    "3",
+                    "http://169.254.169.254/latest/meta-data/",
+                ],
+                capture_output=True,
+                timeout=10,
+            )
+
+            # The CRITICAL event must be logged first, so a surviving container
+            # proves the response was skipped, not that detection never happened.
+            events = []
+            critical_events = []
+            for _ in range(30):
+                time.sleep(1)
+                events = get_nft_threat_events(container_name)
+                critical_events = [e for e in events if e.get("level") == "critical"]
+                if critical_events:
+                    break
+
+            assert critical_events, (
+                f"Expected CRITICAL threat logged for metadata access. Events: {events}"
+            )
+            actions = {e.get("action") for e in critical_events}
+            assert actions <= {"alerted", "deduplicated"}, (
+                f"auto_kill_on_critical=false: CRITICAL threats must only be alerted, "
+                f"got actions {actions}. Events: {critical_events}"
+            )
+
+            # A kill would stop and delete the container within a few seconds
+            time.sleep(5)
+            state = get_container_state(container_name)
+            assert state == "Running", (
+                f"auto_kill_on_critical=false: container should keep running, but state is {state}"
+            )
+
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            cleanup_container(container_name, coi_binary, env=coi_monitoring_env)
+
+    def test_private_network_access_not_paused_when_auto_pause_disabled(
+        self, test_workspace, coi_binary, coi_monitoring_env
+    ):
+        """With auto_pause_on_high = false, a HIGH network threat is only alerted.
+
+        The nft monitor used to hard-code both auto-responses to true, so this
+        setting only governed the process monitor and the container was still paused.
+        """
+        slot = 59
+        container_name = get_container_name_from_workspace(test_workspace, slot)
+
+        # Open mode (CI's default too): restricted mode's firewall drops RFC1918
+        # traffic. coi_monitoring_env points COI_CONFIG at this file.
+        Path(test_workspace, ".coi", "config.toml").write_text("""
+[network]
+mode = "open"
+
+[monitoring]
+enabled = true
+auto_kill_on_critical = false
+auto_pause_on_high = false
+
+[monitoring.nft]
+enabled = true
+""")
+
+        proc = subprocess.Popen(
+            [
+                coi_binary,
+                "shell",
+                "--workspace",
+                test_workspace,
+                "--slot",
+                str(slot),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=coi_monitoring_env,
+        )
+
+        try:
+            if not wait_for_container_ready(container_name, timeout=60):
+                pytest.fail(f"Container {container_name} did not start")
+
+            container_ip = wait_for_container_ip(container_name)
+            assert container_ip, f"Container {container_name} got no IP address"
+
+            # Wait for NFT rules to be created (confirms monitoring pipeline is active)
+            nft_ready = False
+            for _ in range(15):
+                if check_nft_rules_exist(container_ip):
+                    nft_ready = True
+                    break
+                time.sleep(1)
+
+            assert nft_ready, f"NFT monitoring rules never appeared for {container_ip}"
+
+            # Any routed RFC1918 address other than the gateway is HIGH; this one
+            # is off the bridge subnet, so the SYN is forwarded past the LOG rule.
+            subprocess.run(
+                [
+                    "incus",
+                    "exec",
+                    container_name,
+                    "--",
+                    "curl",
+                    "-m",
+                    "3",
+                    "http://192.168.254.254/",
+                ],
+                capture_output=True,
+                timeout=10,
+            )
+
+            # The HIGH event must be logged first, so a running container proves
+            # the response was skipped, not that detection never happened.
+            events = []
+            high_events = []
+            for _ in range(30):
+                time.sleep(1)
+                events = get_nft_threat_events(container_name)
+                high_events = [e for e in events if e.get("level") == "high"]
+                if high_events:
+                    break
+
+            assert high_events, (
+                f"Expected HIGH threat logged for private network access. Events: {events}"
+            )
+            actions = {e.get("action") for e in high_events}
+            assert actions <= {"alerted", "deduplicated"}, (
+                f"auto_pause_on_high=false: HIGH threats must only be alerted, "
+                f"got actions {actions}. Events: {high_events}"
+            )
+
+            # A pause would freeze the container within a few seconds
+            time.sleep(5)
+            state = get_container_state(container_name)
+            assert state == "Running", (
+                f"auto_pause_on_high=false: container should keep running, but state is {state}"
+            )
+
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            cleanup_container(container_name, coi_binary, env=coi_monitoring_env)
+
     def test_network_activity_counted(self, test_workspace, coi_binary, coi_monitoring_env):
         """Test that network activity hits NFT rules (verified via counters)."""
         slot = 55

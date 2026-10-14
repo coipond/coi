@@ -799,6 +799,8 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 		LogDNSQueries:        config.BoolVal(cfg.Monitoring.NFT.LogDNSQueries),
 		LimaHost:             cfg.Monitoring.NFT.LimaHost,
 		ForensicsOnKill:      cfg.Monitoring.IsForensicsOnKillEnabled(),
+		AutoPauseOnHigh:      config.BoolVal(cfg.Monitoring.AutoPauseOnHigh),
+		AutoKillOnCritical:   config.BoolVal(cfg.Monitoring.AutoKillOnCritical),
 		OnThreat: func(threat nftmonitor.ThreatEvent) {
 			log.Printf("[nft] threat detected: %s severity=%s", threat.Title, threat.Level)
 		},
