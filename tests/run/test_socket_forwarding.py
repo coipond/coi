@@ -126,6 +126,63 @@ def test_ssh_forward_agent_regression(coi_binary, workspace_dir, cleanup_contain
         server.close()
 
 
+def _assert_agent_not_forwarded(r):
+    """The container ran but /tmp/ssh-agent.sock led nowhere, with the loader warning."""
+    combined = r.stdout + r.stderr
+    assert SENTINEL not in r.stdout, (
+        f"host SSH agent must not be reachable from a project config. out={r.stdout} err={r.stderr}"
+    )
+    # Node's connect failure proves the container ran, so the check above isn't vacuous.
+    assert "CONNERR" in combined, f"container read never ran. out={r.stdout} err={r.stderr}"
+    assert "ignoring '[ssh] forward_agent = true' in project config" in r.stderr, (
+        f"expected the forward_agent warning. err={r.stderr}"
+    )
+
+
+def test_ssh_forward_agent_ignored_from_project_config(
+    coi_binary, workspace_dir, cleanup_containers, tmp_path
+):
+    """`[ssh] forward_agent = true` in an untrusted project .coi/config.toml is
+    dropped: a cloned repo must not hand the container the host SSH agent. Not
+    gated by `coi trust`, so COI_TRUST_ALL=1 doesn't enable it either."""
+    server = HostSocketServer()
+    try:
+        cfg_dir = pathlib.Path(workspace_dir) / ".coi"
+        cfg_dir.mkdir(exist_ok=True)
+        (cfg_dir / "config.toml").write_text("[ssh]\nforward_agent = true\n")
+        env = dict(os.environ)
+        env.pop("COI_CONFIG", None)
+        env["COI_TRUST_ALL"] = "1"
+        env["SSH_AUTH_SOCK"] = server.path
+
+        r = read_through_socket(coi_binary, workspace_dir, env, "/tmp/ssh-agent.sock")
+        _assert_agent_not_forwarded(r)
+    finally:
+        server.close()
+
+
+def test_ssh_forward_agent_ignored_from_project_profile(
+    coi_binary, workspace_dir, cleanup_containers, tmp_path
+):
+    """Same for a project-scoped profile (./.coi/profiles/dev)."""
+    server = HostSocketServer()
+    try:
+        prof = pathlib.Path(workspace_dir) / ".coi" / "profiles" / "dev"
+        prof.mkdir(parents=True)
+        (prof / "config.toml").write_text("[ssh]\nforward_agent = true\n")
+        env = dict(os.environ)
+        env.pop("COI_CONFIG", None)
+        env["COI_TRUST_ALL"] = "1"
+        env["SSH_AUTH_SOCK"] = server.path
+
+        r = read_through_socket(
+            coi_binary, workspace_dir, env, "/tmp/ssh-agent.sock", extra_args=["--profile", "dev"]
+        )
+        _assert_agent_not_forwarded(r)
+    finally:
+        server.close()
+
+
 def test_configured_socket_end_to_end(coi_binary, workspace_dir, cleanup_containers, tmp_path):
     """A [[sockets]] entry from a trusted-scope ($COI_CONFIG) config is forwarded,
     its env var is injected, and the container reads the host sentinel back through
