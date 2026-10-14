@@ -53,3 +53,29 @@ func strictDecode(src string, v any) error {
 	}
 	return nil
 }
+
+// The coi-profile agent skill teaches agents to write profiles, so every
+// ```toml example in it must be a valid profile config.toml.
+func TestProfileSkillTomlExamplesValidate(t *testing.T) {
+	data, err := os.ReadFile("../../skills/coi-profile/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := tomlFence.FindAllStringSubmatch(string(data), -1)
+	if len(blocks) == 0 {
+		t.Fatal("no ```toml blocks found in skills/coi-profile/SKILL.md")
+	}
+	for i, b := range blocks {
+		src := b[1]
+		err := strictDecode(src, &ProfileConfig{})
+		if err == nil {
+			var raw map[string]any
+			if _, err = toml.Decode(src, &raw); err == nil {
+				err = coischema.ValidateProfileMap(raw)
+			}
+		}
+		if err != nil {
+			t.Errorf("skill toml block %d is not a valid profile: %v\n%s", i+1, err, src)
+		}
+	}
+}

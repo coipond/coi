@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- [Feature] **Agent skill for writing profiles** — `skills/coi-profile/SKILL.md` teaches a coding agent to write a profile `config.toml`: read the format from `coi schema profile`, scaffold with `coi profile create`, check with `coi validate profile` and `coi profile info`. A test checks that its TOML example is a valid profile.
+
 ### Breaking
 
 - [Breaking] **`forward_env` and `[ssh] forward_agent = true` are ignored in project config** — both hand host secrets to the container (named host environment variables, the host SSH agent), so a cloned repo's `.coi/config.toml` or project profile can no longer turn them on; coi prints a warning and drops them. Set them in `~/.coi/config.toml`, a profile under `~/.coi/profiles/`, or the file named by `COI_CONFIG`. `forward_agent = false` in project config is still honored.

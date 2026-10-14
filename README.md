@@ -97,7 +97,7 @@ limit = "8GiB"
 mode = "restricted"          # open / restricted / allowlist
 ```
 
-Profiles support inheritance, ship AI-agent context files, and can carry their own build scripts, so "my hardened Python box with these limits and these tools" becomes one word. A built-in `hardened` preset locks a session down for untrusted code. See the [Profiles](https://github.com/coipond/coi/wiki/Profiles) wiki page for the full reference, the `hardened` preset, and the schema.
+Profiles support inheritance, ship AI-agent context files, and can carry their own build scripts, so "my hardened Python box with these limits and these tools" becomes one word. A built-in `hardened` preset locks a session down for untrusted code. See the [Profiles](https://github.com/coipond/coi/wiki/Profiles) wiki page for the full reference, the `hardened` preset, and the schema. To have your coding agent write a profile for you, give it the [coi-profile skill](skills/coi-profile/SKILL.md): it checks its work against `coi schema profile` and `coi validate profile`.
 
 ## Supported AI Tools
 
