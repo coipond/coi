@@ -4,7 +4,7 @@
 
 ### Features
 
-- [Feature] **Agent skill for writing profiles** — `skills/coi-profile/SKILL.md` teaches a coding agent to write a profile `config.toml`: read the format from `coi schema profile`, scaffold with `coi profile create`, check with `coi validate profile` and `coi profile info`. A test checks that its TOML example is a valid profile.
+- [Feature] **Agent skill for writing profiles** — `skills/coi-profile/SKILL.md` teaches a coding agent to write a profile `config.toml`: read the format from `coi schema profile`, scaffold with `coi profile create`, check with `coi validate profile` and `coi profile info`.
 
 ### Breaking
 

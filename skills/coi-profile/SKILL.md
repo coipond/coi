@@ -48,7 +48,6 @@ inherits = "hardened"
 
 [container]
 image = "coi-rust-dev"
-persistent = true
 
 [container.build]
 script = "build.sh"           # relative to this profile's directory
@@ -70,8 +69,8 @@ allowed_domains = ["api.anthropic.com", "crates.io", "static.crates.io", "index.
 ## Rules that are easy to get wrong
 
 - **Limits are nested tables.** Use `[limits.cpu] count = "4"` and `[limits.memory] limit = "8GiB"`, never `[limits] cpu = "4"`.
-- **Allowlist entries are exact.** `allowed_domains` takes hostnames, IPv4 addresses or CIDRs, optionally with `:ports`. Wildcards (`*.example.com`) are rejected, and DNS is blocked in allowlist mode, so list every host the tool needs.
-- **Relative paths resolve against the profile directory**: `[container.build] script`, `context` and `[prompts]` `file`.
+- **Allowlist entries are exact.** `allowed_domains` takes hostnames, IPv4 addresses or CIDRs, optionally with `:ports`. Wildcards (`*.example.com`) are rejected when the session starts (`coi validate profile` does not catch them), and DNS is blocked in allowlist mode, so list every host the tool needs.
+- **Relative paths resolve against the profile directory**: the top-level `context` key, `[container.build] script` and `[prompts]` `file`.
 - **Project profiles are untrusted.** A profile under a repo's `.coi/profiles/` is loaded with its isolation-weakening settings stripped (with a warning): `env_commands`, `forward_env`, `[ssh] forward_agent = true`, `[prompts]`, `[tool]` `context_file`/`context_json_file`/`pre_launch`, and network, security, git or Docker downgrades. Host mounts outside the workspace need `coi trust`. Put such settings in a profile under `~/.coi/profiles/`, and tell the user why.
 - **`hardened` turns things off on purpose** (no Docker, ephemeral, monitoring with auto-kill, a 4-hour cap). Override one of them only when the task needs it, and say which one.
-- **Validation covers the file alone.** It does not check that the `inherits` parent exists or that the build script is there; `coi profile list` and `coi profile info` do.
+- **Validation covers the file's format alone.** `coi validate profile` does not check that the `inherits` parent exists, that the `context` file or build script is there, or that `allowed_domains` has no wildcard. `coi profile list` and `coi profile info` catch a missing `inherits` parent. The other three fail only when the profile is used (`coi shell --profile <name>`), so check them yourself and tell the user they are unverified.
