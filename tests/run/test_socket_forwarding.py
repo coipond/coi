@@ -23,6 +23,9 @@ import socket
 import subprocess
 import tempfile
 import threading
+import tomllib
+
+import pytest
 
 CONTAINER_SOCK = "/tmp/broker.sock"
 ENV_NAME = "BROKER_SOCK"
@@ -126,59 +129,76 @@ def test_ssh_forward_agent_regression(coi_binary, workspace_dir, cleanup_contain
         server.close()
 
 
-def _assert_agent_not_forwarded(r):
-    """The container ran but /tmp/ssh-agent.sock led nowhere, with the loader warning."""
-    combined = r.stdout + r.stderr
-    assert SENTINEL not in r.stdout, (
-        f"host SSH agent must not be reachable from a project config. out={r.stdout} err={r.stderr}"
-    )
-    # Node's connect failure proves the container ran, so the check above isn't vacuous.
-    assert "CONNERR" in combined, f"container read never ran. out={r.stdout} err={r.stderr}"
-    assert "ignoring '[ssh] forward_agent = true' in project config" in r.stderr, (
-        f"expected the forward_agent warning. err={r.stderr}"
-    )
+def _user_config_forwards_agent():
+    """True if ~/.coi/config.toml (trusted, always loaded) sets forward_agent = true."""
+    path = pathlib.Path.home() / ".coi" / "config.toml"
+    try:
+        cfg = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    return cfg.get("ssh", {}).get("forward_agent") is True
 
 
-def test_ssh_forward_agent_ignored_from_project_config(
-    coi_binary, workspace_dir, cleanup_containers, tmp_path
+@pytest.mark.parametrize(
+    "config_path, extra_args",
+    [
+        (".coi/config.toml", None),
+        (".coi/profiles/dev/config.toml", ["--profile", "dev"]),
+    ],
+    ids=["project-config", "project-profile"],
+)
+def test_ssh_forward_agent_ignored_from_project_scope(
+    coi_binary, workspace_dir, cleanup_containers, config_path, extra_args
 ):
-    """`[ssh] forward_agent = true` in an untrusted project .coi/config.toml is
-    dropped: a cloned repo must not hand the container the host SSH agent. Not
-    gated by `coi trust`, so COI_TRUST_ALL=1 doesn't enable it either."""
+    """`[ssh] forward_agent = true` in an untrusted project .coi/config.toml or
+    project profile is dropped: a cloned repo must not hand the container the
+    host SSH agent. Not gated by `coi trust`, so COI_TRUST_ALL=1 doesn't enable
+    it either."""
+    if _user_config_forwards_agent():
+        pytest.skip("~/.coi/config.toml sets forward_agent = true (trusted, would forward)")
+
     server = HostSocketServer()
     try:
-        cfg_dir = pathlib.Path(workspace_dir) / ".coi"
-        cfg_dir.mkdir(exist_ok=True)
-        (cfg_dir / "config.toml").write_text("[ssh]\nforward_agent = true\n")
+        cfg = pathlib.Path(workspace_dir) / config_path
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("[ssh]\nforward_agent = true\n")
         env = dict(os.environ)
         env.pop("COI_CONFIG", None)
         env["COI_TRUST_ALL"] = "1"
         env["SSH_AUTH_SOCK"] = server.path
 
-        r = read_through_socket(coi_binary, workspace_dir, env, "/tmp/ssh-agent.sock")
-        _assert_agent_not_forwarded(r)
-    finally:
-        server.close()
-
-
-def test_ssh_forward_agent_ignored_from_project_profile(
-    coi_binary, workspace_dir, cleanup_containers, tmp_path
-):
-    """Same for a project-scoped profile (./.coi/profiles/dev)."""
-    server = HostSocketServer()
-    try:
-        prof = pathlib.Path(workspace_dir) / ".coi" / "profiles" / "dev"
-        prof.mkdir(parents=True)
-        (prof / "config.toml").write_text("[ssh]\nforward_agent = true\n")
-        env = dict(os.environ)
-        env.pop("COI_CONFIG", None)
-        env["COI_TRUST_ALL"] = "1"
-        env["SSH_AUTH_SOCK"] = server.path
-
-        r = read_through_socket(
-            coi_binary, workspace_dir, env, "/tmp/ssh-agent.sock", extra_args=["--profile", "dev"]
+        r = read_through_socket(coi_binary, workspace_dir, env, "/tmp/ssh-agent.sock", extra_args)
+        assert SENTINEL not in r.stdout, (
+            f"host SSH agent must not be reachable from project scope. out={r.stdout} err={r.stderr}"
         )
-        _assert_agent_not_forwarded(r)
+        # Node's connect failure proves the container ran, so the check above isn't vacuous.
+        assert "CONNERR" in r.stdout + r.stderr, (
+            f"container read never ran. out={r.stdout} err={r.stderr}"
+        )
+        assert "ignoring '[ssh] forward_agent = true' in project config" in r.stderr, (
+            f"expected the forward_agent warning. err={r.stderr}"
+        )
+
+        # Nor may the container's env point at an agent socket.
+        e = subprocess.run(
+            [
+                coi_binary,
+                "run",
+                *(extra_args or []),
+                "--",
+                "sh",
+                "-c",
+                "echo sock=[$SSH_AUTH_SOCK]",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=workspace_dir,
+            env=env,
+        )
+        assert "sock=[]" in e.stdout, (
+            f"SSH_AUTH_SOCK must be unset in the container. out={e.stdout} err={e.stderr}"
+        )
     finally:
         server.close()
 
