@@ -24,6 +24,7 @@ Verifies that the report:
 """
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -65,7 +66,8 @@ def _report(output):
             break
         body = line[2:]
         if body[0] != " ":
-            label, _, value = body.partition(" ")
+            # Labels may hold one space ("Tool config"); the column gap is two+.
+            label, value = re.split(r"\s{2,}", body, maxsplit=1)
             rows[label] = [value.strip()]
         else:
             rows[label].append(body.strip())
