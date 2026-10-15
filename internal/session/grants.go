@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -234,13 +235,22 @@ func uncopiedCandidates(st *setupState) (creds, tools []CredentialGrant) {
 			add(&creds, e.HostPath, credentialDestPath(e, home))
 		}
 	}
+	// Tool files only when the host has the file: the tool and coi's settings
+	// merge also create files in its config dir (settings.json, CLAUDE.md),
+	// which are not host copies. [[credentials]] destinations are the user's
+	// own paths, so a stale copy of a since-deleted host file still counts.
 	tcf, ok := st.opts.Tool.(tool.ToolWithConfigDirFiles)
 	if ok && st.opts.CLIConfigPath != "" && home != "" {
+		addIfOnHost := func(host, dest string) {
+			if _, err := os.Stat(host); err == nil {
+				add(&tools, host, dest)
+			}
+		}
 		for _, f := range tcf.EssentialConfigFiles() {
-			add(&tools, filepath.Join(st.opts.CLIConfigPath, f), filepath.Join(home, tcf.ConfigDirName(), f))
+			addIfOnHost(filepath.Join(st.opts.CLIConfigPath, f), filepath.Join(home, tcf.ConfigDirName(), f))
 		}
 		if state := tcf.StateConfigFileName(); state != "" {
-			add(&tools, filepath.Join(filepath.Dir(st.opts.CLIConfigPath), state), filepath.Join(home, state))
+			addIfOnHost(filepath.Join(filepath.Dir(st.opts.CLIConfigPath), state), filepath.Join(home, state))
 		}
 	}
 	return creds, tools

@@ -183,12 +183,21 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 		{HostPath: "/h/a", ContainerPath: ".a"},
 		{HostPath: "/h/b", ContainerPath: "/etc/b"},
 	}
+	// Host claude dir with only .credentials.json: settings.json present in the
+	// container but not on the host must not be listed as a host copy.
+	hostClaude := filepath.Join(t.TempDir(), ".claude")
+	if err := os.MkdirAll(hostClaude, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostClaude, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	base := func(mgr *fakeGrantsManager) *setupState {
 		return &setupState{
 			opts: SetupOptions{
 				CredentialConfig: &CredentialConfig{Entries: entries},
 				Tool:             claude,
-				CLIConfigPath:    "/home/u/.claude",
+				CLIConfigPath:    hostClaude,
 			},
 			result:            &SetupResult{Manager: mgr, HomeDir: "/home/code"},
 			copiedCredentials: []CredentialEntry{{HostPath: "/h/a", ContainerPath: "/home/code/.a"}},
@@ -213,7 +222,7 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 	t.Run("reused container", func(t *testing.T) {
 		mgr := &fakeGrantsManager{
 			disks:    map[string]container.DiskDevice{},
-			probeOut: "/etc/b\n/home/code/.claude/.credentials.json\n",
+			probeOut: "/etc/b\n/home/code/.claude/.credentials.json\n/home/code/.claude/settings.json\n",
 		}
 		st := base(mgr)
 		st.skipLaunch = true
@@ -223,11 +232,14 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 		if len(g.Credentials) != 2 || g.Credentials[0] != want[0] || g.Credentials[1] != want[1] {
 			t.Errorf("credentials = %+v, want %+v", g.Credentials, want)
 		}
-		earlierTool := CredentialGrant{"/home/u/.claude/.credentials.json", "/home/code/.claude/.credentials.json", true}
+		earlierTool := CredentialGrant{filepath.Join(hostClaude, ".credentials.json"), "/home/code/.claude/.credentials.json", true}
 		if len(g.ToolFiles) != 2 || g.ToolFiles[1] != earlierTool {
 			t.Errorf("tool files = %+v, want the copied .claude.json then %+v", g.ToolFiles, earlierTool)
 		}
 		probed := strings.Join(mgr.probeArgs, " ")
+		if strings.Contains(probed, "settings.json") {
+			t.Errorf("tool files absent on the host should not be probed: %s", probed)
+		}
 		if strings.Contains(probed, "/home/code/.a ") || strings.Contains(probed, "/home/code/.claude.json") {
 			t.Errorf("files copied this launch should not be probed: %s", probed)
 		}
