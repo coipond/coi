@@ -13,7 +13,7 @@ import (
 // 6.6 Forward host sockets (SSH agent built-in entry plus configured
 // [[sockets]]) to the running container.
 func (st *setupState) phaseForwardSockets(_ context.Context) (Teardown, error) {
-	st.result.SocketEnv = ForwardConfiguredSockets(st.result.Manager, st.opts.Network.Sockets, st.opts.Network.ForwardSSHAgent, st.opts.Logger)
+	st.result.SocketEnv, st.forwardedSockets = forwardConfiguredSockets(st.result.Manager, st.opts.Network.Sockets, st.opts.Network.ForwardSSHAgent, st.opts.Logger)
 	st.result.SSHAgentSocketPath = st.result.SocketEnv["SSH_AUTH_SOCK"]
 	return nil, nil
 }

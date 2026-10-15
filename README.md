@@ -55,7 +55,7 @@ Your agent now runs in an isolated container with your project at `/workspace`, 
 
 - **Real machine, not a locked box** — Incus system containers give the agent a full OS: root, systemd, native Docker, package managers, services.
 - **Correct file ownership** — workspace edits land on the host owned by you, with no `chown` dance.
-- **Credentials stay home** — SSH keys, tokens, `.env`, and host environment variables never enter the container unless you mount or forward them.
+- **Credentials stay home** — SSH keys, tokens, `.env`, and host environment variables never enter the container unless you mount or forward them, and `coi shell` lists every grant at startup.
 - **Active defense** — kernel-level monitoring catches reverse shells, C2, exfiltration, and DNS tunneling in real time, then auto-pauses on HIGH and auto-kills on CRITICAL.
 - **Network isolation** — nftables egress control in three modes (open, restricted, allowlist), DNS pinning, and per-host port scoping.
 - **Parallel agents** — several slots per project, each with its own home directory, isolated from one another.

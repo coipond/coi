@@ -41,6 +41,13 @@ func SetupSSHAgentForwarding(mgr container.ContainerManager, containerName strin
 // in-container socket path for the entries that were forwarded and declare an
 // EnvVar. Per-entry failures are logged, never fatal.
 func ForwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent bool, logger func(string)) map[string]string {
+	env, _ := forwardConfiguredSockets(mgr, sc, includeSSHAgent, logger)
+	return env
+}
+
+// forwardConfiguredSockets is ForwardConfiguredSockets that also returns the
+// entries actually forwarded, for the startup grants report.
+func forwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent bool, logger func(string)) (map[string]string, []SocketEntry) {
 	var entries []SocketEntry
 	if includeSSHAgent {
 		if e, ok := sshAgentSocketEntry(logger); ok {
@@ -51,7 +58,7 @@ func ForwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, 
 		entries = append(entries, sc.Sockets...)
 	}
 	if len(entries) == 0 {
-		return nil
+		return nil, nil
 	}
 	return forwardSockets(mgr, entries, logger)
 }
@@ -82,20 +89,27 @@ type socketForwarder interface {
 
 // forwardSockets forwards each entry into the container and returns a map of
 // env var name -> in-container socket path for the entries that were forwarded
-// successfully and declare an EnvVar. Per-entry failures are logged, not fatal.
-func forwardSockets(mgr socketForwarder, entries []SocketEntry, logger func(string)) map[string]string {
+// successfully and declare an EnvVar, plus every entry that was forwarded.
+// Per-entry failures are logged, not fatal.
+func forwardSockets(mgr socketForwarder, entries []SocketEntry, logger func(string)) (map[string]string, []SocketEntry) {
 	env := map[string]string{}
+	var forwarded []SocketEntry
 	for _, e := range entries {
 		path, ok, err := forwardSocket(mgr, e, logger)
 		if err != nil {
 			logger(fmt.Sprintf("Warning: socket forwarding failed for %s: %v", e.HostPath, err))
 			continue
 		}
-		if ok && e.EnvVar != "" {
+		if !ok {
+			continue
+		}
+		e.ContainerPath = path
+		forwarded = append(forwarded, e)
+		if e.EnvVar != "" {
 			env[e.EnvVar] = path
 		}
 	}
-	return env
+	return env, forwarded
 }
 
 // forwardSocket forwards a single host unix socket into the container via an

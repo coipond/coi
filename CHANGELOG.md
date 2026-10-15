@@ -4,6 +4,7 @@
 
 ### Features
 
+- [Feature] **`coi shell` prints the session's effective grants at startup** — one block lists what the container can reach on the host: the workspace and extra mounts (read-only or read-write), protected paths, the network mode and what it lets through (allowlist entries, port caps, pinned DNS, LAN hosts), published ports, forwarded sockets (including the SSH agent), forwarded and minted environment variables (names only, never values), copied credentials, root vs non-root, Docker, and resource limits. It is built after setup, so it shows what was granted, not just what was configured: untrusted entries dropped by trust gating and sockets that failed to forward are left out. Absent grants are stated as `none`.
 - [Feature] **Agent skill for writing profiles** — `skills/coi-profile/SKILL.md` teaches a coding agent to write a profile `config.toml`: read the format from `coi schema profile`, scaffold with `coi profile create`, check with `coi validate profile` and `coi profile info`.
 
 ### Breaking

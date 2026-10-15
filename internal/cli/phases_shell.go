@@ -582,6 +582,10 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			fmt.Fprintf(os.Stderr, "Session ID: %s\n", s.sessionID)
 			fmt.Fprintf(os.Stderr, "Container: %s\n", s.result.ContainerName)
 			fmt.Fprintf(os.Stderr, "Workspace: %s\n", s.absWorkspace)
+			if g := s.result.Grants; g != nil {
+				g.EnvCommands = session.SortedKeys(a.cfg.Defaults.EnvCommands)
+				fmt.Fprintf(os.Stderr, "\n%s", g.Render())
+			}
 
 			useResumeFlag := (s.resumeID != "") && a.persistent
 			restoreOnly := (s.resumeID != "") && !a.persistent

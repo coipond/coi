@@ -126,6 +126,7 @@ type SetupResult struct {
 	PublishedPorts         []PublishedPort   // ports published on the host this session (for the context file)
 	Timezone               string            // Resolved timezone applied to the container (empty = UTC)
 	HasImmutableProtection bool              // True if host-side immutable attribute was applied to protected paths
+	Grants                 *Grants           // Effective reach of the session, for the startup report
 }
 
 // Setup initializes a container for a Claude session.
@@ -186,6 +187,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		return nil, err
 	}
 
+	st.result.Grants = buildGrants(st.result, st.opts, st.forwardedSockets)
 	st.opts.Logger("Container setup complete!")
 	return st.result, nil
 }
@@ -802,6 +804,32 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 // returns the rendered context content for the auto-context step. Extracted
 // verbatim from Setup's phase-12 block.
 func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestOp) {
+	ctxInfo := contextInfoFor(result, opts)
+	contextContent := resolveContextContent(ctxInfo, opts.Context.FilePath, opts.Logger)
+	var ops []guestOp
+	if op, err := contextFileOp(ctxInfo, opts.Context.FilePath, result.HomeDir, opts.Logger); err != nil {
+		opts.Logger(fmt.Sprintf("Warning: Failed to inject context file: %v", err))
+	} else {
+		ops = append(ops, op)
+	}
+	// Machine-readable companion for programmatic consumers (#705), enabled
+	// by default. Written from ctxInfo (the real facts) unless [tool]
+	// context_json_file provides a custom JSON to inject verbatim; disable
+	// entirely with context_json = false.
+	if config.BoolVal(opts.Context.JSON) {
+		if op, err := contextJSONFileOp(ctxInfo, opts.Context.JSONFilePath, result.HomeDir, opts.Logger); err != nil {
+			opts.Logger(fmt.Sprintf("Warning: Failed to inject context JSON file: %v", err))
+		} else {
+			ops = append(ops, op)
+		}
+	}
+	return contextContent, ops
+}
+
+// contextInfoFor builds the tool.ContextInfo from the resolved session facts.
+// Shared by the sandbox context files and the startup grants report, so the
+// agent and the user are told the same thing.
+func contextInfoFor(result *SetupResult, opts SetupOptions) tool.ContextInfo {
 	networkMode := ""
 	var allowedPorts []int
 	var dnsServers, allowedDomains []string
@@ -851,7 +879,7 @@ func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestO
 		}
 	}
 
-	ctxInfo := tool.ContextInfo{
+	return tool.ContextInfo{
 		WorkspacePath:      result.ContainerWorkspacePath,
 		HomeDir:            result.HomeDir,
 		Persistent:         opts.Persistent,
@@ -876,25 +904,6 @@ func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestO
 		ProfileContext:     profileContext,
 		DockerUnavailable:  !hardeningPolicyFrom(&opts).DockerEnabled(),
 	}
-	contextContent := resolveContextContent(ctxInfo, opts.Context.FilePath, opts.Logger)
-	var ops []guestOp
-	if op, err := contextFileOp(ctxInfo, opts.Context.FilePath, result.HomeDir, opts.Logger); err != nil {
-		opts.Logger(fmt.Sprintf("Warning: Failed to inject context file: %v", err))
-	} else {
-		ops = append(ops, op)
-	}
-	// Machine-readable companion for programmatic consumers (#705), enabled
-	// by default. Written from ctxInfo (the real facts) unless [tool]
-	// context_json_file provides a custom JSON to inject verbatim; disable
-	// entirely with context_json = false.
-	if config.BoolVal(opts.Context.JSON) {
-		if op, err := contextJSONFileOp(ctxInfo, opts.Context.JSONFilePath, result.HomeDir, opts.Logger); err != nil {
-			opts.Logger(fmt.Sprintf("Warning: Failed to inject context JSON file: %v", err))
-		} else {
-			ops = append(ops, op)
-		}
-	}
-	return contextContent, ops
 }
 
 // injectSandboxContextFiles writes ~/SANDBOX_CONTEXT.md, the optional .json,

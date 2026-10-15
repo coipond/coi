@@ -17,6 +17,10 @@ type setupState struct {
 	hasCodeUser   bool
 	resolvedPorts []PublishedPort
 
+	// forwardedSockets are the sockets actually forwarded, for the startup
+	// grants report (SetupResult.Grants).
+	forwardedSockets []SocketEntry
+
 	// pendingGuestOps are small in-container steps from earlier phases that
 	// ride along with phaseInjectContext's exec instead of paying their own
 	// incus round trip.

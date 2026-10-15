@@ -88,7 +88,7 @@ func TestForwardSockets_ForwardsAndReturnsEnv(t *testing.T) {
 		DeviceName:    "socket-0",
 	}}
 
-	env := forwardSockets(f, entries, func(string) {})
+	env, forwarded := forwardSockets(f, entries, func(string) {})
 
 	if got := env["BROKER_SOCK"]; got != "/run/broker.sock" {
 		t.Fatalf("env[BROKER_SOCK] = %q, want /run/broker.sock", got)
@@ -102,6 +102,9 @@ func TestForwardSockets_ForwardsAndReturnsEnv(t *testing.T) {
 	}
 	if a.uid != container.CodeUID || a.gid != container.CodeUID {
 		t.Fatalf("proxy device uid/gid = %d/%d, want %d", a.uid, a.gid, container.CodeUID)
+	}
+	if len(forwarded) != 1 || forwarded[0].ContainerPath != "/run/broker.sock" || forwarded[0].HostPath != host {
+		t.Fatalf("forwarded = %+v, want the one broker entry", forwarded)
 	}
 }
 
