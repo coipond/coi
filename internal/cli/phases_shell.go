@@ -578,20 +578,22 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "run-tool",
 		RunFn: func(_ context.Context) (session.Teardown, error) {
+			// Resolve the env once, before the report: env_commands run here, so
+			// the report names what was actually minted, and the tool gets the
+			// same env.
+			containerEnv, userPtr, envSources, err := a.buildContainerEnv(s.result)
+			if err != nil {
+				return nil, err
+			}
+			// The report goes before the "Starting session..." block so that block
+			// stays right above the tool's output, where it always was.
+			if g := s.result.Grants; g != nil {
+				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(envSources).Render())
+			}
 			fmt.Fprintf(os.Stderr, "\nStarting session...\n")
 			fmt.Fprintf(os.Stderr, "Session ID: %s\n", s.sessionID)
 			fmt.Fprintf(os.Stderr, "Container: %s\n", s.result.ContainerName)
 			fmt.Fprintf(os.Stderr, "Workspace: %s\n", s.absWorkspace)
-			// Resolve the env once, before the report: env_commands run here, so
-			// the report names what was actually minted, and the tool gets the
-			// same env.
-			containerEnv, userPtr, err := a.buildContainerEnv(s.result)
-			if err != nil {
-				return nil, err
-			}
-			if g := s.result.Grants; g != nil {
-				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(a.envGrants(containerEnv)).Render())
-			}
 
 			useResumeFlag := (s.resumeID != "") && a.persistent
 			restoreOnly := (s.resumeID != "") && !a.persistent

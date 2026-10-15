@@ -54,7 +54,7 @@ func TestSetupCLIConfig_Codex_Integration(t *testing.T) {
 	homeDir := "/home/" + container.CodeUser
 	logger := func(msg string) { t.Logf("[codex] %s", msg) }
 
-	if err := setupCLIConfig(mgr, hostCodex, homeDir, tcf, logger); err != nil {
+	if _, err := setupCLIConfig(mgr, hostCodex, homeDir, tcf, logger); err != nil {
 		t.Fatalf("setupCLIConfig: %v", err)
 	}
 

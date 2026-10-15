@@ -187,8 +187,11 @@ func toolConfigSeeded(mgr containerCommandRunner, homeDir string, tcf tool.ToolW
 	return err == nil
 }
 
-// setupCLIConfig copies tool config directory and injects sandbox settings
-func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir string, tcf tool.ToolWithConfigDirFiles, logger func(string)) error {
+// setupCLIConfig copies tool config directory and injects sandbox settings. It
+// returns the host files it copied in (the tool's essential config files and
+// state file, e.g. Claude's .credentials.json and .claude.json), even on error,
+// for the grants report.
+func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir string, tcf tool.ToolWithConfigDirFiles, logger func(string)) (copied []CredentialEntry, err error) {
 	configDirName := tcf.ConfigDirName()
 	stateDir := filepath.Join(homeDir, configDirName)
 
@@ -196,7 +199,7 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 	logger(fmt.Sprintf("Creating %s directory in container...", configDirName))
 	mkdirCmd := fmt.Sprintf("mkdir -p %s", stateDir)
 	if _, err := mgr.ExecCommand(mkdirCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-		return fmt.Errorf("failed to create %s directory: %w", configDirName, err)
+		return copied, fmt.Errorf("failed to create %s directory: %w", configDirName, err)
 	}
 
 	essentialFiles := tcf.EssentialConfigFiles()
@@ -211,8 +214,12 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 		// recursive config-dir chown below.
 		srcPath := filepath.Join(hostCLIConfigPath, filename)
 		destPath := filepath.Join(stateDir, filename)
-		if _, err := seedHostFile(mgr, srcPath, destPath, homeDir, "", logger); err != nil {
-			return err
+		ok, err := seedHostFile(mgr, srcPath, destPath, homeDir, "", logger)
+		if err != nil {
+			return copied, err
+		}
+		if ok {
+			copied = append(copied, CredentialEntry{HostPath: srcPath, ContainerPath: destPath})
 		}
 	}
 
@@ -236,10 +243,10 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 			logger(fmt.Sprintf("Warning: Existing %s has invalid JSON, overwriting with sandbox settings: %v", sandboxTarget, parseErr))
 		}
 		if err != nil {
-			return fmt.Errorf("failed to merge sandbox settings: %w", err)
+			return copied, fmt.Errorf("failed to merge sandbox settings: %w", err)
 		}
 		if err := mgr.CreateFile(settingsPath, string(merged)); err != nil {
-			return fmt.Errorf("failed to write %s: %w", sandboxTarget, err)
+			return copied, fmt.Errorf("failed to write %s: %w", sandboxTarget, err)
 		}
 		logger(fmt.Sprintf("%s config copied and sandbox settings merged into %s", tcf.Name(), sandboxTarget))
 	} else {
@@ -254,10 +261,10 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 		if homeDir != "/root" {
 			chownCmd := fmt.Sprintf("chown -R %d:%d %s", container.CodeUID, container.CodeUID, stateDir)
 			if _, err := mgr.ExecCommand(chownCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-				return fmt.Errorf("failed to set %s directory ownership: %w", configDirName, err)
+				return copied, fmt.Errorf("failed to set %s directory ownership: %w", configDirName, err)
 			}
 		}
-		return nil
+		return copied, nil
 	}
 
 	stateConfigPath := filepath.Join(filepath.Dir(hostCLIConfigPath), stateConfigFilename)
@@ -269,9 +276,10 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 
 		// Push the file to container
 		if err := mgr.PushFile(stateConfigPath, stateJsonDest); err != nil {
-			return fmt.Errorf("failed to copy %s: %w", stateConfigFilename, err)
+			return copied, fmt.Errorf("failed to copy %s: %w", stateConfigFilename, err)
 		}
 		logger(fmt.Sprintf("%s copied to %s", stateConfigFilename, stateJsonDest))
+		copied = append(copied, CredentialEntry{HostPath: stateConfigPath, ContainerPath: stateJsonDest})
 
 		// Inject sandbox settings if tool provides them
 		if len(sandboxSettings) > 0 {
@@ -298,7 +306,7 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 		// Fix ownership if running as non-root user
 		if homeDir != "/root" {
 			if err := mgr.Chown(stateJsonDest, container.CodeUID, container.CodeUID); err != nil {
-				return fmt.Errorf("failed to set %s ownership: %w", stateConfigFilename, err)
+				return copied, fmt.Errorf("failed to set %s ownership: %w", stateConfigFilename, err)
 			}
 		}
 
@@ -307,7 +315,7 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 			logger(fmt.Sprintf("Fixing ownership of entire %s directory to %d:%d", configDirName, container.CodeUID, container.CodeUID))
 			chownCmd := fmt.Sprintf("chown -R %d:%d %s", container.CodeUID, container.CodeUID, stateDir)
 			if _, err := mgr.ExecCommand(chownCmd, container.ExecCommandOptions{Capture: true}); err != nil {
-				return fmt.Errorf("failed to set %s directory ownership: %w", configDirName, err)
+				return copied, fmt.Errorf("failed to set %s directory ownership: %w", configDirName, err)
 			}
 		}
 
@@ -340,8 +348,8 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 			logger(fmt.Sprintf("%s not found at %s and no sandbox settings needed, skipping", stateConfigFilename, stateConfigPath))
 		}
 	} else {
-		return fmt.Errorf("failed to check %s: %w", stateConfigFilename, err)
+		return copied, fmt.Errorf("failed to check %s: %w", stateConfigFilename, err)
 	}
 
-	return nil
+	return copied, nil
 }

@@ -94,7 +94,7 @@ func TestMacHomeConfigSeeding_Integration(t *testing.T) {
 	homeDir := "/home/" + container.CodeUser
 	logger := func(msg string) { t.Logf("[machome] %s", msg) }
 
-	if err := setupCLIConfig(mgr, resolved, homeDir, tcf, logger); err != nil {
+	if _, err := setupCLIConfig(mgr, resolved, homeDir, tcf, logger); err != nil {
 		t.Fatalf("setupCLIConfig: %v", err)
 	}
 

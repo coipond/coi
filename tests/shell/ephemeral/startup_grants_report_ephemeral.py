@@ -17,7 +17,10 @@ Verifies that the report:
 6. for a git worktree workspace, lists the read-write common dir and its
    read-only git internals;
 7. on a reused persistent container, still lists a mount attached at creation
-   that trust gating now drops (it stays attached, so it is still reachable).
+   that trust gating now drops (it stays attached, so it is still reachable);
+8. lists the tool's own config and login files copied from the host (Claude's
+   .credentials.json and .claude.json), and on reuse the ones already there;
+9. lists a host disk the container inherits from an Incus profile.
 """
 
 import os
@@ -95,8 +98,9 @@ def test_report_mounts_env_and_protected_paths(
 ):
     extra = tmp_path / "extra"
     extra.mkdir()
-    # .husky is in the default protected_paths; .vscode is too but is absent from
-    # the workspace, so it has nothing to protect and must not be listed.
+    # .husky and .vscode are in the default protected_paths. .husky exists;
+    # .vscode doesn't, but coi mounts an empty read-only placeholder over it so the
+    # agent can't plant one, so it is protected (and listed) too.
     os.mkdir(os.path.join(workspace_dir, ".husky"))
     env = write_trusted_coi_config(
         "[defaults]\n"
@@ -118,7 +122,7 @@ def test_report_mounts_env_and_protected_paths(
     assert rows["Workspace"] == [f"{workspace_dir} -> /workspace (read-write)"], rows
     assert rows["Mounts"] == [f"{extra} -> /mnt/extra (read-only)"], rows
     assert ".husky" in rows["Protected"][0], rows
-    assert ".vscode" not in rows["Protected"][0], rows
+    assert ".vscode" in rows["Protected"][0], rows
     assert rows["Env"] == [
         "COI_GRANTS_TEST_VAR (from host)",
         "COI_GRANTS_STATIC (set by config)",
@@ -323,3 +327,94 @@ def test_report_reused_container_keeps_leftover_mount(
         ).stderr
     )
     assert mount_line in reused["Mounts"], reused
+
+
+def test_report_tool_config_files(coi_binary, cleanup_containers, workspace_dir, tmp_path):
+    """The tool's login and state files copied from the host are listed; on a
+    reused container that doesn't re-copy them they're listed as already there."""
+    fake_home = tmp_path / "fake_home"
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / ".credentials.json").write_text('{"token": "test"}')
+    (fake_home / ".claude.json").write_text("{}")
+    write_workspace_container_config(workspace_dir, persistent=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+    env = dict(os.environ)
+    env["HOME"] = str(fake_home)
+
+    rows = _report(_run_shell(coi_binary, workspace_dir, dict(env)).stderr)
+    tool_files = rows.get("Tool config", [])
+    creds_line = f"{claude_dir}/.credentials.json -> /home/code/.claude/.credentials.json"
+    assert creds_line in tool_files, rows
+    assert f"{fake_home}/.claude.json -> /home/code/.claude.json" in tool_files, rows
+
+    stop = subprocess.run(
+        [coi_binary, "container", "stop", container_name],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    assert stop.returncode == 0, stop.stderr
+    time.sleep(1)
+
+    # The reused container keeps its config; the login file is still in it.
+    reused = _report(
+        _run_shell(
+            coi_binary, workspace_dir, dict(env), args=("--container", container_name)
+        ).stderr
+    )
+    assert any(
+        line.startswith(creds_line) and "already in the container" in line
+        for line in reused.get("Tool config", [])
+    ), reused
+
+
+def test_report_lists_incus_profile_disk(coi_binary, cleanup_containers, workspace_dir, tmp_path):
+    """A host disk inherited from an Incus profile is reachable, so it is listed."""
+    shared = tmp_path / "from-profile"
+    shared.mkdir()
+    write_workspace_container_config(workspace_dir, persistent=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+    profile = f"coi-test-grants-{os.getpid()}"
+
+    _run_shell(coi_binary, workspace_dir, dict(os.environ))
+    stop = subprocess.run(
+        [coi_binary, "container", "stop", container_name],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert stop.returncode == 0, stop.stderr
+
+    def incus(*args):
+        r = subprocess.run(["incus", *args], capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, f"incus {' '.join(args)}: {r.stderr}"
+
+    incus("profile", "create", profile)
+    try:
+        incus(
+            "profile",
+            "device",
+            "add",
+            profile,
+            "shared",
+            "disk",
+            f"source={shared}",
+            "path=/mnt/from-profile",
+        )
+        incus("profile", "add", container_name, profile)
+
+        rows = _report(
+            _run_shell(
+                coi_binary, workspace_dir, dict(os.environ), args=("--container", container_name)
+            ).stderr
+        )
+        assert f"{shared} -> /mnt/from-profile (read-write)" in rows["Mounts"], rows
+    finally:
+        subprocess.run(
+            [coi_binary, "container", "delete", container_name, "--force"],
+            capture_output=True,
+            timeout=60,
+        )
+        subprocess.run(["incus", "profile", "delete", profile], capture_output=True, timeout=60)

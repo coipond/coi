@@ -24,7 +24,7 @@ type fakeGrantsManager struct {
 	mkdirFail bool
 }
 
-func (f *fakeGrantsManager) DiskDevices() (map[string]container.DiskDevice, error) {
+func (f *fakeGrantsManager) ExpandedDiskDevices() (map[string]container.DiskDevice, error) {
 	return f.disks, f.disksErr
 }
 
@@ -109,11 +109,7 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 		},
 		result:           &SetupResult{Manager: mgr},
 		forwardedSockets: []SocketEntry{{HostPath: "/run/a.sock", ContainerPath: "/run/a.sock"}},
-		contextInfo: tool.ContextInfo{
-			WorkspacePath:    "/workspace",
-			ForwardedEnvVars: []string{"GH_TOKEN"},
-			ProfileContext:   "long profile text",
-		},
+		contextInfo:      tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "restricted"},
 	}
 	g := buildGrants(st)
 
@@ -126,14 +122,15 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 	if strings.Join(g.Protected, ",") != ".git/hooks" {
 		t.Errorf("protected = %v, want only the mounted .git/hooks", g.Protected)
 	}
-	if len(g.Sockets) != 1 || strings.Join(g.Env.FromHost, ",") != "GH_TOKEN" {
-		t.Errorf("sockets/env = %+v / %+v", g.Sockets, g.Env)
+	if len(g.Sockets) != 1 {
+		t.Errorf("sockets = %+v", g.Sockets)
 	}
-	if g.Context.ProfileContext != "" {
-		t.Error("the profile context text should not be carried in Grants")
+	if len(g.Env.FromHost)+len(g.Env.Minted)+len(g.Env.Configured) != 0 {
+		t.Errorf("Env is the caller's to fill (WithEnv), got %+v", g.Env)
 	}
-	if !g.LANAccess || g.LANBlocked || !g.MetadataBlock {
-		t.Errorf("network flags = lan %v, blocked %v, metadata %v", g.LANAccess, g.LANBlocked, g.MetadataBlock)
+	n := g.Network
+	if n.Mode != "restricted" || !n.LANAccess || n.LANBlocked || !n.MetadataBlock {
+		t.Errorf("network = %+v", n)
 	}
 }
 
@@ -142,12 +139,18 @@ func TestBuildGrants_DevicesUnreadable(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(ws, ".git", "hooks"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(ws, ".env"), []byte("SECRET=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	mgr := &fakeGrantsManager{disksErr: errors.New("incus down")}
 	st := &setupState{
 		opts: SetupOptions{
 			WorkspacePath: ws,
 			MountConfig:   &MountConfig{Mounts: []MountEntry{{HostPath: "/data", ContainerPath: "/data", Readonly: true}}},
-			Security:      SecurityOptions{ProtectedPaths: []string{".git/hooks", ".husky"}},
+			Security: SecurityOptions{
+				ProtectedPaths: []string{".git/hooks", ".husky"},
+				SecretPaths:    []string{".env", ".missing-secret"},
+			},
 		},
 		result:      &SetupResult{Manager: mgr},
 		contextInfo: tool.ContextInfo{WorkspacePath: "/workspace"},
@@ -157,48 +160,85 @@ func TestBuildGrants_DevicesUnreadable(t *testing.T) {
 	if !g.DevicesUnread || len(g.Mounts) != 1 || strings.Join(g.Protected, ",") != ".git/hooks" {
 		t.Fatalf("fallback grants = %+v", g)
 	}
+	if strings.Join(g.Masked, ",") != ".env" {
+		t.Errorf("fallback masked = %v, want the existing .env", g.Masked)
+	}
 	out := g.Render()
-	if !strings.Contains(out, "(could not read the container's devices; showing configured mounts)") {
+	if !strings.Contains(out, "(could not read the container's devices; showing what config asks for)") {
 		t.Errorf("fallback should be flagged:\n%s", out)
 	}
 }
 
-// Credentials list what was copied this launch; when this launch copied none
-// (a reused container), the destinations still in the container are listed as
-// left from an earlier session.
-func TestBuildGrants_Credentials(t *testing.T) {
+// Copied files list what this launch pushed. A reused or resumed container is
+// also probed, once, for configured credentials and tool files this launch did
+// not copy (a skipped or failed copy, or no copy at all on reuse); those still
+// there are listed as already in the container. A fresh container is not
+// probed.
+func TestBuildGrants_CopiedFiles(t *testing.T) {
+	claude, err := tool.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
 	entries := []CredentialEntry{
 		{HostPath: "/h/a", ContainerPath: ".a"},
 		{HostPath: "/h/b", ContainerPath: "/etc/b"},
 	}
 	base := func(mgr *fakeGrantsManager) *setupState {
 		return &setupState{
-			opts:   SetupOptions{CredentialConfig: &CredentialConfig{Entries: entries}},
-			result: &SetupResult{Manager: mgr, HomeDir: "/home/code"},
+			opts: SetupOptions{
+				CredentialConfig: &CredentialConfig{Entries: entries},
+				Tool:             claude,
+				CLIConfigPath:    "/home/u/.claude",
+			},
+			result:            &SetupResult{Manager: mgr, HomeDir: "/home/code"},
+			copiedCredentials: []CredentialEntry{{HostPath: "/h/a", ContainerPath: "/home/code/.a"}},
+			toolFiles:         []CredentialEntry{{HostPath: "/home/u/.claude.json", ContainerPath: "/home/code/.claude.json"}},
 		}
 	}
 
-	t.Run("copied this launch", func(t *testing.T) {
-		st := base(&fakeGrantsManager{disks: map[string]container.DiskDevice{}})
-		st.credentialsSeeded = true
-		st.copiedCredentials = []CredentialEntry{{HostPath: "/h/a", ContainerPath: "/home/code/.a"}}
-		g := buildGrants(st)
+	t.Run("fresh container", func(t *testing.T) {
+		mgr := &fakeGrantsManager{disks: map[string]container.DiskDevice{}, probeOut: "/etc/b\n"}
+		g := buildGrants(base(mgr))
+		if mgr.probeArgs != nil {
+			t.Errorf("a fresh container should not be probed, ran %v", mgr.probeArgs)
+		}
 		if len(g.Credentials) != 1 || g.Credentials[0] != (CredentialGrant{"/h/a", "/home/code/.a", false}) {
 			t.Errorf("credentials = %+v", g.Credentials)
+		}
+		if len(g.ToolFiles) != 1 || g.ToolFiles[0].ContainerPath != "/home/code/.claude.json" {
+			t.Errorf("tool files = %+v", g.ToolFiles)
 		}
 	})
 
 	t.Run("reused container", func(t *testing.T) {
-		mgr := &fakeGrantsManager{disks: map[string]container.DiskDevice{}, probeOut: "/etc/b\n"}
-		g := buildGrants(base(mgr))
-		if len(g.Credentials) != 1 || g.Credentials[0] != (CredentialGrant{"/h/b", "/etc/b", true}) {
-			t.Errorf("credentials = %+v", g.Credentials)
+		mgr := &fakeGrantsManager{
+			disks:    map[string]container.DiskDevice{},
+			probeOut: "/etc/b\n/home/code/.claude/.credentials.json\n",
 		}
-		if got := mgr.probeArgs[len(mgr.probeArgs)-2:]; got[0] != "/home/code/.a" || got[1] != "/etc/b" {
-			t.Errorf("probe paths = %v", got)
+		st := base(mgr)
+		st.skipLaunch = true
+		g := buildGrants(st)
+
+		want := []CredentialGrant{{"/h/a", "/home/code/.a", false}, {"/h/b", "/etc/b", true}}
+		if len(g.Credentials) != 2 || g.Credentials[0] != want[0] || g.Credentials[1] != want[1] {
+			t.Errorf("credentials = %+v, want %+v", g.Credentials, want)
 		}
-		if out := g.Render(); !strings.Contains(out, "/h/b -> /etc/b (from an earlier session, not refreshed)") {
-			t.Errorf("earlier credential not annotated:\n%s", out)
+		earlierTool := CredentialGrant{"/home/u/.claude/.credentials.json", "/home/code/.claude/.credentials.json", true}
+		if len(g.ToolFiles) != 2 || g.ToolFiles[1] != earlierTool {
+			t.Errorf("tool files = %+v, want the copied .claude.json then %+v", g.ToolFiles, earlierTool)
+		}
+		probed := strings.Join(mgr.probeArgs, " ")
+		if strings.Contains(probed, "/home/code/.a ") || strings.Contains(probed, "/home/code/.claude.json") {
+			t.Errorf("files copied this launch should not be probed: %s", probed)
+		}
+		out := g.Render()
+		for _, w := range []string{
+			"/h/b -> /etc/b (already in the container, not copied this launch)",
+			"Tool config  /home/u/.claude.json -> /home/code/.claude.json\n",
+		} {
+			if !strings.Contains(out, w) {
+				t.Errorf("missing %q in:\n%s", w, out)
+			}
 		}
 	})
 }
@@ -278,26 +318,27 @@ func TestGrantsRender_Full(t *testing.T) {
 			{HostPath: "/run/broker.sock", ContainerPath: "/run/broker.sock"},
 		},
 		Credentials: []CredentialGrant{{HostPath: "/home/u/.aws/credentials", ContainerPath: "/home/code/.aws/credentials"}},
-		Hosts:       []config.HostEntry{{IP: "192.168.1.50", Hostnames: []string{"nas"}, Ports: []int{443}}},
+		ToolFiles:   []CredentialGrant{{HostPath: "/home/u/.claude/.credentials.json", ContainerPath: "/home/code/.claude/.credentials.json"}},
 		Env: EnvGrants{
 			FromHost:   []string{"GH_TOKEN"},
 			Minted:     []string{"AWS_SESSION_TOKEN"},
 			Configured: []string{"ANTHROPIC_API_KEY", "FOO"},
 		},
-		Context: tool.ContextInfo{
-			NetworkMode:    "allowlist",
+		Network: NetworkGrants{
+			Mode:           "allowlist",
 			AllowedDomains: []string{"github.com", "api.anthropic.com"},
 			AllowedPorts:   []int{443},
-			PublishedPorts: []tool.PortInfo{
-				{Name: "web", HostPort: 41000, ContainerPort: 3000},
-				{HostPort: 42000, ContainerPort: 42000, Pool: true},
-			},
-			RunAsRoot:         true,
-			DockerUnavailable: true,
-			CPULimit:          "2",
-			MemoryLimit:       "4GiB",
-			MaxDuration:       "2h",
+			Hosts:          []config.HostEntry{{IP: "192.168.1.50", Hostnames: []string{"nas"}, Ports: []int{443}}},
 		},
+		Ports: []tool.PortInfo{
+			{Name: "web", HostPort: 41000, ContainerPort: 3000},
+			{HostPort: 42000, ContainerPort: 42000, Pool: true},
+		},
+		RunAsRoot:         true,
+		DockerUnavailable: true,
+		CPULimit:          "2",
+		MemoryLimit:       "4GiB",
+		MaxDuration:       "2h",
 	}
 	out := g.Render()
 	for _, want := range []string{
@@ -306,6 +347,7 @@ func TestGrantsRender_Full(t *testing.T) {
 		"Protected    .git/hooks, .husky (read-only)\n",
 		"Masked       .env (hidden)\n",
 		"Network      allowlist: github.com, api.anthropic.com\n",
+		"             LAN and metadata endpoint blocked\n",
 		"             ports 443 only\n",
 		"             host 192.168.1.50 (nas) on ports 443\n",
 		"Ports        web: container 3000 -> host 127.0.0.1:41000\n",
@@ -315,6 +357,7 @@ func TestGrantsRender_Full(t *testing.T) {
 		"Env          GH_TOKEN (from host)\n",
 		"             AWS_SESSION_TOKEN (env_commands)\n",
 		"             ANTHROPIC_API_KEY, FOO (set by config)\n",
+		"Tool config  /home/u/.claude/.credentials.json -> /home/code/.claude/.credentials.json\n",
 		"Credentials  /home/u/.aws/credentials -> /home/code/.aws/credentials\n",
 		"Agent        runs as root, Docker unavailable\n",
 		"Limits       cpu 2, memory 4GiB, max duration 2h\n",
@@ -329,44 +372,41 @@ func TestGrantsRender_Network(t *testing.T) {
 	hosts := []config.HostEntry{{IP: "10.0.0.5", Hostnames: []string{"db"}, Ports: []int{5432}}}
 	cases := []struct {
 		name    string
-		g       Grants
+		n       NetworkGrants
 		want    []string
 		notWant []string
 	}{
 		{
 			name: "restricted, LAN and metadata blocked, DNS pinned",
-			g: Grants{LANBlocked: true, MetadataBlock: true, Context: tool.ContextInfo{
-				NetworkMode: "restricted", DNSServers: []string{"10.0.0.53"},
-			}},
+			n:    NetworkGrants{Mode: "restricted", LANBlocked: true, MetadataBlock: true, DNSServers: []string{"10.0.0.53"}},
 			want: []string{"restricted: internet (LAN blocked, metadata endpoint blocked)", "DNS pinned to 10.0.0.53"},
 		},
 		{
 			name: "restricted, LAN access wins, metadata open",
-			g:    Grants{LANAccess: true, LANBlocked: true, Context: tool.ContextInfo{NetworkMode: "restricted"}},
+			n:    NetworkGrants{Mode: "restricted", LANAccess: true, LANBlocked: true},
 			want: []string{"restricted: internet (LAN allowed, metadata endpoint not blocked)"},
 		},
 		{
 			name: "allowlist with LAN access opens metadata",
-			g:    Grants{LANAccess: true, MetadataBlock: true, Context: tool.ContextInfo{NetworkMode: "allowlist"}},
+			n:    NetworkGrants{Mode: "allowlist", LANAccess: true, MetadataBlock: true},
 			want: []string{"allowlist: nothing", "LAN allowed (metadata endpoint not blocked)"},
 		},
 		{
-			name:    "allowlist never shows a DNS pin",
-			g:       Grants{Context: tool.ContextInfo{NetworkMode: "allowlist", DNSServers: []string{"1.1.1.1"}}},
+			name:    "allowlist without LAN access blocks LAN and metadata, never shows a DNS pin",
+			n:       NetworkGrants{Mode: "allowlist", DNSServers: []string{"1.1.1.1"}},
+			want:    []string{"LAN and metadata endpoint blocked"},
 			notWant: []string{"DNS pinned"},
 		},
 		{
-			name: "open lists hosts entries but no unenforced caps",
-			g: Grants{Hosts: hosts, Context: tool.ContextInfo{
-				NetworkMode: "open", AllowedPorts: []int{443}, DNSServers: []string{"1.1.1.1"},
-			}},
+			name:    "open lists hosts entries but no unenforced caps",
+			n:       NetworkGrants{Mode: "open", Hosts: hosts, AllowedPorts: []int{443}, DNSServers: []string{"1.1.1.1"}},
 			want:    []string{"open (no egress filtering)", "host 10.0.0.5 (db)\n"},
-			notWant: []string{"ports 443", "DNS pinned", "on ports"},
+			notWant: []string{"ports 443", "DNS pinned", "on ports", "LAN"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := tc.g.Render()
+			out := (&Grants{Network: tc.n}).Render()
 			for _, w := range tc.want {
 				if !strings.Contains(out, w) {
 					t.Errorf("missing %q in:\n%s", w, out)

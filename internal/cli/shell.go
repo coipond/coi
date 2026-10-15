@@ -3,12 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -290,7 +288,8 @@ func buildCLICommand(sessionID string, useResumeFlag, restoreOnly bool, sessions
 // buildContainerEnv constructs the environment variables map and user pointer for container execution.
 // It sets HOME, TERM (sanitized), IS_SANDBOX, merges config environment, resolves forward_env, and
 // runs env_commands (host commands whose trimmed stdout is injected). A failing env_command is fatal.
-func (a *App) buildContainerEnv(result *session.SetupResult) (map[string]string, *int, error) {
+// It also returns the source of each config-set variable, for the grants report.
+func (a *App) buildContainerEnv(result *session.SetupResult) (map[string]string, *int, session.EnvGrants, error) {
 	user := container.CodeUID
 	if result.RunAsRoot {
 		user = 0
@@ -322,8 +321,9 @@ func (a *App) buildContainerEnv(result *session.SetupResult) (map[string]string,
 
 	// Apply the config-sourced env layers (defaults.environment -> forward_env ->
 	// env_commands, last-wins), shared with coi run's appendEnvArgs.
-	if err := a.applyConfigEnv(containerEnv); err != nil {
-		return nil, nil, err
+	envSources, err := a.applyConfigEnv(containerEnv)
+	if err != nil {
+		return nil, nil, session.EnvGrants{}, err
 	}
 
 	// Sanitize TERM if user explicitly provided it via config
@@ -331,31 +331,7 @@ func (a *App) buildContainerEnv(result *session.SetupResult) (map[string]string,
 		containerEnv["TERM"] = terminal.SanitizeTerm(userTerm)
 	}
 
-	return containerEnv, userPtr, nil
-}
-
-// envGrants names the config-sourced variables present in the resolved
-// container env, each under the source that won (env_commands over forward_env
-// over [defaults] environment, applyConfigEnv's last-wins order), for the
-// startup grants report.
-func (a *App) envGrants(containerEnv map[string]string) session.EnvGrants {
-	var g session.EnvGrants
-	seen := map[string]bool{}
-	pick := func(names []string) []string {
-		var out []string
-		for _, n := range names {
-			if _, ok := containerEnv[n]; ok && !seen[n] {
-				seen[n] = true
-				out = append(out, n)
-			}
-		}
-		sort.Strings(out)
-		return out
-	}
-	g.Minted = pick(slices.Collect(maps.Keys(a.cfg.Defaults.EnvCommands)))
-	g.FromHost = pick(a.cfg.Defaults.ForwardEnv)
-	g.Configured = pick(slices.Collect(maps.Keys(a.cfg.Defaults.Environment)))
-	return g
+	return containerEnv, userPtr, envSources, nil
 }
 
 // resolveForwardedEnvVarNames returns the subset of env var names that are actually

@@ -451,7 +451,7 @@ func (a *App) appendEnvArgs(incusArgs []string, homeDir, tz string, socketEnv ma
 
 	// Apply the config-sourced env layers (defaults.environment -> forward_env ->
 	// env_commands, last-wins), shared with coi shell's buildContainerEnv.
-	if err := a.applyConfigEnv(env); err != nil {
+	if _, err := a.applyConfigEnv(env); err != nil {
 		return nil, err
 	}
 

@@ -5,6 +5,7 @@ package container
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -220,6 +221,16 @@ func (m *Manager) DiskDevices() (map[string]DiskDevice, error) {
 		return nil, err
 	}
 	return diskDevicesFrom(devices), nil
+}
+
+// ExpandedDiskDevices is DiskDevices plus the disk devices the container
+// inherits from its Incus profiles, i.e. every disk it actually has.
+func (m *Manager) ExpandedDiskDevices() (map[string]DiskDevice, error) {
+	c, ok := loadInstanceConfig(context.Background(), m.ContainerName, true)
+	if !ok {
+		return nil, fmt.Errorf("could not read the expanded config of %s", m.ContainerName)
+	}
+	return diskDevicesFrom(c.devices), nil
 }
 
 // ParseDiskDevices extracts the disk devices from `incus config show` YAML.

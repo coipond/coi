@@ -48,14 +48,14 @@ func SeedToolConfigForRun(ctx context.Context, result *SetupResult, opts SetupOp
 			hostDirExists := statErr == nil
 			if hostDirExists || tcf.AlwaysSetupConfig() {
 				opts.Logger(fmt.Sprintf("Setting up %s config...", opts.Tool.Name()))
-				if err := setupCLIConfig(result.Manager, opts.CLIConfigPath, result.HomeDir, tcf, opts.Logger); err != nil {
+				if _, err := setupCLIConfig(result.Manager, opts.CLIConfigPath, result.HomeDir, tcf, opts.Logger); err != nil {
 					opts.Logger(fmt.Sprintf("Warning: Failed to setup %s config: %v", opts.Tool.Name(), err))
 				}
 			} else if statErr != nil && !os.IsNotExist(statErr) {
 				return fmt.Errorf("failed to check %s config directory: %w", opts.Tool.Name(), statErr)
 			}
 		} else if tcf.AlwaysSetupConfig() {
-			if err := setupCLIConfig(result.Manager, opts.CLIConfigPath, result.HomeDir, tcf, opts.Logger); err != nil {
+			if _, err := setupCLIConfig(result.Manager, opts.CLIConfigPath, result.HomeDir, tcf, opts.Logger); err != nil {
 				opts.Logger(fmt.Sprintf("Warning: Failed to setup %s config: %v", opts.Tool.Name(), err))
 			}
 		}

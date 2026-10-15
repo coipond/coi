@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 
 	"github.com/coipond/coi/internal/alias"
@@ -55,15 +56,24 @@ func stderrLogFn(msg string) {
 // (freshly minted per session, fatal on error). Shared by coi shell
 // (buildContainerEnv) and coi run (appendEnvArgs) so the precedence and the
 // unset-var warning can't drift between the two launch paths.
-func (a *App) applyConfigEnv(env map[string]string) error {
+//
+// It returns which layer each variable it set came from (the layer that won),
+// for the startup grants report; callers that don't report ignore it.
+func (a *App) applyConfigEnv(env map[string]string) (session.EnvGrants, error) {
+	source := map[string]*[]string{}
+	var g session.EnvGrants
+	set := func(k, v string, layer *[]string) {
+		env[k] = v
+		source[k] = layer
+	}
 	// Static environment from config (defaults.environment + profile environment)
 	for k, v := range a.cfg.Defaults.Environment {
-		env[k] = v
+		set(k, v, &g.Configured)
 	}
 	// Resolve forward_env from config, look up host values
 	for _, name := range a.cfg.Defaults.ForwardEnv {
 		if val, ok := os.LookupEnv(name); ok {
-			env[name] = val
+			set(name, val, &g.FromHost)
 		} else {
 			fmt.Fprintf(os.Stderr, "Warning: forward_env variable %q is not set on host, skipping\n", name)
 		}
@@ -71,12 +81,18 @@ func (a *App) applyConfigEnv(env map[string]string) error {
 	// Command-sourced env vars (highest precedence — freshly minted per session).
 	envCommandValues, err := a.resolveEnvCommands()
 	if err != nil {
-		return err
+		return session.EnvGrants{}, err
 	}
 	for k, v := range envCommandValues {
-		env[k] = v
+		set(k, v, &g.Minted)
 	}
-	return nil
+	for k, layer := range source {
+		*layer = append(*layer, k)
+	}
+	sort.Strings(g.Configured)
+	sort.Strings(g.FromHost)
+	sort.Strings(g.Minted)
+	return g, nil
 }
 
 // runPipelineWithSignals installs a SIGINT/SIGTERM handler that triggers

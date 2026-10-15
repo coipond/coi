@@ -42,7 +42,7 @@ func (st *setupState) phaseResumeRestore(_ context.Context) (Teardown, error) {
 		if err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Could not refresh credentials: %v", err))
 		}
-		st.credentialsSeeded, st.copiedCredentials = true, copied
+		st.copiedCredentials = copied
 	}
 	return nil, nil
 }
@@ -71,6 +71,16 @@ func (st *setupState) phaseMountsAndContextPath(_ context.Context) (Teardown, er
 	return nil, nil
 }
 
+// seedToolConfig copies the tool's config in and records the copied files for
+// the grants report.
+func (st *setupState) seedToolConfig(tcf tool.ToolWithConfigDirFiles) {
+	copied, err := setupCLIConfig(st.result.Manager, st.opts.CLIConfigPath, st.result.HomeDir, tcf, st.opts.Logger)
+	if err != nil {
+		st.opts.Logger(fmt.Sprintf("Warning: Failed to setup %s config: %v", st.opts.Tool.Name(), err))
+	}
+	st.toolFiles = copied
+}
+
 // 11. Setup CLI tool config (skip if resuming — config already restored).
 func (st *setupState) phaseSetupCLIConfig(_ context.Context) (Teardown, error) {
 	if st.opts.Tool != nil {
@@ -83,9 +93,7 @@ func (st *setupState) phaseSetupCLIConfig(_ context.Context) (Teardown, error) {
 					switch {
 					case !st.skipLaunch:
 						st.opts.Logger(fmt.Sprintf("Setting up %s config...", st.opts.Tool.Name()))
-						if err := setupCLIConfig(st.result.Manager, st.opts.CLIConfigPath, st.result.HomeDir, tcf, st.opts.Logger); err != nil {
-							st.opts.Logger(fmt.Sprintf("Warning: Failed to setup %s config: %v", st.opts.Tool.Name(), err))
-						}
+						st.seedToolConfig(tcf)
 					case !toolConfigSeeded(st.result.Manager, st.result.HomeDir, tcf):
 						// Persistent reuse with a tool coi hasn't seeded in this
 						// container yet — e.g. a profile that shares [container]
@@ -97,9 +105,7 @@ func (st *setupState) phaseSetupCLIConfig(_ context.Context) (Teardown, error) {
 						// its config once so it authenticates, without touching the
 						// original tool's config or conversation history.
 						st.opts.Logger(fmt.Sprintf("Setting up %s config in reused container (first use of this tool here)...", st.opts.Tool.Name()))
-						if err := setupCLIConfig(st.result.Manager, st.opts.CLIConfigPath, st.result.HomeDir, tcf, st.opts.Logger); err != nil {
-							st.opts.Logger(fmt.Sprintf("Warning: Failed to setup %s config: %v", st.opts.Tool.Name(), err))
-						}
+						st.seedToolConfig(tcf)
 					default:
 						st.opts.Logger(fmt.Sprintf("Reusing existing %s config (persistent container)", st.opts.Tool.Name()))
 					}
@@ -133,7 +139,7 @@ func (st *setupState) phaseSetupCredentials(_ context.Context) (Teardown, error)
 		if err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Failed to setup credentials: %v", err))
 		}
-		st.credentialsSeeded, st.copiedCredentials = true, copied
+		st.copiedCredentials = copied
 	}
 	return nil, nil
 }
