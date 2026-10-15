@@ -38,9 +38,11 @@ func (st *setupState) phaseResumeRestore(_ context.Context) (Teardown, error) {
 	// session it's applied once at phaseSetupCredentials alongside CLI tool config.
 	if st.opts.ResumeFromID != "" && st.opts.CredentialConfig != nil && len(st.opts.CredentialConfig.Entries) > 0 {
 		st.opts.Logger("Refreshing configured credentials...")
-		if err := setupCredentials(st.result.Manager, st.result.HomeDir, st.opts.CredentialConfig.Entries, st.opts.Logger); err != nil {
+		copied, err := setupCredentials(st.result.Manager, st.result.HomeDir, st.opts.CredentialConfig.Entries, st.opts.Logger)
+		if err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Could not refresh credentials: %v", err))
 		}
+		st.credentialsSeeded, st.copiedCredentials = true, copied
 	}
 	return nil, nil
 }
@@ -127,9 +129,11 @@ func (st *setupState) phaseApplyToolEnv(ctx context.Context) (Teardown, error) {
 func (st *setupState) phaseSetupCredentials(_ context.Context) (Teardown, error) {
 	if !st.skipLaunch && st.opts.ResumeFromID == "" && st.opts.CredentialConfig != nil && len(st.opts.CredentialConfig.Entries) > 0 {
 		st.opts.Logger("Setting up configured credentials...")
-		if err := setupCredentials(st.result.Manager, st.result.HomeDir, st.opts.CredentialConfig.Entries, st.opts.Logger); err != nil {
+		copied, err := setupCredentials(st.result.Manager, st.result.HomeDir, st.opts.CredentialConfig.Entries, st.opts.Logger)
+		if err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Failed to setup credentials: %v", err))
 		}
+		st.credentialsSeeded, st.copiedCredentials = true, copied
 	}
 	return nil, nil
 }
@@ -138,7 +142,8 @@ func (st *setupState) phaseSetupCredentials(_ context.Context) (Teardown, error)
 // that support it, the native auto-context file (e.g. Claude's ~/.claude/CLAUDE.md).
 func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	// Runs for both new and resumed sessions so dynamic info stays current.
-	out := injectSandboxContextFiles(st.result, st.opts, st.pendingGuestOps...)
+	out, ctxInfo := injectSandboxContextFiles(st.result, st.opts, st.pendingGuestOps...)
+	st.contextInfo = ctxInfo
 	st.pendingGuestOps = nil
 	reportTimezone(out, st.opts.Timezone, st.opts.Logger)
 	reportMiseTrust(out, st.opts.Logger)

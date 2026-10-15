@@ -16,22 +16,23 @@ import (
 // [[credentials]] entries and the builtin tools' setupCLIConfig essential-
 // file loop, so the two copy paths cannot drift. Directory-creation failure
 // is returned (nothing can be pushed there); push/chown/chmod failures
-// degrade to warnings so one bad file doesn't kill the session.
-func seedHostFile(mgr container.ContainerManager, hostPath, destPath, homeDir, mode string, logger func(string)) error {
+// degrade to warnings so one bad file doesn't kill the session. copied is
+// true when the file was pushed into the container.
+func seedHostFile(mgr container.ContainerManager, hostPath, destPath, homeDir, mode string, logger func(string)) (copied bool, err error) {
 	if _, err := os.Stat(hostPath); err != nil {
 		logger(fmt.Sprintf("  - Skipping %s (not found on host)", hostPath))
-		return nil
+		return false, nil
 	}
 
 	destDir := filepath.Dir(destPath)
 	if err := mgr.ExecArgs([]string{"mkdir", "-p", destDir}, container.ExecCommandOptions{}); err != nil {
-		return fmt.Errorf("failed to create %s: %w", destDir, err)
+		return false, fmt.Errorf("failed to create %s: %w", destDir, err)
 	}
 
 	logger(fmt.Sprintf("  - Copying %s -> %s", hostPath, destPath))
 	if err := mgr.PushFile(hostPath, destPath); err != nil {
 		logger(fmt.Sprintf("  - Warning: Failed to copy %s: %v", hostPath, err))
-		return nil
+		return false, nil
 	}
 
 	if homeDir != "/root" {
@@ -45,7 +46,7 @@ func seedHostFile(mgr container.ContainerManager, hostPath, destPath, homeDir, m
 			logger(fmt.Sprintf("  - Warning: Failed to chmod %s to %s: %v", destPath, mode, err))
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // SetupCredentials copies each configured credential entry (catalog bundle or
@@ -62,18 +63,34 @@ func SetupCredentials(mgr container.ContainerManager, homeDir string, cc *Creden
 	if cc == nil || len(cc.Entries) == 0 {
 		return nil
 	}
-	return setupCredentials(mgr, homeDir, cc.Entries, logger)
+	_, err := setupCredentials(mgr, homeDir, cc.Entries, logger)
+	return err
 }
 
-func setupCredentials(mgr container.ContainerManager, homeDir string, entries []CredentialEntry, logger func(string)) error {
+// setupCredentials seeds each entry and returns the ones actually copied in
+// (ContainerPath resolved to the absolute destination), even on error, so the
+// grants report lists exactly what landed.
+func setupCredentials(mgr container.ContainerManager, homeDir string, entries []CredentialEntry, logger func(string)) ([]CredentialEntry, error) {
+	var copied []CredentialEntry
 	for _, entry := range entries {
-		dest := entry.ContainerPath
-		if !filepath.IsAbs(dest) {
-			dest = filepath.Join(homeDir, dest)
+		dest := credentialDestPath(entry, homeDir)
+		ok, err := seedHostFile(mgr, entry.HostPath, dest, homeDir, entry.Mode, logger)
+		if err != nil {
+			return copied, err
 		}
-		if err := seedHostFile(mgr, entry.HostPath, dest, homeDir, entry.Mode, logger); err != nil {
-			return err
+		if ok {
+			entry.ContainerPath = dest
+			copied = append(copied, entry)
 		}
 	}
-	return nil
+	return copied, nil
+}
+
+// credentialDestPath resolves an entry's destination: absolute as-is, else
+// relative to the container home.
+func credentialDestPath(entry CredentialEntry, homeDir string) string {
+	if filepath.IsAbs(entry.ContainerPath) {
+		return entry.ContainerPath
+	}
+	return filepath.Join(homeDir, entry.ContainerPath)
 }

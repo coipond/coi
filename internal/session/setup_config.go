@@ -211,7 +211,7 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 		// recursive config-dir chown below.
 		srcPath := filepath.Join(hostCLIConfigPath, filename)
 		destPath := filepath.Join(stateDir, filename)
-		if err := seedHostFile(mgr, srcPath, destPath, homeDir, "", logger); err != nil {
+		if _, err := seedHostFile(mgr, srcPath, destPath, homeDir, "", logger); err != nil {
 			return err
 		}
 	}

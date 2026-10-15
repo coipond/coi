@@ -187,7 +187,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		return nil, err
 	}
 
-	st.result.Grants = buildGrants(st.result, st.opts, st.forwardedSockets)
+	st.result.Grants = buildGrants(st)
 	st.opts.Logger("Container setup complete!")
 	return st.result, nil
 }
@@ -803,7 +803,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 // facts, injects ~/SANDBOX_CONTEXT.md (and the optional .json companion), and
 // returns the rendered context content for the auto-context step. Extracted
 // verbatim from Setup's phase-12 block.
-func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestOp) {
+func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestOp, tool.ContextInfo) {
 	ctxInfo := contextInfoFor(result, opts)
 	contextContent := resolveContextContent(ctxInfo, opts.Context.FilePath, opts.Logger)
 	var ops []guestOp
@@ -823,7 +823,7 @@ func sandboxContextOps(result *SetupResult, opts SetupOptions) (string, []guestO
 			ops = append(ops, op)
 		}
 	}
-	return contextContent, ops
+	return contextContent, ops, ctxInfo
 }
 
 // contextInfoFor builds the tool.ContextInfo from the resolved session facts.
@@ -912,9 +912,10 @@ func contextInfoFor(result *SetupResult, opts SetupOptions) tool.ContextInfo {
 // dynamic info stays current.
 //
 // preOps run first in the same exec (other phases' deferred steps); the
-// combined output is returned so their callers can report what happened.
-func injectSandboxContextFiles(result *SetupResult, opts SetupOptions, preOps ...guestOp) string {
-	contextContent, contextOps := sandboxContextOps(result, opts)
+// combined output is returned so their callers can report what happened,
+// along with the context facts the files were written from.
+func injectSandboxContextFiles(result *SetupResult, opts SetupOptions, preOps ...guestOp) (string, tool.ContextInfo) {
+	contextContent, contextOps, ctxInfo := sandboxContextOps(result, opts)
 	ops := append(append([]guestOp{}, preOps...), contextOps...)
 
 	if opts.Tool != nil && config.BoolVal(opts.Context.Auto) && contextContent != "" {
@@ -927,19 +928,19 @@ func injectSandboxContextFiles(result *SetupResult, opts SetupOptions, preOps ..
 		}
 	}
 	if len(ops) == 0 {
-		return ""
+		return "", ctxInfo
 	}
 	out, err := runGuestOpsOutput(result.Manager, ops, container.ExecCommandOptions{})
 	if err != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to write sandbox context files: %v", err))
-		return out
+		return out, ctxInfo
 	}
 	for _, op := range ops {
 		if op.write != nil {
 			opts.Logger(fmt.Sprintf("Context file injected at %s", op.write.path))
 		}
 	}
-	return out
+	return out, ctxInfo
 }
 
 // remapContainerUser remaps the container's `code` user to a non-default

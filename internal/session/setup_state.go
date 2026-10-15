@@ -1,6 +1,10 @@
 package session
 
-import "context"
+import (
+	"context"
+
+	"github.com/coipond/coi/internal/tool"
+)
 
 // setupState is the shared state threaded through the Setup pipeline. Each
 // phase reads and mutates it in place; splitting Setup's former ~600-line body
@@ -17,9 +21,15 @@ type setupState struct {
 	hasCodeUser   bool
 	resolvedPorts []PublishedPort
 
-	// forwardedSockets are the sockets actually forwarded, for the startup
-	// grants report (SetupResult.Grants).
-	forwardedSockets []SocketEntry
+	// What setup actually granted, for the startup grants report
+	// (SetupResult.Grants): the sockets forwarded, the [[credentials]] copied
+	// (credentialsSeeded is false when this launch copied none, e.g. a reused
+	// container), and the context facts the sandbox context files were written
+	// from.
+	forwardedSockets  []SocketEntry
+	copiedCredentials []CredentialEntry
+	credentialsSeeded bool
+	contextInfo       tool.ContextInfo
 
 	// pendingGuestOps are small in-container steps from earlier phases that
 	// ride along with phaseInjectContext's exec instead of paying their own

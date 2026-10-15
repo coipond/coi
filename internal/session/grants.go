@@ -2,56 +2,111 @@ package session
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/tool"
 )
 
 // Grants is the effective reach of a session: what from the host the container
-// can see, write, connect to, or hold. It is built from the setup state after
-// every phase ran (trust gating applied, failed socket forwards dropped,
-// protected paths expanded), so it reports what was granted, not what was
-// configured. Printed once at `coi shell` start.
+// can see, write, connect to, or hold. Each category comes from what setup
+// actually applied, not from config: mounts and protections are read back from
+// the container's disk devices (so a reused container's leftover mounts show,
+// and a protection mount that failed doesn't), sockets and credentials are the
+// ones forwarded and copied. Printed once at `coi shell` start.
 type Grants struct {
-	WorkspaceHost string
-	Mounts        []MountEntry      // extra [[mounts]], after trust gating
-	Sockets       []SocketEntry     // sockets actually forwarded (incl. the SSH agent)
-	Credentials   []CredentialEntry // [[credentials]] whose host file exists (copied in)
+	Workspace MountGrant
+	Mounts    []MountGrant // every other host disk device: [[mounts]], the worktree common dir, ...
+	Protected []string     // read-only overlays (protected paths, worktree git internals)
+	Masked    []string     // secret_paths hidden from the container
+	// DevicesUnread is set when the container's devices could not be read, so
+	// Mounts/Protected fell back to the configured lists.
+	DevicesUnread bool
+
+	Sockets     []SocketEntry // sockets actually forwarded (incl. the SSH agent)
+	Credentials []CredentialGrant
+
 	Hosts         []config.HostEntry
 	LANAccess     bool // allow_local_network_access
 	LANBlocked    bool // block_private_networks
 	MetadataBlock bool // block_metadata_endpoint
 
-	// EnvCommands are the names of [defaults] env_commands variables. They are
-	// minted by the CLI at launch, after Setup, so the caller fills them in.
-	EnvCommands []string
+	Env EnvGrants
 
 	Context tool.ContextInfo
 }
 
-// buildGrants collects the session's effective grants from the setup state.
-func buildGrants(result *SetupResult, opts SetupOptions, forwardedSockets []SocketEntry) *Grants {
+// MountGrant is a host path visible in the container.
+type MountGrant struct {
+	HostPath, ContainerPath string
+	Readonly                bool
+}
+
+// CredentialGrant is a host file copied into the container. Earlier marks one
+// this launch didn't copy but that is still there from an earlier session (a
+// reused container).
+type CredentialGrant struct {
+	HostPath, ContainerPath string
+	Earlier                 bool
+}
+
+// EnvGrants names the environment variables that carry host or config values
+// into the container, by source. Names only: the report never shows values.
+type EnvGrants struct {
+	FromHost   []string // forward_env
+	Minted     []string // env_commands
+	Configured []string // [defaults] environment (incl. profile environment)
+}
+
+// WithEnv returns a copy of g with Env replaced. The caller resolves the
+// container env after Setup (env_commands run then), so it supplies the
+// authoritative names without mutating the shared SetupResult.Grants.
+func (g *Grants) WithEnv(env EnvGrants) *Grants {
+	c := *g
+	c.Env = env
+	return &c
+}
+
+// buildGrants collects the session's effective grants once setup has run.
+func buildGrants(st *setupState) *Grants {
+	opts := st.opts
+	info := st.contextInfo
+	info.ProfileContext = "" // the report never shows it; don't carry the text
 	g := &Grants{
-		WorkspaceHost: opts.WorkspacePath,
-		Sockets:       forwardedSockets,
-		Context:       contextInfoFor(result, opts),
+		Sockets: st.forwardedSockets,
+		Env:     EnvGrants{FromHost: info.ForwardedEnvVars},
+		Context: info,
 	}
-	if opts.MountConfig != nil {
-		g.Mounts = opts.MountConfig.Mounts
+
+	var disks map[string]container.DiskDevice
+	var err error
+	if lister, ok := st.result.Manager.(diskDeviceLister); ok {
+		disks, err = lister.DiskDevices()
 	}
-	if opts.CredentialConfig != nil {
-		for _, c := range opts.CredentialConfig.Entries {
-			// seedHostFile skips a missing host file, so only an existing one
-			// was copied in.
-			if _, err := os.Stat(c.HostPath); err == nil {
-				g.Credentials = append(g.Credentials, c)
+	if disks != nil && err == nil {
+		g.Workspace, g.Mounts, g.Protected, g.Masked = classifyDisks(disks, info.WorkspacePath)
+	} else {
+		g.DevicesUnread = true
+		g.Workspace = MountGrant{HostPath: opts.WorkspacePath, ContainerPath: info.WorkspacePath}
+		if opts.MountConfig != nil {
+			for _, m := range opts.MountConfig.Mounts {
+				g.Mounts = append(g.Mounts, MountGrant{m.HostPath, m.ContainerPath, m.Readonly})
 			}
 		}
+		// Same existence filter as the setup log line.
+		g.Protected = GetProtectedPathsForLogging(opts.WorkspacePath, opts.Security.ProtectedPaths)
 	}
+
+	for _, c := range st.copiedCredentials {
+		g.Credentials = append(g.Credentials, CredentialGrant{HostPath: c.HostPath, ContainerPath: c.ContainerPath})
+	}
+	if !st.credentialsSeeded && opts.CredentialConfig != nil && len(opts.CredentialConfig.Entries) > 0 {
+		g.Credentials = earlierCredentials(st.result.Manager, opts.CredentialConfig.Entries, st.result.HomeDir)
+	}
+
 	if nc := opts.Network.Config; nc != nil {
 		g.Hosts = nc.Hosts
 		g.LANAccess = config.BoolVal(nc.AllowLocalNetworkAccess)
@@ -61,10 +116,71 @@ func buildGrants(result *SetupResult, opts SetupOptions, forwardedSockets []Sock
 	return g
 }
 
+// classifyDisks sorts the container's disk devices into grant categories by
+// the device families setup creates. Anything not recognized as a coi
+// protection is a mount, so a device added outside coi is still reported.
+func classifyDisks(disks map[string]container.DiskDevice, workspace string) (ws MountGrant, mounts []MountGrant, protected, masked []string) {
+	for name, d := range disks {
+		switch {
+		case d.Source == "":
+			// Pool-backed (the root disk): nothing from the host.
+		case name == "workspace":
+			ws = MountGrant{d.Source, d.Path, d.Readonly}
+		case name == gitReadonlyDeviceName:
+			// coi's generated read-only gitconfig, not host data.
+		case strings.HasPrefix(name, protectDevicePrefix), strings.HasPrefix(name, gitcDevicePrefix):
+			protected = append(protected, displayPath(d.Path, workspace))
+		case strings.HasPrefix(name, maskDevicePrefix):
+			masked = append(masked, displayPath(d.Path, workspace))
+		default:
+			mounts = append(mounts, MountGrant{d.Source, d.Path, d.Readonly})
+		}
+	}
+	sort.Slice(mounts, func(i, j int) bool { return mounts[i].ContainerPath < mounts[j].ContainerPath })
+	sort.Strings(protected)
+	sort.Strings(masked)
+	return ws, mounts, protected, masked
+}
+
+// displayPath shows a container path relative to the workspace when under it.
+func displayPath(p, workspace string) string {
+	if workspace != "" {
+		if rel := strings.TrimPrefix(p, strings.TrimSuffix(workspace, "/")+"/"); rel != p {
+			return rel
+		}
+	}
+	return p
+}
+
+// earlierCredentials reports, for a launch that copied no credentials (a
+// reused container), the configured destinations still present in the
+// container from an earlier session. One exec checks them all.
+func earlierCredentials(mgr container.ContainerManager, entries []CredentialEntry, homeDir string) []CredentialGrant {
+	args := []string{"sh", "-c", `for p; do [ -e "$p" ] && printf '%s\n' "$p"; done`, "sh"}
+	for _, e := range entries {
+		args = append(args, credentialDestPath(e, homeDir))
+	}
+	out, err := mgr.ExecArgsCapture(args, container.ExecCommandOptions{})
+	if err != nil && out == "" {
+		return nil
+	}
+	present := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		present[strings.TrimSpace(line)] = true
+	}
+	var grants []CredentialGrant
+	for _, e := range entries {
+		if dest := credentialDestPath(e, homeDir); present[dest] {
+			grants = append(grants, CredentialGrant{HostPath: e.HostPath, ContainerPath: dest, Earlier: true})
+		}
+	}
+	return grants
+}
+
 // Render formats the grants as an aligned block for the terminal. The core
 // grant categories are always listed, with "none" when empty, so an absent
-// grant is stated rather than implied; limits, ports and credentials appear
-// only when set. Environment variables are listed by name, never value.
+// grant is stated rather than implied; masks, ports, credentials and limits
+// appear only when set. Environment variables are listed by name, never value.
 func (g *Grants) Render() string {
 	info := g.Context
 	var rows [][2]string
@@ -77,24 +193,27 @@ func (g *Grants) Render() string {
 		}
 	}
 
-	add("Workspace", fmt.Sprintf("%s -> %s (read-write)", g.WorkspaceHost, info.WorkspacePath))
+	add("Workspace", fmt.Sprintf("%s -> %s (%s)", g.Workspace.HostPath, g.Workspace.ContainerPath, rwLabel(g.Workspace.Readonly)))
 
-	if len(g.Mounts) == 0 {
-		add("Mounts", "none")
-	} else {
-		var lines []string
+	mounts := []string{"none"}
+	if len(g.Mounts) > 0 {
+		mounts = nil
 		for _, m := range g.Mounts {
-			lines = append(lines, fmt.Sprintf("%s -> %s (%s)", m.HostPath, m.ContainerPath, rwLabel(m.Readonly)))
+			mounts = append(mounts, fmt.Sprintf("%s -> %s (%s)", m.HostPath, m.ContainerPath, rwLabel(m.Readonly)))
 		}
-		add("Mounts", lines...)
 	}
+	if g.DevicesUnread {
+		mounts = append(mounts, "(could not read the container's devices; showing configured mounts)")
+	}
+	add("Mounts", mounts...)
 
-	// Same existence filter as the setup log line: a configured path missing
-	// from the workspace has nothing to protect.
-	if shown := GetProtectedPathsForLogging(g.WorkspaceHost, info.ProtectedPaths); len(shown) == 0 {
+	if len(g.Protected) == 0 {
 		add("Protected", "none")
 	} else {
-		add("Protected", strings.Join(shown, ", ")+" (read-only)")
+		add("Protected", strings.Join(g.Protected, ", ")+" (read-only)")
+	}
+	if len(g.Masked) > 0 {
+		add("Masked", strings.Join(g.Masked, ", ")+" (hidden)")
 	}
 
 	add("Network", g.networkLines()...)
@@ -117,19 +236,28 @@ func (g *Grants) Render() string {
 		add("Sockets", lines...)
 	}
 
-	envLine := "none"
-	if len(info.ForwardedEnvVars) > 0 {
-		envLine = strings.Join(info.ForwardedEnvVars, ", ") + " (from host)"
+	var env []string
+	for _, src := range []struct {
+		names []string
+		label string
+	}{{g.Env.FromHost, "from host"}, {g.Env.Minted, "env_commands"}, {g.Env.Configured, "set by config"}} {
+		if len(src.names) > 0 {
+			env = append(env, strings.Join(src.names, ", ")+" ("+src.label+")")
+		}
 	}
-	add("Env", envLine)
-	if len(g.EnvCommands) > 0 {
-		add("", strings.Join(g.EnvCommands, ", ")+" (env_commands)")
+	if len(env) == 0 {
+		env = []string{"none"}
 	}
+	add("Env", env...)
 
 	if len(g.Credentials) > 0 {
 		var lines []string
 		for _, c := range g.Credentials {
-			lines = append(lines, fmt.Sprintf("%s -> %s", c.HostPath, credentialDest(c, info.HomeDir)))
+			l := fmt.Sprintf("%s -> %s", c.HostPath, c.ContainerPath)
+			if c.Earlier {
+				l += " (from an earlier session, not refreshed)"
+			}
+			lines = append(lines, l)
 		}
 		add("Credentials", lines...)
 	}
@@ -170,43 +298,48 @@ func (g *Grants) Render() string {
 	return b.String()
 }
 
-// networkLines describes egress: the mode, then what it lets through.
+// networkLines describes egress: the mode, then what it lets through. Port
+// caps and DNS pins are shown only in the modes whose firewall enforces them,
+// as the sandbox context does.
 func (g *Grants) networkLines() []string {
 	info := g.Context
+	mode := config.NetworkMode(info.NetworkMode)
 	var lines []string
-	switch config.NetworkMode(info.NetworkMode) {
+	metadata := "metadata endpoint not blocked"
+	if g.MetadataBlock {
+		metadata = "metadata endpoint blocked"
+	}
+	switch mode {
 	case "", config.NetworkModeOpen:
-		return []string{"open (no egress filtering)"}
+		lines = append(lines, "open (no egress filtering)")
 	case config.NetworkModeAllowlist:
 		dests := "nothing"
 		if len(info.AllowedDomains) > 0 {
 			dests = strings.Join(info.AllowedDomains, ", ")
 		}
 		lines = append(lines, "allowlist: "+dests)
+		if g.LANAccess {
+			// Allowlist mode skips its private/link-local rejects entirely when
+			// local access is on, whatever block_metadata_endpoint says.
+			lines = append(lines, "LAN allowed (metadata endpoint not blocked)")
+		}
 	case config.NetworkModeRestricted:
-		var notes []string
+		lan := "LAN not blocked"
 		switch {
 		case g.LANAccess:
-			notes = append(notes, "LAN allowed")
+			lan = "LAN allowed"
 		case g.LANBlocked:
-			notes = append(notes, "LAN blocked")
-		default:
-			notes = append(notes, "LAN not blocked")
+			lan = "LAN blocked"
 		}
-		if g.MetadataBlock {
-			notes = append(notes, "metadata endpoint blocked")
-		}
-		lines = append(lines, "restricted: internet ("+strings.Join(notes, ", ")+")")
+		lines = append(lines, "restricted: internet ("+lan+", "+metadata+")")
 	default:
 		lines = append(lines, info.NetworkMode)
 	}
-	if g.LANAccess && config.NetworkMode(info.NetworkMode) == config.NetworkModeAllowlist {
-		lines = append(lines, "LAN allowed")
-	}
-	if len(info.AllowedPorts) > 0 {
+	enforcing := mode == config.NetworkModeRestricted || mode == config.NetworkModeAllowlist
+	if enforcing && len(info.AllowedPorts) > 0 {
 		lines = append(lines, "ports "+joinInts(info.AllowedPorts)+" only")
 	}
-	if len(info.DNSServers) > 0 {
+	if mode == config.NetworkModeRestricted && len(info.DNSServers) > 0 {
 		lines = append(lines, "DNS pinned to "+strings.Join(info.DNSServers, ", "))
 	}
 	for _, h := range g.Hosts {
@@ -214,7 +347,7 @@ func (g *Grants) networkLines() []string {
 		if len(h.Hostnames) > 0 {
 			l += " (" + strings.Join(h.Hostnames, ", ") + ")"
 		}
-		if len(h.Ports) > 0 {
+		if enforcing && len(h.Ports) > 0 {
 			l += " on ports " + joinInts(h.Ports)
 		}
 		lines = append(lines, l)
@@ -241,13 +374,6 @@ func portLines(ports []tool.PortInfo) []string {
 	return lines
 }
 
-func credentialDest(c CredentialEntry, homeDir string) string {
-	if strings.HasPrefix(c.ContainerPath, "/") || homeDir == "" {
-		return c.ContainerPath
-	}
-	return strings.TrimSuffix(homeDir, "/") + "/" + c.ContainerPath
-}
-
 func rwLabel(readonly bool) string {
 	if readonly {
 		return "read-only"
@@ -261,14 +387,4 @@ func joinInts(ns []int) string {
 		s[i] = strconv.Itoa(n)
 	}
 	return strings.Join(s, ", ")
-}
-
-// SortedKeys returns m's keys in order, for listing env var names.
-func SortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

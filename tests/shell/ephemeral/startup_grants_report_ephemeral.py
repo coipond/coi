@@ -6,14 +6,18 @@ setup, so it must show what was granted, not what was configured.
 
 Verifies that the report:
 1. lists the workspace, an extra read-only mount and protected paths that exist;
-   names a forwarded env var but never prints its value; says "none" for
-   sockets when nothing is forwarded;
+   names forwarded and config-set env vars but never prints their values; says
+   "none" for sockets when nothing is forwarded;
 2. lists forwarded sockets (a [[sockets]] entry and the SSH agent), published
-   ports, env_commands names, credentials whose host file exists (not missing
-   ones) and resource limits;
+   ports, env_commands names, credentials that were copied (not missing ones)
+   and resource limits;
 3. describes allowlist mode: the entries and the port cap;
 4. describes restricted mode: LAN and metadata blocking, pinned DNS;
-5. leaves out untrusted project entries that trust gating dropped.
+5. leaves out untrusted project entries that trust gating dropped;
+6. for a git worktree workspace, lists the read-write common dir and its
+   read-only git internals;
+7. on a reused persistent container, still lists a mount attached at creation
+   that trust gating now drops (it stays attached, so it is still reachable).
 """
 
 import os
@@ -21,17 +25,23 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 
-from support.helpers import write_trusted_coi_config
+from support.helpers import (
+    calculate_container_name,
+    write_trusted_coi_config,
+    write_workspace_container_config,
+)
 
 SECRET_VALUE = "grants-report-secret-value-8231"
+STATIC_VALUE = "grants-report-static-value-6604"
 MINTED_VALUE = "grants-report-minted-value-5517"
 
 
-def _run_shell(coi_binary, workspace_dir, env):
+def _run_shell(coi_binary, workspace_dir, env, args=("--slot", "1")):
     env["COI_USE_DUMMY"] = "1"
     result = subprocess.run(
-        [coi_binary, "shell", "--background", "--workspace", workspace_dir, "--slot", "1"],
+        [coi_binary, "shell", "--background", "--workspace", str(workspace_dir), *args],
         capture_output=True,
         text=True,
         timeout=180,
@@ -91,6 +101,8 @@ def test_report_mounts_env_and_protected_paths(
     env = write_trusted_coi_config(
         "[defaults]\n"
         'forward_env = ["COI_GRANTS_TEST_VAR"]\n'
+        "[defaults.environment]\n"
+        f'COI_GRANTS_STATIC = "{STATIC_VALUE}"\n'
         "[ssh]\n"
         "forward_agent = false\n"
         "[[mounts]]\n"
@@ -107,10 +119,16 @@ def test_report_mounts_env_and_protected_paths(
     assert rows["Mounts"] == [f"{extra} -> /mnt/extra (read-only)"], rows
     assert ".husky" in rows["Protected"][0], rows
     assert ".vscode" not in rows["Protected"][0], rows
-    assert rows["Env"] == ["COI_GRANTS_TEST_VAR (from host)"], rows
+    assert rows["Env"] == [
+        "COI_GRANTS_TEST_VAR (from host)",
+        "COI_GRANTS_STATIC (set by config)",
+    ], rows
     assert rows["Sockets"] == ["none"], rows
     assert rows["Agent"][0].startswith("runs as non-root"), rows
-    assert SECRET_VALUE not in result.stderr + result.stdout, "the report must not print env values"
+    output = result.stderr + result.stdout
+    assert SECRET_VALUE not in output and STATIC_VALUE not in output, (
+        "the report must not print env values"
+    )
 
 
 def test_report_sockets_ports_credentials_and_limits(
@@ -226,3 +244,82 @@ def test_report_omits_untrusted_entries(coi_binary, cleanup_containers, workspac
         assert str(outside) not in report and sock.path not in report, report
     finally:
         sock.close()
+
+
+def _git(*args, cwd=None):
+    return subprocess.run(
+        ["git", "-c", "user.email=t@t.dev", "-c", "user.name=t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_report_worktree_common_dir(coi_binary, tmp_path):
+    """A linked-worktree workspace: the external common dir is mounted read-write
+    and its git internals are re-covered read-only; the report shows both."""
+    main = tmp_path / "main"
+    main.mkdir()
+    _git("init", "-q", str(main))
+    _git("commit", "-q", "--allow-empty", "-m", "init", cwd=str(main))
+    wt = tmp_path / "wt"
+    _git("worktree", "add", "-q", str(wt), cwd=str(main))
+    common = os.path.realpath(main / ".git")
+    try:
+        rows = _report(_run_shell(coi_binary, wt, dict(os.environ)).stderr)
+
+        assert any(m.startswith(f"{common} -> {common} (read-write)") for m in rows["Mounts"]), rows
+        protected = rows["Protected"][0]
+        assert f"{common}/hooks" in protected and f"{common}/config" in protected, rows
+    finally:
+        for slot in range(1, 4):
+            subprocess.run(
+                [
+                    coi_binary,
+                    "container",
+                    "delete",
+                    calculate_container_name(str(wt), slot),
+                    "--force",
+                ],
+                capture_output=True,
+                timeout=60,
+            )
+
+
+def test_report_reused_container_keeps_leftover_mount(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
+    """A mount attached when a persistent container was created stays attached on
+    reuse even once trust gating drops it from config, so the report must keep
+    listing it rather than understate what the container can reach."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    project = os.path.join(workspace_dir, ".coi")
+    os.mkdir(project)
+    with open(os.path.join(project, "config.toml"), "w") as f:
+        f.write(f'[[mounts]]\nhost = "{outside}"\ncontainer = "/mnt/outside"\n')
+    write_workspace_container_config(workspace_dir, persistent=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+    mount_line = f"{outside} -> /mnt/outside (read-write)"
+
+    # Created trusted (the suite sets COI_TRUST_ALL), so the mount is attached.
+    first = _report(_run_shell(coi_binary, workspace_dir, dict(os.environ)).stderr)
+    assert mount_line in first["Mounts"], first
+
+    stop = subprocess.run(
+        [coi_binary, "container", "stop", container_name],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert stop.returncode == 0, stop.stderr
+    time.sleep(1)
+
+    # Re-entered with the trust gate on: config drops the mount, the device stays.
+    reused = _report(
+        _run_shell(
+            coi_binary, workspace_dir, _gate_active_env(), args=("--container", container_name)
+        ).stderr
+    )
+    assert mount_line in reused["Mounts"], reused

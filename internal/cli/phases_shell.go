@@ -582,9 +582,15 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			fmt.Fprintf(os.Stderr, "Session ID: %s\n", s.sessionID)
 			fmt.Fprintf(os.Stderr, "Container: %s\n", s.result.ContainerName)
 			fmt.Fprintf(os.Stderr, "Workspace: %s\n", s.absWorkspace)
+			// Resolve the env once, before the report: env_commands run here, so
+			// the report names what was actually minted, and the tool gets the
+			// same env.
+			containerEnv, userPtr, err := a.buildContainerEnv(s.result)
+			if err != nil {
+				return nil, err
+			}
 			if g := s.result.Grants; g != nil {
-				g.EnvCommands = session.SortedKeys(a.cfg.Defaults.EnvCommands)
-				fmt.Fprintf(os.Stderr, "\n%s", g.Render())
+				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(a.envGrants(containerEnv)).Render())
 			}
 
 			useResumeFlag := (s.resumeID != "") && a.persistent
@@ -603,7 +609,7 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 					fmt.Fprintf(os.Stderr, "Resume mode: Persistent session\n")
 				}
 				fmt.Fprintf(os.Stderr, "\n")
-				runErr = a.runCLIInTmux(s.result, s.sessionID, background, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance)
+				runErr = a.runCLIInTmux(s.result, containerEnv, userPtr, s.sessionID, background, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance)
 			} else {
 				fmt.Fprintf(os.Stderr, "Mode: Direct (no tmux)\n")
 				if restoreOnly {
@@ -612,7 +618,7 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 					fmt.Fprintf(os.Stderr, "Resume mode: Persistent session\n")
 				}
 				fmt.Fprintf(os.Stderr, "\n")
-				runErr = a.runCLI(s.result, s.sessionID, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance)
+				runErr = a.runCLI(s.result, containerEnv, userPtr, s.sessionID, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance)
 			}
 
 			// Normalise expected exit conditions so the pipeline doesn't log

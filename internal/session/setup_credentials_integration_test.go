@@ -33,7 +33,7 @@ func TestSetupCredentials_Integration(t *testing.T) {
 	logger := func(msg string) { logs = append(logs, msg); t.Logf("[credentials] %s", msg) }
 
 	homeDir := "/home/" + container.CodeUser
-	if err := setupCredentials(mgr, homeDir, entries, logger); err != nil {
+	if _, err := setupCredentials(mgr, homeDir, entries, logger); err != nil {
 		t.Fatalf("setupCredentials: %v", err)
 	}
 

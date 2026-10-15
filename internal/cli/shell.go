@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -332,6 +334,30 @@ func (a *App) buildContainerEnv(result *session.SetupResult) (map[string]string,
 	return containerEnv, userPtr, nil
 }
 
+// envGrants names the config-sourced variables present in the resolved
+// container env, each under the source that won (env_commands over forward_env
+// over [defaults] environment, applyConfigEnv's last-wins order), for the
+// startup grants report.
+func (a *App) envGrants(containerEnv map[string]string) session.EnvGrants {
+	var g session.EnvGrants
+	seen := map[string]bool{}
+	pick := func(names []string) []string {
+		var out []string
+		for _, n := range names {
+			if _, ok := containerEnv[n]; ok && !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+	g.Minted = pick(slices.Collect(maps.Keys(a.cfg.Defaults.EnvCommands)))
+	g.FromHost = pick(a.cfg.Defaults.ForwardEnv)
+	g.Configured = pick(slices.Collect(maps.Keys(a.cfg.Defaults.Environment)))
+	return g
+}
+
 // resolveForwardedEnvVarNames returns the subset of env var names that are actually
 // set on the host. This is used to inform the context file about what's available.
 func resolveForwardedEnvVarNames(names []string) []string {
@@ -446,13 +472,10 @@ func withUserPreLaunch(mgr container.ContainerManager, cmds []string, cliCmd str
 	return "trap : INT; bash " + userPreLaunchScriptPath + "; " + cliCmd
 }
 
-// runCLI executes the CLI tool in the container interactively
-func (a *App) runCLI(result *session.SetupResult, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
+// runCLI executes the CLI tool in the container interactively, with the env
+// and user from buildContainerEnv.
+func (a *App) runCLI(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
 	cmdToRun := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
-	containerEnv, userPtr, err := a.buildContainerEnv(result)
-	if err != nil {
-		return err
-	}
 
 	workspacePath := result.ContainerWorkspacePath
 	if workspacePath == "" {
@@ -477,7 +500,7 @@ func (a *App) runCLI(result *session.SetupResult, sessionID string, useResumeFla
 	}
 
 	cmdToRun = withUserPreLaunch(result.Manager, a.cfg.Tool.PreLaunch, cmdToRun)
-	_, err = result.Manager.ExecCommand(cmdToRun, opts)
+	_, err := result.Manager.ExecCommand(cmdToRun, opts)
 	return err
 }
 
@@ -530,7 +553,7 @@ func buildTmuxSetEnvironmentCmds(sessionName string, env map[string]string) []st
 }
 
 // runCLIInTmux executes CLI tool in a tmux session for background/monitoring support
-func (a *App) runCLIInTmux(result *session.SetupResult, sessionID string, detached bool, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
+func (a *App) runCLIInTmux(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, detached bool, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
 	tmuxSessionName := fmt.Sprintf("coi-%s", result.ContainerName)
 
 	// Get workspace path (with fallback for backwards compatibility)
@@ -540,10 +563,6 @@ func (a *App) runCLIInTmux(result *session.SetupResult, sessionID string, detach
 	}
 
 	cliCmd := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
-	containerEnv, userPtr, err := a.buildContainerEnv(result)
-	if err != nil {
-		return err
-	}
 	mergeToolEnv(containerEnv, t, workspacePath)
 
 	// Run pre-launch commands (e.g., symlink creation) before the tool starts
