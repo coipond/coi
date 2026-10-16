@@ -348,10 +348,8 @@ func resolveForwardedEnvVarNames(names []string) []string {
 
 // mergeToolEnv adds tool-specific environment variables (if the tool implements ToolWithContainerEnv).
 func mergeToolEnv(env map[string]string, t tool.Tool, workspacePath string) {
-	if twce, ok := t.(tool.ToolWithContainerEnv); ok {
-		for k, v := range twce.GetContainerEnv(workspacePath) {
-			env[k] = v
-		}
+	for k, v := range session.ToolContainerEnv(t, workspacePath) {
+		env[k] = v
 	}
 }
 
@@ -453,10 +451,7 @@ func withUserPreLaunch(mgr container.ContainerManager, cmds []string, cliCmd str
 func (a *App) runCLI(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
 	cmdToRun := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
 
-	workspacePath := result.ContainerWorkspacePath
-	if workspacePath == "" {
-		workspacePath = "/workspace" // Fallback for backwards compatibility
-	}
+	workspacePath := session.ContainerWorkspace(result)
 	mergeToolEnv(containerEnv, t, workspacePath)
 	opts := container.ExecCommandOptions{
 		User:        userPtr,
@@ -528,43 +523,45 @@ func buildTmuxSetEnvironmentCmds(sessionName string, env map[string]string) []st
 	return cmds
 }
 
-// tmuxLaunch is a prepared tmux session: prepareTmux has run the pre-launch
-// steps and made sure the session exists; enterTmux attaches to it or leaves
-// it running in the background.
+// tmuxLaunch is a prepared tmux session: prepareTmux has made sure it exists
+// without starting anything new; enterTmux runs the pre-launch steps, then
+// releases the held-back tool and attaches, or leaves it in the background.
 type tmuxLaunch struct {
 	session, workspacePath, cliCmd string
 	userPtr                        *int
 	env                            map[string]string
+	tool                           tool.Tool
 	// existing is set when the session was already there, so the tool in it
 	// keeps running with the env it started with.
 	existing bool
 }
 
-// prepareTmux readies the tool's tmux session for background/monitoring
-// support: it runs the pre-launch steps and reuses the session if it exists,
-// else creates it, which starts the tool. enterTmux then attaches to it or
-// leaves it in the background, by whether it already existed.
-func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) (*tmuxLaunch, error) {
-	l := &tmuxLaunch{session: session.TmuxSessionName(result.ContainerName), userPtr: userPtr, env: containerEnv}
+// tmuxStartGateTimeout bounds how long a new session's pane holds the tool
+// back waiting for enterTmux's start signal, so a coi that dies in between
+// doesn't leave a pane that never starts the tool.
+const tmuxStartGateTimeout = 120
 
-	// Get workspace path (with fallback for backwards compatibility)
-	l.workspacePath = result.ContainerWorkspacePath
-	if l.workspacePath == "" {
-		l.workspacePath = "/workspace"
+// tmuxStartChannel is the `tmux wait-for` channel that releases a new
+// session's tool. tmux keeps a signal sent before the pane waits for the next
+// waiter, so the order of the two doesn't matter.
+func tmuxStartChannel(sessionName string) string { return sessionName + "-start" }
+
+// prepareTmux readies the tool's tmux session for background/monitoring
+// support: it reuses the session if it exists, else creates it with the tool
+// held back (the pane waits on tmuxStartChannel), so nothing new runs until
+// enterTmux. The caller reports the grants in between, knowing whether the
+// launch starts the tool or reaches one already running.
+func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) (*tmuxLaunch, error) {
+	l := &tmuxLaunch{
+		session:       session.TmuxSessionName(result.ContainerName),
+		workspacePath: session.ContainerWorkspace(result),
+		userPtr:       userPtr,
+		env:           containerEnv,
+		tool:          t,
 	}
 
 	cliCmd := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
 	mergeToolEnv(containerEnv, t, l.workspacePath)
-
-	// Run pre-launch commands (e.g., symlink creation) before the tool starts
-	if err := runPreLaunch(result.Manager, t, container.ExecCommandOptions{
-		User:    userPtr,
-		Cwd:     l.workspacePath,
-		Env:     containerEnv,
-		Capture: true,
-	}); err != nil {
-		return nil, err
-	}
 
 	// The user's [tool] pre_launch commands run in the pane, before the tool,
 	// for both a new tmux session and a command sent into an existing one.
@@ -581,7 +578,8 @@ func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]s
 	// interact: exit (leaves container running), Ctrl+b d (detach), or
 	// sudo shutdown 0 (stop). trap : INT keeps bash alive on Ctrl+C while
 	// Ctrl+C still works in the tool; exec bash avoids nested shells.
-	createCmd := buildTmuxNewSessionCmd(l.session, l.workspacePath, l.cliCmd, containerEnv)
+	gated := fmt.Sprintf("timeout %d tmux wait-for %s 2>/dev/null; %s", tmuxStartGateTimeout, tmuxStartChannel(l.session), l.cliCmd)
+	createCmd := buildTmuxNewSessionCmd(l.session, l.workspacePath, gated, containerEnv)
 	prepOut, prepErr := result.Manager.ExecCommand(
 		buildTmuxPrepScript(l.session, createCmd, buildTmuxSetEnvironmentCmds(l.session, containerEnv)),
 		container.ExecCommandOptions{Capture: true, User: userPtr, Cwd: l.workspacePath},
@@ -596,9 +594,26 @@ func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]s
 	return l, nil
 }
 
-// enterTmux attaches to the prepared session, or (detached) leaves it running
-// in the background, sending the tool command into it if it already existed.
+// enterTmux runs the tool's pre-launch steps, then, for a new session,
+// releases the held-back tool and attaches (or leaves it in the background);
+// for an existing one it attaches, or (detached) types the tool command into
+// its pane.
 func (a *App) enterTmux(result *session.SetupResult, l *tmuxLaunch, detached bool) error {
+	// Run pre-launch commands (e.g., symlink creation) before the tool starts
+	if err := runPreLaunch(result.Manager, l.tool, container.ExecCommandOptions{
+		User:    l.userPtr,
+		Cwd:     l.workspacePath,
+		Env:     l.env,
+		Capture: true,
+	}); err != nil {
+		if !l.existing {
+			// Don't let the held-back tool start after its gate times out.
+			_, _ = result.Manager.ExecCommand("tmux kill-session -t "+shellQuote("="+l.session), container.ExecCommandOptions{Capture: true, User: l.userPtr})
+		}
+		return err
+	}
+	release := "tmux wait-for -S " + shellQuote(tmuxStartChannel(l.session))
+
 	switch {
 	case l.existing && detached:
 		// Send command to existing session
@@ -621,12 +636,15 @@ func (a *App) enterTmux(result *session.SetupResult, l *tmuxLaunch, detached boo
 		})
 		return err
 	case detached:
+		if _, err := result.Manager.ExecCommand(release, container.ExecCommandOptions{Capture: true, User: l.userPtr}); err != nil {
+			return fmt.Errorf("failed to start the tool in tmux session %s: %w", l.session, err)
+		}
 		fmt.Fprintf(os.Stderr, "Created background tmux session: %s\n", l.session)
 		fmt.Fprintf(os.Stderr, "Use 'coi tmux capture %s' to view output\n", result.ContainerName)
 		fmt.Fprintf(os.Stderr, "Use 'coi tmux send %s \"<command>\"' to send commands\n", result.ContainerName)
 		return nil
 	default:
-		_, err := result.Manager.ExecCommand(fmt.Sprintf("tmux attach -t %s", l.session), container.ExecCommandOptions{
+		_, err := result.Manager.ExecCommand(release+"; tmux attach -t "+shellQuote(l.session), container.ExecCommandOptions{
 			User:        l.userPtr,
 			Cwd:         l.workspacePath,
 			Interactive: true,
@@ -649,8 +667,10 @@ const (
 // create failed) and tmuxPrepEnvFailed if any env command failed.
 func buildTmuxPrepScript(sessionName, createCmd string, envCmds []string) string {
 	var b strings.Builder
+	// "=" makes the target an exact name: a bare name also matches any
+	// session it prefixes (e.g. a user's "coi-<container>-dev").
 	fmt.Fprintf(&b, "if tmux has-session -t %s 2>/dev/null; then echo %s; else %s || exit 1; echo %s; fi\n",
-		shellQuote(sessionName), tmuxPrepExisting, createCmd, tmuxPrepCreated)
+		shellQuote("="+sessionName), tmuxPrepExisting, createCmd, tmuxPrepCreated)
 	for _, c := range envCmds {
 		fmt.Fprintf(&b, "%s || echo %s\n", c, tmuxPrepEnvFailed)
 	}

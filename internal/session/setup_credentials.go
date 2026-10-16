@@ -63,7 +63,12 @@ func SetupCredentials(mgr container.ContainerManager, homeDir string, cc *Creden
 	if cc == nil || len(cc.Entries) == 0 {
 		return nil
 	}
-	_, err := setupCredentials(mgr, homeDir, cc.Entries, logger)
+	copied, err := setupCredentials(mgr, homeDir, cc.Entries, logger)
+	// Record the copies (best-effort, like the shell path), so a later
+	// `coi shell` reusing this container can vouch for them.
+	if op, ok := recordCopiesOp(copyRecords(copyKindCredential, copied)); ok {
+		_ = runGuestOps(mgr, []guestOp{op}, container.ExecCommandOptions{})
+	}
 	return err
 }
 

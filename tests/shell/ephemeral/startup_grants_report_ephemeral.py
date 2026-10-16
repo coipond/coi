@@ -28,11 +28,13 @@ Verifies that the report:
 12. when the tool is already running in tmux, a background launch says the
     tool starts in the existing pane (which keeps its env) and lists the names
     as reaching new panes only;
-13. on reuse, lists a [[credentials]] file coi copied earlier as already there,
-    one changed in the container since as such, but not a file the image
-    ships at another entry's destination;
+13. on reuse, lists a [[credentials]] file coi copied earlier as already there
+    (even once config no longer names it), one changed in the container since
+    as such, but not a file the image ships at another entry's destination;
 14. on reuse, shows the limits the container runs with (CPU count and
-    allowance), not changed config.
+    allowance), not changed config;
+15. on resume into a new container, lists the login file restored from the
+    saved session.
 """
 
 import json
@@ -607,9 +609,18 @@ def test_report_reused_container_leftover_credentials(
     assert edit.returncode == 0, edit.stderr
     _stop(coi_binary, container_name, env)
 
+    # Config no longer names the first file; the copy is still in the container.
+    reuse_env = write_trusted_coi_config(
+        "[[credentials]]\n"
+        f'host = "{edited}"\n'
+        'container = "/home/code/.edited-cred"\n'
+        "[[credentials]]\n"
+        f'host = "{missing}"\n'
+        'container = "/home/code/.bashrc"\n'
+    )
     reused = _report(
         _run_shell(
-            coi_binary, workspace_dir, dict(env), args=("--container", container_name)
+            coi_binary, workspace_dir, dict(reuse_env), args=("--container", container_name)
         ).stderr
     )
     assert reused["Credentials"] == [
@@ -637,3 +648,42 @@ def test_report_reused_container_applied_limits(coi_binary, cleanup_containers, 
         ).stderr
     )
     assert reused["Limits"] == ["cpu 1, cpu allowance 50%"], reused
+
+
+def test_report_resume_lists_restored_login(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
+    """Resuming an ephemeral session recreates the container and restores the
+    saved config dir, login file included. With no login on the host to copy
+    over it, the restored one is what the agent holds, so it is listed."""
+    fake_home = tmp_path / "fake_home"
+    (fake_home / ".claude").mkdir(parents=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+    env = dict(os.environ)
+    env["HOME"] = str(fake_home)
+
+    # A saved session for this workspace, as session cleanup would write it.
+    session_id = "grants-restore-test"
+    saved = fake_home / ".coi" / "sessions-claude" / session_id
+    (saved / ".claude").mkdir(parents=True)
+    (saved / ".claude" / ".credentials.json").write_text('{"token": "saved"}')
+    (saved / "metadata.json").write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "container_name": container_name,
+                "persistent": False,
+                "workspace": str(workspace_dir),
+                "saved_at": "2026-01-01T00:00:00Z",
+            }
+        )
+    )
+
+    rows = _report(
+        _run_shell(coi_binary, workspace_dir, dict(env), args=(f"--resume={session_id}",)).stderr
+    )
+    restored = (
+        f"{saved}/.claude/.credentials.json -> /home/code/.claude/.credentials.json"
+        " (restored from the saved session)"
+    )
+    assert restored in rows.get("Tool config", []), rows

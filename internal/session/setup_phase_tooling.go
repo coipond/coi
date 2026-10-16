@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/coipond/coi/internal/config"
-	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -21,6 +19,8 @@ func (st *setupState) phaseResumeRestore(_ context.Context) (Teardown, error) {
 		if !st.skipLaunch && st.opts.SessionsDir != "" {
 			if err := restoreSessionData(st.result.Manager, st.opts.ResumeFromID, st.result.HomeDir, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger); err != nil {
 				st.opts.Logger(fmt.Sprintf("Warning: Could not restore session data: %v", err))
+			} else {
+				st.restoredFiles = restoredToolFiles(st.opts.SessionsDir, st.opts.ResumeFromID, st.result.HomeDir, st.opts.Tool)
 			}
 		}
 
@@ -157,24 +157,19 @@ func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	// Runs for both new and resumed sessions so dynamic info stays current.
 	// The context files state whether Docker works, from the applied config.
 	st.awaitApplied()
-	// The leftover-file check, the copy record and the tmux probe ride along
-	// first, so a later failing op can't cut them short. The check looks only
-	// at files not copied this launch, so it doesn't see this launch's record.
+	// The leftover-file check and the copy record ride along first, so a
+	// later failing op can't cut them short. The check skips this launch's
+	// copies, and runs before they are recorded.
 	var ops []guestOp
 	if op, ok := st.planLeftoverCheck(); ok {
 		ops = append(ops, op)
 	}
-	if op, ok := recordCopiesOp(append(append([]CredentialEntry{}, st.copiedCredentials...), st.toolFiles...)); ok {
+	if op, ok := recordCopiesOp(st.copiesThisLaunch()); ok {
 		ops = append(ops, op)
-	}
-	// Only a container that was already there can have the tool running.
-	if st.skipLaunch {
-		ops = append(ops, tmuxRunningOp(st.result))
 	}
 	ops = append(ops, st.pendingGuestOps...)
 	out, ctxInfo := injectSandboxContextFiles(st.result, st.opts, ops...)
 	st.leftovers.parse(out)
-	st.result.ToolRunning = strings.Contains(out, tmuxRunningMarker)
 	st.contextInfo = ctxInfo
 	st.pendingGuestOps = nil
 	reportTimezone(out, st.opts.Timezone, st.opts.Logger)
@@ -182,18 +177,21 @@ func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	return nil, nil
 }
 
-// tmuxRunningMarker is printed by tmuxRunningOp when the session exists.
-const tmuxRunningMarker = "coi:tmux-running"
-
-// tmuxRunningOp checks, as root, whether the tool's tmux session exists, via
-// the socket of the user the tool runs as (tmux's default /tmp/tmux-<uid>), so
-// the shell knows before it reports the grants whether the launch attaches to
-// a running tool. Always succeeds, so it can't fail the batch.
-func tmuxRunningOp(result *SetupResult) guestOp {
-	uid := container.CodeUID
-	if result.RunAsRoot {
-		uid = 0
+// restoredToolFiles lists the tool's essential config files (its login file
+// among them) that restoreSessionData put back from the saved session, which
+// the report lists so a restored login isn't left out.
+func restoredToolFiles(sessionsDir, resumeID, homeDir string, t tool.Tool) []CredentialEntry {
+	tcf, ok := t.(tool.ToolWithConfigDirFiles)
+	if !ok {
+		return nil
 	}
-	return guestCmd(fmt.Sprintf("if tmux -S /tmp/tmux-%d/default has-session -t %s 2>/dev/null; then echo %s; fi",
-		uid, shellEscape(TmuxSessionName(result.ContainerName)), tmuxRunningMarker))
+	saved := filepath.Join(sessionsDir, resumeID, tcf.ConfigDirName())
+	essential, _ := toolHostFiles(saved, homeDir, tcf)
+	var out []CredentialEntry
+	for _, f := range essential {
+		if _, err := os.Stat(f.HostPath); err == nil {
+			out = append(out, f)
+		}
+	}
+	return out
 }

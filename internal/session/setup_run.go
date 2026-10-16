@@ -41,14 +41,18 @@ func SeedToolConfigForRun(ctx context.Context, result *SetupResult, opts SetupOp
 		}
 	}
 
-	// 11. Tool CLI config + credentials + sandbox settings.
+	// 11. Tool CLI config + credentials + sandbox settings. The copies are
+	// recorded in the copy manifest, so a later `coi shell` reusing this
+	// container can vouch for them.
+	var copied []CredentialEntry
 	if tcf, ok := opts.Tool.(tool.ToolWithConfigDirFiles); ok {
 		if opts.CLIConfigPath != "" {
 			_, statErr := os.Stat(opts.CLIConfigPath)
 			hostDirExists := statErr == nil
 			if hostDirExists || tcf.AlwaysSetupConfig() {
 				opts.Logger(fmt.Sprintf("Setting up %s config...", opts.Tool.Name()))
-				if _, err := setupCLIConfig(result.Manager, opts.CLIConfigPath, result.HomeDir, tcf, opts.Logger); err != nil {
+				var err error
+				if copied, err = setupCLIConfig(result.Manager, opts.CLIConfigPath, result.HomeDir, tcf, opts.Logger); err != nil {
 					opts.Logger(fmt.Sprintf("Warning: Failed to setup %s config: %v", opts.Tool.Name(), err))
 				}
 			} else if statErr != nil && !os.IsNotExist(statErr) {
@@ -69,7 +73,11 @@ func SeedToolConfigForRun(ctx context.Context, result *SetupResult, opts SetupOp
 
 	// 12-13. Sandbox context (~/SANDBOX_CONTEXT.md + optional .json) and the
 	// tool's native auto-load file (e.g. ~/.claude/CLAUDE.md), in one exec.
-	injectSandboxContextFiles(result, opts)
+	var ops []guestOp
+	if op, ok := recordCopiesOp(copyRecords(copyKindTool, copied)); ok {
+		ops = append(ops, op)
+	}
+	injectSandboxContextFiles(result, opts, ops...)
 
 	return nil
 }

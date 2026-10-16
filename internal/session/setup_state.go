@@ -33,6 +33,9 @@ type setupState struct {
 	// leftovers are the files a reused or resumed container may still hold
 	// from an earlier session, checked inside phaseInjectContext's exec.
 	leftovers leftoverCheck
+	// restoredFiles are the tool's login/config files put back from a saved
+	// session on resume (host path: the file in the sessions dir).
+	restoredFiles []CredentialEntry
 	// appliedCh delivers the background read of the container's applied
 	// config (startAppliedRead); appliedDone is set once it was collected.
 	appliedCh   chan *container.AppliedState

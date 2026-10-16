@@ -2,7 +2,6 @@ package session
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,7 +116,8 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 		},
 		result:           &SetupResult{Manager: mgr},
 		forwardedSockets: []SocketEntry{{HostPath: "/run/a.sock", ContainerPath: "/run/a.sock"}},
-		contextInfo:      tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "restricted", DockerUnavailable: false},
+		// What contextInfoFor reports once it read the container's nesting.
+		contextInfo: tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "restricted", DockerUnavailable: true},
 	}
 	g := buildGrants(st)
 
@@ -214,82 +214,66 @@ func TestBuildGrants_FallbackListsPlaceholders(t *testing.T) {
 	}
 }
 
-// Copied files list what this launch pushed. A reused or resumed container is
-// also checked, once, for configured credentials and tool files this launch
-// did not copy (a skipped or failed copy, or no copy at all on reuse); those
-// the copy manifest says coi copied earlier are listed as already in the
-// container, or as changed since. A fresh container is not checked.
+// Copied files list what this launch pushed. A reused container is also
+// checked, once, for host files an earlier session copied that this launch
+// didn't; the check reports them by kind, still as copied or changed since.
+// A new container is not checked.
 func TestBuildGrants_CopiedFiles(t *testing.T) {
 	claude, err := tool.Get("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries := []CredentialEntry{
-		{HostPath: "/h/a", ContainerPath: ".a"},
-		{HostPath: "/h/b", ContainerPath: "/etc/b"},
-	}
-	// Host claude dir with .credentials.json only; whether a container file
-	// is a host copy is the manifest's call, not the host's.
-	hostClaude := filepath.Join(t.TempDir(), ".claude")
-	if err := os.MkdirAll(hostClaude, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(hostClaude, ".credentials.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	base := func(mgr *fakeGrantsManager) *setupState {
+	base := func() *setupState {
 		return &setupState{
-			opts: SetupOptions{
-				CredentialConfig: &CredentialConfig{Entries: entries},
-				Tool:             claude,
-				CLIConfigPath:    hostClaude,
-			},
-			result:            &SetupResult{Manager: mgr, HomeDir: "/home/code"},
+			opts:              SetupOptions{Tool: claude},
+			result:            &SetupResult{Manager: &fakeGrantsManager{disks: map[string]container.DiskDevice{}}, HomeDir: "/home/code"},
 			copiedCredentials: []CredentialEntry{{HostPath: "/h/a", ContainerPath: "/home/code/.a"}},
 			toolFiles:         []CredentialEntry{{HostPath: "/home/u/.claude.json", ContainerPath: "/home/code/.claude.json"}},
 		}
 	}
 
-	t.Run("fresh container", func(t *testing.T) {
-		st := base(&fakeGrantsManager{disks: map[string]container.DiskDevice{}})
+	t.Run("new container", func(t *testing.T) {
+		st := base()
+		st.opts.ResumeFromID = "abc" // resumed into a new container: still nothing to find
 		if op, ok := st.planLeftoverCheck(); ok {
-			t.Errorf("a fresh container should not be checked, got %q", op.cmd)
+			t.Errorf("a new container should not be checked, got %q", op.cmd)
 		}
 		g := buildGrants(st)
 		if len(g.Credentials) != 1 || g.Credentials[0] != (CredentialGrant{HostPath: "/h/a", ContainerPath: "/home/code/.a"}) {
 			t.Errorf("credentials = %+v", g.Credentials)
 		}
-		if len(g.ToolFiles) != 1 || g.ToolFiles[0].ContainerPath != "/home/code/.claude.json" {
-			t.Errorf("tool files = %+v", g.ToolFiles)
-		}
-		if g.LeftoversUnchecked {
-			t.Error("a fresh container has nothing to check")
+		if len(g.ToolFiles) != 1 || g.ToolFiles[0].ContainerPath != "/home/code/.claude.json" || g.LeftoversUnchecked {
+			t.Errorf("tool files = %+v, unchecked %v", g.ToolFiles, g.LeftoversUnchecked)
 		}
 	})
 
 	t.Run("reused container", func(t *testing.T) {
-		st := base(&fakeGrantsManager{disks: map[string]container.DiskDevice{}})
+		st := base()
 		st.skipLaunch = true
 		op, ok := st.planLeftoverCheck()
 		if !ok {
 			t.Fatal("a reused container should be checked")
 		}
-		if strings.Contains(op.cmd, "'/home/code/.a'") || strings.Contains(op.cmd, "/home/code/.claude.json") {
-			t.Errorf("files copied this launch should not be checked: %s", op.cmd)
+		if !strings.Contains(op.cmd, "'/home/code/.a'") || !strings.Contains(op.cmd, "'/home/code/.claude.json'") {
+			t.Errorf("this launch's copies should be excluded by path: %s", op.cmd)
 		}
-		st.leftovers.parse("tz set\n" + leftoverPresentMarker + "/etc/b\n" +
-			leftoverChangedMarker + "/home/code/.claude/.credentials.json\n" + leftoverCheckedMarker + "\n")
+		st.leftovers.parse("tz set\n" +
+			leftoverSameMarker + "c\t/etc/b\t/h/b\n" +
+			leftoverChangedMarker + "t\t/home/code/.claude/.credentials.json\t/home/u/.claude/.credentials.json\n" +
+			leftoverUnknownMarker + "c\t/home/code/.npmrc\t/home/u/.npmrc\n" +
+			"garbage\n" + leftoverCheckedMarker + "\n")
 		g := buildGrants(st)
 
 		want := []CredentialGrant{
 			{HostPath: "/h/a", ContainerPath: "/home/code/.a"},
 			{HostPath: "/h/b", ContainerPath: "/etc/b", Earlier: true},
+			{HostPath: "/home/u/.npmrc", ContainerPath: "/home/code/.npmrc", Earlier: true, Unverified: true},
 		}
-		if len(g.Credentials) != 2 || g.Credentials[0] != want[0] || g.Credentials[1] != want[1] {
+		if len(g.Credentials) != 3 || g.Credentials[0] != want[0] || g.Credentials[1] != want[1] || g.Credentials[2] != want[2] {
 			t.Errorf("credentials = %+v, want %+v", g.Credentials, want)
 		}
 		earlierTool := CredentialGrant{
-			HostPath: filepath.Join(hostClaude, ".credentials.json"), ContainerPath: "/home/code/.claude/.credentials.json",
+			HostPath: "/home/u/.claude/.credentials.json", ContainerPath: "/home/code/.claude/.credentials.json",
 			Earlier: true, Changed: true,
 		}
 		if len(g.ToolFiles) != 2 || g.ToolFiles[1] != earlierTool {
@@ -303,6 +287,7 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 			"/h/b -> /etc/b (already in the container, not copied this launch)",
 			"Tool config  /home/u/.claude.json -> /home/code/.claude.json\n",
 			"/home/code/.claude/.credentials.json (copied by an earlier session, since changed in the container)\n",
+			"/home/code/.npmrc (in the container; it predates coi recording copies, so it may not be from the host)\n",
 		} {
 			if !strings.Contains(out, w) {
 				t.Errorf("missing %q in:\n%s", w, out)
@@ -313,30 +298,71 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 	// A check that never finished (the exec failed) must not read as
 	// "nothing left over".
 	t.Run("check did not run", func(t *testing.T) {
-		st := base(&fakeGrantsManager{disks: map[string]container.DiskDevice{}})
-		st.opts.ResumeFromID = "abc"
+		st := base()
+		st.skipLaunch = true
 		if _, ok := st.planLeftoverCheck(); !ok {
-			t.Fatal("a resumed container should be checked")
+			t.Fatal("a reused container should be checked")
 		}
 		st.leftovers.parse("")
 		g := buildGrants(st)
-		if !g.LeftoversUnchecked {
-			t.Error("LeftoversUnchecked not set after a check that didn't run")
-		}
-		if len(g.Credentials) != 1 || g.Credentials[0].Earlier {
-			t.Errorf("credentials = %+v, want only this launch's copy", g.Credentials)
+		if !g.LeftoversUnchecked || len(g.Credentials) != 1 {
+			t.Errorf("unchecked %v, credentials %+v", g.LeftoversUnchecked, g.Credentials)
 		}
 		if out := g.Render(); !strings.Contains(out, "(could not check the container for files copied by earlier sessions)") {
 			t.Errorf("missing unchecked note in:\n%s", out)
 		}
 	})
+
+	// Resume into a new container restores the saved config dir: its login
+	// file is listed as restored, unless a fresh copy replaced it, and both
+	// are recorded in the manifest.
+	t.Run("restored on resume", func(t *testing.T) {
+		st := base()
+		st.restoredFiles = []CredentialEntry{
+			{HostPath: "/s/abc/.claude/.credentials.json", ContainerPath: "/home/code/.claude/.credentials.json"},
+			{HostPath: "/s/abc/.claude/x.json", ContainerPath: "/home/code/.claude.json"}, // replaced by the copy
+		}
+		g := buildGrants(st)
+		want := CredentialGrant{HostPath: "/s/abc/.claude/.credentials.json", ContainerPath: "/home/code/.claude/.credentials.json", Restored: true}
+		if len(g.ToolFiles) != 2 || g.ToolFiles[1] != want {
+			t.Errorf("tool files = %+v, want the copy then %+v", g.ToolFiles, want)
+		}
+		if out := g.Render(); !strings.Contains(out, "/home/code/.claude/.credentials.json (restored from the saved session)\n") {
+			t.Errorf("restored label missing:\n%s", out)
+		}
+		if n := len(st.copiesThisLaunch()); n != 3 {
+			t.Errorf("copies to record = %d, want the credential, the copy and the live restore", n)
+		}
+	})
+}
+
+// restoredToolFiles lists only the essential files the saved session has.
+func TestRestoredToolFiles(t *testing.T) {
+	claude, err := tool.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := t.TempDir()
+	saved := filepath.Join(sessions, "abc", ".claude")
+	if err := os.MkdirAll(saved, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saved, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := restoredToolFiles(sessions, "abc", "/home/code", claude)
+	want := []CredentialEntry{{HostPath: filepath.Join(saved, ".credentials.json"), ContainerPath: "/home/code/.claude/.credentials.json"}}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Errorf("restored = %+v, want %+v", got, want)
+	}
 }
 
 // The record and check ops are real shell: run them (as the batch would)
-// against temp files, including a path that needs quoting, and feed the output
-// to parse. A file counts only once recorded (an image's own file at the same
-// path does not), and a recorded file whose content changed since is told
-// apart from one still as copied.
+// against temp files, with paths that need quoting, and feed the output to
+// parse. The check finds recorded files from the manifest alone (config need
+// not name them), skips this launch's copies, tells unchanged from changed,
+// ignores files coi never copied, and without a manifest lists existing
+// candidates as origin unknown.
 func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 	dir := t.TempDir()
 	old := copyManifestPath
@@ -351,8 +377,9 @@ func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 	}
 	copied := file(`it's \copied`, "token")
 	refreshed := file(".credentials.json", "old token")
+	thisLaunch := file("fresh", "new")
 	fromImage := file("gitconfig", "[user]")
-	absent := filepath.Join(dir, "gone")
+	gone := filepath.Join(dir, "gone")
 
 	run := func(ops ...guestOp) string {
 		t.Helper()
@@ -362,31 +389,45 @@ func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 		}
 		return string(out)
 	}
-	record, ok := recordCopiesOp([]CredentialEntry{{ContainerPath: copied}, {ContainerPath: refreshed}})
+	rec := func(kind, p, host string) copyRecord {
+		return copyRecord{kind, CredentialEntry{HostPath: host, ContainerPath: p}}
+	}
+	record, ok := recordCopiesOp([]copyRecord{
+		rec(copyKindCredential, copied, "/host/it's copied"),
+		rec(copyKindTool, refreshed, "/host/.credentials.json"),
+		rec(copyKindTool, thisLaunch, "/host/fresh"),
+		rec(copyKindCredential, gone, "/host/gone"), // missing: not recorded
+	})
 	if !ok {
 		t.Fatal("no record op for copied files")
 	}
 	run(record, record) // a second launch must not duplicate the entries
-	if b, _ := os.ReadFile(copyManifestPath); strings.Count(string(b), "\n") != 2 || !strings.HasSuffix(strings.SplitN(string(b), "\n", 2)[0], " "+copied) {
+	if b, _ := os.ReadFile(copyManifestPath); strings.Count(string(b), "\n") != 3 || strings.Contains(string(b), gone) {
 		t.Errorf("manifest = %q", b)
 	}
 	file(".credentials.json", "new token") // the tool refreshed it
 
 	lc := leftoverCheck{planned: true}
-	out := run(leftoverCheckOp([]string{copied, refreshed, fromImage, absent}))
+	out := run(leftoverCheckOp([]string{thisLaunch}, []copyRecord{rec(copyKindCredential, fromImage, "/host/gitconfig")}))
 	lc.parse(out)
-	if !lc.checked || !lc.present[copied] || !lc.changed[refreshed] || len(lc.present)+len(lc.changed) != 2 {
+	wantCreds := []CredentialGrant{{HostPath: "/host/it's copied", ContainerPath: copied, Earlier: true}}
+	wantTools := []CredentialGrant{{HostPath: "/host/.credentials.json", ContainerPath: refreshed, Earlier: true, Changed: true}}
+	if !lc.checked || len(lc.creds) != 1 || lc.creds[0] != wantCreds[0] || len(lc.tools) != 1 || lc.tools[0] != wantTools[0] {
 		t.Errorf("parsed %+v from %q", lc, out)
 	}
 
-	// No manifest (nothing ever recorded): nothing counts, and the check
-	// still completes.
+	// No manifest (a container from before coi recorded copies): existing
+	// candidates are listed as origin unknown; this launch's copies aren't.
 	if err := os.Remove(copyManifestPath); err != nil {
 		t.Fatal(err)
 	}
 	lc = leftoverCheck{planned: true}
-	lc.parse(run(leftoverCheckOp([]string{copied})))
-	if !lc.checked || len(lc.present)+len(lc.changed) != 0 {
+	lc.parse(run(leftoverCheckOp([]string{thisLaunch}, []copyRecord{
+		rec(copyKindCredential, fromImage, "/host/gitconfig"),
+		rec(copyKindTool, thisLaunch, "/host/fresh"),
+		rec(copyKindTool, gone, "/host/gone"),
+	})))
+	if !lc.checked || len(lc.tools) != 0 || len(lc.creds) != 1 || !lc.creds[0].Unverified || lc.creds[0].ContainerPath != fromImage {
 		t.Errorf("without a manifest parsed %+v", lc)
 	}
 }
@@ -397,28 +438,12 @@ func TestRecordCopiesOp_NeverFails(t *testing.T) {
 	old := copyManifestPath
 	copyManifestPath = "/proc/coi-no-such-dir/copied-host-files"
 	t.Cleanup(func() { copyManifestPath = old })
-	op, _ := recordCopiesOp([]CredentialEntry{{ContainerPath: "/etc/hostname"}})
+	op, _ := recordCopiesOp([]copyRecord{{copyKindTool, CredentialEntry{ContainerPath: "/etc/hostname"}}})
 	if out, err := exec.Command("bash", "-c", renderGuestScript([]guestOp{op, guestCmd("echo after")})).Output(); err != nil || !strings.Contains(string(out), "after") {
 		t.Errorf("record op failed the batch: %v (%s)", err, out)
 	}
 	if _, ok := recordCopiesOp(nil); ok {
 		t.Error("nothing copied should need no op")
-	}
-}
-
-// The tmux probe reports a running session through the batch output, and an
-// absent one (or no tmux at all) without failing the batch.
-func TestTmuxRunningOp(t *testing.T) {
-	op := tmuxRunningOp(&SetupResult{ContainerName: "coi-x-1"})
-	if !strings.Contains(op.cmd, "has-session -t 'coi-coi-x-1'") || !strings.Contains(op.cmd, fmt.Sprintf("/tmp/tmux-%d/default", container.CodeUID)) {
-		t.Errorf("probe = %q", op.cmd)
-	}
-	if op := tmuxRunningOp(&SetupResult{ContainerName: "c", RunAsRoot: true}); !strings.Contains(op.cmd, "/tmp/tmux-0/default") {
-		t.Errorf("root probe = %q", op.cmd)
-	}
-	out, err := exec.Command("bash", "-c", renderGuestScript([]guestOp{op, guestCmd("echo after")})).Output()
-	if err != nil || strings.Contains(string(out), tmuxRunningMarker) || !strings.Contains(string(out), "after") {
-		t.Errorf("absent session: %v (%s)", err, out)
 	}
 }
 
@@ -715,8 +740,12 @@ func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
 		}
 	}
 
+	// contextInfo's DockerUnavailable is what contextInfoFor derives from the
+	// container's nesting; the report keeps it and compares it with config.
 	fresh := func(m *fakeGrantsManager, o SetupOptions) string {
-		return buildGrants(&setupState{opts: o, result: &SetupResult{Manager: m}, contextInfo: st.contextInfo}).Render()
+		info := st.contextInfo
+		info.DockerUnavailable = !m.nesting
+		return buildGrants(&setupState{opts: o, result: &SetupResult{Manager: m}, contextInfo: info}).Render()
 	}
 	mgr.fromProfile = true
 	if out := fresh(mgr, SetupOptions{}); !strings.Contains(out, "Docker available (an Incus profile enables nesting; config disables Docker)\n") {

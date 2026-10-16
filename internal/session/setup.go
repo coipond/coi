@@ -127,14 +127,6 @@ type SetupResult struct {
 	Timezone               string            // Resolved timezone applied to the container (empty = UTC)
 	HasImmutableProtection bool              // True if host-side immutable attribute was applied to protected paths
 	Grants                 *Grants           // Effective reach of the session, for the startup report
-	// Launched is set when this setup launched the container, rather than
-	// reusing an existing (running, or stopped and restarted) one.
-	Launched bool
-	// ToolRunning is set when the tool's tmux session (TmuxSessionName)
-	// already existed at the end of setup, so a tmux launch will attach to (or
-	// type into) it rather than start the tool with this launch's env.
-	ToolRunning bool
-
 	// applied is the container's applied config, read at the end of setup
 	// (nil if unreadable); the context files and the grants report use it.
 	applied *container.AppliedState
@@ -201,7 +193,6 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		return nil, err
 	}
 
-	st.result.Launched = !st.skipLaunch
 	st.result.Grants = buildGrants(st)
 	st.opts.Logger("Container setup complete!")
 	return st.result, nil

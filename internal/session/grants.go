@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -76,12 +77,16 @@ func (m MountGrant) source() string {
 
 // CredentialGrant is a host file copied into the container. Earlier marks one
 // this launch didn't copy that an earlier session did and that is still in the
-// (reused or resumed) container; Changed marks such a copy whose content has
-// changed in the container since (a refreshed token, or something else now at
-// that path).
+// reused container; Changed marks such a copy whose content has changed in the
+// container since (a refreshed token, or something else now at that path).
 type CredentialGrant struct {
 	HostPath, ContainerPath string
 	Earlier, Changed        bool
+	// Unverified marks an Earlier file in a container with no copy manifest
+	// (created before coi recorded copies): it may or may not be a copy.
+	Unverified bool
+	// Restored marks a tool file put back from a saved session on resume.
+	Restored bool
 }
 
 // NetworkGrants is the egress the firewall was set up with. Network setup is
@@ -210,11 +215,12 @@ func buildGrants(st *setupState) *Grants {
 	// config, is what the agent has.
 	containerWorkspace := info.WorkspacePath
 	if containerWorkspace == "" {
-		containerWorkspace = "/workspace"
+		containerWorkspace = ContainerWorkspace(st.result)
 	}
 	if applied := st.awaitApplied(); applied != nil {
 		g.Workspace, g.Mounts, g.Protected, g.Masked = classifyDisks(applied.Disks, containerWorkspace)
-		g.DockerUnavailable = !applied.Nesting
+		// DockerUnavailable stays info's, which already follows the applied
+		// nesting (dockerUnavailable), so the context file can't disagree.
 		g.DockerConfigDiffers = g.DockerUnavailable != !hardeningPolicyFrom(&opts).DockerEnabled()
 		g.DockerFromProfile = applied.NestingFromProfile
 		g.Env.Container = applied.EnvNames
@@ -232,14 +238,17 @@ func buildGrants(st *setupState) *Grants {
 			g.Limits = append(g.Limits, "memory "+info.MemoryLimit)
 		}
 	}
-	g.Env.Tool = toolEnvNames(opts.Tool, st.result.ContainerWorkspacePath)
+	g.Env.Tool = toolEnvNames(opts.Tool, ContainerWorkspace(st.result))
 
 	g.Credentials = grantsOf(st.copiedCredentials)
 	g.ToolFiles = grantsOf(st.toolFiles)
+	for _, r := range st.liveRestored() {
+		g.ToolFiles = append(g.ToolFiles, CredentialGrant{HostPath: r.HostPath, ContainerPath: r.ContainerPath, Restored: true})
+	}
 	if lc := st.leftovers; lc.planned {
 		g.LeftoversUnchecked = !lc.checked
-		g.Credentials = append(g.Credentials, lc.found(lc.creds)...)
-		g.ToolFiles = append(g.ToolFiles, lc.found(lc.tools)...)
+		g.Credentials = append(g.Credentials, lc.creds...)
+		g.ToolFiles = append(g.ToolFiles, lc.tools...)
 	}
 	return g
 }
@@ -272,19 +281,31 @@ func limitLines(limits map[string]string) []string {
 // toolEnvNames lists the env the tool sets for itself from its config (e.g. a
 // profile's [tool] model or API settings); the shell passes it on every exec.
 func toolEnvNames(t tool.Tool, workspacePath string) []string {
-	twce, ok := t.(tool.ToolWithContainerEnv)
-	if !ok {
-		return nil
-	}
-	if workspacePath == "" {
-		workspacePath = "/workspace"
-	}
 	var names []string
-	for k := range twce.GetContainerEnv(workspacePath) {
+	for k := range ToolContainerEnv(t, workspacePath) {
 		names = append(names, k)
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ToolContainerEnv is the env the tool sets for itself (nil for a tool with
+// none). The shell merges it into every exec and the grants report names it,
+// so both get it from here.
+func ToolContainerEnv(t tool.Tool, workspacePath string) map[string]string {
+	if twce, ok := t.(tool.ToolWithContainerEnv); ok {
+		return twce.GetContainerEnv(workspacePath)
+	}
+	return nil
+}
+
+// ContainerWorkspace is the workspace path in the container, /workspace for a
+// result that doesn't record one (older containers).
+func ContainerWorkspace(result *SetupResult) string {
+	if result != nil && result.ContainerWorkspacePath != "" {
+		return result.ContainerWorkspacePath
+	}
+	return "/workspace"
 }
 
 // configuredDisks fills the disk categories from config when the container's
@@ -362,27 +383,111 @@ func grantsOf(entries []CredentialEntry) []CredentialGrant {
 	return out
 }
 
-// uncopiedCandidates lists the files a reused or resumed container may still
-// hold from an earlier session: the configured [[credentials]] destinations and
-// the tool's host config files that this launch did not copy. Whether one is a
-// copy at all is for the copy manifest to say (see leftoverCheckOp), so a
-// candidate's host file needn't still exist: a stale copy of a since-deleted
-// host file is still in the container.
-func uncopiedCandidates(st *setupState) (creds, tools []CredentialGrant) {
-	copied := map[string]bool{}
-	for _, e := range append(append([]CredentialEntry{}, st.copiedCredentials...), st.toolFiles...) {
-		copied[e.ContainerPath] = true
+// Copy manifest kinds: which report row a recorded copy belongs to.
+const (
+	copyKindCredential = "c" // a [[credentials]] entry
+	copyKindTool       = "t" // the tool's own config or login file
+)
+
+// copyRecord is a host file copied into the container this launch.
+type copyRecord struct {
+	kind string
+	CredentialEntry
+}
+
+func copyRecords(kind string, entries []CredentialEntry) []copyRecord {
+	var out []copyRecord
+	for _, e := range entries {
+		out = append(out, copyRecord{kind, e})
 	}
-	add := func(list *[]CredentialGrant, host, dest string) {
-		if !copied[dest] {
-			copied[dest] = true
-			*list = append(*list, CredentialGrant{HostPath: host, ContainerPath: dest, Earlier: true})
+	return out
+}
+
+// copyManifestPath is the file recording each host file coi copied into the
+// container, one line per container path:
+//
+//	<sha256> <kind> <container path>\t<host path>
+//
+// the hash taken once setup's writes to the file were done. Root-owned,
+// outside the home dir. The leftover check reads it, so files an earlier
+// session copied are found even after config stopped naming them, a file the
+// image, the tool or the agent put at the same path isn't mistaken for a copy,
+// and a copy since changed is told apart from one still as copied. A var only
+// so tests can point it at a temp file.
+var copyManifestPath = "/var/lib/coi/copied-host-files"
+
+// recordCopiesOp records this launch's copies in copyManifestPath, replacing
+// any earlier line for the same container path. Best-effort: a failure only
+// means a later reuse can't vouch for those files, so it never fails the
+// batch it rides in.
+func recordCopiesOp(copies []copyRecord) (guestOp, bool) {
+	if len(copies) == 0 {
+		return guestOp{}, false
+	}
+	m := shellEscape(copyManifestPath)
+	var b strings.Builder
+	// The destination must be readable, and the hash non-empty: the
+	// pipeline's status is cut's, so a failed sha256sum alone wouldn't stop
+	// an empty hash from replacing the good line.
+	fmt.Fprintf(&b, `{ mkdir -p %s && touch %s && rec() { [ -r "$2" ] || return 0; h=$(sha256sum < "$2" | cut -c1-64); [ -n "$h" ] || return 0; `+
+		`P="$2" awk -F '\t' 'substr($1, 68) != ENVIRON["P"]' %s > %s.new && printf '%%s %%s %%s\t%%s\n' "$h" "$1" "$2" "$3" >> %s.new && mv -f %s.new %s; }`,
+		shellEscape(filepath.Dir(copyManifestPath)), m, m, m, m, m, m)
+	for _, c := range copies {
+		fmt.Fprintf(&b, "; rec %s %s %s", c.kind, shellEscape(c.ContainerPath), shellEscape(c.HostPath))
+	}
+	b.WriteString("; } 2>/dev/null || true")
+	return guestCmd(b.String()), true
+}
+
+// Markers leftoverCheckOp prints: "<marker><kind>\t<container path>\t<host path>".
+const (
+	leftoverSameMarker    = "coi:leftover-same:"    // recorded, content unchanged
+	leftoverChangedMarker = "coi:leftover-changed:" // recorded, content changed since
+	leftoverUnknownMarker = "coi:leftover-unknown:" // no manifest; present, origin unknown
+	leftoverCheckedMarker = "coi:leftovers-checked"
+)
+
+// leftoverCheck is the check, on a reused container, for host files an
+// earlier session copied in that this launch didn't.
+type leftoverCheck struct {
+	planned bool
+	creds   []CredentialGrant
+	tools   []CredentialGrant
+	checked bool // the check ran to the end
+}
+
+// planLeftoverCheck returns the guest op that checks for leftovers. Only a
+// reused container can hold files an earlier session copied (a resumed
+// session in a new container gets its saved files back by restore, which
+// the report lists itself), so a new container gets no op.
+func (st *setupState) planLeftoverCheck() (guestOp, bool) {
+	if !st.skipLaunch {
+		return guestOp{}, false
+	}
+	st.leftovers = leftoverCheck{planned: true}
+	var exclude []string
+	for _, c := range st.copiesThisLaunch() {
+		exclude = append(exclude, c.ContainerPath)
+	}
+	return leftoverCheckOp(exclude, st.unrecordedCandidates()), true
+}
+
+// unrecordedCandidates are the host files config would copy, for a container
+// without a manifest (created before coi recorded copies): there, a file at
+// one of these paths may or may not be a copy, so it is listed as such. Only
+// files the host has: with no manifest to go by, that keeps an image's own
+// files at a configured path out unless the host has one too.
+func (st *setupState) unrecordedCandidates() []copyRecord {
+	var out []copyRecord
+	add := func(kind, host, dest string) {
+		if _, err := os.Stat(host); err == nil {
+			out = append(out, copyRecord{kind, CredentialEntry{HostPath: host, ContainerPath: dest}})
 		}
 	}
 	home := st.result.HomeDir
 	if cc := st.opts.CredentialConfig; cc != nil {
 		for _, e := range cc.Entries {
-			add(&creds, e.HostPath, credentialDestPath(e, home))
+			add(copyKindCredential, e.HostPath, credentialDestPath(e, home))
 		}
 	}
 	tcf, ok := st.opts.Tool.(tool.ToolWithConfigDirFiles)
@@ -390,105 +495,39 @@ func uncopiedCandidates(st *setupState) (creds, tools []CredentialGrant) {
 		essential, state := toolHostFiles(st.opts.CLIConfigPath, home, tcf)
 		for _, f := range append(essential, state) {
 			if f.HostPath != "" {
-				add(&tools, f.HostPath, f.ContainerPath)
+				add(copyKindTool, f.HostPath, f.ContainerPath)
 			}
 		}
 	}
-	return creds, tools
+	return out
 }
 
-// leftoverCheck is the check, on a reused or resumed container, for files an
-// earlier session copied in that this launch didn't.
-type leftoverCheck struct {
-	planned bool
-	creds   []CredentialGrant
-	tools   []CredentialGrant
-	present map[string]bool // still holds what coi copied
-	changed map[string]bool // coi copied there, but the content has changed since
-	checked bool            // the check ran to the end
-}
-
-// Markers leftoverCheckOp prints.
-const (
-	leftoverPresentMarker = "coi:leftover-present:"
-	leftoverChangedMarker = "coi:leftover-changed:"
-	leftoverCheckedMarker = "coi:leftovers-checked"
-)
-
-// copyManifestPath is the file recording each host file coi copied into the
-// container, one "<sha256> <container path>" line per path, the hash taken
-// once setup's writes to it were done. Root-owned, outside the home dir. It
-// lets the leftover check tell a file coi copied apart from one the image, the
-// tool or the agent put at the same path (an image's ~/.gitconfig, a
-// ~/.claude.json the tool wrote itself), and a copy since changed from one
-// still as copied. A var only so tests can point it at a temp file.
-var copyManifestPath = "/var/lib/coi/copied-host-files"
-
-// planLeftoverCheck works out the candidates and returns the guest op that
-// checks for them. Only a reused or resumed container can hold files copied by
-// an earlier session, so a fresh one gets no op.
-func (st *setupState) planLeftoverCheck() (guestOp, bool) {
-	if !st.skipLaunch && st.opts.ResumeFromID == "" {
-		return guestOp{}, false
-	}
-	creds, tools := uncopiedCandidates(st)
-	if len(creds)+len(tools) == 0 {
-		return guestOp{}, false
-	}
-	st.leftovers = leftoverCheck{planned: true, creds: creds, tools: tools}
-	return leftoverCheckOp(append(containerPaths(creds), containerPaths(tools)...)), true
-}
-
-func containerPaths(gs []CredentialGrant) []string {
-	var paths []string
-	for _, g := range gs {
-		paths = append(paths, g.ContainerPath)
-	}
-	return paths
-}
-
-// manifestHashCmd prints the hash the manifest last recorded for "$p" (empty
-// if none). The path goes through the environment, not awk -v, so backslashes
-// in it aren't interpreted.
-func manifestHashCmd() string {
-	return `P="$p" awk 'substr($0, 66) == ENVIRON["P"] { h = substr($0, 1, 64) } END { print h }' ` +
-		shellEscape(copyManifestPath) + ` 2>/dev/null`
-}
-
-// leftoverCheckOp prints a marker line for each path coi recorded copying to
-// that is still there (one marker if unchanged since, another if changed),
-// then a final marker, so the output tells "absent" apart from "never
-// checked". The op always succeeds, so it can't fail the batch it rides in.
-func leftoverCheckOp(paths []string) guestOp {
-	var b strings.Builder
-	b.WriteString("for p in")
-	for _, p := range paths {
-		b.WriteString(" " + shellEscape(p))
-	}
-	fmt.Fprintf(&b, `; do [ -e "$p" ] || continue; h=$(%s); [ -n "$h" ] || continue; `+
-		`if [ "$(sha256sum < "$p" | cut -c1-64)" = "$h" ]; then printf '%s%%s\n' "$p"; else printf '%s%%s\n' "$p"; fi; done; echo %s`,
-		manifestHashCmd(), leftoverPresentMarker, leftoverChangedMarker, leftoverCheckedMarker)
-	return guestCmd(b.String())
-}
-
-// recordCopiesOp records this launch's copies (destination and current hash)
-// in copyManifestPath, replacing any earlier line for the same path.
-// Best-effort: a failure only means a later reuse won't list those files as
-// left over, so it never fails the batch.
-func recordCopiesOp(copied []CredentialEntry) (guestOp, bool) {
-	if len(copied) == 0 {
-		return guestOp{}, false
-	}
+// leftoverCheckOp scans the copy manifest for files copied by an earlier
+// session (skipping those in exclude, copied this launch) that are still in
+// the container, and prints a marker for each, telling unchanged from
+// changed-since. Without a manifest it prints, for each candidate that exists
+// and isn't excluded, an origin-unknown marker instead. It ends with a final
+// marker, so the output tells "nothing found" apart from "never checked", and
+// always succeeds, so it can't fail the batch it rides in.
+func leftoverCheckOp(exclude []string, candidates []copyRecord) guestOp {
 	m := shellEscape(copyManifestPath)
 	var b strings.Builder
-	fmt.Fprintf(&b, "{ mkdir -p %s && touch %s && for p in", shellEscape(filepath.Dir(copyManifestPath)), m)
-	for _, e := range copied {
-		b.WriteString(" " + shellEscape(e.ContainerPath))
+	b.WriteString("X=$(printf '%s\\n'")
+	for _, p := range exclude {
+		b.WriteString(" " + shellEscape(p))
 	}
-	fmt.Fprintf(&b, `; do h=$(sha256sum < "$p" | cut -c1-64) || continue; `+
-		`P="$p" awk 'substr($0, 66) != ENVIRON["P"]' %s > %s.new && printf '%%s %%s\n' "$h" "$p" >> %s.new && mv -f %s.new %s; done; } 2>/dev/null || true`,
-		m, m, m, m, m)
-	return guestCmd(b.String()), true
+	b.WriteString("); skip() { printf '%s\\n' \"$X\" | grep -qxF -- \"$1\"; }; ")
+	fmt.Fprintf(&b, `if [ -f %s ]; then while IFS='	' read -r a hp; do h=${a%%%% *}; r=${a#* }; k=${r%%%% *}; c=${r#* }; `+
+		`skip "$c" && continue; [ -e "$c" ] || continue; `+
+		`if [ "$(sha256sum < "$c" 2>/dev/null | cut -c1-64)" = "$h" ]; then mk=%s; else mk=%s; fi; `+
+		`printf '%%s%%s\t%%s\t%%s\n' "$mk" "$k" "$c" "$hp"; done < %s; else :`,
+		m, leftoverSameMarker, leftoverChangedMarker, m)
+	for _, c := range candidates {
+		fmt.Fprintf(&b, `; c=%s; skip "$c" || { [ -e "$c" ] && printf '%s%s\t%%s\t%%s\n' "$c" %s; }`,
+			shellEscape(c.ContainerPath), leftoverUnknownMarker, c.kind, shellEscape(c.HostPath))
+	}
+	b.WriteString("; fi; echo " + leftoverCheckedMarker)
+	return guestCmd(b.String())
 }
 
 // parse reads leftoverCheckOp's output from the batch's combined output.
@@ -496,29 +535,59 @@ func (lc *leftoverCheck) parse(out string) {
 	if !lc.planned {
 		return
 	}
-	lc.present, lc.changed = map[string]bool{}, map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
-		if p, ok := strings.CutPrefix(line, leftoverPresentMarker); ok {
-			lc.present[p] = true
-		} else if p, ok := strings.CutPrefix(line, leftoverChangedMarker); ok {
-			lc.changed[p] = true
-		} else if line == leftoverCheckedMarker {
+		if line == leftoverCheckedMarker {
 			lc.checked = true
+			continue
+		}
+		var g CredentialGrant
+		var rest string
+		var ok bool
+		switch {
+		case strings.HasPrefix(line, leftoverSameMarker):
+			rest, ok = strings.CutPrefix(line, leftoverSameMarker)
+		case strings.HasPrefix(line, leftoverChangedMarker):
+			rest, ok = strings.CutPrefix(line, leftoverChangedMarker)
+			g.Changed = true
+		case strings.HasPrefix(line, leftoverUnknownMarker):
+			rest, ok = strings.CutPrefix(line, leftoverUnknownMarker)
+			g.Unverified = true
+		}
+		f := strings.SplitN(rest, "\t", 3)
+		if !ok || len(f) != 3 {
+			continue
+		}
+		g.HostPath, g.ContainerPath, g.Earlier = f[2], f[1], true
+		if f[0] == copyKindCredential {
+			lc.creds = append(lc.creds, g)
+		} else {
+			lc.tools = append(lc.tools, g)
 		}
 	}
 }
 
-// found returns the candidates the check found in the container.
-func (lc *leftoverCheck) found(candidates []CredentialGrant) []CredentialGrant {
-	var out []CredentialGrant
-	for _, c := range candidates {
-		switch {
-		case lc.present[c.ContainerPath]:
-			out = append(out, c)
-		case lc.changed[c.ContainerPath]:
-			c.Changed = true
-			out = append(out, c)
+// copiesThisLaunch is every host file this launch put in the container, for
+// the manifest: [[credentials]] and tool files copied, and tool files
+// restored from a saved session (unless a fresh copy replaced them).
+func (st *setupState) copiesThisLaunch() []copyRecord {
+	out := append(copyRecords(copyKindCredential, st.copiedCredentials), copyRecords(copyKindTool, st.toolFiles)...)
+	for _, r := range st.liveRestored() {
+		out = append(out, copyRecord{copyKindTool, r})
+	}
+	return out
+}
+
+// liveRestored is the restored tool files no fresh copy replaced.
+func (st *setupState) liveRestored() []CredentialEntry {
+	copied := map[string]bool{}
+	for _, e := range st.toolFiles {
+		copied[e.ContainerPath] = true
+	}
+	var out []CredentialEntry
+	for _, r := range st.restoredFiles {
+		if !copied[r.ContainerPath] {
+			out = append(out, r)
 		}
 	}
 	return out
@@ -687,6 +756,10 @@ func copiedLines(files []CredentialGrant) []string {
 	for _, c := range files {
 		l := fmt.Sprintf("%s -> %s", c.HostPath, c.ContainerPath)
 		switch {
+		case c.Restored:
+			l += " (restored from the saved session)"
+		case c.Earlier && c.Unverified:
+			l += " (in the container; it predates coi recording copies, so it may not be from the host)"
 		case c.Earlier && c.Changed:
 			l += " (copied by an earlier session, since changed in the container)"
 		case c.Earlier:

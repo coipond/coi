@@ -588,15 +588,24 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			useResumeFlag := (s.resumeID != "") && a.persistent
 			restoreOnly := (s.resumeID != "") && !a.persistent
 
-			// Setup found out whether the tool is already running in tmux, so
-			// the report can say whether this launch's env reaches it before
-			// anything starts. The report goes before the "Starting session..."
-			// block so that block stays right above the tool's output.
+			// In tmux mode the session is prepared first: an existing one is
+			// found (the tool in it keeps its env), a new one is created with
+			// the tool held back until enterTmux releases it. So the report
+			// says exactly what happens, and still prints before the tool (or
+			// any pre-launch step) runs. The report goes before the "Starting
+			// session..." block so that block stays right above the tool's
+			// output.
 			launch := session.ToolStarted
-			if s.useTmux && s.result.ToolRunning {
-				launch = session.ToolAttached
-				if background {
-					launch = session.ToolSentToPane
+			var tl *tmuxLaunch
+			if s.useTmux {
+				if tl, err = a.prepareTmux(s.result, containerEnv, userPtr, s.sessionID, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance); err != nil {
+					return nil, err
+				}
+				if tl.existing {
+					launch = session.ToolAttached
+					if background {
+						launch = session.ToolSentToPane
+					}
 				}
 			}
 			if g := s.result.Grants; g != nil {
@@ -620,19 +629,7 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 					fmt.Fprintf(os.Stderr, "Resume mode: Persistent session\n")
 				}
 				fmt.Fprintf(os.Stderr, "\n")
-				var tl *tmuxLaunch
-				if tl, runErr = a.prepareTmux(s.result, containerEnv, userPtr, s.sessionID, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance); runErr == nil {
-					if tl.existing != (launch != session.ToolStarted) {
-						// The session ended (or appeared) since setup checked,
-						// so the env line in the report is off for this launch.
-						if tl.existing {
-							fmt.Fprintf(os.Stderr, "Note: the tool is already running in tmux, so it keeps the env it started with\n")
-						} else {
-							fmt.Fprintf(os.Stderr, "Note: the tmux session had ended, so the tool starts with this launch's env\n")
-						}
-					}
-					runErr = a.enterTmux(s.result, tl, background)
-				}
+				runErr = a.enterTmux(s.result, tl, background)
 			} else {
 				fmt.Fprintf(os.Stderr, "Mode: Direct (no tmux)\n")
 				if restoreOnly {
