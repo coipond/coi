@@ -155,8 +155,10 @@ apt_get() {
 install_base_dependencies() {
     log "Installing base dependencies..."
 
+    log "Updating package lists..."
     apt_get update -qq
 
+    log "Downloading and installing base packages..."
     apt_get install -y -qq \
         curl wget git ca-certificates gnupg jq unzip sudo \
         tmux \

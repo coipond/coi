@@ -9,7 +9,6 @@ import (
 
 	"github.com/coipond/coi/internal/cleanup"
 	"github.com/coipond/coi/internal/container"
-	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/session"
 	"github.com/spf13/cobra"
 )
@@ -483,18 +482,17 @@ func (a *App) cleanUnreferencedPools() (int, bool, error) {
 	for _, plan := range plans {
 		for _, name := range plan.containers {
 			fmt.Printf("Deleting container %s (pool %s)...\n", name, plan.pool)
-			// Resolve the IP BEFORE stopping — a stopped container may not report
-			// one via GetContainerIPFast — then reclaim its firewall artefacts
-			// before delete (#696 item 4). If the IP is unresolvable the
-			// name-keyed coi6-<name> block is still removed and the orphan sweep
-			// remains the backstop for the IP-keyed rules.
-			var ip string
-			if network.NftAvailable() {
-				ip, _ = network.GetContainerIPFast(name)
-			}
+			// Resolve the IP BEFORE stopping — a stopped container reports none —
+			// then reclaim its firewall artefacts before delete (#696 item 4). If
+			// the IP is unresolvable the name-keyed coi6-<name> block is still
+			// removed and the orphan sweep remains the backstop for the IP-keyed
+			// rules.
 			mgr := container.NewManager(name)
-			// Best-effort stop; ignore errors (container may already be stopped).
-			_ = mgr.Stop(true)
+			state, ip, err := stateAndFirewallIP(mgr)
+			if err != nil || state.Running {
+				// Best-effort stop; ignore errors.
+				_ = mgr.Stop(true)
+			}
 			cleanupContainerFirewall(name, ip)
 			if err := mgr.Delete(true); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to delete %s: %v\n", name, err)

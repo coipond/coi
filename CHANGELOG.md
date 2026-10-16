@@ -13,7 +13,7 @@
 
 ### Enhancements
 
-- [Enhancement] **Faster container removal, and `coi build` shows it is still publishing** — `coi kill`, `coi shutdown` and `coi container delete` polled a stopped container for an IP for up to 3 seconds before removing it; a stopped container never reports one. They now read the container's existence, state and IP with one `incus list`, and look up the IP only for a running container that does not report one yet. `coi build` printed nothing while `incus publish` packed and compressed the image, often for minutes; it now prints `Still creating image... (<elapsed>)` every 15 seconds.
+- [Enhancement] **Faster container removal, and `coi build` shows it is still publishing** — `coi kill`, `coi shutdown`, `coi container delete` and `coi clean` polled a stopped container for an IP for up to 3 seconds before removing it; a stopped container never reports one. They now read the container's existence, state and IP with one `incus list`, and look up the IP only for a running container that does not report one yet. `coi clean` pool cleanup did the same. `coi build` printed nothing while `incus publish` packed and compressed the image (10.6s for `coi-default` on CI); it now prints `Still creating image... (<elapsed>)` every 5 seconds. The base image step also logs `Updating package lists...` and `Downloading and installing base packages...`, which split a silent ~26s stretch on CI.
 
 ### Bug Fixes
 

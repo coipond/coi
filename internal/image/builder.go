@@ -592,8 +592,8 @@ func (b *Builder) createImage(versionAlias string) (string, error) {
 
 	args = append(args, fmt.Sprintf("description=%s", b.opts.Description))
 
-	// Publish container as image. Packing and compressing the rootfs takes
-	// minutes with no output of its own, so report that it is still running.
+	// Publish container as image. incus publish prints nothing while it packs
+	// and compresses the rootfs, so report that it is still running.
 	var output string
 	err := withProgress(b.opts.Logger, publishProgressInterval, "Still creating image", func() error {
 		var err error
@@ -617,7 +617,7 @@ func (b *Builder) createImage(versionAlias string) (string, error) {
 }
 
 // publishProgressInterval is how often createImage reports a running publish.
-const publishProgressInterval = 15 * time.Second
+const publishProgressInterval = 5 * time.Second
 
 // withProgress runs fn and logs "<what>... (<elapsed>)" every interval until it
 // returns.
