@@ -58,18 +58,14 @@ func seedHostFile(mgr container.ContainerManager, hostPath, destPath, homeDir, m
 // SetupCredentials applies a (possibly nil) CredentialConfig to a running
 // container, seeding each [[credentials]] entry from host to container. Exported
 // so the run pipeline can apply credentials the same way session.Setup does for
-// the shell path (#726 follow-up). A nil/empty config is a no-op.
-func SetupCredentials(mgr container.ContainerManager, homeDir string, cc *CredentialConfig, logger func(string)) error {
+// the shell path (#726 follow-up). A nil/empty config is a no-op. It returns
+// the entries copied, which the caller hands to ConfigureTimezoneAndMiseTrust
+// to record in the copy manifest without an exec of its own.
+func SetupCredentials(mgr container.ContainerManager, homeDir string, cc *CredentialConfig, logger func(string)) ([]CredentialEntry, error) {
 	if cc == nil || len(cc.Entries) == 0 {
-		return nil
+		return nil, nil
 	}
-	copied, err := setupCredentials(mgr, homeDir, cc.Entries, logger)
-	// Record the copies (best-effort, like the shell path), so a later
-	// `coi shell` reusing this container can vouch for them.
-	if op, ok := recordCopiesOp(copyRecords(copyKindCredential, copied)); ok {
-		_ = runGuestOps(mgr, []guestOp{op}, container.ExecCommandOptions{})
-	}
-	return err
+	return setupCredentials(mgr, homeDir, cc.Entries, logger)
 }
 
 // setupCredentials seeds each entry and returns the ones actually copied in

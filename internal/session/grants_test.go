@@ -411,6 +411,23 @@ func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 	if b, _ := os.ReadFile(copyManifestPath); strings.Count(string(b), "\n") != 4 || !strings.HasPrefix(string(b), copyManifestComplete+"\n") || strings.Contains(string(b), gone) {
 		t.Errorf("manifest = %q", b)
 	}
+	// A path this launch copied over but can't hash (gone again) loses its
+	// earlier line rather than keeping a stale hash and host path.
+	staleGone := file("stale", "v1")
+	run(func() guestOp {
+		op, _ := recordCopiesOp([]copyRecord{rec(copyKindCredential, staleGone, "/host/old")})
+		return op
+	}())
+	if err := os.Remove(staleGone); err != nil {
+		t.Fatal(err)
+	}
+	run(func() guestOp {
+		op, _ := recordCopiesOp([]copyRecord{rec(copyKindCredential, staleGone, "/host/new")})
+		return op
+	}())
+	if b := mustRead(t, copyManifestPath); strings.Contains(b, staleGone) || !strings.HasPrefix(b, copyManifestComplete+"\n") {
+		t.Errorf("stale line kept or mark lost: %q", b)
+	}
 	file(".credentials.json", "new token") // the tool refreshed it
 
 	lc := leftoverCheck{planned: true}
@@ -786,6 +803,17 @@ func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
 	if out := fresh(mgr, SetupOptions{}); !strings.Contains(out, "Docker available (an Incus profile enables nesting; config disables Docker)\n") {
 		t.Errorf("profile nesting not attributed:\n%s", out)
 	}
+	// A profile disabling nesting is overridden by the restart reconcile,
+	// which sets the container's own nesting when config enables Docker.
+	mgr.nesting = false
+	if out := fresh(mgr, SetupOptions{Security: SecurityOptions{Docker: true}}); !strings.Contains(out, "Docker unavailable (config enables it; restart the container to apply)\n") {
+		t.Errorf("profile-disabled nesting should be fixable by restart:\n%s", out)
+	}
+	// An explicit --container attach is never reconciled.
+	if out := fresh(mgr, SetupOptions{ContainerName: "mine", Security: SecurityOptions{Docker: true}}); !strings.Contains(out, "Docker unavailable (config enables it; not applied to a container named with --container)\n") {
+		t.Errorf("--container note missing:\n%s", out)
+	}
+	mgr.nesting = true
 	mgr.fromProfile, mgr.sourceUnknown = false, true
 	if out := fresh(mgr, SetupOptions{}); !strings.Contains(out, "Docker available (config disables it)\n") {
 		t.Errorf("unknown source should carry no restart advice:\n%s", out)

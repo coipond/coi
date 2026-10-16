@@ -59,7 +59,8 @@ func SeedToolConfigForRun(ctx context.Context, result *SetupResult, opts SetupOp
 				return fmt.Errorf("failed to check %s config directory: %w", opts.Tool.Name(), statErr)
 			}
 		} else if tcf.AlwaysSetupConfig() {
-			if _, err := setupCLIConfig(result.Manager, opts.CLIConfigPath, result.HomeDir, tcf, opts.Logger); err != nil {
+			var err error
+			if copied, err = setupCLIConfig(result.Manager, opts.CLIConfigPath, result.HomeDir, tcf, opts.Logger); err != nil {
 				opts.Logger(fmt.Sprintf("Warning: Failed to setup %s config: %v", opts.Tool.Name(), err))
 			}
 		}

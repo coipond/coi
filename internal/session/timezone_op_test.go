@@ -92,16 +92,17 @@ func TestPhaseConfigureTimezone_Deferred(t *testing.T) {
 	}
 }
 
-// The run path sets timezone and mise trust in ONE exec and logs only what
-// changed or failed.
+// The run path sets timezone and mise trust, and records the copied
+// [[credentials]], in ONE exec and logs only what changed or failed.
 func TestConfigureTimezoneAndMiseTrust_OneExec(t *testing.T) {
 	r := &guestOpsRecorder{}
 	var logs []string
-	ConfigureTimezoneAndMiseTrust(r, "Europe/Warsaw", "/workspace", func(m string) { logs = append(logs, m) })
+	copied := []CredentialEntry{{HostPath: "/h/aws", ContainerPath: "/home/code/.aws/credentials"}}
+	ConfigureTimezoneAndMiseTrust(r, "Europe/Warsaw", "/workspace", copied, func(m string) { logs = append(logs, m) })
 	if len(r.execs) != 1 {
 		t.Fatalf("want one exec, got %d", len(r.execs))
 	}
-	for _, want := range []string{"zoneinfo/Europe/Warsaw", "MISE_TRUSTED_CONFIG_PATHS", timezoneFailedMarker, miseTrustFailedMarker} {
+	for _, want := range []string{"zoneinfo/Europe/Warsaw", "MISE_TRUSTED_CONFIG_PATHS", timezoneFailedMarker, miseTrustFailedMarker, "rec c '/home/code/.aws/credentials' '/h/aws'"} {
 		if !strings.Contains(r.execs[0], want) {
 			t.Errorf("batched exec missing %q", want)
 		}

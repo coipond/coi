@@ -53,6 +53,9 @@ type Grants struct {
 	// dockerSourceInstance and co.).
 	DockerConfigDiffers bool
 	DockerSource        string
+	// DockerNotReconciled is set for an explicit --container attach, whose
+	// restart deliberately leaves the container's config as it is.
+	DockerNotReconciled bool
 	// Limits are the resource limits the container runs with ("cpu 2",
 	// "memory 4GiB", "disk read 10MB", ...); MaxDuration is per session.
 	Limits      []string
@@ -194,7 +197,7 @@ type nestingSourceReader interface {
 // decides what to tell the user.
 const (
 	dockerSourceInstance = "instance" // the container's own (or default) setting: a restart applies config
-	dockerSourceProfile  = "profile"  // an Incus profile pins it: a restart won't change it
+	dockerSourceProfile  = "profile"  // an Incus profile sets it (a restart overrides it only to enable Docker)
 	dockerSourceUnknown  = ""         // couldn't tell
 )
 
@@ -243,10 +246,7 @@ func buildGrants(st *setupState) *Grants {
 	// environment.*, nesting (which Docker needs) and limits. A reused
 	// container keeps what it was created with, so this, not the current
 	// config, is what the agent has.
-	containerWorkspace := info.WorkspacePath
-	if containerWorkspace == "" {
-		containerWorkspace = ContainerWorkspace(st.result)
-	}
+	containerWorkspace := ContainerWorkspace(st.result)
 	if applied := st.awaitApplied(); applied != nil {
 		g.Workspace, g.Mounts, g.Protected, g.Masked = classifyDisks(applied.Disks, containerWorkspace)
 		// DockerUnavailable stays info's, which already follows the applied
@@ -254,6 +254,7 @@ func buildGrants(st *setupState) *Grants {
 		g.DockerConfigDiffers = g.DockerUnavailable != !hardeningPolicyFrom(&opts).DockerEnabled()
 		if g.DockerConfigDiffers {
 			g.DockerSource = dockerSource(st.result.Manager, applied)
+			g.DockerNotReconciled = opts.ContainerName != ""
 		}
 		g.Env.Container = applied.EnvNames
 		// Limits are applied only when a container is created, so a reused
@@ -270,7 +271,7 @@ func buildGrants(st *setupState) *Grants {
 			g.Limits = append(g.Limits, "memory "+info.MemoryLimit)
 		}
 	}
-	g.Env.Tool = toolEnvNames(opts.Tool, ContainerWorkspace(st.result))
+	g.Env.Tool = toolEnvNames(opts.Tool, containerWorkspace)
 
 	g.Credentials = grantsOf(st.copiedCredentials)
 	g.ToolFiles = grantsOf(st.toolFiles)
@@ -468,11 +469,14 @@ func recordCopiesOp(copies []copyRecord) (guestOp, bool) {
 	}
 	m := shellEscape(copyManifestPath)
 	var b strings.Builder
-	// The destination must be readable, and the hash non-empty: the
-	// pipeline's status is cut's, so a failed sha256sum alone wouldn't stop
-	// an empty hash from replacing the good line.
-	fmt.Fprintf(&b, `{ mkdir -p %s && touch %s && rec() { [ -r "$2" ] || return 0; h=$(sha256sum < "$2" | cut -c1-64); [ -n "$h" ] || return 0; `+
-		`P="$2" awk -F '\t' 'substr($1, 68) != ENVIRON["P"]' %s > %s.new && printf '%%s %%s %%s\t%%s\n' "$h" "$1" "$2" "$3" >> %s.new && mv -f %s.new %s; }`,
+	// Any earlier line for the path goes either way: this launch replaced
+	// that file, so the old hash and host path no longer describe it. A new
+	// line is written only with a real hash (the destination readable, and
+	// the hash non-empty: the pipeline's status is cut's, so a failed
+	// sha256sum alone wouldn't stop an empty one).
+	fmt.Fprintf(&b, `{ mkdir -p %s && touch %s && rec() { h=; [ -r "$2" ] && h=$(sha256sum < "$2" | cut -c1-64); `+
+		`P="$2" awk -F '\t' 'substr($1, 68) != ENVIRON["P"]' %s > %s.new || return 0; `+
+		`[ -z "$h" ] || printf '%%s %%s %%s\t%%s\n' "$h" "$1" "$2" "$3" >> %s.new; mv -f %s.new %s; }`,
 		shellEscape(filepath.Dir(copyManifestPath)), m, m, m, m, m, m)
 	for _, c := range copies {
 		fmt.Fprintf(&b, "; rec %s %s %s", c.kind, shellEscape(c.ContainerPath), shellEscape(c.HostPath))
@@ -740,17 +744,19 @@ func (g *Grants) Render() string {
 		if g.DockerUnavailable {
 			verb = "enables"
 		}
-		switch g.DockerSource {
-		case dockerSourceProfile:
-			if g.DockerUnavailable {
-				docker += " (an Incus profile disables nesting; config enables Docker)"
-			} else {
-				docker += " (an Incus profile enables nesting; config disables Docker)"
-			}
-		case dockerSourceInstance:
-			docker += " (config " + verb + " it; restart the container to apply)"
-		default:
+		// A restart reconciles the container's own nesting to config: with
+		// Docker on it sets it, which overrides a profile; with Docker off it
+		// only removes the container's own setting, so a profile's stays.
+		// An explicit --container attach skips the reconcile altogether.
+		switch {
+		case g.DockerNotReconciled:
+			docker += " (config " + verb + " it; not applied to a container named with --container)"
+		case g.DockerSource == dockerSourceProfile && !g.DockerUnavailable:
+			docker += " (an Incus profile enables nesting; config disables Docker)"
+		case g.DockerSource == dockerSourceUnknown:
 			docker += " (config " + verb + " it)"
+		default:
+			docker += " (config " + verb + " it; restart the container to apply)"
 		}
 	}
 	add("Agent", fmt.Sprintf("runs as %s, Docker %s", user, docker))

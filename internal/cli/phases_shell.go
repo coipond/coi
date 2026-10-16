@@ -589,12 +589,12 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			restoreOnly := (s.resumeID != "") && !a.persistent
 
 			// In tmux mode the session is prepared first: an existing one is
-			// found (the tool in it keeps its env), a new one is created with
-			// the tool held back until enterTmux releases it. So the report
-			// says exactly what happens, and still prints before the tool (or
-			// any pre-launch step) runs. The report goes before the "Starting
-			// session..." block so that block stays right above the tool's
-			// output.
+			// found (the tool in it keeps its env), or a new one is created,
+			// starting the tool. So the report says exactly what this launch
+			// did, before anything is visible, and a failed pre-launch step
+			// fails the launch before a report claims a start. The report goes
+			// before the "Starting session..." block so that block stays right
+			// above the tool's output.
 			launch := session.ToolStarted
 			var tl *tmuxLaunch
 			if s.useTmux {

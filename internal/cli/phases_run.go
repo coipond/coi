@@ -62,6 +62,7 @@ type runState struct {
 	mountConfig        *session.MountConfig       // trust-gated
 	socketConfig       *session.SocketConfig      // trust-gated
 	credentialConfig   *session.CredentialConfig  // trust-gated [[credentials]] to seed (#726 follow-up)
+	copiedCredentials  []session.CredentialEntry  // [[credentials]] copied, recorded in the copy manifest by the timezone exec
 	portConfig         *session.PortConfig        // trust-gated [[ports]] to publish (#558)
 	slot               int                        // resolved slot number (for port allocation)
 	resolvedPorts      []session.PublishedPort    // preflighted port plan (see session.ResolvePorts)
@@ -551,9 +552,11 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 			if a.cfg.Tool.Name == "claude" {
 				session.SetupClaudeManagedSettings(s.mgr, false, stripAttribution, logFn)
 			}
-			if err := session.SetupCredentials(s.mgr, homeDir, s.credentialConfig, logFn); err != nil {
+			copied, err := session.SetupCredentials(s.mgr, homeDir, s.credentialConfig, logFn)
+			if err != nil {
 				return nil, fmt.Errorf("failed to set up credentials: %w", err)
 			}
+			s.copiedCredentials = copied
 
 			// Disk devices (workspace, additional mounts, security + secret masks)
 			// and the UID mapping were applied by the launch phase's pre-start
@@ -605,7 +608,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 			// Timezone ("" = UTC, resetting a reused container) and workspace
 			// mise trust in one exec.
 			s.tz = resolveTimezone(a.cfg)
-			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, logFn)
+			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, logFn)
 
 			if nm == nil {
 				return nil, nil
