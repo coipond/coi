@@ -18,8 +18,7 @@ type InstanceState struct {
 }
 
 // State answers Exists, Running and the eth0 IPv4 address with a single CSV
-// `incus list`. Removal paths used to make three or more calls for this, and
-// to poll a stopped container for an IP it can never report.
+// `incus list`.
 func (m *Manager) State() (InstanceState, error) {
 	output, err := IncusOutput("list", "^"+regexp.QuoteMeta(m.ContainerName)+"$", "--format=csv", "--columns=ns4")
 	if err != nil {

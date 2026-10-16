@@ -11,9 +11,9 @@
 
 - [Breaking] **`forward_env` and `[ssh] forward_agent = true` are ignored in project config** — both hand host secrets to the container (named host environment variables, the host SSH agent), so a cloned repo's `.coi/config.toml` or project profile can no longer turn them on; coi prints a warning and drops them. Set them in `~/.coi/config.toml`, a profile under `~/.coi/profiles/`, or the file named by `COI_CONFIG`. `forward_agent = false` in project config is still honored.
 
-### Enhancements
+### Changed
 
-- [Enhancement] **Faster container removal, and `coi build` shows it is still publishing** — `coi kill`, `coi shutdown`, `coi container delete` and `coi clean` polled a stopped container for an IP for up to 3 seconds before removing it; a stopped container never reports one. They now read the container's existence, state and IP with one `incus list`, and look up the IP only for a running container that does not report one yet. `coi clean` pool cleanup did the same. `coi build` printed nothing while `incus publish` packed and compressed the image (10.6s for `coi-default` on CI); it now prints `Still creating image... (<elapsed>)` every 5 seconds. The base image step also logs `Updating package lists...` and `Downloading and installing base packages...`, which split a silent ~26s stretch on CI.
+- [Change] **Faster container removal, and `coi build` shows progress** — `coi kill`, `coi shutdown`, `coi container delete` and `coi clean --pools` remove a stopped container up to 3 seconds sooner, and make fewer Incus calls for a running one. `coi build` now reports progress during base package install and while it publishes the image.
 
 ### Bug Fixes
 
