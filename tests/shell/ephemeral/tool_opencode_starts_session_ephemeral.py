@@ -61,7 +61,11 @@ def test_opencode_tool_starts_session(coi_binary, cleanup_containers, workspace_
     # Without API keys opencode shows a provider selection screen containing "opencode".
     opencode_started = False
     try:
-        wait_for_text_on_screen(child, "opencode", timeout=60)
+        # "OpenCode" (as capitalized) is drawn only by opencode's own UI and
+        # its pane title. The lowercase word also appears in coi's
+        # "Workspace: .../test_opencode_.../workspace" line, which would let
+        # this pass without opencode ever drawing anything.
+        wait_for_text_on_screen(child, "OpenCode", timeout=60)
         opencode_started = True
     except Exception:
         pass
