@@ -197,7 +197,10 @@ def test_report_sockets_ports_credentials_and_limits(
         )
         assert "COI_GRANTS_MINTED (env_commands)" in rows["Env"], rows
         assert rows["Credentials"] == [f"{present} -> /home/code/.present-cred"], rows
-        assert rows["Limits"] == ["memory 2GiB, max duration 2h"], rows
+        # Config's default memory enforcement is soft, which the report states.
+        assert rows["Limits"] == [
+            "memory 2GiB (soft: may be exceeded while the host has memory free), max duration 2h"
+        ], rows
         assert MINTED_VALUE not in result.stderr + result.stdout, (
             "the report must not print minted values"
         )
