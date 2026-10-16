@@ -25,9 +25,11 @@ func (st *setupState) phaseResumeRestore(_ context.Context) (Teardown, error) {
 		// Always inject fresh credentials/sandbox settings when resuming
 		if tcf, ok := st.opts.Tool.(tool.ToolWithConfigDirFiles); ok {
 			if st.opts.CLIConfigPath != "" || tcf.AlwaysSetupConfig() {
-				if err := injectCredentials(st.result.Manager, st.opts.CLIConfigPath, st.result.HomeDir, tcf, st.opts.Logger); err != nil {
+				copied, err := injectCredentials(st.result.Manager, st.opts.CLIConfigPath, st.result.HomeDir, tcf, st.opts.Logger)
+				if err != nil {
 					st.opts.Logger(fmt.Sprintf("Warning: Could not inject credentials: %v", err))
 				}
+				st.toolFiles = copied
 			}
 		}
 	}
@@ -148,7 +150,14 @@ func (st *setupState) phaseSetupCredentials(_ context.Context) (Teardown, error)
 // that support it, the native auto-context file (e.g. Claude's ~/.claude/CLAUDE.md).
 func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	// Runs for both new and resumed sessions so dynamic info stays current.
-	out, ctxInfo := injectSandboxContextFiles(st.result, st.opts, st.pendingGuestOps...)
+	// The leftover-file check rides along first, so a later failing op can't
+	// cut it short.
+	ops := st.pendingGuestOps
+	if op, ok := st.planLeftoverCheck(); ok {
+		ops = append([]guestOp{op}, ops...)
+	}
+	out, ctxInfo := injectSandboxContextFiles(st.result, st.opts, ops...)
+	st.leftovers.parse(out)
 	st.contextInfo = ctxInfo
 	st.pendingGuestOps = nil
 	reportTimezone(out, st.opts.Timezone, st.opts.Logger)

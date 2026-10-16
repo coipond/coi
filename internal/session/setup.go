@@ -127,6 +127,7 @@ type SetupResult struct {
 	Timezone               string            // Resolved timezone applied to the container (empty = UTC)
 	HasImmutableProtection bool              // True if host-side immutable attribute was applied to protected paths
 	Grants                 *Grants           // Effective reach of the session, for the startup report
+	Reused                 bool              // The container was already running and was reused, not launched
 }
 
 // Setup initializes a container for a Claude session.
@@ -187,6 +188,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		return nil, err
 	}
 
+	st.result.Reused = st.skipLaunch
 	st.result.Grants = buildGrants(st)
 	st.opts.Logger("Container setup complete!")
 	return st.result, nil

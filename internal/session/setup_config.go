@@ -52,26 +52,45 @@ func restoreSessionData(mgr container.ContainerManager, resumeID, homeDir, sessi
 	return nil
 }
 
+// toolHostFiles maps the tool's host config files to where setup copies them in
+// the container: each essential config file into the tool's config dir, and the
+// state file (if the tool has one) into the home dir beside it. setupCLIConfig,
+// injectCredentials and the grants report all derive the paths from here, so a
+// copied file and its report row cannot disagree. state is zero when the tool
+// has no state file.
+func toolHostFiles(hostCLIConfigPath, homeDir string, tcf tool.ToolWithConfigDirFiles) (essential []CredentialEntry, state CredentialEntry) {
+	stateDir := filepath.Join(homeDir, tcf.ConfigDirName())
+	for _, f := range tcf.EssentialConfigFiles() {
+		essential = append(essential, CredentialEntry{HostPath: filepath.Join(hostCLIConfigPath, f), ContainerPath: filepath.Join(stateDir, f)})
+	}
+	if name := tcf.StateConfigFileName(); name != "" {
+		state = CredentialEntry{HostPath: filepath.Join(filepath.Dir(hostCLIConfigPath), name), ContainerPath: filepath.Join(homeDir, name)}
+	}
+	return essential, state
+}
+
 // injectCredentials copies essential config files and sandbox settings from host to container when resuming.
 // This ensures fresh authentication while preserving the session conversation history.
 // Uses the ToolWithConfigDirFiles interface so each tool declares its own files and layout.
-func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDir string, tcf tool.ToolWithConfigDirFiles, logger func(string)) error {
+// It returns the host files it copied in, for the grants report.
+func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDir string, tcf tool.ToolWithConfigDirFiles, logger func(string)) (copied []CredentialEntry, err error) {
 	logger("Injecting fresh credentials and config for session resume...")
 
 	configDirName := tcf.ConfigDirName()
 	stateDir := filepath.Join(homeDir, configDirName)
+	essentialFiles, stateFile := toolHostFiles(hostCLIConfigPath, homeDir, tcf)
 
 	// Copy essential config files from host — only those that exist on host
-	for _, filename := range tcf.EssentialConfigFiles() {
+	for _, f := range essentialFiles {
 		if hostCLIConfigPath == "" {
 			break
 		}
-		srcPath := filepath.Join(hostCLIConfigPath, filename)
-		if _, err := os.Stat(srcPath); err == nil {
-			destPath := filepath.Join(stateDir, filename)
-			logger(fmt.Sprintf("  - Refreshing %s", filename))
-			if err := mgr.PushFile(srcPath, destPath); err != nil {
-				logger(fmt.Sprintf("  - Warning: Failed to copy %s: %v", filename, err))
+		if _, err := os.Stat(f.HostPath); err == nil {
+			logger(fmt.Sprintf("  - Refreshing %s", filepath.Base(f.ContainerPath)))
+			if err := mgr.PushFile(f.HostPath, f.ContainerPath); err != nil {
+				logger(fmt.Sprintf("  - Warning: Failed to copy %s: %v", filepath.Base(f.ContainerPath), err))
+			} else {
+				copied = append(copied, f)
 			}
 		}
 	}
@@ -103,14 +122,18 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 	// Copy and refresh tool state config file (e.g., .claude.json) — only if tool uses one
 	stateConfigFilename := tcf.StateConfigFileName()
 	if stateConfigFilename != "" && hostCLIConfigPath != "" {
-		stateConfigPath := filepath.Join(filepath.Dir(hostCLIConfigPath), stateConfigFilename)
+		stateConfigPath := stateFile.HostPath
 
 		if _, err := os.Stat(stateConfigPath); err == nil {
 			logger(fmt.Sprintf("Copying %s for session resume...", stateConfigFilename))
-			stateJsonDest := filepath.Join(homeDir, stateConfigFilename)
-			if err := mgr.PushFile(stateConfigPath, stateJsonDest); err != nil {
-				logger(fmt.Sprintf("Warning: Failed to copy %s: %v", stateConfigFilename, err))
-			} else if len(sandboxSettings) > 0 {
+			stateJsonDest := stateFile.ContainerPath
+			pushErr := mgr.PushFile(stateConfigPath, stateJsonDest)
+			if pushErr != nil {
+				logger(fmt.Sprintf("Warning: Failed to copy %s: %v", stateConfigFilename, pushErr))
+			} else {
+				copied = append(copied, stateFile)
+			}
+			if pushErr == nil && len(sandboxSettings) > 0 {
 				// Inject sandbox settings into state config too
 				logger(fmt.Sprintf("Injecting sandbox settings into %s...", stateConfigFilename))
 				// Read from host file (we just pushed it, so host is source of truth)
@@ -149,7 +172,7 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 	}
 
 	logger("Credentials and config injected successfully")
-	return nil
+	return copied, nil
 }
 
 // containerCommandRunner is the narrow slice of the container manager that
@@ -202,24 +225,22 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 		return copied, fmt.Errorf("failed to create %s directory: %w", configDirName, err)
 	}
 
-	essentialFiles := tcf.EssentialConfigFiles()
+	essentialFiles, stateFile := toolHostFiles(hostCLIConfigPath, homeDir, tcf)
 	sandboxTarget := tcf.SandboxSettingsFileName()
 
 	logger(fmt.Sprintf("Copying essential CLI config files from %s", hostCLIConfigPath))
-	for _, filename := range essentialFiles {
+	for _, f := range essentialFiles {
 		// Same seeding primitive as [[credentials]] entries (see
 		// setup_credentials.go), so the builtin-tool and generic copy paths
 		// cannot drift. The per-file chown is new here but strictly safer:
 		// files are correctly owned even if setup aborts before the
 		// recursive config-dir chown below.
-		srcPath := filepath.Join(hostCLIConfigPath, filename)
-		destPath := filepath.Join(stateDir, filename)
-		ok, err := seedHostFile(mgr, srcPath, destPath, homeDir, "", logger)
+		ok, err := seedHostFile(mgr, f.HostPath, f.ContainerPath, homeDir, "", logger)
 		if err != nil {
 			return copied, err
 		}
 		if ok {
-			copied = append(copied, CredentialEntry{HostPath: srcPath, ContainerPath: destPath})
+			copied = append(copied, f)
 		}
 	}
 
@@ -267,19 +288,19 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 		return copied, nil
 	}
 
-	stateConfigPath := filepath.Join(filepath.Dir(hostCLIConfigPath), stateConfigFilename)
+	stateConfigPath := stateFile.HostPath
 	logger(fmt.Sprintf("Checking for %s at: %s", stateConfigFilename, stateConfigPath))
 
 	if info, err := os.Stat(stateConfigPath); err == nil {
 		logger(fmt.Sprintf("Found %s (size: %d bytes), copying to container...", stateConfigFilename, info.Size()))
-		stateJsonDest := filepath.Join(homeDir, stateConfigFilename)
+		stateJsonDest := stateFile.ContainerPath
 
 		// Push the file to container
 		if err := mgr.PushFile(stateConfigPath, stateJsonDest); err != nil {
 			return copied, fmt.Errorf("failed to copy %s: %w", stateConfigFilename, err)
 		}
 		logger(fmt.Sprintf("%s copied to %s", stateConfigFilename, stateJsonDest))
-		copied = append(copied, CredentialEntry{HostPath: stateConfigPath, ContainerPath: stateJsonDest})
+		copied = append(copied, stateFile)
 
 		// Inject sandbox settings if tool provides them
 		if len(sandboxSettings) > 0 {

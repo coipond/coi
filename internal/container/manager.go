@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -211,6 +212,9 @@ func (m *Manager) DeviceConfig(name string) (map[string]string, bool) {
 type DiskDevice struct {
 	Source, Path    string
 	Shift, Readonly bool
+	// Pool is set for a storage-pool volume, whose Source names the volume
+	// rather than a host path. Empty for host-path disks, coi's own included.
+	Pool string
 }
 
 // DiskDevices returns the container's own (non-profile) disk devices by name,
@@ -223,14 +227,29 @@ func (m *Manager) DiskDevices() (map[string]DiskDevice, error) {
 	return diskDevicesFrom(devices), nil
 }
 
-// ExpandedDiskDevices is DiskDevices plus the disk devices the container
-// inherits from its Incus profiles, i.e. every disk it actually has.
-func (m *Manager) ExpandedDiskDevices() (map[string]DiskDevice, error) {
+// AppliedState is what an instance actually runs with, profile-inherited
+// settings included, for reporting what a session was granted.
+type AppliedState struct {
+	Disks    map[string]DiskDevice // every disk, the container's own and its profiles'
+	EnvNames []string              // environment.* keys, sorted; names only
+	Nesting  bool                  // security.nesting, which Docker needs
+}
+
+// AppliedState reads the instance's expanded config, from one
+// `incus config show --expanded` (shared with the other cached reads).
+func (m *Manager) AppliedState() (AppliedState, error) {
 	c, ok := loadInstanceConfig(context.Background(), m.ContainerName, true)
 	if !ok {
-		return nil, fmt.Errorf("could not read the expanded config of %s", m.ContainerName)
+		return AppliedState{}, fmt.Errorf("could not read the expanded config of %s", m.ContainerName)
 	}
-	return diskDevicesFrom(c.devices), nil
+	st := AppliedState{Disks: diskDevicesFrom(c.devices), Nesting: isTrue(c.config["security.nesting"])}
+	for k := range c.config {
+		if name, ok := strings.CutPrefix(k, "environment."); ok && name != "" {
+			st.EnvNames = append(st.EnvNames, name)
+		}
+	}
+	sort.Strings(st.EnvNames)
+	return st, nil
 }
 
 // ParseDiskDevices extracts the disk devices from `incus config show` YAML.
@@ -256,6 +275,7 @@ func diskDevicesFrom(devices map[string]map[string]string) map[string]DiskDevice
 			Path:     d["path"],
 			Shift:    isTrue(d["shift"]),
 			Readonly: isTrue(d["readonly"]),
+			Pool:     d["pool"],
 		}
 	}
 	return disks

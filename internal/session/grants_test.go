@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,25 +13,20 @@ import (
 	"github.com/coipond/coi/internal/tool"
 )
 
-// fakeGrantsManager is a container with disk devices in a map, an exec that
-// answers the credential probe, and a file push that can fail per path.
+// fakeGrantsManager is a container whose applied state (disks, environment.*
+// names, nesting) comes from fields, with a file push that can fail per path.
 type fakeGrantsManager struct {
 	container.ContainerManager
 	disks     map[string]container.DiskDevice
 	disksErr  error
-	probeOut  string
-	probeArgs []string
+	envNames  []string
+	nesting   bool
 	pushFail  map[string]bool // host paths whose push fails
 	mkdirFail bool
 }
 
-func (f *fakeGrantsManager) ExpandedDiskDevices() (map[string]container.DiskDevice, error) {
-	return f.disks, f.disksErr
-}
-
-func (f *fakeGrantsManager) ExecArgsCapture(args []string, _ container.ExecCommandOptions) (string, error) {
-	f.probeArgs = args
-	return f.probeOut, nil
+func (f *fakeGrantsManager) AppliedState() (container.AppliedState, error) {
+	return container.AppliedState{Disks: f.disks, EnvNames: f.envNames, Nesting: f.nesting}, f.disksErr
 }
 
 func (f *fakeGrantsManager) ExecArgs(args []string, _ container.ExecCommandOptions) error {
@@ -56,6 +52,7 @@ func TestClassifyDisks(t *testing.T) {
 		"mount-0":             {Source: "/data", Path: "/mnt/data", Readonly: true},
 		"git-worktree-common": {Source: "/home/u/repo/.git", Path: "/home/u/repo/.git"},
 		"user-added":          {Source: "/srv", Path: "/srv"},
+		"cache-volume":        {Source: "cache", Path: "/cache", Pool: "default"},
 		"protect-git-hooks":   {Source: "/home/u/proj/.git/hooks", Path: "/workspace/.git/hooks", Readonly: true},
 		"gitc-hooks":          {Source: "/home/u/repo/.git/hooks", Path: "/home/u/repo/.git/hooks", Readonly: true},
 		"mask-env":            {Source: "/tmp/empty", Path: "/workspace/.env", Readonly: true},
@@ -63,13 +60,14 @@ func TestClassifyDisks(t *testing.T) {
 	}
 	ws, mounts, protected, masked := classifyDisks(disks, "/workspace")
 
-	if ws != (MountGrant{"/home/u/proj", "/workspace", false}) {
+	if ws != (MountGrant{HostPath: "/home/u/proj", ContainerPath: "/workspace"}) {
 		t.Errorf("workspace = %+v", ws)
 	}
 	want := []MountGrant{
-		{"/home/u/repo/.git", "/home/u/repo/.git", false},
-		{"/data", "/mnt/data", true},
-		{"/srv", "/srv", false},
+		{HostPath: "cache", ContainerPath: "/cache", Pool: "default"},
+		{HostPath: "/home/u/repo/.git", ContainerPath: "/home/u/repo/.git"},
+		{HostPath: "/data", ContainerPath: "/mnt/data", Readonly: true},
+		{HostPath: "/srv", ContainerPath: "/srv"},
 	}
 	if len(mounts) != len(want) {
 		t.Fatalf("mounts = %+v, want %+v", mounts, want)
@@ -91,11 +89,15 @@ func TestClassifyDisks(t *testing.T) {
 // that was never attached is left out, an untrusted one still attached to a
 // reused container is listed, and a protection whose mount failed is absent.
 func TestBuildGrants_FromDevices(t *testing.T) {
-	mgr := &fakeGrantsManager{disks: map[string]container.DiskDevice{
-		"workspace":         {Source: "/home/u/proj", Path: "/workspace"},
-		"mount-0":           {Source: "/home/u/.aws", Path: "/home/code/.aws"}, // dropped by trust, still attached
-		"protect-git-hooks": {Source: "/home/u/proj/.git/hooks", Path: "/workspace/.git/hooks", Readonly: true},
-	}}
+	mgr := &fakeGrantsManager{
+		disks: map[string]container.DiskDevice{
+			"workspace":         {Source: "/home/u/proj", Path: "/workspace"},
+			"mount-0":           {Source: "/home/u/.aws", Path: "/home/code/.aws"}, // dropped by trust, still attached
+			"protect-git-hooks": {Source: "/home/u/proj/.git/hooks", Path: "/workspace/.git/hooks", Readonly: true},
+		},
+		envNames: []string{"GIT_AUTHOR_NAME"},
+		nesting:  false, // created without Docker, though config now enables it
+	}
 	st := &setupState{
 		opts: SetupOptions{
 			WorkspacePath: "/home/u/proj",
@@ -109,12 +111,18 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 		},
 		result:           &SetupResult{Manager: mgr},
 		forwardedSockets: []SocketEntry{{HostPath: "/run/a.sock", ContainerPath: "/run/a.sock"}},
-		contextInfo:      tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "restricted"},
+		contextInfo:      tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "restricted", DockerUnavailable: false},
 	}
 	g := buildGrants(st)
 
 	if g.DevicesUnread {
 		t.Fatal("devices were readable")
+	}
+	if !g.DockerUnavailable {
+		t.Error("Docker should follow the container's nesting, not the config")
+	}
+	if strings.Join(g.Env.Container, ",") != "GIT_AUTHOR_NAME" {
+		t.Errorf("container env = %v", g.Env.Container)
 	}
 	if len(g.Mounts) != 1 || g.Mounts[0].HostPath != "/home/u/.aws" {
 		t.Errorf("mounts = %+v, want only the attached ~/.aws", g.Mounts)
@@ -169,6 +177,37 @@ func TestBuildGrants_DevicesUnreadable(t *testing.T) {
 	}
 }
 
+// grantsMounter records the disks SetupSecurityMounts adds.
+type grantsMounter struct {
+	container.ContainerDevices
+	mounted []string
+}
+
+func (m *grantsMounter) MountDisk(name, _, _ string, _, _ bool) error {
+	m.mounted = append(m.mounted, name)
+	return nil
+}
+
+// The config fallback runs after setup, which materializes a read-only
+// placeholder for a missing default protected path (.vscode here) and mounts
+// it, so the fallback lists it like the device read would.
+func TestBuildGrants_FallbackListsPlaceholders(t *testing.T) {
+	ws := t.TempDir()
+	m := &grantsMounter{}
+	paths, err := SetupSecurityMounts(m, ws, "/workspace", []string{".vscode"}, false, nil)
+	if err != nil || len(m.mounted) != 1 {
+		t.Fatalf("setup mounted %v, err %v", m.mounted, err)
+	}
+	st := &setupState{
+		opts:        SetupOptions{WorkspacePath: ws, Security: SecurityOptions{ProtectedPaths: paths}},
+		result:      &SetupResult{Manager: &fakeGrantsManager{disksErr: errors.New("incus down")}},
+		contextInfo: tool.ContextInfo{WorkspacePath: "/workspace"},
+	}
+	if g := buildGrants(st); strings.Join(g.Protected, ",") != ".vscode" {
+		t.Errorf("fallback protected = %v, want the mounted .vscode placeholder", g.Protected)
+	}
+}
+
 // Copied files list what this launch pushed. A reused or resumed container is
 // also probed, once, for configured credentials and tool files this launch did
 // not copy (a skipped or failed copy, or no copy at all on reuse); those still
@@ -206,26 +245,37 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 	}
 
 	t.Run("fresh container", func(t *testing.T) {
-		mgr := &fakeGrantsManager{disks: map[string]container.DiskDevice{}, probeOut: "/etc/b\n"}
-		g := buildGrants(base(mgr))
-		if mgr.probeArgs != nil {
-			t.Errorf("a fresh container should not be probed, ran %v", mgr.probeArgs)
+		st := base(&fakeGrantsManager{disks: map[string]container.DiskDevice{}})
+		if op, ok := st.planLeftoverCheck(); ok {
+			t.Errorf("a fresh container should not be checked, got %q", op.cmd)
 		}
+		g := buildGrants(st)
 		if len(g.Credentials) != 1 || g.Credentials[0] != (CredentialGrant{"/h/a", "/home/code/.a", false}) {
 			t.Errorf("credentials = %+v", g.Credentials)
 		}
 		if len(g.ToolFiles) != 1 || g.ToolFiles[0].ContainerPath != "/home/code/.claude.json" {
 			t.Errorf("tool files = %+v", g.ToolFiles)
 		}
+		if g.LeftoversUnchecked {
+			t.Error("a fresh container has nothing to check")
+		}
 	})
 
 	t.Run("reused container", func(t *testing.T) {
-		mgr := &fakeGrantsManager{
-			disks:    map[string]container.DiskDevice{},
-			probeOut: "/etc/b\n/home/code/.claude/.credentials.json\n/home/code/.claude/settings.json\n",
-		}
-		st := base(mgr)
+		st := base(&fakeGrantsManager{disks: map[string]container.DiskDevice{}})
 		st.skipLaunch = true
+		op, ok := st.planLeftoverCheck()
+		if !ok {
+			t.Fatal("a reused container should be checked")
+		}
+		if strings.Contains(op.cmd, "settings.json") {
+			t.Errorf("tool files absent on the host should not be checked: %s", op.cmd)
+		}
+		if strings.Contains(op.cmd, "'/home/code/.a'") || strings.Contains(op.cmd, "/home/code/.claude.json") {
+			t.Errorf("files copied this launch should not be checked: %s", op.cmd)
+		}
+		st.leftovers.parse("tz set\n" + leftoverPresentMarker + "/etc/b\n" +
+			leftoverPresentMarker + "/home/code/.claude/.credentials.json\n" + leftoverCheckedMarker + "\n")
 		g := buildGrants(st)
 
 		want := []CredentialGrant{{"/h/a", "/home/code/.a", false}, {"/h/b", "/etc/b", true}}
@@ -236,12 +286,8 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 		if len(g.ToolFiles) != 2 || g.ToolFiles[1] != earlierTool {
 			t.Errorf("tool files = %+v, want the copied .claude.json then %+v", g.ToolFiles, earlierTool)
 		}
-		probed := strings.Join(mgr.probeArgs, " ")
-		if strings.Contains(probed, "settings.json") {
-			t.Errorf("tool files absent on the host should not be probed: %s", probed)
-		}
-		if strings.Contains(probed, "/home/code/.a ") || strings.Contains(probed, "/home/code/.claude.json") {
-			t.Errorf("files copied this launch should not be probed: %s", probed)
+		if g.LeftoversUnchecked {
+			t.Error("LeftoversUnchecked set after a completed check")
 		}
 		out := g.Render()
 		for _, w := range []string{
@@ -253,6 +299,56 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 			}
 		}
 	})
+
+	// A check that never finished (the exec failed) must not read as
+	// "nothing left over".
+	t.Run("check did not run", func(t *testing.T) {
+		st := base(&fakeGrantsManager{disks: map[string]container.DiskDevice{}})
+		st.opts.ResumeFromID = "abc"
+		if _, ok := st.planLeftoverCheck(); !ok {
+			t.Fatal("a resumed container should be checked")
+		}
+		st.leftovers.parse("")
+		g := buildGrants(st)
+		if !g.LeftoversUnchecked {
+			t.Error("LeftoversUnchecked not set after a check that didn't run")
+		}
+		if len(g.Credentials) != 1 || g.Credentials[0].Earlier {
+			t.Errorf("credentials = %+v, want only this launch's copy", g.Credentials)
+		}
+		if out := g.Render(); !strings.Contains(out, "(could not check the container for files copied by earlier sessions)") {
+			t.Errorf("missing unchecked note in:\n%s", out)
+		}
+	})
+}
+
+// The check op is real shell: run it (as the batch would) against temp files,
+// including a path that needs quoting, and feed its output to parse.
+func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "it's here")
+	if err := os.WriteFile(present, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	absent := filepath.Join(dir, "gone")
+	op := leftoverCheckOp([]string{present, absent})
+	out, err := exec.Command("bash", "-c", renderGuestScript([]guestOp{op})).Output()
+	if err != nil {
+		t.Fatalf("check failed the batch: %v (%s)", err, out)
+	}
+	lc := leftoverCheck{planned: true}
+	lc.parse(string(out))
+	if !lc.checked || !lc.present[present] || lc.present[absent] || len(lc.present) != 1 {
+		t.Errorf("parsed %+v from %q", lc, out)
+	}
+}
+
+// An unchecked report with no copies still gets a Credentials row for the note.
+func TestGrantsRender_LeftoversUnchecked(t *testing.T) {
+	g := &Grants{LeftoversUnchecked: true}
+	if out := g.Render(); !strings.Contains(out, "Credentials  (could not check the container for files copied by earlier sessions)\n") {
+		t.Errorf("unchecked note missing:\n%s", out)
+	}
 }
 
 // setupCredentials returns only the entries actually pushed: a missing host
@@ -322,6 +418,7 @@ func TestGrantsRender_Full(t *testing.T) {
 		Mounts: []MountGrant{
 			{HostPath: "/data", ContainerPath: "/mnt/data", Readonly: true},
 			{HostPath: "/cache", ContainerPath: "/mnt/cache"},
+			{HostPath: "shared", ContainerPath: "/shared", Pool: "default"},
 		},
 		Protected: []string{".git/hooks", ".husky"},
 		Masked:    []string{".env"},
@@ -356,6 +453,7 @@ func TestGrantsRender_Full(t *testing.T) {
 	for _, want := range []string{
 		"Mounts       /data -> /mnt/data (read-only)\n",
 		"             /cache -> /mnt/cache (read-write)\n",
+		"             volume default/shared -> /shared (read-write)\n",
 		"Protected    .git/hooks, .husky (read-only)\n",
 		"Masked       .env (hidden)\n",
 		"Network      allowlist: github.com, api.anthropic.com\n",
@@ -434,12 +532,49 @@ func TestGrantsRender_Network(t *testing.T) {
 }
 
 func TestGrantsWithEnv_DoesNotMutate(t *testing.T) {
-	g := &Grants{Env: EnvGrants{FromHost: []string{"A"}}}
-	c := g.WithEnv(EnvGrants{Minted: []string{"B"}})
+	g := &Grants{Env: EnvGrants{FromHost: []string{"A"}, Tool: []string{"T"}}}
+	c := g.WithEnv(EnvGrants{Minted: []string{"B"}}, false)
 	if len(g.Env.Minted) != 0 || len(g.Env.FromHost) != 1 {
 		t.Errorf("original changed: %+v", g.Env)
 	}
 	if len(c.Env.Minted) != 1 || len(c.Env.FromHost) != 0 {
 		t.Errorf("copy = %+v", c.Env)
+	}
+	if len(c.Env.Tool) != 1 {
+		t.Errorf("WithEnv dropped the setup-time env: %+v", c.Env)
+	}
+}
+
+// Each variable is listed once, under the source the agent's value comes
+// from: tool settings beat the config layers, per-exec env beats the
+// container's environment.*.
+func TestGrantsRender_EnvSources(t *testing.T) {
+	g := (&Grants{Env: EnvGrants{
+		Tool:      []string{"ANTHROPIC_MODEL", "GH_TOKEN"},
+		Container: []string{"GIT_AUTHOR_NAME", "ANTHROPIC_MODEL", "FOO"},
+	}}).WithEnv(EnvGrants{FromHost: []string{"GH_TOKEN", "HOME_VAR"}, Configured: []string{"FOO"}}, false)
+	out := g.Render()
+	for _, w := range []string{
+		"Env        ANTHROPIC_MODEL, GH_TOKEN (tool settings)\n",
+		"           HOME_VAR (from host)\n",
+		"           FOO (set by config)\n",
+		"           GIT_AUTHOR_NAME (container environment)\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q in:\n%s", w, out)
+		}
+	}
+}
+
+// Attaching to a tool already running in tmux applies none of this launch's
+// env, so the report says so instead of naming it.
+func TestGrantsRender_EnvAttaching(t *testing.T) {
+	g := (&Grants{Env: EnvGrants{Tool: []string{"T"}}}).WithEnv(EnvGrants{Minted: []string{"TOKEN"}}, true)
+	out := g.Render()
+	if !strings.Contains(out, "Env        unchanged: attaching to the running session, which keeps the env it started with\n") {
+		t.Errorf("attach note missing:\n%s", out)
+	}
+	if strings.Contains(out, "TOKEN") {
+		t.Errorf("attach should not list env names:\n%s", out)
 	}
 }

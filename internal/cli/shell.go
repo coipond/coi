@@ -530,7 +530,7 @@ func buildTmuxSetEnvironmentCmds(sessionName string, env map[string]string) []st
 
 // runCLIInTmux executes CLI tool in a tmux session for background/monitoring support
 func (a *App) runCLIInTmux(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, detached bool, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
-	tmuxSessionName := fmt.Sprintf("coi-%s", result.ContainerName)
+	tmuxSessionName := tmuxSessionName(result.ContainerName)
 
 	// Get workspace path (with fallback for backwards compatibility)
 	workspacePath := result.ContainerWorkspacePath
@@ -614,6 +614,18 @@ func (a *App) runCLIInTmux(result *session.SetupResult, containerEnv map[string]
 		})
 		return err
 	}
+}
+
+// tmuxSessionName is the tmux session coi runs the tool in.
+func tmuxSessionName(containerName string) string { return "coi-" + containerName }
+
+// tmuxSessionRunning reports whether the tool's tmux session already exists,
+// in which case runCLIInTmux attaches to it (or sends into it) rather than
+// starting the tool with this launch's env.
+func tmuxSessionRunning(result *session.SetupResult, userPtr *int) bool {
+	_, err := result.Manager.ExecCommand("tmux has-session -t "+shellQuote(tmuxSessionName(result.ContainerName))+" 2>/dev/null",
+		container.ExecCommandOptions{Capture: true, User: userPtr})
+	return err == nil
 }
 
 // Markers buildTmuxPrepScript prints to report what it did.

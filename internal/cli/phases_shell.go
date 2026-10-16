@@ -588,7 +588,10 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			// The report goes before the "Starting session..." block so that block
 			// stays right above the tool's output, where it always was.
 			if g := s.result.Grants; g != nil {
-				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(envSources).Render())
+				// Only a reused container can have the tool already running in
+				// tmux; attaching to it applies none of this launch's env.
+				attaching := s.useTmux && s.result.Reused && tmuxSessionRunning(s.result, userPtr)
+				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(envSources, attaching).Render())
 			}
 			fmt.Fprintf(os.Stderr, "\nStarting session...\n")
 			fmt.Fprintf(os.Stderr, "Session ID: %s\n", s.sessionID)

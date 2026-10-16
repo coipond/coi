@@ -29,6 +29,9 @@ type setupState struct {
 	copiedCredentials []CredentialEntry
 	toolFiles         []CredentialEntry
 	contextInfo       tool.ContextInfo
+	// leftovers are the files a reused or resumed container may still hold
+	// from an earlier session, checked inside phaseInjectContext's exec.
+	leftovers leftoverCheck
 
 	// pendingGuestOps are small in-container steps from earlier phases that
 	// ride along with phaseInjectContext's exec instead of paying their own

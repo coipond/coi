@@ -20,9 +20,16 @@ Verifies that the report:
    that trust gating now drops (it stays attached, so it is still reachable);
 8. lists the tool's own config and login files copied from the host (Claude's
    .credentials.json and .claude.json), and on reuse the ones already there;
-9. lists a host disk the container inherits from an Incus profile.
+9. lists what the container inherits from an Incus profile: a host disk, a
+   storage-pool volume (as a volume, not a host path) and environment.* names;
+10. on resume, lists the login files re-copied from the host as copied this
+    launch, not as left over;
+11. names the tool's own env from [tool] config;
+12. when the tool is already running in tmux, says the env is unchanged rather
+    than naming env the running tool never received.
 """
 
+import json
 import os
 import re
 import shutil
@@ -125,7 +132,8 @@ def test_report_mounts_env_and_protected_paths(
     assert rows["Mounts"] == [f"{extra} -> /mnt/extra (read-only)"], rows
     assert ".husky" in rows["Protected"][0], rows
     assert ".vscode" in rows["Protected"][0], rows
-    assert rows["Env"] == [
+    # A container environment line (e.g. a locked git identity) may follow.
+    assert rows["Env"][:2] == [
         "COI_GRANTS_TEST_VAR (from host)",
         "COI_GRANTS_STATIC (set by config)",
     ], rows
@@ -372,30 +380,46 @@ def test_report_tool_config_files(coi_binary, cleanup_containers, workspace_dir,
     ), reused
 
 
-def test_report_lists_incus_profile_disk(coi_binary, cleanup_containers, workspace_dir, tmp_path):
-    """A host disk inherited from an Incus profile is reachable, so it is listed."""
-    shared = tmp_path / "from-profile"
-    shared.mkdir()
-    write_workspace_container_config(workspace_dir, persistent=True)
-    container_name = calculate_container_name(workspace_dir, 1)
-    profile = f"coi-test-grants-{os.getpid()}"
+def _incus(*args):
+    r = subprocess.run(["incus", *args], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, f"incus {' '.join(args)}: {r.stderr}"
+    return r.stdout.strip()
 
-    _run_shell(coi_binary, workspace_dir, dict(os.environ))
+
+def _stop(coi_binary, container_name, env=None):
     stop = subprocess.run(
         [coi_binary, "container", "stop", container_name],
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
     )
     assert stop.returncode == 0, stop.stderr
+    time.sleep(1)
 
-    def incus(*args):
-        r = subprocess.run(["incus", *args], capture_output=True, text=True, timeout=60)
-        assert r.returncode == 0, f"incus {' '.join(args)}: {r.stderr}"
 
-    incus("profile", "create", profile)
+def test_report_lists_incus_profile_grants(coi_binary, cleanup_containers, workspace_dir, tmp_path):
+    """What the container inherits from an Incus profile is reachable, so it is
+    listed: a host disk, a storage-pool volume (named as a volume, since it is
+    not a host path) and environment.* names (never values)."""
+    shared = tmp_path / "from-profile"
+    shared.mkdir()
+    write_workspace_container_config(workspace_dir, persistent=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+    profile = f"coi-test-grants-{os.getpid()}"
+    volume = f"coi-test-grants-vol-{os.getpid()}"
+    profile_value = "grants-profile-env-value-3391"
+
+    _run_shell(coi_binary, workspace_dir, dict(os.environ))
+    _stop(coi_binary, container_name)
+    pool = _incus("config", "device", "get", container_name, "root", "pool") or _incus(
+        "profile", "device", "get", "default", "root", "pool"
+    )
+
+    _incus("profile", "create", profile)
+    volume_created = False
     try:
-        incus(
+        _incus(
             "profile",
             "device",
             "add",
@@ -405,14 +429,35 @@ def test_report_lists_incus_profile_disk(coi_binary, cleanup_containers, workspa
             f"source={shared}",
             "path=/mnt/from-profile",
         )
-        incus("profile", "add", container_name, profile)
-
-        rows = _report(
-            _run_shell(
-                coi_binary, workspace_dir, dict(os.environ), args=("--container", container_name)
-            ).stderr
+        _incus("storage", "volume", "create", pool, volume)
+        volume_created = True
+        _incus(
+            "profile",
+            "device",
+            "add",
+            profile,
+            "vol",
+            "disk",
+            f"pool={pool}",
+            f"source={volume}",
+            "path=/mnt/vol",
         )
+        _incus("profile", "set", profile, f"environment.COI_PROFILE_ENV={profile_value}")
+        _incus("profile", "add", container_name, profile)
+
+        result = _run_shell(
+            coi_binary, workspace_dir, dict(os.environ), args=("--container", container_name)
+        )
+        rows = _report(result.stderr)
         assert f"{shared} -> /mnt/from-profile (read-write)" in rows["Mounts"], rows
+        assert f"volume {pool}/{volume} -> /mnt/vol (read-write)" in rows["Mounts"], rows
+        assert any(
+            "COI_PROFILE_ENV" in line and line.endswith("(container environment)")
+            for line in rows["Env"]
+        ), rows
+        assert profile_value not in result.stderr + result.stdout, (
+            "the report must not print env values"
+        )
     finally:
         subprocess.run(
             [coi_binary, "container", "delete", container_name, "--force"],
@@ -420,3 +465,85 @@ def test_report_lists_incus_profile_disk(coi_binary, cleanup_containers, workspa
             timeout=60,
         )
         subprocess.run(["incus", "profile", "delete", profile], capture_output=True, timeout=60)
+        if volume_created:
+            subprocess.run(
+                ["incus", "storage", "volume", "delete", pool, volume],
+                capture_output=True,
+                timeout=60,
+            )
+
+
+def test_report_resume_lists_recopied_tool_files(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
+    """Resume re-copies the tool's login files from the host, so they are listed
+    as copied this launch, not as already in the container."""
+    fake_home = tmp_path / "fake_home"
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / ".credentials.json").write_text('{"token": "test"}')
+    (fake_home / ".claude.json").write_text("{}")
+    write_workspace_container_config(workspace_dir, persistent=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+    env = dict(os.environ)
+    env["HOME"] = str(fake_home)
+
+    _run_shell(coi_binary, workspace_dir, dict(env))
+    _stop(coi_binary, container_name, env)
+
+    # A saved session for this container, as session cleanup would write it.
+    sessions = [d for d in (fake_home / ".coi").iterdir() if d.name.startswith("sessions-")]
+    assert len(sessions) == 1, sessions
+    session_id = "grants-resume-test"
+    saved = sessions[0] / session_id
+    (saved / ".claude").mkdir(parents=True)
+    (saved / "metadata.json").write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "container_name": container_name,
+                "persistent": True,
+                "workspace": str(workspace_dir),
+                "saved_at": "2026-01-01T00:00:00Z",
+            }
+        )
+    )
+
+    rows = _report(
+        _run_shell(coi_binary, workspace_dir, dict(env), args=("--resume", session_id)).stderr
+    )
+    creds_line = f"{claude_dir}/.credentials.json -> /home/code/.claude/.credentials.json"
+    assert creds_line in rows.get("Tool config", []), rows
+
+
+def test_report_tool_settings_env(coi_binary, cleanup_containers, workspace_dir):
+    """The tool's own env from [tool] config reaches the agent, so it is named."""
+    env = write_trusted_coi_config('[tool.claude]\neffort_level = "high"\nmodel = "opus"\n')
+
+    rows = _report(_run_shell(coi_binary, workspace_dir, env).stderr)
+
+    assert "ANTHROPIC_MODEL, CLAUDE_CODE_EFFORT_LEVEL (tool settings)" in rows["Env"], rows
+
+
+def test_report_running_tool_keeps_its_env(coi_binary, cleanup_containers, workspace_dir):
+    """Re-entering a container whose tool is still running in tmux doesn't
+    restart it, so env_commands minted now never reach it: the report says the
+    env is unchanged instead of naming them."""
+    env = write_trusted_coi_config(
+        f"[defaults.env_commands]\nCOI_GRANTS_MINTED = \"printf '{MINTED_VALUE}'\"\n"
+    )
+    write_workspace_container_config(workspace_dir, persistent=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+
+    first = _report(_run_shell(coi_binary, workspace_dir, dict(env)).stderr)
+    assert "COI_GRANTS_MINTED (env_commands)" in first["Env"], first
+
+    # Still running: the second launch finds the tool's tmux session.
+    second = _report(
+        _run_shell(
+            coi_binary, workspace_dir, dict(env), args=("--container", container_name)
+        ).stderr
+    )
+    assert second["Env"] == [
+        "unchanged: attaching to the running session, which keeps the env it started with"
+    ], second

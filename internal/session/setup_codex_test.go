@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -158,8 +159,13 @@ func TestInjectCredentials_Codex_RefreshesWithoutSettingsWrite(t *testing.T) {
 	// Simulate in-container state from the previous session.
 	mgr.files["/home/code/.codex/auth.json"] = `{"tokens": {"access_token": "stale"}}`
 
-	if err := injectCredentials(mgr, hostDir, "/home/code", codexToolWithConfigDirFiles(t), func(string) {}); err != nil {
+	copied, err := injectCredentials(mgr, hostDir, "/home/code", codexToolWithConfigDirFiles(t), func(string) {})
+	if err != nil {
 		t.Fatalf("injectCredentials failed: %v", err)
+	}
+	wantCopied := []CredentialEntry{{HostPath: filepath.Join(hostDir, "auth.json"), ContainerPath: "/home/code/.codex/auth.json"}}
+	if !reflect.DeepEqual(copied, wantCopied) {
+		t.Errorf("injectCredentials copied = %+v, want %+v", copied, wantCopied)
 	}
 
 	if got := mgr.files["/home/code/.codex/auth.json"]; got != refreshedAuth {
