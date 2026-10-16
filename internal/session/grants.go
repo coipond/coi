@@ -268,10 +268,18 @@ var limitNames = map[string]string{
 	"root.size":             "disk size",
 }
 
+// limitDefaults are values coi writes along with any limit (they are config's
+// defaults) that restrict nothing; they are left out so Limits lists only
+// what actually caps the container.
+var limitDefaults = map[string]string{
+	"limits.memory.enforce": "soft",
+	"limits.memory.swap":    "true",
+}
+
 func limitLines(limits map[string]string) []string {
 	var lines []string
 	for _, k := range container.LimitKeys {
-		if v, ok := limits[k]; ok {
+		if v, ok := limits[k]; ok && v != limitDefaults[k] {
 			lines = append(lines, limitNames[k]+" "+v)
 		}
 	}

@@ -719,7 +719,11 @@ func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
 	mgr := &fakeGrantsManager{
 		disks:   map[string]container.DiskDevice{"workspace": {Source: "/p", Path: "/workspace"}},
 		nesting: true,
-		limits:  map[string]string{"limits.cpu.allowance": "50%", "limits.cpu": "2", "root.limits.read": "10MB", "limits.processes": "500"},
+		limits: map[string]string{
+			"limits.cpu.allowance": "50%", "limits.cpu": "2", "root.limits.read": "10MB", "limits.processes": "500",
+			// Config's defaults, written with any limit: they cap nothing.
+			"limits.memory.enforce": "soft", "limits.memory.swap": "true",
+		},
 	}
 	st := &setupState{
 		opts:        SetupOptions{}, // Docker off in config
@@ -762,6 +766,16 @@ func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
 
 // The context files tell the agent the same Docker state as the report: the
 // container's, once setup read it.
+// Memory enforcement and swap are listed only when they tighten the defaults.
+func TestLimitLines_TighterThanDefaults(t *testing.T) {
+	got := strings.Join(limitLines(map[string]string{
+		"limits.memory": "2GiB", "limits.memory.enforce": "hard", "limits.memory.swap": "false",
+	}), ", ")
+	if got != "memory 2GiB, memory enforce hard, swap false" {
+		t.Errorf("limits = %q", got)
+	}
+}
+
 func TestContextInfo_DockerFollowsContainer(t *testing.T) {
 	opts := SetupOptions{Security: SecurityOptions{Docker: true}}
 	if contextInfoFor(&SetupResult{}, opts).DockerUnavailable {
