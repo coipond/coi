@@ -87,12 +87,12 @@ func TestValidateDiskSize(t *testing.T) {
 // is what makes coi's hard error correct (#728).
 func TestPoolDriverEnforcesQuota(t *testing.T) {
 	for _, d := range []string{"btrfs", "zfs", "lvm", "ceph"} {
-		if !poolDriverEnforcesQuota(d) {
+		if !PoolDriverEnforcesQuota(d) {
 			t.Errorf("driver %q should be quota-capable", d)
 		}
 	}
 	for _, d := range []string{"dir", "", "overlay", "unknown"} {
-		if poolDriverEnforcesQuota(d) {
+		if PoolDriverEnforcesQuota(d) {
 			t.Errorf("driver %q must NOT be treated as quota-capable", d)
 		}
 	}

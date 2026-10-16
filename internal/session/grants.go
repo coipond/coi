@@ -11,6 +11,7 @@ import (
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/limits"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -260,10 +261,10 @@ func buildGrants(st *setupState) *Grants {
 		// Limits are applied only when a container is created, so a reused
 		// one runs with its own, whatever config says now. max_duration is
 		// per session (the timeout monitor), so it stays from config.
-		g.Limits = limitLines(applied.Limits)
+		g.Limits = limitLines(applied.Limits, rootSizeEnforced(applied.RootPool))
 	} else {
 		g.DevicesUnread = true
-		configuredDisks(g, opts, containerWorkspace)
+		configuredDisks(g, opts, containerWorkspace, st.result.worktreeWritableHooks)
 		if info.CPULimit != "" {
 			g.Limits = append(g.Limits, "cpu "+info.CPULimit)
 		}
@@ -302,22 +303,64 @@ var limitNames = map[string]string{
 	"root.size":                 "disk size",
 }
 
-// limitDefaults are values coi writes along with any limit (they are config's
-// defaults) that restrict nothing; they are left out so Limits lists only
-// what actually caps the container.
-var limitDefaults = map[string]string{
-	"limits.memory.enforce": "soft",
-	"limits.memory.swap":    "true",
-}
-
-func limitLines(limits map[string]string) []string {
+// limitLines formats the limits the container runs with. Memory enforcement
+// qualifies the memory limit: "soft" lets the container exceed it while the
+// host has memory to spare (Incus's own default is hard), so it is shown with
+// the limit; alone it caps nothing. Swap is listed only when turned off (on is
+// the default). A root disk size is flagged when its pool can't enforce it.
+func limitLines(limits map[string]string, sizeEnforced func() (bool, string)) []string {
 	var lines []string
 	for _, k := range container.LimitKeys {
-		if v, ok := limits[k]; ok && v != limitDefaults[k] {
-			lines = append(lines, limitNames[k]+" "+v)
+		v, ok := limits[k]
+		if !ok {
+			continue
 		}
+		switch k {
+		case "limits.memory":
+			if limits["limits.memory.enforce"] == "soft" {
+				v += " (soft: may be exceeded while the host has memory free)"
+			}
+		case "limits.memory.enforce":
+			continue // shown with the memory limit
+		case "limits.memory.swap":
+			if v == "true" {
+				continue
+			}
+		case "root.size":
+			if sizeEnforced != nil {
+				if enforced, why := sizeEnforced(); !enforced {
+					v += " (" + why + ")"
+				}
+			}
+		}
+		lines = append(lines, limitNames[k]+" "+v)
 	}
 	return lines
+}
+
+// listStoragePools is container.ListStoragePools; a var so tests can fake it.
+var listStoragePools = container.ListStoragePools
+
+// rootSizeEnforced returns a check of whether the root disk's pool enforces a
+// size quota, as coi's own [limits.disk] size requires (#728); a profile can
+// set one on a pool that doesn't. The pool list is fetched only if asked, so
+// only when a size is set.
+func rootSizeEnforced(pool string) func() (bool, string) {
+	return func() (bool, string) {
+		pools, err := listStoragePools()
+		if err != nil || pool == "" {
+			return false, "could not check that its pool enforces it"
+		}
+		for _, p := range pools {
+			if p.Name == pool {
+				if limits.PoolDriverEnforcesQuota(p.Driver) {
+					return true, ""
+				}
+				return false, "not enforced: pool " + pool + " uses the " + p.Driver + " driver"
+			}
+		}
+		return false, "could not check that its pool enforces it"
+	}
 }
 
 // toolEnvNames lists the env the tool sets for itself from its config (e.g. a
@@ -353,7 +396,7 @@ func ContainerWorkspace(result *SetupResult) string {
 // configuredDisks fills the disk categories from config when the container's
 // devices can't be read: the workspace, [[mounts]], a worktree's common dir,
 // protected paths and secret masks.
-func configuredDisks(g *Grants, opts SetupOptions, containerWorkspace string) {
+func configuredDisks(g *Grants, opts SetupOptions, containerWorkspace string, writableHooks bool) {
 	g.Workspace = MountGrant{HostPath: opts.WorkspacePath, ContainerPath: containerWorkspace}
 	if opts.MountConfig != nil {
 		for _, m := range opts.MountConfig.Mounts {
@@ -366,7 +409,11 @@ func configuredDisks(g *Grants, opts SetupOptions, containerWorkspace string) {
 	g.Protected = GetProtectedPathsForLogging(opts.WorkspacePath, opts.Security.ProtectedPaths)
 	if layout, err := ResolveGitWorktree(opts.WorkspacePath); err == nil && layout != nil {
 		g.Mounts = append(g.Mounts, MountGrant{HostPath: layout.CommonDir, ContainerPath: layout.CommonDir})
-		g.Protected = append(g.Protected, "git internals of "+layout.CommonDir)
+		// The same paths setup protects (and the device read lists), so the
+		// row keeps its shape whether or not the devices could be read.
+		for _, rel := range commonDirProtectedPaths(layout.CommonDir, writableHooks, opts.Security.Config) {
+			g.Protected = append(g.Protected, filepath.Join(layout.CommonDir, rel))
+		}
 	}
 	masks, _ := expandSecretPaths(opts.WorkspacePath, opts.Security.SecretPaths)
 	for _, m := range masks {
@@ -464,6 +511,7 @@ var copyManifestPath = "/var/lib/coi/copied-host-files"
 // means a later reuse can't vouch for those files, so it never fails the
 // batch it rides in.
 func recordCopiesOp(copies []copyRecord) (guestOp, bool) {
+	copies = manifestSafe(copies)
 	if len(copies) == 0 {
 		return guestOp{}, false
 	}
@@ -483,6 +531,19 @@ func recordCopiesOp(copies []copyRecord) (guestOp, bool) {
 	}
 	b.WriteString("; } 2>/dev/null || true")
 	return guestCmd(b.String()), true
+}
+
+// manifestSafe drops copies whose paths hold a tab or newline, which the
+// manifest's line format can't carry; such a copy goes unrecorded rather than
+// garbling the manifest and the report.
+func manifestSafe(copies []copyRecord) []copyRecord {
+	var out []copyRecord
+	for _, c := range copies {
+		if !strings.ContainsAny(c.ContainerPath+c.HostPath, "\t\n") {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // Markers leftoverCheckOp prints: "<marker><kind>\t<container path>\t<host path>".
@@ -572,6 +633,7 @@ func markManifestCompleteOp() guestOp {
 // "nothing found" apart from "never checked", and always succeeds, so it
 // can't fail the batch it rides in.
 func leftoverCheckOp(exclude []string, candidates []copyRecord) guestOp {
+	candidates = manifestSafe(candidates)
 	m := shellEscape(copyManifestPath)
 	var b strings.Builder
 	b.WriteString("X=$(printf '%s\\n'")

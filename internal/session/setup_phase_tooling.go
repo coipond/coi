@@ -17,9 +17,11 @@ func (st *setupState) phaseResumeRestore(_ context.Context) (Teardown, error) {
 	if st.opts.ResumeFromID != "" && st.opts.Tool != nil && st.opts.Tool.ConfigDirName() != "" {
 		// If we launched a new container (not reusing persistent one), restore config from saved session
 		if !st.skipLaunch && st.opts.SessionsDir != "" {
-			if err := restoreSessionData(st.result.Manager, st.opts.ResumeFromID, st.result.HomeDir, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger); err != nil {
+			pushed, err := restoreSessionData(st.result.Manager, st.opts.ResumeFromID, st.result.HomeDir, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger)
+			if err != nil {
 				st.opts.Logger(fmt.Sprintf("Warning: Could not restore session data: %v", err))
-			} else {
+			}
+			if pushed {
 				st.restoredFiles = restoredToolFiles(st.opts.SessionsDir, st.opts.ResumeFromID, st.result.HomeDir, st.opts.Tool)
 			}
 		}

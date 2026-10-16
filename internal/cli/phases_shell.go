@@ -597,7 +597,14 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			// above the tool's output.
 			launch := session.ToolStarted
 			var tl *tmuxLaunch
-			if s.useTmux {
+			var dl *directLaunch
+			if !s.useTmux {
+				// Direct mode: the pre-launch steps run now too, so their
+				// failure stops the launch before the report claims a start.
+				if dl, err = a.prepareDirect(s.result, containerEnv, userPtr, s.sessionID, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance); err != nil {
+					return nil, err
+				}
+			} else {
 				if tl, err = a.prepareTmux(s.result, containerEnv, userPtr, s.sessionID, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance); err != nil {
 					return nil, err
 				}
@@ -638,7 +645,7 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 					fmt.Fprintf(os.Stderr, "Resume mode: Persistent session\n")
 				}
 				fmt.Fprintf(os.Stderr, "\n")
-				runErr = a.runCLI(s.result, containerEnv, userPtr, s.sessionID, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance)
+				runErr = runDirect(s.result, dl)
 			}
 
 			// Normalise expected exit conditions so the pipeline doesn't log

@@ -226,6 +226,42 @@ type commonDirSink struct {
 	isDir bool
 }
 
+// commonDirSinks lists the common-dir paths SetupCommonDirProtection covers
+// read-only: hooks (unless writable), config, info/attributes and each
+// linked worktree's config.worktree, less writable_paths.
+func commonDirSinks(commonDir string, writableHooks bool, sec *config.SecurityConfig) []commonDirSink {
+	if sec != nil && sec.DisableProtection {
+		return nil
+	}
+	sinks := []commonDirSink{{"config", false}, {filepath.Join("info", "attributes"), false}}
+	if !writableHooks {
+		sinks = append([]commonDirSink{{"hooks", true}}, sinks...)
+	}
+	if entries, e := os.ReadDir(filepath.Join(commonDir, "worktrees")); e == nil {
+		for _, en := range entries {
+			if en.IsDir() {
+				sinks = append(sinks, commonDirSink{filepath.Join("worktrees", en.Name(), "config.worktree"), false})
+			}
+		}
+	}
+	var out []commonDirSink
+	for _, s := range sinks {
+		if sec == nil || !sec.IsWritablePath(s.rel) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// commonDirProtectedPaths is commonDirSinks' paths (relative to commonDir).
+func commonDirProtectedPaths(commonDir string, writableHooks bool, sec *config.SecurityConfig) []string {
+	var out []string
+	for _, s := range commonDirSinks(commonDir, writableHooks, sec) {
+		out = append(out, s.rel)
+	}
+	return out
+}
+
 // SetupCommonDirProtection layers read-only mounts over the RCE-sink paths inside
 // the external git common dir (issue #533) — the same protection #474 applies to a
 // normal repo's `.git`, extended to the second root. Paths are relative to the common
@@ -249,23 +285,8 @@ func SetupCommonDirProtection(mgr container.ContainerDevices, commonDir string, 
 		return nil, nil
 	}
 
-	sinks := []commonDirSink{{"config", false}, {filepath.Join("info", "attributes"), false}}
-	if !writableHooks {
-		sinks = append([]commonDirSink{{"hooks", true}}, sinks...)
-	}
-	if entries, e := os.ReadDir(filepath.Join(commonDir, "worktrees")); e == nil {
-		for _, en := range entries {
-			if en.IsDir() {
-				sinks = append(sinks, commonDirSink{filepath.Join("worktrees", en.Name(), "config.worktree"), false})
-			}
-		}
-	}
-
 	var protected, warnings []string
-	for _, s := range sinks {
-		if sec != nil && sec.IsWritablePath(s.rel) {
-			continue
-		}
+	for _, s := range commonDirSinks(commonDir, writableHooks, sec) {
 		if err := protectCommonDirSink(mgr, commonDir, s, useShift); err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %v", s.rel, err))
 			continue

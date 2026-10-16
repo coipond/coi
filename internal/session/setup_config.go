@@ -21,13 +21,15 @@ func readContainerFile(mgr container.ContainerExecution, path string) ([]byte, e
 
 // restoreSessionData restores tool config directory from a saved session
 // Used when resuming a non-persistent session (container was deleted and recreated)
-func restoreSessionData(mgr container.ContainerManager, resumeID, homeDir, sessionsDir string, t tool.Tool, logger func(string)) error {
+// pushed reports whether the saved directory landed in the container, even if
+// a later step (the chown) failed: its files are in the container either way.
+func restoreSessionData(mgr container.ContainerManager, resumeID, homeDir, sessionsDir string, t tool.Tool, logger func(string)) (pushed bool, err error) {
 	configDirName := t.ConfigDirName()
 	sourceConfigDir := filepath.Join(sessionsDir, resumeID, configDirName)
 
 	// Check if directory exists
 	if info, err := os.Stat(sourceConfigDir); err != nil || !info.IsDir() {
-		return fmt.Errorf("no saved session data found for %s", resumeID)
+		return false, fmt.Errorf("no saved session data found for %s", resumeID)
 	}
 
 	logger(fmt.Sprintf("Restoring session data from %s", resumeID))
@@ -37,19 +39,19 @@ func restoreSessionData(mgr container.ContainerManager, resumeID, homeDir, sessi
 	// So we pass the full destination path where the config dir should end up
 	destConfigPath := filepath.Join(homeDir, configDirName)
 	if err := mgr.PushDirectory(sourceConfigDir, destConfigPath); err != nil {
-		return fmt.Errorf("failed to push %s directory: %w", configDirName, err)
+		return false, fmt.Errorf("failed to push %s directory: %w", configDirName, err)
 	}
 
 	// Fix ownership if running as non-root user
 	if homeDir != "/root" {
 		statePath := destConfigPath
 		if err := mgr.Chown(statePath, container.CodeUID, container.CodeUID); err != nil {
-			return fmt.Errorf("failed to set ownership: %w", err)
+			return true, fmt.Errorf("failed to set ownership: %w", err)
 		}
 	}
 
 	logger("Session data restored successfully")
-	return nil
+	return true, nil
 }
 
 // toolHostFiles maps the tool's host config files to where setup copies them in

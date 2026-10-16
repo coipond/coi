@@ -829,14 +829,48 @@ func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
 
 // The context files tell the agent the same Docker state as the report: the
 // container's, once setup read it.
-// Memory enforcement and swap are listed only when they tighten the defaults.
-func TestLimitLines_TighterThanDefaults(t *testing.T) {
+// Soft memory enforcement qualifies the memory limit (it can be exceeded),
+// and isn't listed without one; swap shows only when off.
+func TestLimitLines_MemoryAndSwap(t *testing.T) {
 	got := strings.Join(limitLines(map[string]string{
-		"limits.memory": "2GiB", "limits.memory.enforce": "hard", "limits.memory.swap": "false",
-	}), ", ")
-	if got != "memory 2GiB, memory enforce hard, swap false" {
-		t.Errorf("limits = %q", got)
+		"limits.memory": "4GiB", "limits.memory.enforce": "soft", "limits.memory.swap": "true",
+	}, nil), ", ")
+	if got != "memory 4GiB (soft: may be exceeded while the host has memory free)" {
+		t.Errorf("soft limit = %q", got)
 	}
+	got = strings.Join(limitLines(map[string]string{
+		"limits.memory": "4GiB", "limits.memory.enforce": "hard", "limits.memory.swap": "false",
+	}, nil), ", ")
+	if got != "memory 4GiB, swap false" {
+		t.Errorf("hard limit = %q", got)
+	}
+	if got := limitLines(map[string]string{"limits.memory.enforce": "soft", "limits.memory.swap": "true"}, nil); len(got) != 0 {
+		t.Errorf("defaults alone = %v, want nothing", got)
+	}
+}
+
+// A root disk size on a pool that can't enforce it (dir) is flagged, as coi's
+// own [limits.disk] size refuses such pools; an enforcing pool is not.
+func TestLimitLines_RootSizeEnforcement(t *testing.T) {
+	old := listStoragePools
+	t.Cleanup(func() { listStoragePools = old })
+	listStoragePools = func() ([]container.StoragePool, error) {
+		return []container.StoragePool{{Name: "default", Driver: "dir"}, {Name: "fast", Driver: "zfs"}}, nil
+	}
+	size := map[string]string{"root.size": "20GiB"}
+	if got := strings.Join(limitLines(size, rootSizeEnforced("default")), ", "); got != "disk size 20GiB (not enforced: pool default uses the dir driver)" {
+		t.Errorf("dir pool = %q", got)
+	}
+	if got := strings.Join(limitLines(size, rootSizeEnforced("fast")), ", "); got != "disk size 20GiB" {
+		t.Errorf("zfs pool = %q", got)
+	}
+	listStoragePools = func() ([]container.StoragePool, error) { return nil, errors.New("incus down") }
+	if got := strings.Join(limitLines(size, rootSizeEnforced("fast")), ", "); got != "disk size 20GiB (could not check that its pool enforces it)" {
+		t.Errorf("unreadable pools = %q", got)
+	}
+	// No size: the pools are never fetched.
+	listStoragePools = func() ([]container.StoragePool, error) { t.Error("pools fetched without a size"); return nil, nil }
+	limitLines(map[string]string{"limits.cpu": "2"}, rootSizeEnforced("fast"))
 }
 
 func TestContextInfo_DockerFollowsContainer(t *testing.T) {
@@ -847,6 +881,12 @@ func TestContextInfo_DockerFollowsContainer(t *testing.T) {
 	r := &SetupResult{applied: &container.AppliedState{Nesting: false}}
 	if !contextInfoFor(r, opts).DockerUnavailable {
 		t.Error("the container's nesting should decide once read")
+	}
+	// Nesting on, but reduce_kernel_surface's syscall denies in force (a
+	// profile's nesting, say): Docker can't run.
+	r = &SetupResult{applied: &container.AppliedState{Nesting: true, KernelSurfaceDenied: true}}
+	if !contextInfoFor(r, opts).DockerUnavailable {
+		t.Error("kernel-surface denies should make Docker unavailable")
 	}
 }
 
@@ -866,5 +906,90 @@ func TestBuildGrants_FallbackDefaultWorkspace(t *testing.T) {
 func TestGrantsRender_NoWorkspaceDevice(t *testing.T) {
 	if out := (&Grants{}).Render(); !strings.Contains(out, "Workspace  none\n") {
 		t.Errorf("missing workspace should say none:\n%s", out)
+	}
+}
+
+// restoreFake pushes fine but can fail the chown that follows.
+type restoreFake struct {
+	container.ContainerManager
+	chownErr error
+}
+
+func (f *restoreFake) PushDirectory(string, string) error { return nil }
+func (f *restoreFake) Chown(string, int, int) error       { return f.chownErr }
+
+// A restore whose push landed but whose chown failed still put the saved
+// files in the container, so it reports them as pushed.
+func TestRestoreSessionData_PushedDespiteChownError(t *testing.T) {
+	claude, err := tool.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sessions, "abc", ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pushed, err := restoreSessionData(&restoreFake{chownErr: errors.New("chown failed")}, "abc", "/home/code", sessions, claude, func(string) {})
+	if !pushed || err == nil {
+		t.Errorf("pushed %v, err %v; want pushed with the chown error", pushed, err)
+	}
+	if pushed, err := restoreSessionData(&restoreFake{}, "missing", "/home/code", sessions, claude, func(string) {}); pushed || err == nil {
+		t.Errorf("no saved data: pushed %v, err %v", pushed, err)
+	}
+}
+
+// Paths the manifest's line format can't carry are left out of the record
+// and the check instead of garbling them.
+func TestManifestSafe(t *testing.T) {
+	op, ok := recordCopiesOp([]copyRecord{{copyKindCredential, CredentialEntry{HostPath: "/h/a\tb", ContainerPath: "/c/a"}}})
+	if ok {
+		t.Errorf("a tab in a path should leave nothing to record, got %q", op.cmd)
+	}
+	check := leftoverCheckOp(nil, []copyRecord{
+		{copyKindTool, CredentialEntry{HostPath: "/h/x", ContainerPath: "/c/new\nline"}},
+		{copyKindTool, CredentialEntry{HostPath: "/h/ok", ContainerPath: "/c/ok"}},
+	})
+	if strings.Contains(check.cmd, "new\nline") || !strings.Contains(check.cmd, "'/c/ok'") {
+		t.Errorf("check op = %q", check.cmd)
+	}
+}
+
+// For a worktree workspace, the device-read fallback lists the same
+// common-dir paths setup protects, not a vague summary.
+func TestBuildGrants_FallbackWorktreeProtections(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "main")
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.email=t@t.dev", "-c", "user.name=t"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", main)
+	git("-C", main, "commit", "-q", "--allow-empty", "-m", "init")
+	wt := filepath.Join(dir, "wt")
+	git("-C", main, "worktree", "add", "-q", wt)
+	common, err := filepath.EvalSymlinks(filepath.Join(main, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st := &setupState{
+		opts:   SetupOptions{WorkspacePath: wt},
+		result: &SetupResult{Manager: &fakeGrantsManager{disksErr: errors.New("incus down")}},
+	}
+	g := buildGrants(st)
+	got := strings.Join(g.Protected, ",")
+	for _, want := range []string{
+		filepath.Join(common, "hooks"), filepath.Join(common, "config"),
+		filepath.Join(common, "info", "attributes"), filepath.Join(common, "worktrees", "wt", "config.worktree"),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fallback protected = %v, missing %s", g.Protected, want)
+		}
+	}
+	if strings.Contains(got, "git internals of") {
+		t.Errorf("fallback still summarizes: %v", g.Protected)
 	}
 }

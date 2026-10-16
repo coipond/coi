@@ -473,9 +473,14 @@ func reportMiseTrust(out string, logger func(string)) {
 // same ops into its context-files exec). Both are non-fatal and idempotent:
 // a matching timezone writes nothing, and only a change or failure is logged.
 // The [[credentials]] copies SetupCredentials returned are recorded in the
-// copy manifest in the same exec (best-effort).
-func ConfigureTimezoneAndMiseTrust(mgr container.ContainerManager, tz, containerWorkspacePath string, copiedCredentials []CredentialEntry, logger func(string)) {
+// copy manifest in the same exec (best-effort), which is first marked
+// complete when the run created the container (newContainer), as the shell's
+// setup does.
+func ConfigureTimezoneAndMiseTrust(mgr container.ContainerManager, tz, containerWorkspacePath string, copiedCredentials []CredentialEntry, newContainer bool, logger func(string)) {
 	ops := []guestOp{timezoneOp(tz), miseTrustOp(containerWorkspacePath)}
+	if newContainer {
+		ops = append(ops, markManifestCompleteOp())
+	}
 	if op, ok := recordCopiesOp(copyRecords(copyKindCredential, copiedCredentials)); ok {
 		ops = append(ops, op)
 	}

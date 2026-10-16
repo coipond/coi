@@ -15,7 +15,7 @@ func TestAppliedState(t *testing.T) {
 	script := `#!/bin/sh
 case "$*" in
   *"config show --expanded c2"*) printf 'config:\n  security.nesting: "false"\n  limits.cpu: "2"\n  limits.cpu.allowance: 50%%\n  limits.memory: 4GiB\n  environment.GIT_AUTHOR_NAME: Jane\n  environment.ANTHROPIC_MODEL: opus\n  user.coi.git_env_keys: GIT_AUTHOR_NAME\ndevices:\n  root:\n    path: /\n    pool: default\n    limits.read: 10MB\n    limits.disk.priority: "5"\n    type: disk\n  cache:\n    path: /cache\n    pool: default\n    source: cache\n    type: disk\n  eth0:\n    type: nic\n' ;;
-  *"config show --expanded c3"*) printf 'config:\n  security.nesting: "true"\ndevices: {}\n' ;;
+  *"config show --expanded c3"*) printf 'config:\n  security.nesting: "true"\n  security.syscalls.deny: |-\n    bpf errno 1\n    keyctl errno 1\ndevices: {}\n' ;;
   *"config show c3"*) printf 'config:\n  user.x: "y"\ndevices: {}\n' ;;
   *"config show --expanded c4"*) printf 'config:\n  security.nesting: "true"\ndevices: {}\n' ;;
   *"config show c4"*) printf 'config:\n  security.nesting: "true"\ndevices: {}\n' ;;
@@ -53,6 +53,12 @@ esac
 
 	// Nesting set only in the expanded config comes from a profile; set on
 	// the instance itself, it doesn't; an unreadable config is unknown.
+	if st.KernelSurfaceDenied || st.RootPool != "default" {
+		t.Errorf("c2: denied %v, root pool %q", st.KernelSurfaceDenied, st.RootPool)
+	}
+	if st, err := (&Manager{ContainerName: "c3"}).AppliedState(); err != nil || !st.KernelSurfaceDenied {
+		t.Errorf("kernel-surface denies not detected: %+v, %v", st, err)
+	}
 	if set, ok := (&Manager{ContainerName: "c3"}).NestingSetLocally(); set || !ok {
 		t.Errorf("profile nesting: set %v ok %v", set, ok)
 	}

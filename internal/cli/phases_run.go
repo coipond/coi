@@ -608,7 +608,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 			// Timezone ("" = UTC, resetting a reused container) and workspace
 			// mise trust in one exec.
 			s.tz = resolveTimezone(a.cfg)
-			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, logFn)
+			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, !s.wasRestarted, logFn)
 
 			if nm == nil {
 				return nil, nil

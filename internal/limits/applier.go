@@ -175,9 +175,9 @@ var quotaCapablePoolDrivers = map[string]bool{
 	"ceph":  true,
 }
 
-// poolDriverEnforcesQuota reports whether an Incus storage-pool driver can
+// PoolDriverEnforcesQuota reports whether an Incus storage-pool driver can
 // enforce a root disk `size=` quota. Pure, so it is unit-testable. (#728)
-func poolDriverEnforcesQuota(driver string) bool {
+func PoolDriverEnforcesQuota(driver string) bool {
 	return quotaCapablePoolDrivers[driver]
 }
 
@@ -195,7 +195,7 @@ func ensureSizeQuotaSupported(ctx context.Context, containerName string) error {
 	}
 	for _, p := range pools {
 		if p.Name == pool {
-			if poolDriverEnforcesQuota(p.Driver) {
+			if PoolDriverEnforcesQuota(p.Driver) {
 				return nil
 			}
 			return fmt.Errorf("[limits.disk] size requires a quota-capable storage pool, but pool %q uses the %q driver which cannot enforce a rootfs quota; use a btrfs/zfs/lvm pool (see 'incus storage create') or remove [limits.disk] size", pool, p.Driver)

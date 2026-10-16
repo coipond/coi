@@ -446,19 +446,21 @@ func withUserPreLaunch(mgr container.ContainerManager, cmds []string, cliCmd str
 	return "trap : INT; bash " + userPreLaunchScriptPath + "; " + cliCmd
 }
 
-// runCLI executes the CLI tool in the container interactively, with the env
-// and user from buildContainerEnv.
-func (a *App) runCLI(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) error {
+// directLaunch is a prepared direct (no tmux) launch: prepareDirect has run
+// the pre-launch steps; runDirect runs the tool attached to the terminal.
+type directLaunch struct {
+	cmd  string
+	opts container.ExecCommandOptions
+}
+
+// prepareDirect readies a direct launch with the env and user from
+// buildContainerEnv: it merges the tool's env and runs the pre-launch steps,
+// so a failure stops the launch before the grants report claims a start.
+func (a *App) prepareDirect(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) (*directLaunch, error) {
 	cmdToRun := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
 
 	workspacePath := session.ContainerWorkspace(result)
 	mergeToolEnv(containerEnv, t, workspacePath)
-	opts := container.ExecCommandOptions{
-		User:        userPtr,
-		Cwd:         workspacePath,
-		Env:         containerEnv,
-		Interactive: true, // Attach stdin/stdout/stderr for interactive session
-	}
 
 	// Run pre-launch commands (e.g., symlink creation) before the tool starts
 	if err := runPreLaunch(result.Manager, t, container.ExecCommandOptions{
@@ -467,11 +469,23 @@ func (a *App) runCLI(result *session.SetupResult, containerEnv map[string]string
 		Env:     containerEnv,
 		Capture: true,
 	}); err != nil {
-		return err
+		return nil, err
 	}
 
-	cmdToRun = withUserPreLaunch(result.Manager, a.cfg.Tool.PreLaunch, cmdToRun)
-	_, err := result.Manager.ExecCommand(cmdToRun, opts)
+	return &directLaunch{
+		cmd: withUserPreLaunch(result.Manager, a.cfg.Tool.PreLaunch, cmdToRun),
+		opts: container.ExecCommandOptions{
+			User:        userPtr,
+			Cwd:         workspacePath,
+			Env:         containerEnv,
+			Interactive: true, // Attach stdin/stdout/stderr for interactive session
+		},
+	}, nil
+}
+
+// runDirect runs the prepared tool in the container interactively.
+func runDirect(result *session.SetupResult, d *directLaunch) error {
+	_, err := result.Manager.ExecCommand(d.cmd, d.opts)
 	return err
 }
 

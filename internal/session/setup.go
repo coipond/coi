@@ -130,6 +130,11 @@ type SetupResult struct {
 	// applied is the container's applied config, read at the end of setup
 	// (nil if unreadable); the context files and the grants report use it.
 	applied *container.AppliedState
+	// worktreeWritableHooks is whether setup left a worktree's common-dir
+	// hooks writable (git.writable_hooks), decided before the protected-path
+	// list is replaced by the effective one (which drops .git/* for a
+	// worktree); the grants report's fallback lists the same protections.
+	worktreeWritableHooks bool
 }
 
 // TmuxSessionName is the tmux session coi runs the tool in.
@@ -489,6 +494,7 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 		opts.Logger(fmt.Sprintf("Warning: git worktree not resolved (%v); its git dirs are skipped by the UID-mapping check and git commands may fail in the container", reuseWtErr))
 	}
 	reuseWritableHooks := !containsGitHooksPath(opts.Security.ProtectedPaths)
+	result.worktreeWritableHooks = reuseWritableHooks
 	secDevices := NewSecurityDeviceReconciler(result.Manager, opts.Logger)
 	// Reconcile the kernel-surface policy while the container is stopped —
 	// the only window where security.nesting and security.syscalls.deny can
@@ -621,6 +627,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 		opts.Logger(fmt.Sprintf("Warning: git worktree not mounted (%v); git commands may fail in the container", wtErr))
 	}
 	worktreeWritableHooks := !containsGitHooksPath(opts.Security.ProtectedPaths)
+	result.worktreeWritableHooks = worktreeWritableHooks
 
 	// Configure UID/GID mapping for the workspace bind mount. Shared with
 	// the run pipeline via ConfigureUIDMapping so both honor Colima/Lima
@@ -963,7 +970,9 @@ func injectSandboxContextFiles(result *SetupResult, opts SetupOptions, preOps ..
 // set it), else the hardening policy config asks for.
 func dockerUnavailable(result *SetupResult, opts SetupOptions) bool {
 	if result != nil && result.applied != nil {
-		return !result.applied.Nesting
+		// Docker needs nesting, and can't run under reduce_kernel_surface's
+		// syscall denies (which win over docker in coi's own policy).
+		return !result.applied.Nesting || result.applied.KernelSurfaceDenied
 	}
 	return !hardeningPolicyFrom(&opts).DockerEnabled()
 }
