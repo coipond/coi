@@ -216,10 +216,7 @@ var containerDeleteCmd = &cobra.Command{
 		mgr := container.NewManager(name)
 
 		// Get container IP BEFORE deleting (needed for nft cleanup)
-		var containerIP string
-		if network.NftAvailable() {
-			containerIP, _ = network.GetContainerIPFast(name)
-		}
+		_, containerIP, _ := stateAndFirewallIP(mgr)
 
 		// Clean up ALL host-side firewall artefacts BEFORE deleting the
 		// container: the IP-keyed rule bundle + sets, the monitoring LOG rules,

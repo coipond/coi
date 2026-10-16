@@ -592,8 +592,14 @@ func (b *Builder) createImage(versionAlias string) (string, error) {
 
 	args = append(args, fmt.Sprintf("description=%s", b.opts.Description))
 
-	// Publish container as image
-	output, err := container.IncusOutputWithStderr(args...)
+	// Publish container as image. Packing and compressing the rootfs takes
+	// minutes with no output of its own, so report that it is still running.
+	var output string
+	err := withProgress(b.opts.Logger, publishProgressInterval, "Still creating image", func() error {
+		var err error
+		output, err = container.IncusOutputWithStderr(args...)
+		return err
+	})
 	if err != nil {
 		if output != "" {
 			b.opts.Logger(fmt.Sprintf("incus publish output: %s", output))
@@ -608,6 +614,34 @@ func (b *Builder) createImage(versionAlias string) (string, error) {
 	}
 
 	return fingerprint, nil
+}
+
+// publishProgressInterval is how often createImage reports a running publish.
+const publishProgressInterval = 15 * time.Second
+
+// withProgress runs fn and logs "<what>... (<elapsed>)" every interval until it
+// returns.
+func withProgress(logf func(string), interval time.Duration, what string, fn func() error) error {
+	start := time.Now()
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				logf(fmt.Sprintf("%s... (%s)", what, time.Since(start).Round(time.Second)))
+			}
+		}
+	}()
+	err := fn()
+	close(done)
+	<-stopped
+	return err
 }
 
 // cleanup removes the build container

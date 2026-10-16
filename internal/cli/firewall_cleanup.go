@@ -4,8 +4,25 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/network"
 )
+
+// stateAndFirewallIP reads a container's state with one incus call and returns
+// it with the IP its firewall rules are keyed by (empty without nft). Only a
+// running container without a reported lease is polled for one: a stopped
+// container never reports an IP, and polling it cost ~3s per removal.
+func stateAndFirewallIP(mgr *container.Manager) (container.InstanceState, string, error) {
+	state, err := mgr.State()
+	if err != nil || !network.NftAvailable() {
+		return state, "", err
+	}
+	if !state.Running || state.IPv4 != "" {
+		return state, state.IPv4, nil
+	}
+	ip, _ := network.GetContainerIPFast(mgr.ContainerName)
+	return state, ip, nil
+}
 
 // cleanupContainerFirewall removes every host-side firewall artefact for one
 // container: the IP-keyed rule bundle + sets, the IP-keyed monitoring LOG

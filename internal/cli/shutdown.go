@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/coipond/coi/internal/container"
-	"github.com/coipond/coi/internal/network"
 	"github.com/spf13/cobra"
 )
 
@@ -73,31 +72,17 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Shutting down container %s (timeout: %ds)...\n", name, shutdownTimeout)
 		mgr := container.NewManager(name)
 
-		// Check if container exists at all before attempting anything
-		exists, err := mgr.Exists()
+		state, containerIP, err := stateAndFirewallIP(mgr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: Failed to check if %s exists: %v\n", name, err)
 			continue
 		}
-		if !exists {
+		if !state.Exists {
 			fmt.Fprintf(os.Stderr, "  Warning: Container %s does not exist\n", name)
 			continue
 		}
 
-		// Get container IP BEFORE stopping/deleting (needed for firewall cleanup)
-		var containerIP string
-		if network.NftAvailable() {
-			containerIP, _ = network.GetContainerIPFast(name)
-		}
-
-		// Check if container is running
-		running, err := mgr.Running()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to check status of %s: %v\n", name, err)
-			continue
-		}
-
-		if running {
+		if state.Running {
 			// First attempt graceful stop
 			fmt.Printf("  Attempting graceful shutdown...\n")
 			gracefulDone := make(chan error, 1)

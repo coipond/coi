@@ -11,6 +11,10 @@
 
 - [Breaking] **`forward_env` and `[ssh] forward_agent = true` are ignored in project config** — both hand host secrets to the container (named host environment variables, the host SSH agent), so a cloned repo's `.coi/config.toml` or project profile can no longer turn them on; coi prints a warning and drops them. Set them in `~/.coi/config.toml`, a profile under `~/.coi/profiles/`, or the file named by `COI_CONFIG`. `forward_agent = false` in project config is still honored.
 
+### Enhancements
+
+- [Enhancement] **Faster container removal, and `coi build` shows it is still publishing** — `coi kill`, `coi shutdown` and `coi container delete` polled a stopped container for an IP for up to 3 seconds before removing it; a stopped container never reports one. They now read the container's existence, state and IP with one `incus list`, and look up the IP only for a running container that does not report one yet. `coi build` printed nothing while `incus publish` packed and compressed the image, often for minutes; it now prints `Still creating image... (<elapsed>)` every 15 seconds.
+
 ### Bug Fixes
 
 - [Bug Fix] **`refresh_interval_minutes = 0` disables allowlist re-resolution** — an explicit `0` was treated as unset and replaced with the 30-minute default, so allowlist domains kept being re-resolved. `0` now turns refresh off; leaving the key out still means 30.

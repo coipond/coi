@@ -109,26 +109,17 @@ func killCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Killing container %s...\n", name)
 		mgr := container.NewManager(name)
 
-		// Check if container exists first
-		exists, err := mgr.Exists()
+		state, containerIP, err := stateAndFirewallIP(mgr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: Failed to check if %s exists: %v\n", name, err)
 			continue
 		}
-		if !exists {
+		if !state.Exists {
 			fmt.Fprintf(os.Stderr, "  Warning: Container %s does not exist\n", name)
 			continue
 		}
 
-		// Get container IP BEFORE stopping/deleting (needed for firewall cleanup)
-		var containerIP string
-		if network.NftAvailable() {
-			containerIP, _ = network.GetContainerIPFast(name)
-		}
-
-		// Stop container (only if running - skip if already stopped)
-		running, err := mgr.Running()
-		if err == nil && running {
+		if state.Running {
 			if err := mgr.Stop(true); err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: Failed to stop %s: %v\n", name, err)
 			}
