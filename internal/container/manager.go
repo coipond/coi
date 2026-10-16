@@ -233,9 +233,9 @@ type AppliedState struct {
 	Disks    map[string]DiskDevice // every disk, the container's own and its profiles'
 	EnvNames []string              // environment.* keys, sorted; names only
 	Nesting  bool                  // security.nesting, which Docker needs
-	// NestingFromProfile is set when nesting comes only from an Incus profile
-	// (the instance doesn't set it itself), so restarting won't change it.
-	NestingFromProfile bool
+	// NestingSet is set when security.nesting is set at all (else Nesting
+	// is Incus's default, off).
+	NestingSet bool
 	// Limits are the resource limits in force, by the key coi sets them
 	// under: the limits.* instance keys, plus the root disk's limits.read,
 	// limits.write, limits.max and size as "root.<key>".
@@ -247,12 +247,11 @@ var LimitKeys = []string{
 	"limits.cpu", "limits.cpu.allowance", "limits.cpu.priority",
 	"limits.memory", "limits.memory.enforce", "limits.memory.swap",
 	"limits.processes",
-	"root.limits.read", "root.limits.write", "root.limits.max", "root.size",
+	"root.limits.read", "root.limits.write", "root.limits.max", "root.limits.disk.priority", "root.size",
 }
 
 // AppliedState reads the instance's expanded config, from one
-// `incus config show --expanded` (shared with the other cached reads), and
-// its own config to tell where nesting comes from.
+// `incus config show --expanded` (shared with the other cached reads).
 func (m *Manager) AppliedState() (AppliedState, error) {
 	ctx := context.Background()
 	c, ok := loadInstanceConfig(ctx, m.ContainerName, true)
@@ -264,12 +263,7 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 		Nesting: isTrue(c.config["security.nesting"]),
 		Limits:  map[string]string{},
 	}
-	if _, set := c.config["security.nesting"]; set {
-		if local, ok := loadInstanceConfig(ctx, m.ContainerName, false); ok {
-			_, own := local.config["security.nesting"]
-			st.NestingFromProfile = !own
-		}
-	}
+	_, st.NestingSet = c.config["security.nesting"]
 	for k := range c.config {
 		if name, ok := strings.CutPrefix(k, "environment."); ok && name != "" {
 			st.EnvNames = append(st.EnvNames, name)
@@ -286,6 +280,19 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 		}
 	}
 	return st, nil
+}
+
+// NestingSetLocally reports whether the instance sets security.nesting in its
+// own config (rather than inheriting it from an Incus profile, which a restart
+// won't change). ok is false when the config can't be read. A separate read,
+// needed only when the applied nesting disagrees with config.
+func (m *Manager) NestingSetLocally() (set, ok bool) {
+	local, ok := loadInstanceConfig(context.Background(), m.ContainerName, false)
+	if !ok {
+		return false, false
+	}
+	_, set = local.config["security.nesting"]
+	return set, true
 }
 
 // ParseDiskDevices extracts the disk devices from `incus config show` YAML.

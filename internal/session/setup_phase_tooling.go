@@ -164,6 +164,10 @@ func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	if op, ok := st.planLeftoverCheck(); ok {
 		ops = append(ops, op)
 	}
+	if !st.skipLaunch {
+		// A container setup just created: the manifest covers every copy.
+		ops = append(ops, markManifestCompleteOp())
+	}
 	if op, ok := recordCopiesOp(st.copiesThisLaunch()); ok {
 		ops = append(ops, op)
 	}

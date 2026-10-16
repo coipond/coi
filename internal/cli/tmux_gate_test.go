@@ -21,22 +21,22 @@ func TestBuildTmuxPrepScript_ExactSessionName(t *testing.T) {
 // A new session's pane holds the tool back until the start signal, and a
 // signal sent before the pane starts waiting is not lost.
 func TestTmuxStartGate(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "sock")
-	marker := filepath.Join(dir, "started")
-	tmux := func(args ...string) error {
-		return exec.Command("tmux", append([]string{"-S", sock}, args...)...).Run()
-	}
-	t.Cleanup(func() { _ = tmux("kill-server") })
+	tmux, sock := testTmux(t)
+	dir := filepath.Dir(sock)
 
-	ch := tmuxStartChannel("coi-gate-test")
-	gated := "timeout 20 tmux -S " + sock + " wait-for " + ch + " 2>/dev/null; touch " + marker
-	if err := tmux("new-session", "-d", "-s", "coi-gate-test", "bash -c '"+gated+"; sleep 30'"); err != nil {
-		t.Fatalf("new-session: %v", err)
+	start := func(name, marker string) string {
+		t.Helper()
+		ch := tmuxStartChannel(name)
+		// The test server has its own socket, so point the pane's tmux at it.
+		cmd := strings.Replace(tmuxGatedCommand(ch, "touch "+marker), "tmux wait-for", "tmux -S "+sock+" wait-for", 1)
+		if err := tmux("new-session", "-d", "-s", name, "bash -c '"+cmd+"; sleep 30'"); err != nil {
+			t.Fatalf("new-session: %v", err)
+		}
+		return ch
 	}
+
+	marker := filepath.Join(dir, "started")
+	ch := start("coi-gate-test", marker)
 	time.Sleep(500 * time.Millisecond)
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the tool started before the signal")
@@ -52,11 +52,56 @@ func TestTmuxStartGate(t *testing.T) {
 	if err := tmux("wait-for", "-S", ch2); err != nil {
 		t.Fatalf("early signal: %v", err)
 	}
-	gated2 := "timeout 20 tmux -S " + sock + " wait-for " + ch2 + " 2>/dev/null; touch " + marker2
-	if err := tmux("new-session", "-d", "-s", "coi-gate-test2", "bash -c '"+gated2+"; sleep 30'"); err != nil {
+	cmd := strings.Replace(tmuxGatedCommand(ch2, "touch "+marker2), "tmux wait-for", "tmux -S "+sock+" wait-for", 1)
+	if err := tmux("new-session", "-d", "-s", "coi-gate-test2", "bash -c '"+cmd+"; sleep 30'"); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
 	waitFor(t, marker2)
+}
+
+// A gate nobody releases (coi was interrupted) must not start the tool when
+// it times out, and the pane says why.
+func TestTmuxStartGate_TimeoutDoesNotStart(t *testing.T) {
+	tmux, sock := testTmux(t)
+	old := tmuxStartGateTimeout
+	tmuxStartGateTimeout = 1
+	t.Cleanup(func() { tmuxStartGateTimeout = old })
+
+	marker := filepath.Join(filepath.Dir(sock), "started")
+	cmd := strings.Replace(tmuxGatedCommand(tmuxStartChannel("coi-t"), "touch "+marker), "tmux wait-for", "tmux -S "+sock+" wait-for", 1)
+	if err := tmux("new-session", "-d", "-s", "coi-t", "bash -c '"+cmd+"; sleep 30'"); err != nil {
+		t.Fatalf("new-session: %v", err)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the tool started after its gate timed out")
+	}
+	out, _ := exec.Command("tmux", "-S", sock, "capture-pane", "-t", "=coi-t:", "-p").Output()
+	if !strings.Contains(string(out), "the tool was not started") {
+		t.Errorf("pane doesn't say why:\n%s", out)
+	}
+}
+
+// Each launch gets its own channel, so a late signal for one gate can't open
+// another's.
+func TestTmuxStartChannel_Unique(t *testing.T) {
+	a, b := tmuxStartChannel("coi-x"), tmuxStartChannel("coi-x")
+	if a == b || !strings.HasPrefix(a, "coi-x-start-") {
+		t.Errorf("channels %q and %q", a, b)
+	}
+}
+
+func testTmux(t *testing.T) (func(args ...string) error, string) {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	sock := filepath.Join(t.TempDir(), "sock")
+	tmux := func(args ...string) error {
+		return exec.Command("tmux", append([]string{"-S", sock}, args...)...).Run()
+	}
+	t.Cleanup(func() { _ = tmux("kill-server") })
+	return tmux, sock
 }
 
 func waitFor(t *testing.T, path string) {

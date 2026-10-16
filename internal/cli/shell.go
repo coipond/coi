@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -531,20 +533,38 @@ type tmuxLaunch struct {
 	userPtr                        *int
 	env                            map[string]string
 	tool                           tool.Tool
+	// startChannel is the `tmux wait-for` channel that releases a new
+	// session's tool (see tmuxStartChannel).
+	startChannel string
 	// existing is set when the session was already there, so the tool in it
 	// keeps running with the env it started with.
 	existing bool
 }
 
-// tmuxStartGateTimeout bounds how long a new session's pane holds the tool
-// back waiting for enterTmux's start signal, so a coi that dies in between
-// doesn't leave a pane that never starts the tool.
-const tmuxStartGateTimeout = 120
+// tmuxStartGateTimeout bounds how long a new session's pane waits for
+// enterTmux's start signal. If it passes (coi was interrupted or died before
+// releasing it) the tool is not started: an agent nobody launched to the end
+// must not start on its own in a background pane.
+var tmuxStartGateTimeout = 120 // seconds; a var only so tests can shorten it
 
-// tmuxStartChannel is the `tmux wait-for` channel that releases a new
-// session's tool. tmux keeps a signal sent before the pane waits for the next
-// waiter, so the order of the two doesn't matter.
-func tmuxStartChannel(sessionName string) string { return sessionName + "-start" }
+// tmuxStartChannel returns a fresh `tmux wait-for` channel that releases a
+// new session's tool. tmux keeps a signal sent before the pane waits for the
+// next waiter, so the order of the two doesn't matter; the channel is unique
+// per launch, so a signal sent after an earlier gate gave up can't open a
+// later session's gate early.
+func tmuxStartChannel(sessionName string) string {
+	nonce := make([]byte, 6)
+	_, _ = rand.Read(nonce)
+	return sessionName + "-start-" + hex.EncodeToString(nonce)
+}
+
+// tmuxGatedCommand wraps cliCmd so the pane starts it only once ch is
+// signalled, and says why it didn't if the wait times out. No quotes or
+// parentheses: it goes inside buildTmuxNewSessionCmd's single-quoted bash -c.
+func tmuxGatedCommand(ch, cliCmd string) string {
+	return fmt.Sprintf("if timeout %d tmux wait-for %s 2>/dev/null; then %s; else echo coi: the launch did not finish, so the tool was not started. Run coi shell again; fi",
+		tmuxStartGateTimeout, ch, cliCmd)
+}
 
 // prepareTmux readies the tool's tmux session for background/monitoring
 // support: it reuses the session if it exists, else creates it with the tool
@@ -554,6 +574,7 @@ func tmuxStartChannel(sessionName string) string { return sessionName + "-start"
 func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) (*tmuxLaunch, error) {
 	l := &tmuxLaunch{
 		session:       session.TmuxSessionName(result.ContainerName),
+		startChannel:  tmuxStartChannel(session.TmuxSessionName(result.ContainerName)),
 		workspacePath: session.ContainerWorkspace(result),
 		userPtr:       userPtr,
 		env:           containerEnv,
@@ -578,8 +599,7 @@ func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]s
 	// interact: exit (leaves container running), Ctrl+b d (detach), or
 	// sudo shutdown 0 (stop). trap : INT keeps bash alive on Ctrl+C while
 	// Ctrl+C still works in the tool; exec bash avoids nested shells.
-	gated := fmt.Sprintf("timeout %d tmux wait-for %s 2>/dev/null; %s", tmuxStartGateTimeout, tmuxStartChannel(l.session), l.cliCmd)
-	createCmd := buildTmuxNewSessionCmd(l.session, l.workspacePath, gated, containerEnv)
+	createCmd := buildTmuxNewSessionCmd(l.session, l.workspacePath, tmuxGatedCommand(l.startChannel, l.cliCmd), containerEnv)
 	prepOut, prepErr := result.Manager.ExecCommand(
 		buildTmuxPrepScript(l.session, createCmd, buildTmuxSetEnvironmentCmds(l.session, containerEnv)),
 		container.ExecCommandOptions{Capture: true, User: userPtr, Cwd: l.workspacePath},
@@ -608,16 +628,21 @@ func (a *App) enterTmux(result *session.SetupResult, l *tmuxLaunch, detached boo
 	}); err != nil {
 		if !l.existing {
 			// Don't let the held-back tool start after its gate times out.
-			_, _ = result.Manager.ExecCommand("tmux kill-session -t "+shellQuote("="+l.session), container.ExecCommandOptions{Capture: true, User: l.userPtr})
+			_, _ = result.Manager.ExecCommand("tmux kill-session -t "+shellQuote(session.TmuxSessionTarget(result.ContainerName)), container.ExecCommandOptions{Capture: true, User: l.userPtr})
 		}
 		return err
 	}
-	release := "tmux wait-for -S " + shellQuote(tmuxStartChannel(l.session))
+	release := func() error {
+		if _, err := result.Manager.ExecCommand("tmux wait-for -S "+shellQuote(l.startChannel), container.ExecCommandOptions{Capture: true, User: l.userPtr}); err != nil {
+			return fmt.Errorf("failed to start the tool in tmux session %s: %w", l.session, err)
+		}
+		return nil
+	}
 
 	switch {
 	case l.existing && detached:
 		// Send command to existing session
-		sendCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", l.session, l.cliCmd)
+		sendCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", shellQuote(session.TmuxPaneTarget(result.ContainerName)), l.cliCmd)
 		if _, err := result.Manager.ExecCommand(sendCmd, container.ExecCommandOptions{
 			Capture: true,
 			User:    l.userPtr,
@@ -629,22 +654,27 @@ func (a *App) enterTmux(result *session.SetupResult, l *tmuxLaunch, detached boo
 		return nil
 	case l.existing:
 		fmt.Fprintf(os.Stderr, "Attaching to existing tmux session: %s\n", l.session)
-		_, err := result.Manager.ExecCommand(fmt.Sprintf("tmux attach -t %s", l.session), container.ExecCommandOptions{
+		_, err := result.Manager.ExecCommand("tmux attach -t "+shellQuote(session.TmuxSessionTarget(result.ContainerName)), container.ExecCommandOptions{
 			User:        l.userPtr,
 			Cwd:         l.workspacePath,
 			Interactive: true,
 		})
 		return err
 	case detached:
-		if _, err := result.Manager.ExecCommand(release, container.ExecCommandOptions{Capture: true, User: l.userPtr}); err != nil {
-			return fmt.Errorf("failed to start the tool in tmux session %s: %w", l.session, err)
+		if err := release(); err != nil {
+			return err
 		}
 		fmt.Fprintf(os.Stderr, "Created background tmux session: %s\n", l.session)
 		fmt.Fprintf(os.Stderr, "Use 'coi tmux capture %s' to view output\n", result.ContainerName)
 		fmt.Fprintf(os.Stderr, "Use 'coi tmux send %s \"<command>\"' to send commands\n", result.ContainerName)
 		return nil
 	default:
-		_, err := result.Manager.ExecCommand(release+"; tmux attach -t "+shellQuote(l.session), container.ExecCommandOptions{
+		// Release first, on its own, so a failure is reported instead of
+		// attaching to a pane that would sit waiting until its gate gives up.
+		if err := release(); err != nil {
+			return err
+		}
+		_, err := result.Manager.ExecCommand("tmux attach -t "+shellQuote(session.TmuxSessionTarget(result.ContainerName)), container.ExecCommandOptions{
 			User:        l.userPtr,
 			Cwd:         l.workspacePath,
 			Interactive: true,

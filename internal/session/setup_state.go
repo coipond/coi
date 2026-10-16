@@ -36,10 +36,9 @@ type setupState struct {
 	// restoredFiles are the tool's login/config files put back from a saved
 	// session on resume (host path: the file in the sessions dir).
 	restoredFiles []CredentialEntry
-	// appliedCh delivers the background read of the container's applied
-	// config (startAppliedRead); appliedDone is set once it was collected.
-	appliedCh   chan *container.AppliedState
-	appliedDone bool
+	// appliedRead returns the container's applied config, read once: in the
+	// background from startAppliedRead, else on first use.
+	appliedRead func() *container.AppliedState
 
 	// pendingGuestOps are small in-container steps from earlier phases that
 	// ride along with phaseInjectContext's exec instead of paying their own

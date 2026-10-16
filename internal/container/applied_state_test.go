@@ -14,7 +14,7 @@ func TestAppliedState(t *testing.T) {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 case "$*" in
-  *"config show --expanded c2"*) printf 'config:\n  security.nesting: "false"\n  limits.cpu: "2"\n  limits.cpu.allowance: 50%%\n  limits.memory: 4GiB\n  environment.GIT_AUTHOR_NAME: Jane\n  environment.ANTHROPIC_MODEL: opus\n  user.coi.git_env_keys: GIT_AUTHOR_NAME\ndevices:\n  root:\n    path: /\n    pool: default\n    limits.read: 10MB\n    type: disk\n  cache:\n    path: /cache\n    pool: default\n    source: cache\n    type: disk\n  eth0:\n    type: nic\n' ;;
+  *"config show --expanded c2"*) printf 'config:\n  security.nesting: "false"\n  limits.cpu: "2"\n  limits.cpu.allowance: 50%%\n  limits.memory: 4GiB\n  environment.GIT_AUTHOR_NAME: Jane\n  environment.ANTHROPIC_MODEL: opus\n  user.coi.git_env_keys: GIT_AUTHOR_NAME\ndevices:\n  root:\n    path: /\n    pool: default\n    limits.read: 10MB\n    limits.disk.priority: "5"\n    type: disk\n  cache:\n    path: /cache\n    pool: default\n    source: cache\n    type: disk\n  eth0:\n    type: nic\n' ;;
   *"config show --expanded c3"*) printf 'config:\n  security.nesting: "true"\ndevices: {}\n' ;;
   *"config show c3"*) printf 'config:\n  user.x: "y"\ndevices: {}\n' ;;
   *"config show --expanded c4"*) printf 'config:\n  security.nesting: "true"\ndevices: {}\n' ;;
@@ -36,7 +36,7 @@ esac
 	if st.Nesting {
 		t.Error("nesting is off")
 	}
-	wantLimits := map[string]string{"limits.cpu": "2", "limits.cpu.allowance": "50%", "limits.memory": "4GiB", "root.limits.read": "10MB"}
+	wantLimits := map[string]string{"limits.cpu": "2", "limits.cpu.allowance": "50%", "limits.memory": "4GiB", "root.limits.read": "10MB", "root.limits.disk.priority": "5"}
 	if !reflect.DeepEqual(st.Limits, wantLimits) {
 		t.Errorf("limits = %v, want %v", st.Limits, wantLimits)
 	}
@@ -51,17 +51,16 @@ esac
 		t.Errorf("disks = %+v, want %+v", st.Disks, want)
 	}
 
-	if st.NestingFromProfile {
-		t.Error("nesting off is not from a profile")
-	}
-
 	// Nesting set only in the expanded config comes from a profile; set on
-	// the instance itself, it doesn't.
-	if st, err := (&Manager{ContainerName: "c3"}).AppliedState(); err != nil || !st.Nesting || !st.NestingFromProfile {
-		t.Errorf("profile nesting: %+v, %v", st, err)
+	// the instance itself, it doesn't; an unreadable config is unknown.
+	if set, ok := (&Manager{ContainerName: "c3"}).NestingSetLocally(); set || !ok {
+		t.Errorf("profile nesting: set %v ok %v", set, ok)
 	}
-	if st, err := (&Manager{ContainerName: "c4"}).AppliedState(); err != nil || !st.Nesting || st.NestingFromProfile {
-		t.Errorf("own nesting: %+v, %v", st, err)
+	if set, ok := (&Manager{ContainerName: "c4"}).NestingSetLocally(); !set || !ok {
+		t.Errorf("own nesting: set %v ok %v", set, ok)
+	}
+	if _, ok := (&Manager{ContainerName: "missing"}).NestingSetLocally(); ok {
+		t.Error("an unreadable config should not be ok")
 	}
 
 	if _, err := (&Manager{ContainerName: "missing"}).AppliedState(); err == nil {

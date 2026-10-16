@@ -89,8 +89,7 @@ func tmuxSendCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Send command to tmux session
-	tmuxSession := fmt.Sprintf("coi-%s", containerName)
-	tmuxCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", tmuxSession, command)
+	tmuxCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", shellQuote(session.TmuxPaneTarget(containerName)), command)
 
 	opts := container.ExecCommandOptions{
 		Interactive: false,
@@ -103,7 +102,7 @@ func tmuxSendCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to send command to tmux session: %w", err)
 	}
 
-	fmt.Printf("Sent command to session %s\n", tmuxSession)
+	fmt.Printf("Sent command to session %s\n", session.TmuxSessionName(containerName))
 	return nil
 }
 
@@ -127,8 +126,7 @@ func tmuxCaptureCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Capture tmux pane output
-	tmuxSession := fmt.Sprintf("coi-%s", containerName)
-	tmuxCmd := fmt.Sprintf("tmux capture-pane -t %s -p", tmuxSession)
+	tmuxCmd := fmt.Sprintf("tmux capture-pane -t %s -p", shellQuote(session.TmuxPaneTarget(containerName)))
 
 	opts := container.ExecCommandOptions{
 		Interactive: false,
@@ -184,8 +182,7 @@ func tmuxListCommand(cmd *cobra.Command, args []string) error {
 		}
 
 		// Check if tmux session exists
-		tmuxSession := fmt.Sprintf("coi-%s", c)
-		checkCmd := fmt.Sprintf("tmux has-session -t %s 2>/dev/null", tmuxSession)
+		checkCmd := fmt.Sprintf("tmux has-session -t %s 2>/dev/null", shellQuote(session.TmuxSessionTarget(c)))
 
 		opts := container.ExecCommandOptions{
 			Interactive: false,
@@ -195,7 +192,7 @@ func tmuxListCommand(cmd *cobra.Command, args []string) error {
 
 		_, err = mgr.ExecCommand(checkCmd, opts)
 		if err == nil {
-			sessions = append(sessions, tmuxEntry{Container: c, Session: tmuxSession})
+			sessions = append(sessions, tmuxEntry{Container: c, Session: session.TmuxSessionName(c)})
 		}
 	}
 

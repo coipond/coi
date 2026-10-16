@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
@@ -48,9 +49,10 @@ type Grants struct {
 	// DockerConfigDiffers is set when the container's nesting disagrees with
 	// what the current config asks for: a reused container keeps what it was
 	// created with until restarted, and an Incus profile can set nesting
-	// itself (DockerFromProfile), which a restart doesn't change.
+	// itself, which a restart doesn't change. DockerSource says which (see
+	// dockerSourceInstance and co.).
 	DockerConfigDiffers bool
-	DockerFromProfile   bool
+	DockerSource        string
 	// Limits are the resource limits the container runs with ("cpu 2",
 	// "memory 4GiB", "disk read 10MB", ...); MaxDuration is per session.
 	Limits      []string
@@ -169,20 +171,48 @@ func (st *setupState) startAppliedRead() {
 	ch := make(chan *container.AppliedState, 1)
 	mgr := st.result.Manager
 	go func() { ch <- readAppliedState(mgr) }()
-	st.appliedCh = ch
+	st.appliedRead = sync.OnceValue(func() *container.AppliedState { return <-ch })
 }
 
 // awaitApplied returns the applied config, reading it now if no background
 // read was started.
 func (st *setupState) awaitApplied() *container.AppliedState {
-	if st.appliedCh != nil {
-		st.result.applied, st.appliedCh = <-st.appliedCh, nil
-		st.appliedDone = true
+	if st.appliedRead == nil {
+		mgr := st.result.Manager
+		st.appliedRead = sync.OnceValue(func() *container.AppliedState { return readAppliedState(mgr) })
 	}
-	if !st.appliedDone {
-		st.result.applied, st.appliedDone = readAppliedState(st.result.Manager), true
-	}
+	st.result.applied = st.appliedRead()
 	return st.result.applied
+}
+
+// nestingSourceReader is implemented by *container.Manager.
+type nestingSourceReader interface {
+	NestingSetLocally() (set, ok bool)
+}
+
+// Where a nesting setting that disagrees with config comes from, which
+// decides what to tell the user.
+const (
+	dockerSourceInstance = "instance" // the container's own (or default) setting: a restart applies config
+	dockerSourceProfile  = "profile"  // an Incus profile pins it: a restart won't change it
+	dockerSourceUnknown  = ""         // couldn't tell
+)
+
+// dockerSource works out where the container's nesting comes from. Only
+// called when it disagrees with config, so the extra read is rare.
+func dockerSource(mgr container.ContainerManager, applied *container.AppliedState) string {
+	if !applied.NestingSet {
+		return dockerSourceInstance // unset: Incus's default, which the restart reconcile overrides
+	}
+	if r, ok := mgr.(nestingSourceReader); ok {
+		if set, ok := r.NestingSetLocally(); ok {
+			if set {
+				return dockerSourceInstance
+			}
+			return dockerSourceProfile
+		}
+	}
+	return dockerSourceUnknown
 }
 
 // buildGrants collects the session's effective grants once setup has run.
@@ -222,7 +252,9 @@ func buildGrants(st *setupState) *Grants {
 		// DockerUnavailable stays info's, which already follows the applied
 		// nesting (dockerUnavailable), so the context file can't disagree.
 		g.DockerConfigDiffers = g.DockerUnavailable != !hardeningPolicyFrom(&opts).DockerEnabled()
-		g.DockerFromProfile = applied.NestingFromProfile
+		if g.DockerConfigDiffers {
+			g.DockerSource = dockerSource(st.result.Manager, applied)
+		}
 		g.Env.Container = applied.EnvNames
 		// Limits are applied only when a container is created, so a reused
 		// one runs with its own, whatever config says now. max_duration is
@@ -255,17 +287,18 @@ func buildGrants(st *setupState) *Grants {
 
 // limitNames labels the container.LimitKeys for the report.
 var limitNames = map[string]string{
-	"limits.cpu":            "cpu",
-	"limits.cpu.allowance":  "cpu allowance",
-	"limits.cpu.priority":   "cpu priority",
-	"limits.memory":         "memory",
-	"limits.memory.enforce": "memory enforce",
-	"limits.memory.swap":    "swap",
-	"limits.processes":      "processes",
-	"root.limits.read":      "disk read",
-	"root.limits.write":     "disk write",
-	"root.limits.max":       "disk I/O",
-	"root.size":             "disk size",
+	"limits.cpu":                "cpu",
+	"limits.cpu.allowance":      "cpu allowance",
+	"limits.cpu.priority":       "cpu priority",
+	"limits.memory":             "memory",
+	"limits.memory.enforce":     "memory enforce",
+	"limits.memory.swap":        "swap",
+	"limits.processes":          "processes",
+	"root.limits.read":          "disk read",
+	"root.limits.write":         "disk write",
+	"root.limits.max":           "disk I/O",
+	"root.limits.disk.priority": "disk priority",
+	"root.size":                 "disk size",
 }
 
 // limitDefaults are values coi writes along with any limit (they are config's
@@ -412,7 +445,8 @@ func copyRecords(kind string, entries []CredentialEntry) []copyRecord {
 }
 
 // copyManifestPath is the file recording each host file coi copied into the
-// container, one line per container path:
+// container (after an optional copyManifestComplete line), one line per
+// container path:
 //
 //	<sha256> <kind> <container path>\t<host path>
 //
@@ -510,13 +544,29 @@ func (st *setupState) unrecordedCandidates() []copyRecord {
 	return out
 }
 
+// copyManifestComplete is the manifest line marking a manifest that covers
+// every copy since the container was created (coi created it with recording
+// on). Without it, the container may hold copies older coi versions made
+// unrecorded.
+const copyManifestComplete = "#complete"
+
+// markManifestCompleteOp marks the manifest complete; setup runs it in a
+// container it just created, before recording anything.
+func markManifestCompleteOp() guestOp {
+	m := shellEscape(copyManifestPath)
+	return guestCmd(fmt.Sprintf(`{ mkdir -p %s && { grep -qx '%s' %s 2>/dev/null || { { echo '%s'; cat %s 2>/dev/null; } > %s.new && mv -f %s.new %s; }; }; } 2>/dev/null || true`,
+		shellEscape(filepath.Dir(copyManifestPath)), copyManifestComplete, m, copyManifestComplete, m, m, m, m))
+}
+
 // leftoverCheckOp scans the copy manifest for files copied by an earlier
 // session (skipping those in exclude, copied this launch) that are still in
 // the container, and prints a marker for each, telling unchanged from
-// changed-since. Without a manifest it prints, for each candidate that exists
-// and isn't excluded, an origin-unknown marker instead. It ends with a final
-// marker, so the output tells "nothing found" apart from "never checked", and
-// always succeeds, so it can't fail the batch it rides in.
+// changed-since. Unless the manifest is marked complete (missing, or started
+// on a container older coi versions copied into unrecorded), it also prints,
+// for each candidate that exists and is neither excluded nor recorded, an
+// origin-unknown marker. It ends with a final marker, so the output tells
+// "nothing found" apart from "never checked", and always succeeds, so it
+// can't fail the batch it rides in.
 func leftoverCheckOp(exclude []string, candidates []copyRecord) guestOp {
 	m := shellEscape(copyManifestPath)
 	var b strings.Builder
@@ -524,14 +574,17 @@ func leftoverCheckOp(exclude []string, candidates []copyRecord) guestOp {
 	for _, p := range exclude {
 		b.WriteString(" " + shellEscape(p))
 	}
-	b.WriteString("); skip() { printf '%s\\n' \"$X\" | grep -qxF -- \"$1\"; }; ")
-	fmt.Fprintf(&b, `if [ -f %s ]; then while IFS='	' read -r a hp; do h=${a%%%% *}; r=${a#* }; k=${r%%%% *}; c=${r#* }; `+
-		`skip "$c" && continue; [ -e "$c" ] || continue; `+
+	b.WriteString("); R=; has() { printf '%s\\n' \"$2\" | grep -qxF -- \"$1\"; }; ")
+	fmt.Fprintf(&b, `if [ -f %s ]; then while IFS='	' read -r a hp; do case $a in '#'*) continue ;; esac; `+
+		`h=${a%%%% *}; r=${a#* }; k=${r%%%% *}; c=${r#* }; R="$R$c
+"; `+
+		`has "$c" "$X" && continue; [ -e "$c" ] || continue; `+
 		`if [ "$(sha256sum < "$c" 2>/dev/null | cut -c1-64)" = "$h" ]; then mk=%s; else mk=%s; fi; `+
-		`printf '%%s%%s\t%%s\t%%s\n' "$mk" "$k" "$c" "$hp"; done < %s; else :`,
+		`printf '%%s%%s\t%%s\t%%s\n' "$mk" "$k" "$c" "$hp"; done < %s; fi; `,
 		m, leftoverSameMarker, leftoverChangedMarker, m)
+	fmt.Fprintf(&b, `if ! grep -qx '%s' %s 2>/dev/null; then :`, copyManifestComplete, m)
 	for _, c := range candidates {
-		fmt.Fprintf(&b, `; c=%s; skip "$c" || { [ -e "$c" ] && printf '%s%s\t%%s\t%%s\n' "$c" %s; }`,
+		fmt.Fprintf(&b, `; c=%s; has "$c" "$X" || has "$c" "$R" || { [ -e "$c" ] && printf '%s%s\t%%s\t%%s\n' "$c" %s; }`,
 			shellEscape(c.ContainerPath), leftoverUnknownMarker, c.kind, shellEscape(c.HostPath))
 	}
 	b.WriteString("; fi; echo " + leftoverCheckedMarker)
@@ -550,17 +603,13 @@ func (lc *leftoverCheck) parse(out string) {
 			continue
 		}
 		var g CredentialGrant
-		var rest string
-		var ok bool
-		switch {
-		case strings.HasPrefix(line, leftoverSameMarker):
-			rest, ok = strings.CutPrefix(line, leftoverSameMarker)
-		case strings.HasPrefix(line, leftoverChangedMarker):
-			rest, ok = strings.CutPrefix(line, leftoverChangedMarker)
-			g.Changed = true
-		case strings.HasPrefix(line, leftoverUnknownMarker):
-			rest, ok = strings.CutPrefix(line, leftoverUnknownMarker)
-			g.Unverified = true
+		rest, ok := strings.CutPrefix(line, leftoverSameMarker)
+		if !ok {
+			if rest, ok = strings.CutPrefix(line, leftoverChangedMarker); ok {
+				g.Changed = true
+			} else if rest, ok = strings.CutPrefix(line, leftoverUnknownMarker); ok {
+				g.Unverified = true
+			}
 		}
 		f := strings.SplitN(rest, "\t", 3)
 		if !ok || len(f) != 3 {
@@ -687,15 +736,21 @@ func (g *Grants) Render() string {
 		docker = "unavailable"
 	}
 	if g.DockerConfigDiffers {
-		switch {
-		case g.DockerFromProfile && g.DockerUnavailable:
-			docker += " (an Incus profile disables nesting; config enables Docker)"
-		case g.DockerFromProfile:
-			docker += " (an Incus profile enables nesting; config disables Docker)"
-		case g.DockerUnavailable:
-			docker += " (config enables it; restart the container to apply)"
+		verb := "disables"
+		if g.DockerUnavailable {
+			verb = "enables"
+		}
+		switch g.DockerSource {
+		case dockerSourceProfile:
+			if g.DockerUnavailable {
+				docker += " (an Incus profile disables nesting; config enables Docker)"
+			} else {
+				docker += " (an Incus profile enables nesting; config disables Docker)"
+			}
+		case dockerSourceInstance:
+			docker += " (config " + verb + " it; restart the container to apply)"
 		default:
-			docker += " (config disables it; restart the container to apply)"
+			docker += " (config " + verb + " it)"
 		}
 	}
 	add("Agent", fmt.Sprintf("runs as %s, Docker %s", user, docker))

@@ -17,21 +17,26 @@ import (
 // names, nesting) comes from fields, with a file push that can fail per path.
 type fakeGrantsManager struct {
 	container.ContainerManager
-	disks       map[string]container.DiskDevice
-	disksErr    error
-	envNames    []string
-	nesting     bool
-	fromProfile bool
-	limits      map[string]string
-	pushFail    map[string]bool // host paths whose push fails
-	mkdirFail   bool
+	disks         map[string]container.DiskDevice
+	disksErr      error
+	envNames      []string
+	nesting       bool
+	fromProfile   bool
+	sourceUnknown bool // the instance's own config can't be read
+	limits        map[string]string
+	pushFail      map[string]bool // host paths whose push fails
+	mkdirFail     bool
 }
 
 func (f *fakeGrantsManager) AppliedState() (container.AppliedState, error) {
 	return container.AppliedState{
 		Disks: f.disks, EnvNames: f.envNames, Nesting: f.nesting,
-		NestingFromProfile: f.fromProfile, Limits: f.limits,
+		NestingSet: f.nesting || f.fromProfile || f.sourceUnknown, Limits: f.limits,
 	}, f.disksErr
+}
+
+func (f *fakeGrantsManager) NestingSetLocally() (set, ok bool) {
+	return !f.fromProfile, !f.sourceUnknown
 }
 
 func (f *fakeGrantsManager) ExecArgs(args []string, _ container.ExecCommandOptions) error {
@@ -124,7 +129,7 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 	if g.DevicesUnread {
 		t.Fatal("devices were readable")
 	}
-	if !g.DockerUnavailable || !g.DockerConfigDiffers || g.DockerFromProfile {
+	if !g.DockerUnavailable || !g.DockerConfigDiffers || g.DockerSource != dockerSourceInstance {
 		t.Errorf("Docker should follow the container's nesting and flag the config: %+v", g)
 	}
 	if strings.Join(g.Env.Container, ",") != "GIT_AUTHOR_NAME" {
@@ -401,8 +406,9 @@ func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 	if !ok {
 		t.Fatal("no record op for copied files")
 	}
-	run(record, record) // a second launch must not duplicate the entries
-	if b, _ := os.ReadFile(copyManifestPath); strings.Count(string(b), "\n") != 3 || strings.Contains(string(b), gone) {
+	// A container setup created: marked complete, then recorded.
+	run(markManifestCompleteOp(), record, markManifestCompleteOp(), record) // re-runs must not duplicate
+	if b, _ := os.ReadFile(copyManifestPath); strings.Count(string(b), "\n") != 4 || !strings.HasPrefix(string(b), copyManifestComplete+"\n") || strings.Contains(string(b), gone) {
 		t.Errorf("manifest = %q", b)
 	}
 	file(".credentials.json", "new token") // the tool refreshed it
@@ -414,6 +420,22 @@ func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 	wantTools := []CredentialGrant{{HostPath: "/host/.credentials.json", ContainerPath: refreshed, Earlier: true, Changed: true}}
 	if !lc.checked || len(lc.creds) != 1 || lc.creds[0] != wantCreds[0] || len(lc.tools) != 1 || lc.tools[0] != wantTools[0] {
 		t.Errorf("parsed %+v from %q", lc, out)
+	}
+
+	// A manifest started on an older container (no complete mark): recorded
+	// copies are vouched for, and unrecorded candidates that exist are still
+	// listed as origin unknown, once.
+	if err := os.WriteFile(copyManifestPath, []byte(strings.Join(strings.Split(mustRead(t, copyManifestPath), "\n")[1:], "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc = leftoverCheck{planned: true}
+	lc.parse(run(leftoverCheckOp([]string{thisLaunch}, []copyRecord{
+		rec(copyKindCredential, fromImage, "/host/gitconfig"),
+		rec(copyKindCredential, copied, "/host/it's copied"), // recorded: not unknown
+	})))
+	if !lc.checked || len(lc.creds) != 2 || lc.creds[0].Unverified || lc.creds[0].ContainerPath != copied ||
+		!lc.creds[1].Unverified || lc.creds[1].ContainerPath != fromImage {
+		t.Errorf("incomplete manifest parsed %+v", lc)
 	}
 
 	// No manifest (a container from before coi recorded copies): existing
@@ -430,6 +452,15 @@ func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 	if !lc.checked || len(lc.tools) != 0 || len(lc.creds) != 1 || !lc.creds[0].Unverified || lc.creds[0].ContainerPath != fromImage {
 		t.Errorf("without a manifest parsed %+v", lc)
 	}
+}
+
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 // The record op is best-effort: an unwritable manifest must not fail the
@@ -714,7 +745,7 @@ func TestClassifyDisks_WritablePrefixIsAMount(t *testing.T) {
 // Limits and Docker follow the container, which keeps what it was created
 // with. A Docker setting config would change on restart is flagged as such;
 // one an Incus profile pins is flagged as the profile's, since a restart
-// wouldn't change it.
+// wouldn't change it; one whose source can't be told gets no advice.
 func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
 	mgr := &fakeGrantsManager{
 		disks:   map[string]container.DiskDevice{"workspace": {Source: "/p", Path: "/workspace"}},
@@ -755,7 +786,11 @@ func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
 	if out := fresh(mgr, SetupOptions{}); !strings.Contains(out, "Docker available (an Incus profile enables nesting; config disables Docker)\n") {
 		t.Errorf("profile nesting not attributed:\n%s", out)
 	}
-	mgr.nesting, mgr.fromProfile = false, false
+	mgr.fromProfile, mgr.sourceUnknown = false, true
+	if out := fresh(mgr, SetupOptions{}); !strings.Contains(out, "Docker available (config disables it)\n") {
+		t.Errorf("unknown source should carry no restart advice:\n%s", out)
+	}
+	mgr.nesting, mgr.sourceUnknown = false, false
 	if out := fresh(mgr, SetupOptions{Security: SecurityOptions{Docker: true}}); !strings.Contains(out, "Docker unavailable (config enables it; restart the container to apply)\n") {
 		t.Errorf("enable mismatch not flagged:\n%s", out)
 	}

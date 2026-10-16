@@ -135,6 +135,15 @@ type SetupResult struct {
 // TmuxSessionName is the tmux session coi runs the tool in.
 func TmuxSessionName(containerName string) string { return "coi-" + containerName }
 
+// TmuxSessionTarget is the tool's tmux session as an exact-match target
+// (`-t` for session commands): a bare name also matches any session it
+// prefixes, such as a user's "coi-<container>-dev".
+func TmuxSessionTarget(containerName string) string { return "=" + TmuxSessionName(containerName) }
+
+// TmuxPaneTarget is the exact-match target of the session's active pane (`-t`
+// for pane commands like send-keys and capture-pane).
+func TmuxPaneTarget(containerName string) string { return TmuxSessionTarget(containerName) + ":" }
+
 // Setup initializes a container for a Claude session.
 //
 // It builds the container up in a fixed sequence of small phases (see
