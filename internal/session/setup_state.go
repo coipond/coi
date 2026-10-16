@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 
+	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -32,6 +33,10 @@ type setupState struct {
 	// leftovers are the files a reused or resumed container may still hold
 	// from an earlier session, checked inside phaseInjectContext's exec.
 	leftovers leftoverCheck
+	// appliedCh delivers the background read of the container's applied
+	// config (startAppliedRead); appliedDone is set once it was collected.
+	appliedCh   chan *container.AppliedState
+	appliedDone bool
 
 	// pendingGuestOps are small in-container steps from earlier phases that
 	// ride along with phaseInjectContext's exec instead of paying their own

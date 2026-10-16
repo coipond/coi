@@ -25,11 +25,14 @@ Verifies that the report:
 10. on resume, lists the login files re-copied from the host as copied this
     launch, not as left over;
 11. names the tool's own env from [tool] config;
-12. when the tool is already running in tmux, says the running tool keeps its
-    env and lists the names as reaching new panes only;
+12. when the tool is already running in tmux, a background launch says the
+    tool starts in the existing pane (which keeps its env) and lists the names
+    as reaching new panes only;
 13. on reuse, lists a [[credentials]] file coi copied earlier as already there,
-    but not a file the image ships at another entry's destination;
-14. on reuse, shows the limits the container runs with, not changed config.
+    one changed in the container since as such, but not a file the image
+    ships at another entry's destination;
+14. on reuse, shows the limits the container runs with (CPU count and
+    allowance), not changed config.
 """
 
 import json
@@ -547,9 +550,10 @@ def test_report_running_tool_keeps_its_env(coi_binary, cleanup_containers, works
             coi_binary, workspace_dir, dict(env), args=("--container", container_name)
         ).stderr
     )
-    assert second["Env"][0] == ("the running tool keeps the env it started with; new panes get:"), (
-        second
-    )
+    # A background launch types the tool command into the existing pane.
+    assert second["Env"][0] == (
+        "the tool starts in the existing pane, which keeps its env; new panes get:"
+    ), second
     assert "COI_GRANTS_MINTED (env_commands)" in second["Env"], second
 
 
@@ -561,11 +565,16 @@ def test_report_reused_container_leftover_credentials(
     host file is missing) is not, even though the image ships a file there."""
     present = tmp_path / "present-cred"
     present.write_text("cred")
+    edited = tmp_path / "edited-cred"
+    edited.write_text("token")
     missing = tmp_path / "missing-cred"
     env = write_trusted_coi_config(
         "[[credentials]]\n"
         f'host = "{present}"\n'
         'container = "/home/code/.present-cred"\n'
+        "[[credentials]]\n"
+        f'host = "{edited}"\n'
+        'container = "/home/code/.edited-cred"\n'
         "[[credentials]]\n"
         f'host = "{missing}"\n'
         'container = "/home/code/.bashrc"\n'
@@ -574,7 +583,28 @@ def test_report_reused_container_leftover_credentials(
     container_name = calculate_container_name(workspace_dir, 1)
 
     first = _report(_run_shell(coi_binary, workspace_dir, dict(env)).stderr)
-    assert first["Credentials"] == [f"{present} -> /home/code/.present-cred"], first
+    assert first["Credentials"] == [
+        f"{present} -> /home/code/.present-cred",
+        f"{edited} -> /home/code/.edited-cred",
+    ], first
+    # Something in the container rewrites one copy (like a token refresh).
+    edit = subprocess.run(
+        [
+            coi_binary,
+            "container",
+            "exec",
+            container_name,
+            "--",
+            "sh",
+            "-c",
+            "echo refreshed > /home/code/.edited-cred",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    assert edit.returncode == 0, edit.stderr
     _stop(coi_binary, container_name, env)
 
     reused = _report(
@@ -583,7 +613,9 @@ def test_report_reused_container_leftover_credentials(
         ).stderr
     )
     assert reused["Credentials"] == [
-        f"{present} -> /home/code/.present-cred (already in the container, not copied this launch)"
+        f"{present} -> /home/code/.present-cred (already in the container, not copied this launch)",
+        f"{edited} -> /home/code/.edited-cred"
+        " (copied by an earlier session, since changed in the container)",
     ], reused
 
 
@@ -593,9 +625,9 @@ def test_report_reused_container_applied_limits(coi_binary, cleanup_containers, 
     write_workspace_container_config(workspace_dir, persistent=True)
     container_name = calculate_container_name(workspace_dir, 1)
 
-    first_env = write_trusted_coi_config('[limits.cpu]\ncount = "1"\n')
+    first_env = write_trusted_coi_config('[limits.cpu]\ncount = "1"\nallowance = "50%"\n')
     first = _report(_run_shell(coi_binary, workspace_dir, dict(first_env)).stderr)
-    assert first["Limits"] == ["cpu 1"], first
+    assert first["Limits"] == ["cpu 1, cpu allowance 50%"], first
     _stop(coi_binary, container_name, first_env)
 
     changed_env = write_trusted_coi_config('[limits.cpu]\ncount = "2"\n')
@@ -604,4 +636,4 @@ def test_report_reused_container_applied_limits(coi_binary, cleanup_containers, 
             coi_binary, workspace_dir, dict(changed_env), args=("--container", container_name)
         ).stderr
     )
-    assert reused["Limits"] == ["cpu 1"], reused
+    assert reused["Limits"] == ["cpu 1, cpu allowance 50%"], reused

@@ -2,7 +2,6 @@ package session
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -44,14 +43,17 @@ type Grants struct {
 	Env EnvGrants
 
 	RunAsRoot         bool
-	DockerUnavailable bool
+	DockerUnavailable bool // follows the container's nesting, not config
 	// DockerConfigDiffers is set when the container's nesting disagrees with
-	// what the current config asks for (a reused container keeps what it was
-	// created with until restarted); DockerUnavailable follows the container.
+	// what the current config asks for: a reused container keeps what it was
+	// created with until restarted, and an Incus profile can set nesting
+	// itself (DockerFromProfile), which a restart doesn't change.
 	DockerConfigDiffers bool
-	CPULimit            string
-	MemoryLimit         string
-	MaxDuration         string
+	DockerFromProfile   bool
+	// Limits are the resource limits the container runs with ("cpu 2",
+	// "memory 4GiB", "disk read 10MB", ...); MaxDuration is per session.
+	Limits      []string
+	MaxDuration string
 }
 
 // MountGrant is a host path, or an Incus storage volume, visible in the
@@ -73,10 +75,13 @@ func (m MountGrant) source() string {
 }
 
 // CredentialGrant is a host file copied into the container. Earlier marks one
-// this launch didn't copy that is already in the (reused or resumed) container.
+// this launch didn't copy that an earlier session did and that is still in the
+// (reused or resumed) container; Changed marks such a copy whose content has
+// changed in the container since (a refreshed token, or something else now at
+// that path).
 type CredentialGrant struct {
 	HostPath, ContainerPath string
-	Earlier                 bool
+	Earlier, Changed        bool
 }
 
 // NetworkGrants is the egress the firewall was set up with. Network setup is
@@ -104,20 +109,34 @@ type EnvGrants struct {
 	// Set by buildGrants.
 	Tool      []string // the tool's own env from [tool] config, set on every launch
 	Container []string // the container's environment.* (git identity, Incus profiles, ...)
-	// Attaching is set when the tool is already running in a tmux session the
-	// launch attaches to: it keeps the env it started with, so the above
-	// reaches only panes opened from now on.
-	Attaching bool
+	// Launch says how the tool gets this env (see ToolLaunch).
+	Launch ToolLaunch
 }
+
+// ToolLaunch is how a launch reaches the tool, which decides whether the env
+// above reaches it.
+type ToolLaunch int
+
+const (
+	// ToolStarted means the tool starts with this launch's env.
+	ToolStarted ToolLaunch = iota
+	// ToolAttached means attaching to the tool already running in tmux, which keeps
+	// the env it started with; the session env is updated, so the names reach
+	// panes opened from now on.
+	ToolAttached
+	// ToolSentToPane means a background launch into an existing tmux session types
+	// the tool command into its pane, whose shell keeps its env; again only
+	// new panes get the names.
+	ToolSentToPane
+)
 
 // WithEnv returns a copy of g with the per-exec env layers set. The caller
 // resolves them after Setup (env_commands run then), so it supplies the names
-// without mutating the shared SetupResult.Grants. attaching marks a launch
-// that only attaches to an already-running tool.
-func (g *Grants) WithEnv(env EnvGrants, attaching bool) *Grants {
+// without mutating the shared SetupResult.Grants.
+func (g *Grants) WithEnv(env EnvGrants, launch ToolLaunch) *Grants {
 	c := *g
 	c.Env.FromHost, c.Env.Minted, c.Env.Configured = env.FromHost, env.Minted, env.Configured
-	c.Env.Attaching = attaching
+	c.Env.Launch = launch
 	return &c
 }
 
@@ -125,6 +144,40 @@ func (g *Grants) WithEnv(env EnvGrants, attaching bool) *Grants {
 // container.ContainerManager so test fakes needn't grow it.
 type appliedStateReader interface {
 	AppliedState() (container.AppliedState, error)
+}
+
+// readAppliedState reads the container's applied config, or nil when it can't.
+func readAppliedState(mgr container.ContainerManager) *container.AppliedState {
+	if r, ok := mgr.(appliedStateReader); ok {
+		if a, err := r.AppliedState(); err == nil && a.Disks != nil {
+			return &a
+		}
+	}
+	return nil
+}
+
+// startAppliedRead reads the applied config in the background. Setup calls it
+// after its last instance-config write, so the read (one `incus config show
+// --expanded`, cold after those writes) overlaps the file copies that follow
+// instead of adding to startup; awaitApplied collects it.
+func (st *setupState) startAppliedRead() {
+	ch := make(chan *container.AppliedState, 1)
+	mgr := st.result.Manager
+	go func() { ch <- readAppliedState(mgr) }()
+	st.appliedCh = ch
+}
+
+// awaitApplied returns the applied config, reading it now if no background
+// read was started.
+func (st *setupState) awaitApplied() *container.AppliedState {
+	if st.appliedCh != nil {
+		st.result.applied, st.appliedCh = <-st.appliedCh, nil
+		st.appliedDone = true
+	}
+	if !st.appliedDone {
+		st.result.applied, st.appliedDone = readAppliedState(st.result.Manager), true
+	}
+	return st.result.applied
 }
 
 // buildGrants collects the session's effective grants once setup has run.
@@ -136,8 +189,6 @@ func buildGrants(st *setupState) *Grants {
 		Ports:             info.PublishedPorts,
 		RunAsRoot:         info.RunAsRoot,
 		DockerUnavailable: info.DockerUnavailable,
-		CPULimit:          info.CPULimit,
-		MemoryLimit:       info.MemoryLimit,
 		MaxDuration:       info.MaxDuration,
 		Network: NetworkGrants{
 			Mode:           info.NetworkMode,
@@ -154,27 +205,32 @@ func buildGrants(st *setupState) *Grants {
 	}
 
 	// The container's applied config: disks (profile-inherited included), its
-	// environment.* and whether nesting (which Docker needs) is on. A reused
+	// environment.*, nesting (which Docker needs) and limits. A reused
 	// container keeps what it was created with, so this, not the current
 	// config, is what the agent has.
-	var applied *container.AppliedState
-	if r, ok := st.result.Manager.(appliedStateReader); ok {
-		if a, err := r.AppliedState(); err == nil && a.Disks != nil {
-			applied = &a
-		}
+	containerWorkspace := info.WorkspacePath
+	if containerWorkspace == "" {
+		containerWorkspace = "/workspace"
 	}
-	if applied != nil {
-		g.Workspace, g.Mounts, g.Protected, g.Masked = classifyDisks(applied.Disks, info.WorkspacePath)
+	if applied := st.awaitApplied(); applied != nil {
+		g.Workspace, g.Mounts, g.Protected, g.Masked = classifyDisks(applied.Disks, containerWorkspace)
 		g.DockerUnavailable = !applied.Nesting
-		g.DockerConfigDiffers = g.DockerUnavailable != info.DockerUnavailable
+		g.DockerConfigDiffers = g.DockerUnavailable != !hardeningPolicyFrom(&opts).DockerEnabled()
+		g.DockerFromProfile = applied.NestingFromProfile
 		g.Env.Container = applied.EnvNames
 		// Limits are applied only when a container is created, so a reused
 		// one runs with its own, whatever config says now. max_duration is
 		// per session (the timeout monitor), so it stays from config.
-		g.CPULimit, g.MemoryLimit = applied.CPU, applied.Memory
+		g.Limits = limitLines(applied.Limits)
 	} else {
 		g.DevicesUnread = true
-		configuredDisks(g, opts, info.WorkspacePath)
+		configuredDisks(g, opts, containerWorkspace)
+		if info.CPULimit != "" {
+			g.Limits = append(g.Limits, "cpu "+info.CPULimit)
+		}
+		if info.MemoryLimit != "" {
+			g.Limits = append(g.Limits, "memory "+info.MemoryLimit)
+		}
 	}
 	g.Env.Tool = toolEnvNames(opts.Tool, st.result.ContainerWorkspacePath)
 
@@ -182,10 +238,35 @@ func buildGrants(st *setupState) *Grants {
 	g.ToolFiles = grantsOf(st.toolFiles)
 	if lc := st.leftovers; lc.planned {
 		g.LeftoversUnchecked = !lc.checked
-		g.Credentials = append(g.Credentials, filterPresent(lc.creds, lc.present)...)
-		g.ToolFiles = append(g.ToolFiles, filterPresent(lc.tools, lc.present)...)
+		g.Credentials = append(g.Credentials, lc.found(lc.creds)...)
+		g.ToolFiles = append(g.ToolFiles, lc.found(lc.tools)...)
 	}
 	return g
+}
+
+// limitNames labels the container.LimitKeys for the report.
+var limitNames = map[string]string{
+	"limits.cpu":            "cpu",
+	"limits.cpu.allowance":  "cpu allowance",
+	"limits.cpu.priority":   "cpu priority",
+	"limits.memory":         "memory",
+	"limits.memory.enforce": "memory enforce",
+	"limits.memory.swap":    "swap",
+	"limits.processes":      "processes",
+	"root.limits.read":      "disk read",
+	"root.limits.write":     "disk write",
+	"root.limits.max":       "disk I/O",
+	"root.size":             "disk size",
+}
+
+func limitLines(limits map[string]string) []string {
+	var lines []string
+	for _, k := range container.LimitKeys {
+		if v, ok := limits[k]; ok {
+			lines = append(lines, limitNames[k]+" "+v)
+		}
+	}
+	return lines
 }
 
 // toolEnvNames lists the env the tool sets for itself from its config (e.g. a
@@ -283,7 +364,10 @@ func grantsOf(entries []CredentialEntry) []CredentialGrant {
 
 // uncopiedCandidates lists the files a reused or resumed container may still
 // hold from an earlier session: the configured [[credentials]] destinations and
-// the tool's config files that this launch did not copy.
+// the tool's host config files that this launch did not copy. Whether one is a
+// copy at all is for the copy manifest to say (see leftoverCheckOp), so a
+// candidate's host file needn't still exist: a stale copy of a since-deleted
+// host file is still in the container.
 func uncopiedCandidates(st *setupState) (creds, tools []CredentialGrant) {
 	copied := map[string]bool{}
 	for _, e := range append(append([]CredentialEntry{}, st.copiedCredentials...), st.toolFiles...) {
@@ -301,21 +385,12 @@ func uncopiedCandidates(st *setupState) (creds, tools []CredentialGrant) {
 			add(&creds, e.HostPath, credentialDestPath(e, home))
 		}
 	}
-	// Tool files only when the host has the file: the tool and coi's settings
-	// merge also create files in its config dir (settings.json, CLAUDE.md),
-	// which are not host copies. [[credentials]] destinations are the user's
-	// own paths, so a stale copy of a since-deleted host file still counts.
 	tcf, ok := st.opts.Tool.(tool.ToolWithConfigDirFiles)
 	if ok && st.opts.CLIConfigPath != "" && home != "" {
-		addIfOnHost := func(host, dest string) {
-			if _, err := os.Stat(host); err == nil {
-				add(&tools, host, dest)
-			}
-		}
 		essential, state := toolHostFiles(st.opts.CLIConfigPath, home, tcf)
 		for _, f := range append(essential, state) {
 			if f.HostPath != "" {
-				addIfOnHost(f.HostPath, f.ContainerPath)
+				add(&tools, f.HostPath, f.ContainerPath)
 			}
 		}
 	}
@@ -328,21 +403,25 @@ type leftoverCheck struct {
 	planned bool
 	creds   []CredentialGrant
 	tools   []CredentialGrant
-	present map[string]bool
-	checked bool // the check ran to the end
+	present map[string]bool // still holds what coi copied
+	changed map[string]bool // coi copied there, but the content has changed since
+	checked bool            // the check ran to the end
 }
 
 // Markers leftoverCheckOp prints.
 const (
 	leftoverPresentMarker = "coi:leftover-present:"
+	leftoverChangedMarker = "coi:leftover-changed:"
 	leftoverCheckedMarker = "coi:leftovers-checked"
 )
 
-// copyManifestPath is the file listing, one per line, the container paths coi has
-// copied a [[credentials]] host file to. Root-owned, outside the home dir. It
-// lets the leftover check tell a file coi copied apart from one the image or
-// the agent put at the same path (e.g. a ~/.gitconfig the image ships).
-// A var only so tests can point it at a temp file.
+// copyManifestPath is the file recording each host file coi copied into the
+// container, one "<sha256> <container path>" line per path, the hash taken
+// once setup's writes to it were done. Root-owned, outside the home dir. It
+// lets the leftover check tell a file coi copied apart from one the image, the
+// tool or the agent put at the same path (an image's ~/.gitconfig, a
+// ~/.claude.json the tool wrote itself), and a copy since changed from one
+// still as copied. A var only so tests can point it at a temp file.
 var copyManifestPath = "/var/lib/coi/copied-host-files"
 
 // planLeftoverCheck works out the candidates and returns the guest op that
@@ -357,7 +436,7 @@ func (st *setupState) planLeftoverCheck() (guestOp, bool) {
 		return guestOp{}, false
 	}
 	st.leftovers = leftoverCheck{planned: true, creds: creds, tools: tools}
-	return leftoverCheckOp(containerPaths(creds), containerPaths(tools)), true
+	return leftoverCheckOp(append(containerPaths(creds), containerPaths(tools)...)), true
 }
 
 func containerPaths(gs []CredentialGrant) []string {
@@ -368,34 +447,35 @@ func containerPaths(gs []CredentialGrant) []string {
 	return paths
 }
 
-// leftoverCheckOp prints a marker line for each candidate still there, then a
-// final marker, so the output tells "absent" apart from "never checked". A
-// [[credentials]] destination counts only if coi recorded copying to it (see
-// copyManifestPath); a tool file lives in the tool's own config dir
-// and is a candidate only when the host has it, so existing is enough. The op
-// always succeeds, so it can't fail the batch it rides in.
-func leftoverCheckOp(creds, tools []string) guestOp {
+// manifestHashCmd prints the hash the manifest last recorded for "$p" (empty
+// if none). The path goes through the environment, not awk -v, so backslashes
+// in it aren't interpreted.
+func manifestHashCmd() string {
+	return `P="$p" awk 'substr($0, 66) == ENVIRON["P"] { h = substr($0, 1, 64) } END { print h }' ` +
+		shellEscape(copyManifestPath) + ` 2>/dev/null`
+}
+
+// leftoverCheckOp prints a marker line for each path coi recorded copying to
+// that is still there (one marker if unchanged since, another if changed),
+// then a final marker, so the output tells "absent" apart from "never
+// checked". The op always succeeds, so it can't fail the batch it rides in.
+func leftoverCheckOp(paths []string) guestOp {
 	var b strings.Builder
-	loop := func(paths []string, test string) {
-		if len(paths) == 0 {
-			return
-		}
-		b.WriteString("for p in")
-		for _, p := range paths {
-			b.WriteString(" " + shellEscape(p))
-		}
-		fmt.Fprintf(&b, `; do %s && printf '%s%%s\n' "$p"; done; `, test, leftoverPresentMarker)
+	b.WriteString("for p in")
+	for _, p := range paths {
+		b.WriteString(" " + shellEscape(p))
 	}
-	loop(creds, `[ -e "$p" ] && grep -qxF -- "$p" `+shellEscape(copyManifestPath)+` 2>/dev/null`)
-	loop(tools, `[ -e "$p" ]`)
-	b.WriteString("echo " + leftoverCheckedMarker)
+	fmt.Fprintf(&b, `; do [ -e "$p" ] || continue; h=$(%s); [ -n "$h" ] || continue; `+
+		`if [ "$(sha256sum < "$p" | cut -c1-64)" = "$h" ]; then printf '%s%%s\n' "$p"; else printf '%s%%s\n' "$p"; fi; done; echo %s`,
+		manifestHashCmd(), leftoverPresentMarker, leftoverChangedMarker, leftoverCheckedMarker)
 	return guestCmd(b.String())
 }
 
-// recordCopiedCredentialsOp adds this launch's [[credentials]] destinations to
-// copyManifestPath. Best-effort: a failure only means a later reuse
-// won't list those files as left over, so it never fails the batch.
-func recordCopiedCredentialsOp(copied []CredentialEntry) (guestOp, bool) {
+// recordCopiesOp records this launch's copies (destination and current hash)
+// in copyManifestPath, replacing any earlier line for the same path.
+// Best-effort: a failure only means a later reuse won't list those files as
+// left over, so it never fails the batch.
+func recordCopiesOp(copied []CredentialEntry) (guestOp, bool) {
 	if len(copied) == 0 {
 		return guestOp{}, false
 	}
@@ -405,7 +485,9 @@ func recordCopiedCredentialsOp(copied []CredentialEntry) (guestOp, bool) {
 	for _, e := range copied {
 		b.WriteString(" " + shellEscape(e.ContainerPath))
 	}
-	fmt.Fprintf(&b, `; do grep -qxF -- "$p" %s || printf '%%s\n' "$p" >> %s; done; } 2>/dev/null || true`, m, m)
+	fmt.Fprintf(&b, `; do h=$(sha256sum < "$p" | cut -c1-64) || continue; `+
+		`P="$p" awk 'substr($0, 66) != ENVIRON["P"]' %s > %s.new && printf '%%s %%s\n' "$h" "$p" >> %s.new && mv -f %s.new %s; done; } 2>/dev/null || true`,
+		m, m, m, m, m)
 	return guestCmd(b.String()), true
 }
 
@@ -414,21 +496,28 @@ func (lc *leftoverCheck) parse(out string) {
 	if !lc.planned {
 		return
 	}
-	lc.present = map[string]bool{}
+	lc.present, lc.changed = map[string]bool{}, map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if p, ok := strings.CutPrefix(line, leftoverPresentMarker); ok {
 			lc.present[p] = true
+		} else if p, ok := strings.CutPrefix(line, leftoverChangedMarker); ok {
+			lc.changed[p] = true
 		} else if line == leftoverCheckedMarker {
 			lc.checked = true
 		}
 	}
 }
 
-func filterPresent(candidates []CredentialGrant, present map[string]bool) []CredentialGrant {
+// found returns the candidates the check found in the container.
+func (lc *leftoverCheck) found(candidates []CredentialGrant) []CredentialGrant {
 	var out []CredentialGrant
 	for _, c := range candidates {
-		if present[c.ContainerPath] {
+		switch {
+		case lc.present[c.ContainerPath]:
+			out = append(out, c)
+		case lc.changed[c.ContainerPath]:
+			c.Changed = true
 			out = append(out, c)
 		}
 	}
@@ -521,21 +610,20 @@ func (g *Grants) Render() string {
 		docker = "unavailable"
 	}
 	if g.DockerConfigDiffers {
-		if g.DockerUnavailable {
+		switch {
+		case g.DockerFromProfile && g.DockerUnavailable:
+			docker += " (an Incus profile disables nesting; config enables Docker)"
+		case g.DockerFromProfile:
+			docker += " (an Incus profile enables nesting; config disables Docker)"
+		case g.DockerUnavailable:
 			docker += " (config enables it; restart the container to apply)"
-		} else {
+		default:
 			docker += " (config disables it; restart the container to apply)"
 		}
 	}
 	add("Agent", fmt.Sprintf("runs as %s, Docker %s", user, docker))
 
-	var limits []string
-	if g.CPULimit != "" {
-		limits = append(limits, "cpu "+g.CPULimit)
-	}
-	if g.MemoryLimit != "" {
-		limits = append(limits, "memory "+g.MemoryLimit)
-	}
+	limits := append([]string{}, g.Limits...)
 	if g.MaxDuration != "" {
 		limits = append(limits, "max duration "+g.MaxDuration)
 	}
@@ -560,10 +648,11 @@ func (g *Grants) Render() string {
 // last), and any per-exec value overrides the container's environment.*.
 func (g *Grants) envLines() []string {
 	var lines []string
-	if g.Env.Attaching {
-		// The running tool keeps its env, but the session env is still
-		// updated, so panes opened from now on get what follows.
+	switch g.Env.Launch {
+	case ToolAttached:
 		lines = append(lines, "the running tool keeps the env it started with; new panes get:")
+	case ToolSentToPane:
+		lines = append(lines, "the tool starts in the existing pane, which keeps its env; new panes get:")
 	}
 	seen := map[string]bool{}
 	for _, src := range []struct {
@@ -587,7 +676,7 @@ func (g *Grants) envLines() []string {
 			lines = append(lines, strings.Join(names, ", ")+" ("+src.label+")")
 		}
 	}
-	if len(lines) == 0 || (g.Env.Attaching && len(lines) == 1) {
+	if len(lines) == 0 || (g.Env.Launch != ToolStarted && len(lines) == 1) {
 		lines = append(lines, "none")
 	}
 	return lines
@@ -597,7 +686,10 @@ func copiedLines(files []CredentialGrant) []string {
 	var lines []string
 	for _, c := range files {
 		l := fmt.Sprintf("%s -> %s", c.HostPath, c.ContainerPath)
-		if c.Earlier {
+		switch {
+		case c.Earlier && c.Changed:
+			l += " (copied by an earlier session, since changed in the container)"
+		case c.Earlier:
 			l += " (already in the container, not copied this launch)"
 		}
 		lines = append(lines, l)

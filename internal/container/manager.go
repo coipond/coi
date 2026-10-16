@@ -233,22 +233,42 @@ type AppliedState struct {
 	Disks    map[string]DiskDevice // every disk, the container's own and its profiles'
 	EnvNames []string              // environment.* keys, sorted; names only
 	Nesting  bool                  // security.nesting, which Docker needs
-	CPU      string                // limits.cpu ("" = unlimited)
-	Memory   string                // limits.memory ("" = unlimited)
+	// NestingFromProfile is set when nesting comes only from an Incus profile
+	// (the instance doesn't set it itself), so restarting won't change it.
+	NestingFromProfile bool
+	// Limits are the resource limits in force, by the key coi sets them
+	// under: the limits.* instance keys, plus the root disk's limits.read,
+	// limits.write, limits.max and size as "root.<key>".
+	Limits map[string]string
+}
+
+// LimitKeys are the AppliedState.Limits keys, in reporting order.
+var LimitKeys = []string{
+	"limits.cpu", "limits.cpu.allowance", "limits.cpu.priority",
+	"limits.memory", "limits.memory.enforce", "limits.memory.swap",
+	"limits.processes",
+	"root.limits.read", "root.limits.write", "root.limits.max", "root.size",
 }
 
 // AppliedState reads the instance's expanded config, from one
-// `incus config show --expanded` (shared with the other cached reads).
+// `incus config show --expanded` (shared with the other cached reads), and
+// its own config to tell where nesting comes from.
 func (m *Manager) AppliedState() (AppliedState, error) {
-	c, ok := loadInstanceConfig(context.Background(), m.ContainerName, true)
+	ctx := context.Background()
+	c, ok := loadInstanceConfig(ctx, m.ContainerName, true)
 	if !ok {
 		return AppliedState{}, fmt.Errorf("could not read the expanded config of %s", m.ContainerName)
 	}
 	st := AppliedState{
 		Disks:   diskDevicesFrom(c.devices),
 		Nesting: isTrue(c.config["security.nesting"]),
-		CPU:     c.config["limits.cpu"],
-		Memory:  c.config["limits.memory"],
+		Limits:  map[string]string{},
+	}
+	if _, set := c.config["security.nesting"]; set {
+		if local, ok := loadInstanceConfig(ctx, m.ContainerName, false); ok {
+			_, own := local.config["security.nesting"]
+			st.NestingFromProfile = !own
+		}
 	}
 	for k := range c.config {
 		if name, ok := strings.CutPrefix(k, "environment."); ok && name != "" {
@@ -256,6 +276,15 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 		}
 	}
 	sort.Strings(st.EnvNames)
+	for _, k := range LimitKeys {
+		v := c.config[k]
+		if dk, ok := strings.CutPrefix(k, "root."); ok {
+			v = c.devices["root"][dk]
+		}
+		if v != "" {
+			st.Limits[k] = v
+		}
+	}
 	return st, nil
 }
 

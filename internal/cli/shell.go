@@ -542,10 +542,10 @@ type tmuxLaunch struct {
 
 // prepareTmux readies the tool's tmux session for background/monitoring
 // support: it runs the pre-launch steps and reuses the session if it exists,
-// else creates it, which starts the tool. Split from enterTmux so the caller
-// knows whether the tool was already running before it reports the env.
+// else creates it, which starts the tool. enterTmux then attaches to it or
+// leaves it in the background, by whether it already existed.
 func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) (*tmuxLaunch, error) {
-	l := &tmuxLaunch{session: tmuxSessionName(result.ContainerName), userPtr: userPtr, env: containerEnv}
+	l := &tmuxLaunch{session: session.TmuxSessionName(result.ContainerName), userPtr: userPtr, env: containerEnv}
 
 	// Get workspace path (with fallback for backwards compatibility)
 	l.workspacePath = result.ContainerWorkspacePath
@@ -635,9 +635,6 @@ func (a *App) enterTmux(result *session.SetupResult, l *tmuxLaunch, detached boo
 		return err
 	}
 }
-
-// tmuxSessionName is the tmux session coi runs the tool in.
-func tmuxSessionName(containerName string) string { return "coi-" + containerName }
 
 // Markers buildTmuxPrepScript prints to report what it did.
 const (

@@ -127,7 +127,21 @@ type SetupResult struct {
 	Timezone               string            // Resolved timezone applied to the container (empty = UTC)
 	HasImmutableProtection bool              // True if host-side immutable attribute was applied to protected paths
 	Grants                 *Grants           // Effective reach of the session, for the startup report
+	// Launched is set when this setup launched the container, rather than
+	// reusing an existing (running, or stopped and restarted) one.
+	Launched bool
+	// ToolRunning is set when the tool's tmux session (TmuxSessionName)
+	// already existed at the end of setup, so a tmux launch will attach to (or
+	// type into) it rather than start the tool with this launch's env.
+	ToolRunning bool
+
+	// applied is the container's applied config, read at the end of setup
+	// (nil if unreadable); the context files and the grants report use it.
+	applied *container.AppliedState
 }
+
+// TmuxSessionName is the tmux session coi runs the tool in.
+func TmuxSessionName(containerName string) string { return "coi-" + containerName }
 
 // Setup initializes a container for a Claude session.
 //
@@ -187,6 +201,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		return nil, err
 	}
 
+	st.result.Launched = !st.skipLaunch
 	st.result.Grants = buildGrants(st)
 	st.opts.Logger("Container setup complete!")
 	return st.result, nil
@@ -902,7 +917,7 @@ func contextInfoFor(result *SetupResult, opts SetupOptions) tool.ContextInfo {
 		ToolName:           toolName,
 		ContainerName:      result.ContainerName,
 		ProfileContext:     profileContext,
-		DockerUnavailable:  !hardeningPolicyFrom(&opts).DockerEnabled(),
+		DockerUnavailable:  dockerUnavailable(result, opts),
 	}
 }
 
@@ -941,6 +956,16 @@ func injectSandboxContextFiles(result *SetupResult, opts SetupOptions, preOps ..
 		}
 	}
 	return out, ctxInfo
+}
+
+// dockerUnavailable follows the container's nesting when setup read it (a
+// reused container keeps what it was created with, and an Incus profile can
+// set it), else the hardening policy config asks for.
+func dockerUnavailable(result *SetupResult, opts SetupOptions) bool {
+	if result != nil && result.applied != nil {
+		return !result.applied.Nesting
+	}
+	return !hardeningPolicyFrom(&opts).DockerEnabled()
 }
 
 // remapContainerUser remaps the container's `code` user to a non-default

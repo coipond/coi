@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,17 +18,21 @@ import (
 // names, nesting) comes from fields, with a file push that can fail per path.
 type fakeGrantsManager struct {
 	container.ContainerManager
-	disks     map[string]container.DiskDevice
-	disksErr  error
-	envNames  []string
-	nesting   bool
-	cpu       string
-	pushFail  map[string]bool // host paths whose push fails
-	mkdirFail bool
+	disks       map[string]container.DiskDevice
+	disksErr    error
+	envNames    []string
+	nesting     bool
+	fromProfile bool
+	limits      map[string]string
+	pushFail    map[string]bool // host paths whose push fails
+	mkdirFail   bool
 }
 
 func (f *fakeGrantsManager) AppliedState() (container.AppliedState, error) {
-	return container.AppliedState{Disks: f.disks, EnvNames: f.envNames, Nesting: f.nesting, CPU: f.cpu}, f.disksErr
+	return container.AppliedState{
+		Disks: f.disks, EnvNames: f.envNames, Nesting: f.nesting,
+		NestingFromProfile: f.fromProfile, Limits: f.limits,
+	}, f.disksErr
 }
 
 func (f *fakeGrantsManager) ExecArgs(args []string, _ container.ExecCommandOptions) error {
@@ -103,7 +108,7 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 		opts: SetupOptions{
 			WorkspacePath: "/home/u/proj",
 			MountConfig:   &MountConfig{Mounts: []MountEntry{{HostPath: "/new", ContainerPath: "/new"}}},
-			Security:      SecurityOptions{ProtectedPaths: []string{".git/hooks", ".git/config"}},
+			Security:      SecurityOptions{ProtectedPaths: []string{".git/hooks", ".git/config"}, Docker: true},
 			Network: NetworkOptions{Config: &config.NetworkConfig{
 				Mode:                    config.NetworkModeRestricted,
 				AllowLocalNetworkAccess: boolPtr(true),
@@ -119,8 +124,8 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 	if g.DevicesUnread {
 		t.Fatal("devices were readable")
 	}
-	if !g.DockerUnavailable {
-		t.Error("Docker should follow the container's nesting, not the config")
+	if !g.DockerUnavailable || !g.DockerConfigDiffers || g.DockerFromProfile {
+		t.Errorf("Docker should follow the container's nesting and flag the config: %+v", g)
 	}
 	if strings.Join(g.Env.Container, ",") != "GIT_AUTHOR_NAME" {
 		t.Errorf("container env = %v", g.Env.Container)
@@ -210,10 +215,10 @@ func TestBuildGrants_FallbackListsPlaceholders(t *testing.T) {
 }
 
 // Copied files list what this launch pushed. A reused or resumed container is
-// also probed, once, for configured credentials and tool files this launch did
-// not copy (a skipped or failed copy, or no copy at all on reuse); those still
-// there are listed as already in the container. A fresh container is not
-// probed.
+// also checked, once, for configured credentials and tool files this launch
+// did not copy (a skipped or failed copy, or no copy at all on reuse); those
+// the copy manifest says coi copied earlier are listed as already in the
+// container, or as changed since. A fresh container is not checked.
 func TestBuildGrants_CopiedFiles(t *testing.T) {
 	claude, err := tool.Get("claude")
 	if err != nil {
@@ -223,8 +228,8 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 		{HostPath: "/h/a", ContainerPath: ".a"},
 		{HostPath: "/h/b", ContainerPath: "/etc/b"},
 	}
-	// Host claude dir with only .credentials.json: settings.json present in the
-	// container but not on the host must not be listed as a host copy.
+	// Host claude dir with .credentials.json only; whether a container file
+	// is a host copy is the manifest's call, not the host's.
 	hostClaude := filepath.Join(t.TempDir(), ".claude")
 	if err := os.MkdirAll(hostClaude, 0o755); err != nil {
 		t.Fatal(err)
@@ -251,7 +256,7 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 			t.Errorf("a fresh container should not be checked, got %q", op.cmd)
 		}
 		g := buildGrants(st)
-		if len(g.Credentials) != 1 || g.Credentials[0] != (CredentialGrant{"/h/a", "/home/code/.a", false}) {
+		if len(g.Credentials) != 1 || g.Credentials[0] != (CredentialGrant{HostPath: "/h/a", ContainerPath: "/home/code/.a"}) {
 			t.Errorf("credentials = %+v", g.Credentials)
 		}
 		if len(g.ToolFiles) != 1 || g.ToolFiles[0].ContainerPath != "/home/code/.claude.json" {
@@ -269,21 +274,24 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 		if !ok {
 			t.Fatal("a reused container should be checked")
 		}
-		if strings.Contains(op.cmd, "settings.json") {
-			t.Errorf("tool files absent on the host should not be checked: %s", op.cmd)
-		}
 		if strings.Contains(op.cmd, "'/home/code/.a'") || strings.Contains(op.cmd, "/home/code/.claude.json") {
 			t.Errorf("files copied this launch should not be checked: %s", op.cmd)
 		}
 		st.leftovers.parse("tz set\n" + leftoverPresentMarker + "/etc/b\n" +
-			leftoverPresentMarker + "/home/code/.claude/.credentials.json\n" + leftoverCheckedMarker + "\n")
+			leftoverChangedMarker + "/home/code/.claude/.credentials.json\n" + leftoverCheckedMarker + "\n")
 		g := buildGrants(st)
 
-		want := []CredentialGrant{{"/h/a", "/home/code/.a", false}, {"/h/b", "/etc/b", true}}
+		want := []CredentialGrant{
+			{HostPath: "/h/a", ContainerPath: "/home/code/.a"},
+			{HostPath: "/h/b", ContainerPath: "/etc/b", Earlier: true},
+		}
 		if len(g.Credentials) != 2 || g.Credentials[0] != want[0] || g.Credentials[1] != want[1] {
 			t.Errorf("credentials = %+v, want %+v", g.Credentials, want)
 		}
-		earlierTool := CredentialGrant{filepath.Join(hostClaude, ".credentials.json"), "/home/code/.claude/.credentials.json", true}
+		earlierTool := CredentialGrant{
+			HostPath: filepath.Join(hostClaude, ".credentials.json"), ContainerPath: "/home/code/.claude/.credentials.json",
+			Earlier: true, Changed: true,
+		}
 		if len(g.ToolFiles) != 2 || g.ToolFiles[1] != earlierTool {
 			t.Errorf("tool files = %+v, want the copied .claude.json then %+v", g.ToolFiles, earlierTool)
 		}
@@ -294,6 +302,7 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 		for _, w := range []string{
 			"/h/b -> /etc/b (already in the container, not copied this launch)",
 			"Tool config  /home/u/.claude.json -> /home/code/.claude.json\n",
+			"/home/code/.claude/.credentials.json (copied by an earlier session, since changed in the container)\n",
 		} {
 			if !strings.Contains(out, w) {
 				t.Errorf("missing %q in:\n%s", w, out)
@@ -325,23 +334,24 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 
 // The record and check ops are real shell: run them (as the batch would)
 // against temp files, including a path that needs quoting, and feed the output
-// to parse. A [[credentials]] destination counts only once recorded; a file
-// already there that coi never copied (an image's ~/.gitconfig) does not.
+// to parse. A file counts only once recorded (an image's own file at the same
+// path does not), and a recorded file whose content changed since is told
+// apart from one still as copied.
 func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 	dir := t.TempDir()
 	old := copyManifestPath
-	copyManifestPath = filepath.Join(dir, "state", "copied-credentials")
+	copyManifestPath = filepath.Join(dir, "state", "copied-host-files")
 	t.Cleanup(func() { copyManifestPath = old })
-	file := func(name string) string {
+	file := func(name, content string) string {
 		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, nil, 0o600); err != nil {
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return p
 	}
-	copied := file("it's copied")
-	fromImage := file("gitconfig")
-	toolFile := file(".credentials.json")
+	copied := file(`it's \copied`, "token")
+	refreshed := file(".credentials.json", "old token")
+	fromImage := file("gitconfig", "[user]")
 	absent := filepath.Join(dir, "gone")
 
 	run := func(ops ...guestOp) string {
@@ -352,46 +362,63 @@ func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 		}
 		return string(out)
 	}
-	record, ok := recordCopiedCredentialsOp([]CredentialEntry{{ContainerPath: copied}})
+	record, ok := recordCopiesOp([]CredentialEntry{{ContainerPath: copied}, {ContainerPath: refreshed}})
 	if !ok {
-		t.Fatal("no record op for a copied file")
+		t.Fatal("no record op for copied files")
 	}
-	run(record, record) // a second launch must not duplicate the entry
-	if b, _ := os.ReadFile(copyManifestPath); string(b) != copied+"\n" {
+	run(record, record) // a second launch must not duplicate the entries
+	if b, _ := os.ReadFile(copyManifestPath); strings.Count(string(b), "\n") != 2 || !strings.HasSuffix(strings.SplitN(string(b), "\n", 2)[0], " "+copied) {
 		t.Errorf("manifest = %q", b)
 	}
+	file(".credentials.json", "new token") // the tool refreshed it
 
-	out := run(leftoverCheckOp([]string{copied, fromImage, absent}, []string{toolFile, absent}))
 	lc := leftoverCheck{planned: true}
+	out := run(leftoverCheckOp([]string{copied, refreshed, fromImage, absent}))
 	lc.parse(out)
-	if !lc.checked || !lc.present[copied] || !lc.present[toolFile] || len(lc.present) != 2 {
+	if !lc.checked || !lc.present[copied] || !lc.changed[refreshed] || len(lc.present)+len(lc.changed) != 2 {
 		t.Errorf("parsed %+v from %q", lc, out)
 	}
 
-	// No manifest yet (nothing ever recorded): credentials don't count, and
-	// the check still completes.
+	// No manifest (nothing ever recorded): nothing counts, and the check
+	// still completes.
 	if err := os.Remove(copyManifestPath); err != nil {
 		t.Fatal(err)
 	}
 	lc = leftoverCheck{planned: true}
-	lc.parse(run(leftoverCheckOp([]string{copied}, nil)))
-	if !lc.checked || len(lc.present) != 0 {
+	lc.parse(run(leftoverCheckOp([]string{copied})))
+	if !lc.checked || len(lc.present)+len(lc.changed) != 0 {
 		t.Errorf("without a manifest parsed %+v", lc)
 	}
 }
 
 // The record op is best-effort: an unwritable manifest must not fail the
 // batch (and the context files written after it).
-func TestRecordCopiedCredentialsOp_NeverFails(t *testing.T) {
+func TestRecordCopiesOp_NeverFails(t *testing.T) {
 	old := copyManifestPath
-	copyManifestPath = "/proc/coi-no-such-dir/copied-credentials"
+	copyManifestPath = "/proc/coi-no-such-dir/copied-host-files"
 	t.Cleanup(func() { copyManifestPath = old })
-	op, _ := recordCopiedCredentialsOp([]CredentialEntry{{ContainerPath: "/x"}})
+	op, _ := recordCopiesOp([]CredentialEntry{{ContainerPath: "/etc/hostname"}})
 	if out, err := exec.Command("bash", "-c", renderGuestScript([]guestOp{op, guestCmd("echo after")})).Output(); err != nil || !strings.Contains(string(out), "after") {
 		t.Errorf("record op failed the batch: %v (%s)", err, out)
 	}
-	if _, ok := recordCopiedCredentialsOp(nil); ok {
+	if _, ok := recordCopiesOp(nil); ok {
 		t.Error("nothing copied should need no op")
+	}
+}
+
+// The tmux probe reports a running session through the batch output, and an
+// absent one (or no tmux at all) without failing the batch.
+func TestTmuxRunningOp(t *testing.T) {
+	op := tmuxRunningOp(&SetupResult{ContainerName: "coi-x-1"})
+	if !strings.Contains(op.cmd, "has-session -t 'coi-coi-x-1'") || !strings.Contains(op.cmd, fmt.Sprintf("/tmp/tmux-%d/default", container.CodeUID)) {
+		t.Errorf("probe = %q", op.cmd)
+	}
+	if op := tmuxRunningOp(&SetupResult{ContainerName: "c", RunAsRoot: true}); !strings.Contains(op.cmd, "/tmp/tmux-0/default") {
+		t.Errorf("root probe = %q", op.cmd)
+	}
+	out, err := exec.Command("bash", "-c", renderGuestScript([]guestOp{op, guestCmd("echo after")})).Output()
+	if err != nil || strings.Contains(string(out), tmuxRunningMarker) || !strings.Contains(string(out), "after") {
+		t.Errorf("absent session: %v (%s)", err, out)
 	}
 }
 
@@ -497,8 +524,7 @@ func TestGrantsRender_Full(t *testing.T) {
 		},
 		RunAsRoot:         true,
 		DockerUnavailable: true,
-		CPULimit:          "2",
-		MemoryLimit:       "4GiB",
+		Limits:            []string{"cpu 2", "memory 4GiB"},
 		MaxDuration:       "2h",
 	}
 	out := g.Render()
@@ -585,7 +611,7 @@ func TestGrantsRender_Network(t *testing.T) {
 
 func TestGrantsWithEnv_DoesNotMutate(t *testing.T) {
 	g := &Grants{Env: EnvGrants{FromHost: []string{"A"}, Tool: []string{"T"}}}
-	c := g.WithEnv(EnvGrants{Minted: []string{"B"}}, false)
+	c := g.WithEnv(EnvGrants{Minted: []string{"B"}}, ToolStarted)
 	if len(g.Env.Minted) != 0 || len(g.Env.FromHost) != 1 {
 		t.Errorf("original changed: %+v", g.Env)
 	}
@@ -604,7 +630,7 @@ func TestGrantsRender_EnvSources(t *testing.T) {
 	g := (&Grants{Env: EnvGrants{
 		Tool:      []string{"ANTHROPIC_MODEL", "GH_TOKEN"},
 		Container: []string{"GIT_AUTHOR_NAME", "ANTHROPIC_MODEL", "FOO"},
-	}}).WithEnv(EnvGrants{FromHost: []string{"GH_TOKEN", "HOME_VAR"}, Configured: []string{"FOO"}}, false)
+	}}).WithEnv(EnvGrants{FromHost: []string{"GH_TOKEN", "HOME_VAR"}, Configured: []string{"FOO"}}, ToolStarted)
 	out := g.Render()
 	for _, w := range []string{
 		"Env        ANTHROPIC_MODEL, GH_TOKEN (tool settings)\n",
@@ -618,10 +644,11 @@ func TestGrantsRender_EnvSources(t *testing.T) {
 	}
 }
 
-// Attaching to a tool already running in tmux: the tool keeps its env, but
-// the session env is updated, so the names are listed as reaching new panes.
-func TestGrantsRender_EnvAttaching(t *testing.T) {
-	g := (&Grants{Env: EnvGrants{Tool: []string{"T"}}}).WithEnv(EnvGrants{Minted: []string{"TOKEN"}}, true)
+// A launch into a running tmux session: the tool keeps its env (attached, or
+// typed into the existing pane by a background launch), but the session env
+// is updated, so the names are listed as reaching new panes.
+func TestGrantsRender_EnvRunningTool(t *testing.T) {
+	g := (&Grants{Env: EnvGrants{Tool: []string{"T"}}}).WithEnv(EnvGrants{Minted: []string{"TOKEN"}}, ToolAttached)
 	out := g.Render()
 	for _, w := range []string{
 		"Env        the running tool keeps the env it started with; new panes get:\n",
@@ -632,7 +659,11 @@ func TestGrantsRender_EnvAttaching(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", w, out)
 		}
 	}
-	empty := (&Grants{}).WithEnv(EnvGrants{}, true).Render()
+	sent := g.WithEnv(EnvGrants{Minted: []string{"TOKEN"}}, ToolSentToPane).Render()
+	if !strings.Contains(sent, "Env        the tool starts in the existing pane, which keeps its env; new panes get:\n") {
+		t.Errorf("send-to-pane note missing:\n%s", sent)
+	}
+	empty := (&Grants{}).WithEnv(EnvGrants{}, ToolAttached).Render()
 	if !strings.Contains(empty, "new panes get:\n             none\n") {
 		t.Errorf("attach with no env should say none:\n%s", empty)
 	}
@@ -656,43 +687,72 @@ func TestClassifyDisks_WritablePrefixIsAMount(t *testing.T) {
 }
 
 // Limits and Docker follow the container, which keeps what it was created
-// with; a Docker setting that config would change is flagged.
+// with. A Docker setting config would change on restart is flagged as such;
+// one an Incus profile pins is flagged as the profile's, since a restart
+// wouldn't change it.
 func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
 	mgr := &fakeGrantsManager{
 		disks:   map[string]container.DiskDevice{"workspace": {Source: "/p", Path: "/workspace"}},
 		nesting: true,
-		cpu:     "2",
+		limits:  map[string]string{"limits.cpu.allowance": "50%", "limits.cpu": "2", "root.limits.read": "10MB", "limits.processes": "500"},
 	}
 	st := &setupState{
-		opts:   SetupOptions{},
-		result: &SetupResult{Manager: mgr},
-		contextInfo: tool.ContextInfo{
-			WorkspacePath: "/workspace", CPULimit: "8", MemoryLimit: "4GiB", MaxDuration: "1h",
-			DockerUnavailable: true,
-		},
+		opts:        SetupOptions{}, // Docker off in config
+		result:      &SetupResult{Manager: mgr},
+		contextInfo: tool.ContextInfo{WorkspacePath: "/workspace", CPULimit: "8", MemoryLimit: "4GiB", MaxDuration: "1h"},
 	}
 	g := buildGrants(st)
-	if g.CPULimit != "2" || g.MemoryLimit != "" || g.MaxDuration != "1h" {
-		t.Errorf("limits = cpu %q memory %q duration %q, want the container's cpu/memory and config's duration", g.CPULimit, g.MemoryLimit, g.MaxDuration)
+	if strings.Join(g.Limits, ", ") != "cpu 2, cpu allowance 50%, processes 500, disk read 10MB" || g.MaxDuration != "1h" {
+		t.Errorf("limits = %v, duration %q; want the container's, in order, and config's duration", g.Limits, g.MaxDuration)
 	}
 	out := g.Render()
 	for _, w := range []string{
 		"Agent      runs as non-root, Docker available (config disables it; restart the container to apply)\n",
-		"Limits     cpu 2, max duration 1h\n",
+		"Limits     cpu 2, cpu allowance 50%, processes 500, disk read 10MB, max duration 1h\n",
 	} {
 		if !strings.Contains(out, w) {
 			t.Errorf("missing %q in:\n%s", w, out)
 		}
 	}
 
-	mgr.nesting = false
-	st.contextInfo.DockerUnavailable = false
-	if out := buildGrants(st).Render(); !strings.Contains(out, "Docker unavailable (config enables it; restart the container to apply)") {
+	fresh := func(m *fakeGrantsManager, o SetupOptions) string {
+		return buildGrants(&setupState{opts: o, result: &SetupResult{Manager: m}, contextInfo: st.contextInfo}).Render()
+	}
+	mgr.fromProfile = true
+	if out := fresh(mgr, SetupOptions{}); !strings.Contains(out, "Docker available (an Incus profile enables nesting; config disables Docker)\n") {
+		t.Errorf("profile nesting not attributed:\n%s", out)
+	}
+	mgr.nesting, mgr.fromProfile = false, false
+	if out := fresh(mgr, SetupOptions{Security: SecurityOptions{Docker: true}}); !strings.Contains(out, "Docker unavailable (config enables it; restart the container to apply)\n") {
 		t.Errorf("enable mismatch not flagged:\n%s", out)
 	}
-	st.contextInfo.DockerUnavailable = true
-	if out := buildGrants(st).Render(); !strings.Contains(out, "Docker unavailable\n") {
+	if out := fresh(mgr, SetupOptions{}); !strings.Contains(out, "Docker unavailable\n") {
 		t.Errorf("matching setting should carry no note:\n%s", out)
+	}
+}
+
+// The context files tell the agent the same Docker state as the report: the
+// container's, once setup read it.
+func TestContextInfo_DockerFollowsContainer(t *testing.T) {
+	opts := SetupOptions{Security: SecurityOptions{Docker: true}}
+	if contextInfoFor(&SetupResult{}, opts).DockerUnavailable {
+		t.Error("without a read, config decides")
+	}
+	r := &SetupResult{applied: &container.AppliedState{Nesting: false}}
+	if !contextInfoFor(r, opts).DockerUnavailable {
+		t.Error("the container's nesting should decide once read")
+	}
+}
+
+// When the devices can't be read and setup left the workspace path empty,
+// the fallback uses /workspace like the rest of coi, not an empty path.
+func TestBuildGrants_FallbackDefaultWorkspace(t *testing.T) {
+	st := &setupState{
+		opts:   SetupOptions{WorkspacePath: "/home/u/p"},
+		result: &SetupResult{Manager: &fakeGrantsManager{disksErr: errors.New("incus down")}},
+	}
+	if out := buildGrants(st).Render(); !strings.Contains(out, "Workspace  /home/u/p -> /workspace (read-write)\n") {
+		t.Errorf("fallback workspace:\n%s", out)
 	}
 }
 
