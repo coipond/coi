@@ -585,21 +585,27 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			if err != nil {
 				return nil, err
 			}
+			useResumeFlag := (s.resumeID != "") && a.persistent
+			restoreOnly := (s.resumeID != "") && !a.persistent
+
+			// In tmux mode the session is prepared first, so the report knows
+			// whether the tool was already running: attaching to it applies
+			// none of this launch's env to the running tool.
+			var tl *tmuxLaunch
+			if s.useTmux {
+				if tl, err = a.prepareTmux(s.result, containerEnv, userPtr, s.sessionID, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance); err != nil {
+					return nil, err
+				}
+			}
 			// The report goes before the "Starting session..." block so that block
 			// stays right above the tool's output, where it always was.
 			if g := s.result.Grants; g != nil {
-				// Only a reused container can have the tool already running in
-				// tmux; attaching to it applies none of this launch's env.
-				attaching := s.useTmux && s.result.Reused && tmuxSessionRunning(s.result, userPtr)
-				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(envSources, attaching).Render())
+				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(envSources, tl != nil && tl.existing).Render())
 			}
 			fmt.Fprintf(os.Stderr, "\nStarting session...\n")
 			fmt.Fprintf(os.Stderr, "Session ID: %s\n", s.sessionID)
 			fmt.Fprintf(os.Stderr, "Container: %s\n", s.result.ContainerName)
 			fmt.Fprintf(os.Stderr, "Workspace: %s\n", s.absWorkspace)
-
-			useResumeFlag := (s.resumeID != "") && a.persistent
-			restoreOnly := (s.resumeID != "") && !a.persistent
 
 			var runErr error
 			if s.useTmux {
@@ -614,7 +620,7 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 					fmt.Fprintf(os.Stderr, "Resume mode: Persistent session\n")
 				}
 				fmt.Fprintf(os.Stderr, "\n")
-				runErr = a.runCLIInTmux(s.result, containerEnv, userPtr, s.sessionID, background, useResumeFlag, restoreOnly, s.sessionsDir, s.resumeID, s.toolInstance)
+				runErr = a.enterTmux(s.result, tl, background)
 			} else {
 				fmt.Fprintf(os.Stderr, "Mode: Direct (no tmux)\n")
 				if restoreOnly {

@@ -25,8 +25,11 @@ Verifies that the report:
 10. on resume, lists the login files re-copied from the host as copied this
     launch, not as left over;
 11. names the tool's own env from [tool] config;
-12. when the tool is already running in tmux, says the env is unchanged rather
-    than naming env the running tool never received.
+12. when the tool is already running in tmux, says the running tool keeps its
+    env and lists the names as reaching new panes only;
+13. on reuse, lists a [[credentials]] file coi copied earlier as already there,
+    but not a file the image ships at another entry's destination;
+14. on reuse, shows the limits the container runs with, not changed config.
 """
 
 import json
@@ -412,9 +415,9 @@ def test_report_lists_incus_profile_grants(coi_binary, cleanup_containers, works
 
     _run_shell(coi_binary, workspace_dir, dict(os.environ))
     _stop(coi_binary, container_name)
-    pool = _incus("config", "device", "get", container_name, "root", "pool") or _incus(
-        "profile", "device", "get", "default", "root", "pool"
-    )
+    # The root disk comes from the default profile, which the instance can't
+    # read as its own device.
+    pool = _incus("profile", "device", "get", "default", "root", "pool")
 
     _incus("profile", "create", profile)
     volume_created = False
@@ -510,7 +513,7 @@ def test_report_resume_lists_recopied_tool_files(
     )
 
     rows = _report(
-        _run_shell(coi_binary, workspace_dir, dict(env), args=("--resume", session_id)).stderr
+        _run_shell(coi_binary, workspace_dir, dict(env), args=(f"--resume={session_id}",)).stderr
     )
     creds_line = f"{claude_dir}/.credentials.json -> /home/code/.claude/.credentials.json"
     assert creds_line in rows.get("Tool config", []), rows
@@ -527,8 +530,8 @@ def test_report_tool_settings_env(coi_binary, cleanup_containers, workspace_dir)
 
 def test_report_running_tool_keeps_its_env(coi_binary, cleanup_containers, workspace_dir):
     """Re-entering a container whose tool is still running in tmux doesn't
-    restart it, so env_commands minted now never reach it: the report says the
-    env is unchanged instead of naming them."""
+    restart it, so env_commands minted now never reach the tool, only panes
+    opened from now on: the report says so rather than claiming them."""
     env = write_trusted_coi_config(
         f"[defaults.env_commands]\nCOI_GRANTS_MINTED = \"printf '{MINTED_VALUE}'\"\n"
     )
@@ -544,6 +547,61 @@ def test_report_running_tool_keeps_its_env(coi_binary, cleanup_containers, works
             coi_binary, workspace_dir, dict(env), args=("--container", container_name)
         ).stderr
     )
-    assert second["Env"] == [
-        "unchanged: attaching to the running session, which keeps the env it started with"
-    ], second
+    assert second["Env"][0] == ("the running tool keeps the env it started with; new panes get:"), (
+        second
+    )
+    assert "COI_GRANTS_MINTED (env_commands)" in second["Env"], second
+
+
+def test_report_reused_container_leftover_credentials(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
+    """A reused container isn't re-seeded, so a [[credentials]] file coi copied at
+    creation is listed as already there. A destination coi never copied to (its
+    host file is missing) is not, even though the image ships a file there."""
+    present = tmp_path / "present-cred"
+    present.write_text("cred")
+    missing = tmp_path / "missing-cred"
+    env = write_trusted_coi_config(
+        "[[credentials]]\n"
+        f'host = "{present}"\n'
+        'container = "/home/code/.present-cred"\n'
+        "[[credentials]]\n"
+        f'host = "{missing}"\n'
+        'container = "/home/code/.bashrc"\n'
+    )
+    write_workspace_container_config(workspace_dir, persistent=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+
+    first = _report(_run_shell(coi_binary, workspace_dir, dict(env)).stderr)
+    assert first["Credentials"] == [f"{present} -> /home/code/.present-cred"], first
+    _stop(coi_binary, container_name, env)
+
+    reused = _report(
+        _run_shell(
+            coi_binary, workspace_dir, dict(env), args=("--container", container_name)
+        ).stderr
+    )
+    assert reused["Credentials"] == [
+        f"{present} -> /home/code/.present-cred (already in the container, not copied this launch)"
+    ], reused
+
+
+def test_report_reused_container_applied_limits(coi_binary, cleanup_containers, workspace_dir):
+    """Limits are applied when a container is created; a reused one keeps them,
+    so the report shows those rather than what config now says."""
+    write_workspace_container_config(workspace_dir, persistent=True)
+    container_name = calculate_container_name(workspace_dir, 1)
+
+    first_env = write_trusted_coi_config('[limits.cpu]\ncount = "1"\n')
+    first = _report(_run_shell(coi_binary, workspace_dir, dict(first_env)).stderr)
+    assert first["Limits"] == ["cpu 1"], first
+    _stop(coi_binary, container_name, first_env)
+
+    changed_env = write_trusted_coi_config('[limits.cpu]\ncount = "2"\n')
+    reused = _report(
+        _run_shell(
+            coi_binary, workspace_dir, dict(changed_env), args=("--container", container_name)
+        ).stderr
+    )
+    assert reused["Limits"] == ["cpu 1"], reused

@@ -14,7 +14,7 @@ func TestAppliedState(t *testing.T) {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 case "$*" in
-  *"config show --expanded c2"*) printf 'config:\n  security.nesting: "false"\n  environment.GIT_AUTHOR_NAME: Jane\n  environment.ANTHROPIC_MODEL: opus\n  user.coi.git_env_keys: GIT_AUTHOR_NAME\ndevices:\n  root:\n    path: /\n    pool: default\n    type: disk\n  cache:\n    path: /cache\n    pool: default\n    source: cache\n    type: disk\n  eth0:\n    type: nic\n' ;;
+  *"config show --expanded c2"*) printf 'config:\n  security.nesting: "false"\n  limits.cpu: "2"\n  limits.memory: 4GiB\n  environment.GIT_AUTHOR_NAME: Jane\n  environment.ANTHROPIC_MODEL: opus\n  user.coi.git_env_keys: GIT_AUTHOR_NAME\ndevices:\n  root:\n    path: /\n    pool: default\n    type: disk\n  cache:\n    path: /cache\n    pool: default\n    source: cache\n    type: disk\n  eth0:\n    type: nic\n' ;;
   *) echo "Error: Instance not found" >&2; exit 1 ;;
 esac
 `
@@ -31,6 +31,9 @@ esac
 	}
 	if st.Nesting {
 		t.Error("nesting is off")
+	}
+	if st.CPU != "2" || st.Memory != "4GiB" {
+		t.Errorf("limits = cpu %q memory %q", st.CPU, st.Memory)
 	}
 	if want := []string{"ANTHROPIC_MODEL", "GIT_AUTHOR_NAME"}; !reflect.DeepEqual(st.EnvNames, want) {
 		t.Errorf("env names = %v, want %v", st.EnvNames, want)

@@ -233,6 +233,8 @@ type AppliedState struct {
 	Disks    map[string]DiskDevice // every disk, the container's own and its profiles'
 	EnvNames []string              // environment.* keys, sorted; names only
 	Nesting  bool                  // security.nesting, which Docker needs
+	CPU      string                // limits.cpu ("" = unlimited)
+	Memory   string                // limits.memory ("" = unlimited)
 }
 
 // AppliedState reads the instance's expanded config, from one
@@ -242,7 +244,12 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 	if !ok {
 		return AppliedState{}, fmt.Errorf("could not read the expanded config of %s", m.ContainerName)
 	}
-	st := AppliedState{Disks: diskDevicesFrom(c.devices), Nesting: isTrue(c.config["security.nesting"])}
+	st := AppliedState{
+		Disks:   diskDevicesFrom(c.devices),
+		Nesting: isTrue(c.config["security.nesting"]),
+		CPU:     c.config["limits.cpu"],
+		Memory:  c.config["limits.memory"],
+	}
 	for k := range c.config {
 		if name, ok := strings.CutPrefix(k, "environment."); ok && name != "" {
 			st.EnvNames = append(st.EnvNames, name)

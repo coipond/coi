@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,9 +45,13 @@ type Grants struct {
 
 	RunAsRoot         bool
 	DockerUnavailable bool
-	CPULimit          string
-	MemoryLimit       string
-	MaxDuration       string
+	// DockerConfigDiffers is set when the container's nesting disagrees with
+	// what the current config asks for (a reused container keeps what it was
+	// created with until restarted); DockerUnavailable follows the container.
+	DockerConfigDiffers bool
+	CPULimit            string
+	MemoryLimit         string
+	MaxDuration         string
 }
 
 // MountGrant is a host path, or an Incus storage volume, visible in the
@@ -100,8 +105,8 @@ type EnvGrants struct {
 	Tool      []string // the tool's own env from [tool] config, set on every launch
 	Container []string // the container's environment.* (git identity, Incus profiles, ...)
 	// Attaching is set when the tool is already running in a tmux session the
-	// launch attaches to: it keeps the env it started with, so none of the
-	// above was applied to it this launch.
+	// launch attaches to: it keeps the env it started with, so the above
+	// reaches only panes opened from now on.
 	Attaching bool
 }
 
@@ -161,7 +166,12 @@ func buildGrants(st *setupState) *Grants {
 	if applied != nil {
 		g.Workspace, g.Mounts, g.Protected, g.Masked = classifyDisks(applied.Disks, info.WorkspacePath)
 		g.DockerUnavailable = !applied.Nesting
+		g.DockerConfigDiffers = g.DockerUnavailable != info.DockerUnavailable
 		g.Env.Container = applied.EnvNames
+		// Limits are applied only when a container is created, so a reused
+		// one runs with its own, whatever config says now. max_duration is
+		// per session (the timeout monitor), so it stays from config.
+		g.CPULimit, g.MemoryLimit = applied.CPU, applied.Memory
 	} else {
 		g.DevicesUnread = true
 		configuredDisks(g, opts, info.WorkspacePath)
@@ -233,9 +243,12 @@ func classifyDisks(disks map[string]container.DiskDevice, workspace string) (ws 
 			ws = MountGrant{HostPath: d.Source, ContainerPath: d.Path, Readonly: d.Readonly}
 		case name == gitReadonlyDeviceName:
 			// coi's generated read-only gitconfig, not host data.
-		case strings.HasPrefix(name, protectDevicePrefix), strings.HasPrefix(name, gitcDevicePrefix):
+		// coi's protections and masks are always read-only; a writable disk
+		// that merely shares the name prefix (e.g. from an Incus profile) is
+		// a mount, and must be listed as one.
+		case d.Readonly && (strings.HasPrefix(name, protectDevicePrefix) || strings.HasPrefix(name, gitcDevicePrefix)):
 			protected = append(protected, displayPath(d.Path, workspace))
-		case strings.HasPrefix(name, maskDevicePrefix):
+		case d.Readonly && strings.HasPrefix(name, maskDevicePrefix):
 			masked = append(masked, displayPath(d.Path, workspace))
 		default:
 			// Includes storage-pool volumes (pool set, source naming the
@@ -325,6 +338,13 @@ const (
 	leftoverCheckedMarker = "coi:leftovers-checked"
 )
 
+// copyManifestPath is the file listing, one per line, the container paths coi has
+// copied a [[credentials]] host file to. Root-owned, outside the home dir. It
+// lets the leftover check tell a file coi copied apart from one the image or
+// the agent put at the same path (e.g. a ~/.gitconfig the image ships).
+// A var only so tests can point it at a temp file.
+var copyManifestPath = "/var/lib/coi/copied-host-files"
+
 // planLeftoverCheck works out the candidates and returns the guest op that
 // checks for them. Only a reused or resumed container can hold files copied by
 // an earlier session, so a fresh one gets no op.
@@ -337,24 +357,56 @@ func (st *setupState) planLeftoverCheck() (guestOp, bool) {
 		return guestOp{}, false
 	}
 	st.leftovers = leftoverCheck{planned: true, creds: creds, tools: tools}
-	var paths []string
-	for _, c := range append(append([]CredentialGrant{}, creds...), tools...) {
-		paths = append(paths, c.ContainerPath)
-	}
-	return leftoverCheckOp(paths), true
+	return leftoverCheckOp(containerPaths(creds), containerPaths(tools)), true
 }
 
-// leftoverCheckOp prints a marker line for each path that exists, then a
-// final marker, so the output tells "absent" apart from "never checked". It
-// always succeeds, so it can't fail the batch it rides in.
-func leftoverCheckOp(paths []string) guestOp {
-	var b strings.Builder
-	b.WriteString("for p in")
-	for _, p := range paths {
-		b.WriteString(" " + shellEscape(p))
+func containerPaths(gs []CredentialGrant) []string {
+	var paths []string
+	for _, g := range gs {
+		paths = append(paths, g.ContainerPath)
 	}
-	fmt.Fprintf(&b, `; do [ -e "$p" ] && printf '%s%%s\n' "$p"; done; echo %s`, leftoverPresentMarker, leftoverCheckedMarker)
+	return paths
+}
+
+// leftoverCheckOp prints a marker line for each candidate still there, then a
+// final marker, so the output tells "absent" apart from "never checked". A
+// [[credentials]] destination counts only if coi recorded copying to it (see
+// copyManifestPath); a tool file lives in the tool's own config dir
+// and is a candidate only when the host has it, so existing is enough. The op
+// always succeeds, so it can't fail the batch it rides in.
+func leftoverCheckOp(creds, tools []string) guestOp {
+	var b strings.Builder
+	loop := func(paths []string, test string) {
+		if len(paths) == 0 {
+			return
+		}
+		b.WriteString("for p in")
+		for _, p := range paths {
+			b.WriteString(" " + shellEscape(p))
+		}
+		fmt.Fprintf(&b, `; do %s && printf '%s%%s\n' "$p"; done; `, test, leftoverPresentMarker)
+	}
+	loop(creds, `[ -e "$p" ] && grep -qxF -- "$p" `+shellEscape(copyManifestPath)+` 2>/dev/null`)
+	loop(tools, `[ -e "$p" ]`)
+	b.WriteString("echo " + leftoverCheckedMarker)
 	return guestCmd(b.String())
+}
+
+// recordCopiedCredentialsOp adds this launch's [[credentials]] destinations to
+// copyManifestPath. Best-effort: a failure only means a later reuse
+// won't list those files as left over, so it never fails the batch.
+func recordCopiedCredentialsOp(copied []CredentialEntry) (guestOp, bool) {
+	if len(copied) == 0 {
+		return guestOp{}, false
+	}
+	m := shellEscape(copyManifestPath)
+	var b strings.Builder
+	fmt.Fprintf(&b, "{ mkdir -p %s && touch %s && for p in", shellEscape(filepath.Dir(copyManifestPath)), m)
+	for _, e := range copied {
+		b.WriteString(" " + shellEscape(e.ContainerPath))
+	}
+	fmt.Fprintf(&b, `; do grep -qxF -- "$p" %s || printf '%%s\n' "$p" >> %s; done; } 2>/dev/null || true`, m, m)
+	return guestCmd(b.String()), true
 }
 
 // parse reads leftoverCheckOp's output from the batch's combined output.
@@ -398,7 +450,13 @@ func (g *Grants) Render() string {
 		}
 	}
 
-	add("Workspace", fmt.Sprintf("%s -> %s (%s)", g.Workspace.HostPath, g.Workspace.ContainerPath, rwLabel(g.Workspace.Readonly)))
+	if g.Workspace.HostPath == "" {
+		// No device named "workspace" (a container coi didn't create);
+		// whatever holds the workspace is listed under Mounts.
+		add("Workspace", "none")
+	} else {
+		add("Workspace", fmt.Sprintf("%s -> %s (%s)", g.Workspace.HostPath, g.Workspace.ContainerPath, rwLabel(g.Workspace.Readonly)))
+	}
 
 	mounts := []string{"none"}
 	if len(g.Mounts) > 0 {
@@ -462,6 +520,13 @@ func (g *Grants) Render() string {
 	if g.DockerUnavailable {
 		docker = "unavailable"
 	}
+	if g.DockerConfigDiffers {
+		if g.DockerUnavailable {
+			docker += " (config enables it; restart the container to apply)"
+		} else {
+			docker += " (config disables it; restart the container to apply)"
+		}
+	}
 	add("Agent", fmt.Sprintf("runs as %s, Docker %s", user, docker))
 
 	var limits []string
@@ -494,11 +559,13 @@ func (g *Grants) Render() string {
 // comes from: the tool's own env overrides the config layers (it is merged in
 // last), and any per-exec value overrides the container's environment.*.
 func (g *Grants) envLines() []string {
+	var lines []string
 	if g.Env.Attaching {
-		return []string{"unchanged: attaching to the running session, which keeps the env it started with"}
+		// The running tool keeps its env, but the session env is still
+		// updated, so panes opened from now on get what follows.
+		lines = append(lines, "the running tool keeps the env it started with; new panes get:")
 	}
 	seen := map[string]bool{}
-	var lines []string
 	for _, src := range []struct {
 		names []string
 		label string
@@ -520,8 +587,8 @@ func (g *Grants) envLines() []string {
 			lines = append(lines, strings.Join(names, ", ")+" ("+src.label+")")
 		}
 	}
-	if len(lines) == 0 {
-		return []string{"none"}
+	if len(lines) == 0 || (g.Env.Attaching && len(lines) == 1) {
+		lines = append(lines, "none")
 	}
 	return lines
 }

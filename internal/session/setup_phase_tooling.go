@@ -150,12 +150,17 @@ func (st *setupState) phaseSetupCredentials(_ context.Context) (Teardown, error)
 // that support it, the native auto-context file (e.g. Claude's ~/.claude/CLAUDE.md).
 func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	// Runs for both new and resumed sessions so dynamic info stays current.
-	// The leftover-file check rides along first, so a later failing op can't
-	// cut it short.
-	ops := st.pendingGuestOps
+	// The leftover-file check and the copied-credentials record ride along
+	// first, so a later failing op can't cut them short. The check looks only
+	// at files not copied this launch, so it doesn't see this launch's record.
+	var ops []guestOp
 	if op, ok := st.planLeftoverCheck(); ok {
-		ops = append([]guestOp{op}, ops...)
+		ops = append(ops, op)
 	}
+	if op, ok := recordCopiedCredentialsOp(st.copiedCredentials); ok {
+		ops = append(ops, op)
+	}
+	ops = append(ops, st.pendingGuestOps...)
 	out, ctxInfo := injectSandboxContextFiles(st.result, st.opts, ops...)
 	st.leftovers.parse(out)
 	st.contextInfo = ctxInfo

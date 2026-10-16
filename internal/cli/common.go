@@ -60,20 +60,25 @@ func stderrLogFn(msg string) {
 // It returns which layer each variable it set came from (the layer that won),
 // for the startup grants report; callers that don't report ignore it.
 func (a *App) applyConfigEnv(env map[string]string) (session.EnvGrants, error) {
-	source := map[string]*[]string{}
-	var g session.EnvGrants
-	set := func(k, v string, layer *[]string) {
+	// The layer that last set each variable; later layers overwrite earlier.
+	const (
+		configured = iota
+		fromHost
+		minted
+	)
+	layer := map[string]int{}
+	set := func(k, v string, l int) {
 		env[k] = v
-		source[k] = layer
+		layer[k] = l
 	}
 	// Static environment from config (defaults.environment + profile environment)
 	for k, v := range a.cfg.Defaults.Environment {
-		set(k, v, &g.Configured)
+		set(k, v, configured)
 	}
 	// Resolve forward_env from config, look up host values
 	for _, name := range a.cfg.Defaults.ForwardEnv {
 		if val, ok := os.LookupEnv(name); ok {
-			set(name, val, &g.FromHost)
+			set(name, val, fromHost)
 		} else {
 			fmt.Fprintf(os.Stderr, "Warning: forward_env variable %q is not set on host, skipping\n", name)
 		}
@@ -84,10 +89,19 @@ func (a *App) applyConfigEnv(env map[string]string) (session.EnvGrants, error) {
 		return session.EnvGrants{}, err
 	}
 	for k, v := range envCommandValues {
-		set(k, v, &g.Minted)
+		set(k, v, minted)
 	}
-	for k, layer := range source {
-		*layer = append(*layer, k)
+
+	var g session.EnvGrants
+	for k, l := range layer {
+		switch l {
+		case configured:
+			g.Configured = append(g.Configured, k)
+		case fromHost:
+			g.FromHost = append(g.FromHost, k)
+		case minted:
+			g.Minted = append(g.Minted, k)
+		}
 	}
 	sort.Strings(g.Configured)
 	sort.Strings(g.FromHost)

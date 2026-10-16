@@ -21,12 +21,13 @@ type fakeGrantsManager struct {
 	disksErr  error
 	envNames  []string
 	nesting   bool
+	cpu       string
 	pushFail  map[string]bool // host paths whose push fails
 	mkdirFail bool
 }
 
 func (f *fakeGrantsManager) AppliedState() (container.AppliedState, error) {
-	return container.AppliedState{Disks: f.disks, EnvNames: f.envNames, Nesting: f.nesting}, f.disksErr
+	return container.AppliedState{Disks: f.disks, EnvNames: f.envNames, Nesting: f.nesting, CPU: f.cpu}, f.disksErr
 }
 
 func (f *fakeGrantsManager) ExecArgs(args []string, _ container.ExecCommandOptions) error {
@@ -322,24 +323,75 @@ func TestBuildGrants_CopiedFiles(t *testing.T) {
 	})
 }
 
-// The check op is real shell: run it (as the batch would) against temp files,
-// including a path that needs quoting, and feed its output to parse.
+// The record and check ops are real shell: run them (as the batch would)
+// against temp files, including a path that needs quoting, and feed the output
+// to parse. A [[credentials]] destination counts only once recorded; a file
+// already there that coi never copied (an image's ~/.gitconfig) does not.
 func TestLeftoverCheckOp_RunsInShell(t *testing.T) {
 	dir := t.TempDir()
-	present := filepath.Join(dir, "it's here")
-	if err := os.WriteFile(present, nil, 0o600); err != nil {
+	old := copyManifestPath
+	copyManifestPath = filepath.Join(dir, "state", "copied-credentials")
+	t.Cleanup(func() { copyManifestPath = old })
+	file := func(name string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	copied := file("it's copied")
+	fromImage := file("gitconfig")
+	toolFile := file(".credentials.json")
+	absent := filepath.Join(dir, "gone")
+
+	run := func(ops ...guestOp) string {
+		t.Helper()
+		out, err := exec.Command("bash", "-c", renderGuestScript(ops)).Output()
+		if err != nil {
+			t.Fatalf("ops failed the batch: %v (%s)", err, out)
+		}
+		return string(out)
+	}
+	record, ok := recordCopiedCredentialsOp([]CredentialEntry{{ContainerPath: copied}})
+	if !ok {
+		t.Fatal("no record op for a copied file")
+	}
+	run(record, record) // a second launch must not duplicate the entry
+	if b, _ := os.ReadFile(copyManifestPath); string(b) != copied+"\n" {
+		t.Errorf("manifest = %q", b)
+	}
+
+	out := run(leftoverCheckOp([]string{copied, fromImage, absent}, []string{toolFile, absent}))
+	lc := leftoverCheck{planned: true}
+	lc.parse(out)
+	if !lc.checked || !lc.present[copied] || !lc.present[toolFile] || len(lc.present) != 2 {
+		t.Errorf("parsed %+v from %q", lc, out)
+	}
+
+	// No manifest yet (nothing ever recorded): credentials don't count, and
+	// the check still completes.
+	if err := os.Remove(copyManifestPath); err != nil {
 		t.Fatal(err)
 	}
-	absent := filepath.Join(dir, "gone")
-	op := leftoverCheckOp([]string{present, absent})
-	out, err := exec.Command("bash", "-c", renderGuestScript([]guestOp{op})).Output()
-	if err != nil {
-		t.Fatalf("check failed the batch: %v (%s)", err, out)
+	lc = leftoverCheck{planned: true}
+	lc.parse(run(leftoverCheckOp([]string{copied}, nil)))
+	if !lc.checked || len(lc.present) != 0 {
+		t.Errorf("without a manifest parsed %+v", lc)
 	}
-	lc := leftoverCheck{planned: true}
-	lc.parse(string(out))
-	if !lc.checked || !lc.present[present] || lc.present[absent] || len(lc.present) != 1 {
-		t.Errorf("parsed %+v from %q", lc, out)
+}
+
+// The record op is best-effort: an unwritable manifest must not fail the
+// batch (and the context files written after it).
+func TestRecordCopiedCredentialsOp_NeverFails(t *testing.T) {
+	old := copyManifestPath
+	copyManifestPath = "/proc/coi-no-such-dir/copied-credentials"
+	t.Cleanup(func() { copyManifestPath = old })
+	op, _ := recordCopiedCredentialsOp([]CredentialEntry{{ContainerPath: "/x"}})
+	if out, err := exec.Command("bash", "-c", renderGuestScript([]guestOp{op, guestCmd("echo after")})).Output(); err != nil || !strings.Contains(string(out), "after") {
+		t.Errorf("record op failed the batch: %v (%s)", err, out)
+	}
+	if _, ok := recordCopiedCredentialsOp(nil); ok {
+		t.Error("nothing copied should need no op")
 	}
 }
 
@@ -566,15 +618,87 @@ func TestGrantsRender_EnvSources(t *testing.T) {
 	}
 }
 
-// Attaching to a tool already running in tmux applies none of this launch's
-// env, so the report says so instead of naming it.
+// Attaching to a tool already running in tmux: the tool keeps its env, but
+// the session env is updated, so the names are listed as reaching new panes.
 func TestGrantsRender_EnvAttaching(t *testing.T) {
 	g := (&Grants{Env: EnvGrants{Tool: []string{"T"}}}).WithEnv(EnvGrants{Minted: []string{"TOKEN"}}, true)
 	out := g.Render()
-	if !strings.Contains(out, "Env        unchanged: attaching to the running session, which keeps the env it started with\n") {
-		t.Errorf("attach note missing:\n%s", out)
+	for _, w := range []string{
+		"Env        the running tool keeps the env it started with; new panes get:\n",
+		"           T (tool settings)\n",
+		"           TOKEN (env_commands)\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q in:\n%s", w, out)
+		}
 	}
-	if strings.Contains(out, "TOKEN") {
-		t.Errorf("attach should not list env names:\n%s", out)
+	empty := (&Grants{}).WithEnv(EnvGrants{}, true).Render()
+	if !strings.Contains(empty, "new panes get:\n             none\n") {
+		t.Errorf("attach with no env should say none:\n%s", empty)
+	}
+}
+
+// A device with coi's protect-/gitc-/mask- prefix that is writable is not a
+// coi protection (coi's are always read-only), so it is listed as a mount.
+func TestClassifyDisks_WritablePrefixIsAMount(t *testing.T) {
+	_, mounts, protected, masked := classifyDisks(map[string]container.DiskDevice{
+		"mask-data":     {Source: "/home/u/secrets", Path: "/data"},
+		"protect-thing": {Source: "/srv/thing", Path: "/thing"},
+		"mask-real":     {Source: "/tmp/empty", Path: "/workspace/.env", Readonly: true},
+		"protect-hooks": {Source: "/p/.git/hooks", Path: "/workspace/.git/hooks", Readonly: true},
+	}, "/workspace")
+	if len(mounts) != 2 || mounts[0].ContainerPath != "/data" || mounts[1].ContainerPath != "/thing" {
+		t.Errorf("mounts = %+v, want the two writable look-alikes", mounts)
+	}
+	if strings.Join(protected, ",") != ".git/hooks" || strings.Join(masked, ",") != ".env" {
+		t.Errorf("protected = %v, masked = %v", protected, masked)
+	}
+}
+
+// Limits and Docker follow the container, which keeps what it was created
+// with; a Docker setting that config would change is flagged.
+func TestBuildGrants_AppliedLimitsAndDocker(t *testing.T) {
+	mgr := &fakeGrantsManager{
+		disks:   map[string]container.DiskDevice{"workspace": {Source: "/p", Path: "/workspace"}},
+		nesting: true,
+		cpu:     "2",
+	}
+	st := &setupState{
+		opts:   SetupOptions{},
+		result: &SetupResult{Manager: mgr},
+		contextInfo: tool.ContextInfo{
+			WorkspacePath: "/workspace", CPULimit: "8", MemoryLimit: "4GiB", MaxDuration: "1h",
+			DockerUnavailable: true,
+		},
+	}
+	g := buildGrants(st)
+	if g.CPULimit != "2" || g.MemoryLimit != "" || g.MaxDuration != "1h" {
+		t.Errorf("limits = cpu %q memory %q duration %q, want the container's cpu/memory and config's duration", g.CPULimit, g.MemoryLimit, g.MaxDuration)
+	}
+	out := g.Render()
+	for _, w := range []string{
+		"Agent      runs as non-root, Docker available (config disables it; restart the container to apply)\n",
+		"Limits     cpu 2, max duration 1h\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q in:\n%s", w, out)
+		}
+	}
+
+	mgr.nesting = false
+	st.contextInfo.DockerUnavailable = false
+	if out := buildGrants(st).Render(); !strings.Contains(out, "Docker unavailable (config enables it; restart the container to apply)") {
+		t.Errorf("enable mismatch not flagged:\n%s", out)
+	}
+	st.contextInfo.DockerUnavailable = true
+	if out := buildGrants(st).Render(); !strings.Contains(out, "Docker unavailable\n") {
+		t.Errorf("matching setting should carry no note:\n%s", out)
+	}
+}
+
+// Without a "workspace" device the row says none instead of a blank path.
+func TestGrantsRender_NoWorkspaceDevice(t *testing.T) {
+	if out := (&Grants{}).Render(); !strings.Contains(out, "Workspace  none\n") {
+		t.Errorf("missing workspace should say none:\n%s", out)
 	}
 }
