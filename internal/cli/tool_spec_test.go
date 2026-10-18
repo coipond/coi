@@ -57,7 +57,7 @@ func TestBuildToolLaunchArgv_NoDummyOverride(t *testing.T) {
 	}
 }
 
-// `coi run --prompt` on opencode (Print) uses `opencode run <prompt>`, while
+// `coi run --prompt` on opencode (Print) uses `opencode run <prompt-file`, while
 // `coi tool spec` (no Print) keeps the out-of-band prompt.
 func TestBuildToolLaunchArgv_OpencodePrint(t *testing.T) {
 	argv, prompt, err := buildToolLaunchArgv(tool.NewOpencode(), tool.LaunchSpec{
@@ -66,7 +66,7 @@ func TestBuildToolLaunchArgv_OpencodePrint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(argv, " "); got != `opencode run "$(cat /run/p)"` {
+	if got := strings.Join(argv, " "); got != `opencode run </run/p` {
 		t.Errorf("opencode print launch = %q", got)
 	}
 	if prompt != "" {

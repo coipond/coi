@@ -65,9 +65,10 @@ func TestOpencodeTool_BuildHeadlessCommand(t *testing.T) {
 		spec LaunchSpec
 		want string
 	}{
-		{"fresh", LaunchSpec{SessionID: "sid", PromptFile: "/run/p", Print: true}, `opencode run "$(cat /run/p)"`},
-		{"continue", LaunchSpec{Resume: true, PromptFile: "/run/p", Print: true}, `opencode run --continue "$(cat /run/p)"`},
-		{"session", LaunchSpec{Resume: true, ResumeSessionID: "ses_1", PromptFile: "/run/p", Print: true}, `opencode run --session ses_1 "$(cat /run/p)"`},
+		{"no prompt", LaunchSpec{SessionID: "sid", Print: true}, `opencode run </dev/null`},
+		{"fresh", LaunchSpec{SessionID: "sid", PromptFile: "/run/p", Print: true}, `opencode run </run/p`},
+		{"continue", LaunchSpec{Resume: true, PromptFile: "/run/p", Print: true}, `opencode run --continue </run/p`},
+		{"session", LaunchSpec{Resume: true, ResumeSessionID: "ses_1", PromptFile: "/run/p", Print: true}, `opencode run --session ses_1 </run/p`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

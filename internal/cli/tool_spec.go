@@ -297,7 +297,7 @@ func (a *App) stageSpecFile(mgr container.ContainerManager, hostPath, destPath s
 // prompt is surfaced rather than silently dropped. A system prompt on a tool
 // without one is still rejected loudly (those tools have no such concept).
 // A print-mode spec on a ToolWithHeadlessPrompt (opencode) uses the tool's
-// headless form instead, which carries the prompt in argv.
+// headless form instead, which carries the prompt itself.
 //
 // It does NOT apply the COI_USE_DUMMY test override: `coi run --prompt` runs the
 // tool by its real binary name (the dummy test image installs the stub AS
