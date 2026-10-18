@@ -1,5 +1,5 @@
 """
-Integration test for `coi run --prompt` with the opencode tool (#48996).
+Integration test for `coi run --prompt` with the opencode tool.
 
 `[tool] binary` points at a stub in the workspace, so no real opencode or auth
 is needed. The stub records its arguments and stdin, then exits with a set

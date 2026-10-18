@@ -8,9 +8,9 @@ package tool
 // PromptFile and SystemPromptFile are IN-CONTAINER paths to files holding the
 // initial user prompt and an optional system prompt. Passing files (not the
 // text) keeps arbitrary prompt content off the launch command line — the tool
-// references the prompt via a `"$(cat <file>)"` substitution the container
-// shell expands when the orchestrator runs the command, so prompts with
-// quotes/newlines can't corrupt it.
+// references the prompt via a `"$(cat <file>)"` substitution or a `<file`
+// stdin redirect the container shell expands when the command runs, so
+// prompts with quotes/newlines can't corrupt it.
 type LaunchSpec struct {
 	SessionID        string
 	Resume           bool
