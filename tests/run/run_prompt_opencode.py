@@ -1,17 +1,7 @@
 """
-Integration tests for `coi run --prompt` with the opencode tool.
-
-test_run_prompt_opencode: `[tool] binary` points at a stub in the workspace.
-The stub records its arguments and stdin, then exits with a set code. It checks
-the headless launch end to end: `opencode run` with the prompt on stdin
-(verbatim, even when it starts with "-"), exit-code propagation, and no hang
-when the caller keeps its stdin open.
-
-test_run_prompt_real_opencode: the real opencode from the default image, with
-no credentials. The configured model does not exist, so opencode stores the
-prompt in its session database, fails before any model call, and exits 1. The
-database lives in the workspace (XDG_DATA_HOME), so the test reads the prompt
-back from it on the host.
+Integration tests for `coi run --prompt` with the opencode tool: the prompt
+must reach `opencode run` verbatim (even when it starts with "-") and the
+agent's exit code must propagate.
 """
 
 import json
@@ -32,6 +22,10 @@ PROMPT = "---\ntitle: nightly\n---\n- fix the bug\n- add a test\n"
 
 
 def test_run_prompt_opencode(coi_binary, cleanup_containers, workspace_dir, dummy_image, tmp_path):
+    """`[tool] binary` points at a stub in the workspace. The stub records its
+    arguments and stdin, then exits with a set code. Checks `opencode run` with
+    the prompt on stdin, exit-code propagation, and no hang when the caller
+    keeps its stdin open."""
     write_workspace_container_config(workspace_dir, image=dummy_image)
     script = Path(workspace_dir) / "fake-opencode.sh"
     script.write_text(FAKE_OPENCODE)
@@ -77,6 +71,11 @@ def test_run_prompt_opencode(coi_binary, cleanup_containers, workspace_dir, dumm
 
 
 def test_run_prompt_real_opencode(coi_binary, cleanup_containers, workspace_dir, tmp_path):
+    """The real opencode from the default image, with no credentials. The
+    configured model does not exist, so opencode stores the prompt in its
+    session database, fails before any model call, and exits 1. The database
+    lives in the workspace (XDG_DATA_HOME), so the test reads the prompt back
+    from it on the host."""
     prompt = tmp_path / "task.md"
     prompt.write_text(PROMPT)
 
