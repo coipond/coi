@@ -389,6 +389,22 @@ type ToolWithContainerEnv interface {
 	GetContainerEnv(workspacePath string) map[string]string
 }
 
+// ToolWithContainerSessionDiscovery is an optional interface for tools whose
+// sessions live in a store that only the tool can read in the container (e.g.
+// opencode's SQLite DB under XDG_DATA_HOME), so DiscoverSessionID cannot find
+// them in the saved state on the host. On resume coi runs
+// SessionDiscoveryCommand in the container (with the tool's container env)
+// and passes its stdout to SetSessionDiscoveryOutput; DiscoverSessionID then
+// returns the session found there.
+type ToolWithContainerSessionDiscovery interface {
+	Tool
+	// SessionDiscoveryCommand returns the argv that prints the latest session
+	// of workspacePath (the mount point inside the container).
+	SessionDiscoveryCommand(workspacePath string) []string
+	// SetSessionDiscoveryOutput stores the session ID found in output.
+	SetSessionDiscoveryOutput(output string)
+}
+
 // SetPermissionMode sets the permission mode for Claude Code.
 // Valid values: "bypass" (default, all permissions auto-granted) or "interactive" (human-in-the-loop).
 func (c *ClaudeTool) SetPermissionMode(mode string) {

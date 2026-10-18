@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -62,6 +63,62 @@ func TestOpencodeTool_DiscoverSessionID(t *testing.T) {
 	id := oc.DiscoverSessionID("/some/path")
 	if id != "" {
 		t.Errorf("DiscoverSessionID() = %q, want %q", id, "")
+	}
+}
+
+func TestOpencodeTool_SessionDiscoveryCommand(t *testing.T) {
+	oc := NewOpencode().(*OpencodeTool)
+	cmd := oc.SessionDiscoveryCommand("/work'space")
+	want := []string{
+		"opencode", "db",
+		"SELECT id FROM session WHERE parent_id IS NULL AND time_archived IS NULL" +
+			" AND directory = '/work''space' ORDER BY time_updated DESC LIMIT 1",
+		"--format", "json",
+	}
+	if strings.Join(cmd, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("SessionDiscoveryCommand() = %q, want %q", cmd, want)
+	}
+
+	oc.SetBinary("/opt/oc/bin/opencode")
+	if got := oc.SessionDiscoveryCommand("/workspace")[0]; got != "/opt/oc/bin/opencode" {
+		t.Errorf("SessionDiscoveryCommand()[0] = %q, want the [tool] binary override", got)
+	}
+}
+
+func TestOpencodeTool_SetSessionDiscoveryOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{"one row", "[\n  {\n    \"id\": \"ses_1a2B3c\"\n  }\n]\n", "ses_1a2B3c"},
+		{"log line before the rows", "INFO migrating\n[{\"id\":\"ses_x9\"}]", "ses_x9"},
+		{"no rows", "[]\n", ""},
+		{"empty output", "", ""},
+		{"not json", "Error: no such table: session", ""},
+		{"unexpected id shape", `[{"id":"ses_1; rm -rf /"}]`, ""},
+		{"not an opencode id", `[{"id":"abc"}]`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oc := NewOpencode().(*OpencodeTool)
+			oc.SetSessionDiscoveryOutput(tt.output)
+			if got := oc.DiscoverSessionID("/ignored"); got != tt.want {
+				t.Errorf("DiscoverSessionID() = %q, want %q", got, tt.want)
+			}
+			if got := strings.Join(oc.BuildCommand("", true, oc.DiscoverSessionID("")), " "); tt.want != "" && got != "opencode --session "+tt.want {
+				t.Errorf("BuildCommand(resume) = %q, want --session %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpencodeTool_SetSessionDiscoveryOutput_ClearsPrevious(t *testing.T) {
+	oc := NewOpencode().(*OpencodeTool)
+	oc.SetSessionDiscoveryOutput(`[{"id":"ses_old"}]`)
+	oc.SetSessionDiscoveryOutput("[]")
+	if got := oc.DiscoverSessionID(""); got != "" {
+		t.Errorf("DiscoverSessionID() = %q, want \"\" after an empty lookup", got)
 	}
 }
 

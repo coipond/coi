@@ -197,26 +197,13 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 
 			resumeFlagSet := cmd.Flags().Changed("resume") || cmd.Flags().Changed("continue")
 
-			isWorkspaceSessionTool := false
-			if ti.Name() == "opencode" {
-				workspaceSessionDir := filepath.Join(s.absWorkspace, ".opencode")
-				if info, err := os.Stat(workspaceSessionDir); err == nil && info.IsDir() {
-					isWorkspaceSessionTool = true
-				}
-			}
-
 			if resumeFlagSet && (resumeID == "" || resumeID == "auto") {
-				if isWorkspaceSessionTool {
-					resumeID = "workspace-session"
-					fmt.Fprintf(os.Stderr, "Resuming %s session from workspace\n", ti.Name())
-				} else {
-					resumeID, err = session.GetLatestSessionForWorkspace(sessionsDir, s.absWorkspace, a.sessionName())
-					if err != nil {
-						return nil, fmt.Errorf("no previous session to resume for this workspace: %w", err)
-					}
-					fmt.Fprintf(os.Stderr, "Auto-detected session: %s\n", resumeID)
+				resumeID, err = session.GetLatestSessionForWorkspace(sessionsDir, s.absWorkspace, a.sessionName())
+				if err != nil {
+					return nil, fmt.Errorf("no previous session to resume for this workspace: %w", err)
 				}
-			} else if resumeID != "" && !isWorkspaceSessionTool {
+				fmt.Fprintf(os.Stderr, "Auto-detected session: %s\n", resumeID)
+			} else if resumeID != "" {
 				if !session.SessionExists(sessionsDir, resumeID) {
 					return nil, fmt.Errorf("session '%s' not found - check available sessions with: coi list --all", resumeID)
 				}
@@ -226,7 +213,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 
 			// Inherit persistent flag, profile, and slot from session metadata.
 			var resumeSlot int
-			if resumeID != "" && !isWorkspaceSessionTool {
+			if resumeID != "" {
 				metadataPath := filepath.Join(sessionsDir, resumeID, "metadata.json")
 				if metadata, err := session.LoadSessionMetadata(metadataPath); err == nil {
 					if !cmd.Flags().Changed("profile") && metadata.ProfileName != "" {
