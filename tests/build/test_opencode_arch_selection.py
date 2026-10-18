@@ -14,6 +14,7 @@ suffix. Hermetic: no network, no Incus.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -84,3 +85,19 @@ def test_install_opencode_url_uses_detected_arch():
         assert "opencode-linux-x64.tar.gz" not in ln, (
             f"opencode DOWNLOAD_URL still hardcodes the x64 asset (issue #506): {ln.strip()}"
         )
+
+
+def test_install_opencode_pins_v1_release_tag():
+    """The opencode download must come from an explicit v1 tag, not /latest/,
+    so an upstream move of "latest" to v2 cannot switch majors."""
+    content = BUILD_SH.read_text()
+    url_lines = [ln for ln in content.splitlines() if "DOWNLOAD_URL=" in ln and "opencode" in ln]
+    assert url_lines, "no opencode DOWNLOAD_URL assignment found"
+    for ln in url_lines:
+        assert "/releases/latest/" not in ln, f"opencode DOWNLOAD_URL follows latest: {ln.strip()}"
+        assert "/releases/download/${OPENCODE_VERSION}/" in ln, (
+            f"opencode DOWNLOAD_URL is not built from OPENCODE_VERSION: {ln.strip()}"
+        )
+
+    versions = re.findall(r'^\s*local OPENCODE_VERSION="([^"]+)"', content, re.MULTILINE)
+    assert versions == ["v1.19.3"], f"expected OPENCODE_VERSION pinned to v1.19.3, got {versions}"

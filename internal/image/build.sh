@@ -565,12 +565,14 @@ install_opencode() {
         exit 1
     fi
 
-    # Download the binary directly from the /latest/download/ redirect URL.
-    # This does NOT hit the GitHub API and is not subject to rate limits
-    # (unlike the official installer which calls api.github.com).
+    # Download the binary from a fixed release tag, not /latest/: OpenCode v2
+    # ships through npm, and a moved "latest" would switch majors silently.
+    # The release download URL does NOT hit the GitHub API and is not subject
+    # to rate limits (unlike the official installer which calls api.github.com).
+    local OPENCODE_VERSION="v1.19.3"
     local INSTALL_DIR="/home/$CODE_USER/.opencode/bin"
     local OPENCODE_PATH="$INSTALL_DIR/opencode"
-    local DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-${OPENCODE_ARCH}.tar.gz"
+    local DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-${OPENCODE_ARCH}.tar.gz"
 
     mkdir -p "$INSTALL_DIR"
     chown "$CODE_USER:$CODE_USER" "$INSTALL_DIR"
