@@ -40,6 +40,17 @@ type ToolWithPrompt interface {
 	BuildCommandLaunch(spec LaunchSpec) ([]string, error)
 }
 
+// ToolWithHeadlessPrompt is implemented by tools whose headless (print-mode)
+// launch is a separate CLI form that carries the prompt in argv, even when
+// their interactive launch can't (e.g. `opencode run <prompt>`). It backs
+// `coi run --prompt`; `coi tool spec` keeps using ToolWithPrompt.
+type ToolWithHeadlessPrompt interface {
+	Tool
+	// BuildHeadlessCommand returns the full argv for a run-to-completion
+	// launch of spec. It errors on what the tool can't express.
+	BuildHeadlessCommand(spec LaunchSpec) ([]string, error)
+}
+
 // catSubst returns a `"$(cat <path>)"` token whose value the container shell
 // expands to the file's contents at launch. path is a coi-controlled file
 // (~/.coi/runs/<id>.*) with no shell metacharacters, so the arbitrary prompt

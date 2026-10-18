@@ -1,6 +1,9 @@
 package tool
 
-import "path/filepath"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // OpencodeTool implements Tool for opencode (https://opencode.ai)
 type OpencodeTool struct {
@@ -51,6 +54,24 @@ func (c *OpencodeTool) BuildCommand(sessionID string, resume bool, resumeSession
 		}
 	}
 	return cmd
+}
+
+// BuildHeadlessCommand implements ToolWithHeadlessPrompt. `opencode run
+// [message..]` runs the prompt to completion and exits with a status code; it
+// takes the same --session/--continue resume flags as the TUI and works in
+// OpenCode v1 and v2. It has no system-prompt flag, so a SystemPromptFile is
+// rejected. The prompt is passed as `"$(cat <file>)"` so arbitrary content
+// stays in the file.
+func (c *OpencodeTool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
+	if spec.SystemPromptFile != "" {
+		return nil, fmt.Errorf("opencode run has no system-prompt flag")
+	}
+	base := c.BuildCommand(spec.SessionID, spec.Resume, spec.ResumeSessionID)
+	cmd := append([]string{base[0], "run"}, base[1:]...)
+	if spec.PromptFile != "" {
+		cmd = append(cmd, catSubst(spec.PromptFile))
+	}
+	return cmd, nil
 }
 
 // DiscoverSessionID returns "" because opencode uses SQLite (not JSONL files).

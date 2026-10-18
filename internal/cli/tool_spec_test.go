@@ -57,6 +57,23 @@ func TestBuildToolLaunchArgv_NoDummyOverride(t *testing.T) {
 	}
 }
 
+// `coi run --prompt` on opencode (Print) uses `opencode run <prompt>`, while
+// `coi tool spec` (no Print) keeps the out-of-band prompt.
+func TestBuildToolLaunchArgv_OpencodePrint(t *testing.T) {
+	argv, prompt, err := buildToolLaunchArgv(tool.NewOpencode(), tool.LaunchSpec{
+		SessionID: "sid", PromptFile: "/run/p", Print: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(argv, " "); got != `opencode run "$(cat /run/p)"` {
+		t.Errorf("opencode print launch = %q", got)
+	}
+	if prompt != "" {
+		t.Errorf("opencode run embeds the prompt; no out-of-band prompt expected, got %q", prompt)
+	}
+}
+
 func TestBuildToolSpecCommand_CodexPrompt(t *testing.T) {
 	// Codex embeds the prompt as a trailing positional and has no system prompt.
 	argv, prompt, err := buildToolSpecCommand(tool.NewCodex(), tool.LaunchSpec{

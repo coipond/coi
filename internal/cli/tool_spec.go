@@ -296,13 +296,20 @@ func (a *App) stageSpecFile(mgr container.ContainerManager, hostPath, destPath s
 // tools without it (opencode) get the base command plus outOfBandPrompt so the
 // prompt is surfaced rather than silently dropped. A system prompt on a tool
 // without one is still rejected loudly (those tools have no such concept).
+// A print-mode spec on a ToolWithHeadlessPrompt (opencode) uses the tool's
+// headless form instead, which carries the prompt in argv.
 //
 // It does NOT apply the COI_USE_DUMMY test override: `coi run --prompt` runs the
 // tool by its real binary name (the dummy test image installs the stub AS
 // `claude`), so rewriting argv[0] to "dummy" would exec a nonexistent command.
 // buildToolSpecCommand layers that override on for the orchestrator path.
 func buildToolLaunchArgv(t tool.Tool, spec tool.LaunchSpec) (argv []string, outOfBandPrompt string, err error) {
-	if twp, ok := t.(tool.ToolWithPrompt); ok {
+	if twh, ok := t.(tool.ToolWithHeadlessPrompt); ok && spec.Print {
+		argv, err = twh.BuildHeadlessCommand(spec)
+		if err != nil {
+			return nil, "", err
+		}
+	} else if twp, ok := t.(tool.ToolWithPrompt); ok {
 		argv, err = twp.BuildCommandLaunch(spec)
 		if err != nil {
 			return nil, "", err
