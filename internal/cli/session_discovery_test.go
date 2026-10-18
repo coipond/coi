@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 
@@ -34,7 +35,9 @@ func (f *fakeDiscoveryManager) ExecCommand(cmd string, _ container.ExecCommandOp
 
 func (f *fakeDiscoveryManager) ExecArgsCapture(argv []string, opts container.ExecCommandOptions) (string, error) {
 	f.calls++
+	// Clone Env: the caller keeps mutating its map after the lookup.
 	f.argv, f.opts = argv, opts
+	f.opts.Env = maps.Clone(opts.Env)
 	return f.out, f.err
 }
 
