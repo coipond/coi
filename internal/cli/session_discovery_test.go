@@ -2,9 +2,12 @@ package cli
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/session"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -18,6 +21,15 @@ type fakeDiscoveryManager struct {
 	calls int
 	argv  []string
 	opts  container.ExecCommandOptions
+
+	// execCommands records ExecCommand calls (the tmux prep script); each
+	// one reports a newly created tmux session.
+	execCommands []string
+}
+
+func (f *fakeDiscoveryManager) ExecCommand(cmd string, _ container.ExecCommandOptions) (string, error) {
+	f.execCommands = append(f.execCommands, cmd)
+	return tmuxPrepCreated + "\n", nil
 }
 
 func (f *fakeDiscoveryManager) ExecArgsCapture(argv []string, opts container.ExecCommandOptions) (string, error) {
@@ -84,5 +96,68 @@ func TestDiscoverContainerSession_Skipped(t *testing.T) {
 				t.Errorf("ExecArgsCapture calls = %d, want 0", mgr.calls)
 			}
 		})
+	}
+}
+
+// The launch paths must run the lookup with the tool's merged env before they
+// build the command, so a resume reaches opencode as --session <id>.
+func TestPrepareLaunch_ResumesDiscoveredOpencodeSession(t *testing.T) {
+	t.Setenv("COI_USE_DUMMY", "")
+	for _, mode := range []string{"direct", "tmux"} {
+		t.Run(mode, func(t *testing.T) {
+			mgr := &fakeDiscoveryManager{out: `[{"id":"ses_abc123"}]`}
+			a := &App{cfg: &config.Config{}}
+			result := &session.SetupResult{ContainerName: "coi-test-1", Manager: mgr, ContainerWorkspacePath: "/workspace"}
+			env := map[string]string{"HOME": "/home/code"}
+			uid := 1000
+			oc := tool.NewOpencode()
+
+			var cmd string
+			if mode == "direct" {
+				d, err := a.prepareDirect(result, env, &uid, "coi-id", true, false, t.TempDir(), "coi-id", oc)
+				if err != nil {
+					t.Fatalf("prepareDirect() error = %v", err)
+				}
+				cmd = d.cmd
+			} else {
+				l, err := a.prepareTmux(result, env, &uid, "coi-id", true, false, t.TempDir(), "coi-id", oc)
+				if err != nil {
+					t.Fatalf("prepareTmux() error = %v", err)
+				}
+				cmd = l.cliCmd
+				if len(mgr.execCommands) != 1 || !strings.Contains(mgr.execCommands[0], "opencode --session ses_abc123") {
+					t.Errorf("tmux session command = %q, want it to launch opencode --session ses_abc123", mgr.execCommands)
+				}
+			}
+
+			if cmd != "opencode --session ses_abc123" {
+				t.Errorf("launch command = %q, want %q", cmd, "opencode --session ses_abc123")
+			}
+			if mgr.calls != 1 {
+				t.Fatalf("lookup calls = %d, want 1", mgr.calls)
+			}
+			if got := mgr.opts.Env["XDG_DATA_HOME"]; got != "/workspace/.local/share" {
+				t.Errorf("lookup XDG_DATA_HOME = %q, want %q", got, "/workspace/.local/share")
+			}
+			if mgr.opts.Cwd != "/workspace" || mgr.opts.User == nil || *mgr.opts.User != uid {
+				t.Errorf("lookup cwd/user = %q/%v, want /workspace as uid %d", mgr.opts.Cwd, mgr.opts.User, uid)
+			}
+		})
+	}
+}
+
+func TestPrepareLaunch_NewSessionSkipsLookup(t *testing.T) {
+	t.Setenv("COI_USE_DUMMY", "")
+	mgr := &fakeDiscoveryManager{out: `[{"id":"ses_abc123"}]`}
+	a := &App{cfg: &config.Config{}}
+	result := &session.SetupResult{ContainerName: "coi-test-1", Manager: mgr}
+	uid := 1000
+
+	d, err := a.prepareDirect(result, map[string]string{}, &uid, "coi-id", false, false, t.TempDir(), "", tool.NewOpencode())
+	if err != nil {
+		t.Fatalf("prepareDirect() error = %v", err)
+	}
+	if d.cmd != "opencode" || mgr.calls != 0 {
+		t.Errorf("launch command = %q with %d lookups, want %q with none", d.cmd, mgr.calls, "opencode")
 	}
 }
