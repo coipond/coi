@@ -59,9 +59,10 @@ def _exec(coi_binary, container_name, *cmd):
 def _assert_tree(coi_binary, container_name, root):
     for rel, content in (("a.txt", "content-a-7f3"), ("sub/b.txt", "content-b-9c1")):
         result = _exec(coi_binary, container_name, "cat", f"{root}/{rel}")
-        assert content in result.stdout, (
-            f"{root}/{rel} should hold the pushed content. "
-            f"stdout: {result.stdout} stderr: {result.stderr}"
+        assert result.returncode == 0, f"{root}/{rel} should exist. stderr: {result.stderr}"
+        combined_output = result.stdout + result.stderr
+        assert content in combined_output, (
+            f"{root}/{rel} should hold the pushed content. Got:\n{combined_output}"
         )
 
 
