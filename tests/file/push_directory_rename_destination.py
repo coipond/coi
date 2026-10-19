@@ -147,3 +147,45 @@ def test_push_rejects_bad_destinations(coi_binary, cleanup_containers, workspace
     ), "nothing may be merged into the existing target"
 
     _delete(coi_binary, container_name)
+
+
+def test_push_to_stopped_container(coi_binary, cleanup_containers, workspace_dir):
+    """
+    Flow:
+    1. Create /opt/dest, then stop the container (/opt, not /tmp: /tmp may
+       be cleared when the container boots again)
+    2. Push ./src to <c>:/opt/renamed and to <c>:/opt/dest (incus file
+       push works on a stopped container, exec does not)
+    3. Start the container and verify /opt/renamed and /opt/dest/src
+    """
+    container_name = _launch(coi_binary, workspace_dir)
+    src = _make_src(workspace_dir)
+    _exec(coi_binary, container_name, "mkdir", "-p", "/opt/dest")
+
+    result = subprocess.run(
+        [coi_binary, "container", "stop", container_name],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, f"stop should succeed. stderr: {result.stderr}"
+
+    for destination in ("/opt/renamed", "/opt/dest"):
+        result = _push(coi_binary, src, f"{container_name}:{destination}")
+        assert result.returncode == 0, (
+            f"push to {destination} on a stopped container should succeed. stderr: {result.stderr}"
+        )
+
+    result = subprocess.run(
+        [coi_binary, "container", "start", container_name],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, f"start should succeed. stderr: {result.stderr}"
+    time.sleep(3)
+
+    _assert_tree(coi_binary, container_name, "/opt/renamed")
+    _assert_tree(coi_binary, container_name, "/opt/dest/src")
+
+    _delete(coi_binary, container_name)

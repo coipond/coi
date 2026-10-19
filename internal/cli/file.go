@@ -139,7 +139,8 @@ Examples:
 
 // resolvePushDestination is the container-side mirror of
 // resolvePullDestination for `coi file push -r`: it returns the exact path the
-// pushed directory gets. kind reports what a container path is (see
+// pushed directory gets. kind reports what a container path is: "dir",
+// "none", or anything else for an existing non-directory (see
 // container.Manager.PathKind).
 //
 // Rules:

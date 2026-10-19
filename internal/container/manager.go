@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -904,46 +906,60 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 		localPath = abs
 	}
 
-	target := strings.TrimRight(containerPath, "/")
-	parent := target[:strings.LastIndex(target, "/")+1]
-	if parent == "" {
-		parent = "/"
+	// Incus creates <dest>/<local name>, so push to the parent, e.g. /local/dir
+	// to container:/remote/ creates /remote/dir. When the target has another
+	// name, push a copy staged on the host under that name: exec (mktemp/mv
+	// in the container) would fail on a stopped container.
+	target := path.Clean("/" + containerPath)
+	if target == "/" {
+		return IncusExec("file", "push", "-r", localPath, m.ContainerName+"/")
 	}
-
-	// Incus creates <dest>/<local name>, so push to the parent when the names
-	// match, e.g. /local/dir to container:/remote/ creates /remote/dir.
-	name := target[len(parent):]
-	if name == filepath.Base(localPath) {
-		return IncusExec("file", "push", "-r", localPath, m.ContainerName+parent)
+	parent, name := path.Dir(target), path.Base(target)
+	if !strings.HasSuffix(parent, "/") {
+		parent += "/"
 	}
-
-	// Different name: push into a temp dir in the container, then move it.
-	tmp, err := m.ExecArgsCapture([]string{"mktemp", "-d"}, ExecCommandOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create a temp dir in the container: %w", err)
+	src := localPath
+	if name != filepath.Base(localPath) {
+		stage, err := os.MkdirTemp("", "coi-push-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(stage)
+		src = filepath.Join(stage, name)
+		if err := copyDirRecursive(localPath, src); err != nil {
+			return fmt.Errorf("failed to stage %s for the push: %w", localPath, err)
+		}
 	}
-	tmp = strings.TrimSpace(tmp)
-	defer func() { _ = m.ExecArgs([]string{"rm", "-rf", tmp}, ExecCommandOptions{}) }()
-
-	if err := IncusExec("file", "push", "-r", localPath, m.ContainerName+tmp+"/"); err != nil {
-		return err
-	}
-	pushed := tmp + "/" + filepath.Base(localPath)
-	if err := m.ExecArgs([]string{"mv", "-T", pushed, target}, ExecCommandOptions{}); err != nil {
-		return fmt.Errorf("failed to move the pushed directory to %s: %w", target, err)
-	}
-	return nil
+	return IncusExec("file", "push", "-r", src, m.ContainerName+parent)
 }
 
-// PathKind reports what path is in the container: "dir", "link" (a symlink,
-// judged as the link itself), "other" (any other existing entry) or "none".
-func (m *Manager) PathKind(path string) (string, error) {
-	const script = `if [ -L "$1" ]; then echo link; elif [ -d "$1" ]; then echo dir; elif [ -e "$1" ]; then echo other; else echo none; fi`
-	out, err := m.ExecArgsCapture([]string{"sh", "-c", script, "sh", path}, ExecCommandOptions{})
-	if err != nil {
+// PathKind reports what a path is in the container: "dir", "other" (any other
+// existing entry; a symlink counts as the link itself) or "none". It uses the
+// instance files API, not exec, so it also works on a stopped container.
+func (m *Manager) PathKind(p string) (string, error) {
+	// `incus query` rejects --project, so the project goes in the URL.
+	query := fmt.Sprintf("/1.0/instances/%s/files?path=%s&project=%s",
+		url.PathEscape(m.ContainerName), url.QueryEscape(p), url.QueryEscape(IncusProject))
+	cmd := execIncusCommand([]string{"query", query})
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := runIncus(cmd); err != nil {
+		err = ClassifyIncusErr(toExitError(err, strings.TrimSpace(stderr.String())), stderr.String())
+		if errors.Is(err, ErrContainerNotFound) || errors.Is(err, ErrIncusUnavailable) {
+			return "", err
+		}
+		if strings.Contains(strings.ToLower(stderr.String()), "not found") {
+			return "none", nil
+		}
 		return "", err
 	}
-	return strings.TrimSpace(out), nil
+	// A directory answers with its entry names as JSON; a file or symlink
+	// answers with its raw content.
+	var entries []string
+	if json.Unmarshal(stdout.Bytes(), &entries) == nil {
+		return "dir", nil
+	}
+	return "other", nil
 }
 
 // Chown changes ownership of a path in the container
