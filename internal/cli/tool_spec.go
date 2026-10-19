@@ -49,9 +49,10 @@ coi builds the command from the profile's tool via the tool.Tool abstraction
 (session id, resume, model, permission), so it is correct for any supported
 tool (claude/codex/…). The prompt (and optional system prompt) are staged into
 the container as files and referenced via "$(cat <file>)", keeping arbitrary
-prompt content off the command line. Only tool-derived env (model/effort) is
-emitted; secrets and auth stay with the caller, which adds its own --env when it
-execs.
+prompt content off the command line. Only tool-derived env is emitted: model
+and effort settings, plus the session-dir and XDG redirects to the workspace
+for pi, omp and opencode. Secrets and auth stay with the caller, which adds its
+own --env when it execs.
 
 Tools that can't embed the initial prompt in their launch command (e.g.
 opencode) instead get a "prompt" field: the in-container path to the staged
@@ -87,8 +88,9 @@ func init() {
 }
 
 // toolSpecResult is the machine-readable spec a `coi tool spec` prints: the
-// exact argv to run in the container and the tool-derived env (model/effort)
-// only. Secrets/auth are deliberately absent — the caller adds those itself.
+// exact argv to run in the container and the tool-derived env only (model/effort,
+// plus pi/omp/opencode session-dir/XDG redirects). Secrets/auth are deliberately
+// absent — the caller adds those itself.
 //
 // Prompt is set only for tools that can't embed the initial prompt in their
 // launch command (they don't implement ToolWithPrompt, e.g. opencode). It is the
@@ -231,7 +233,7 @@ func (a *App) toolSpecCommand(cmd *cobra.Command) error {
 		return err
 	}
 
-	// Env: tool-derived only (model/effort), computed against the container's
+	// Env: tool-derived only (model/effort, session-dir/XDG redirects), computed against the container's
 	// ACTUAL workspace mount — pi/omp/opencode derive session-dir/XDG paths from
 	// it, so a container that mounts the workspace somewhere other than
 	// /workspace (preserve_workspace_path / worktree) must get the real path,
