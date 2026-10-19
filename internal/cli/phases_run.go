@@ -82,6 +82,9 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "validate-env",
 		RunFn: func(ctx context.Context) (_ session.Teardown, retErr error) {
+			if err := validateSlotFlag(a.slot); err != nil {
+				return nil, err
+			}
 			if !container.Available() {
 				return nil, container.IncusNotAvailableError()
 			}

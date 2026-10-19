@@ -17,6 +17,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`--slot` rejects a negative number** — `coi shell --slot -1` and `coi run --slot -1` started a container that `coi list`, `coi attach` and resume could not recognise. They now exit with code 2 and a usage message.
 - [Bug Fix] **`refresh_interval_minutes = 0` disables allowlist re-resolution** — an explicit `0` was treated as unset and replaced with the 30-minute default, so allowlist domains kept being re-resolved. `0` now turns refresh off; leaving the key out still means 30.
 - [Bug Fix] **README profile example loads again (#890)** — the `[limits]` example set `cpu = "4"` and `memory = "8GiB"` directly, which fails to load; it now uses `[limits.cpu] count` and `[limits.memory] limit`. A test now checks that every TOML example in the README loads. Stale comments in the shipped config files are fixed too: the default config named a nonexistent `writable_agent_config` (the opt-out is `writable_paths`), the starter config's disk rate example `"10MiB/s"` failed validation, and the nftables-unavailable hint pointed at the workspace `.coi/config.toml`, which can't change the network mode.
 - [Bug Fix] **`coi audit` prints the security monitor's records** — dumping a container's audit log (or a file with `--file`) printed nothing, because the monitor's threat events and snapshots were silently dropped as unrecognized. They are now printed as written.

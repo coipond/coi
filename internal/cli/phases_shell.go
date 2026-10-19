@@ -52,6 +52,9 @@ func (a *App) resolveWorkspacePhase(cmd *cobra.Command, s *shellState) session.P
 	return session.PhaseFunc{
 		PhaseName: "resolve-workspace",
 		RunFn: func(_ context.Context) (session.Teardown, error) {
+			if err := validateSlotFlag(a.slot); err != nil {
+				return nil, err
+			}
 			absWorkspace, err := filepath.Abs(a.workspace)
 			if err != nil {
 				return nil, fmt.Errorf("invalid workspace path: %w", err)
