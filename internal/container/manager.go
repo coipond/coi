@@ -924,9 +924,9 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 		if err != nil {
 			return err
 		}
-		defer os.RemoveAll(stage)
+		defer removeStage(stage)
 		src = filepath.Join(stage, name)
-		if err := copyDirRecursive(localPath, src); err != nil {
+		if err := stagePushTree(localPath, src); err != nil {
 			return fmt.Errorf("failed to stage %s for the push: %w", localPath, err)
 		}
 	}
