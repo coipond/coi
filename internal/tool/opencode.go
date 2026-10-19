@@ -2,6 +2,7 @@ package tool
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -61,6 +62,27 @@ func (c *OpencodeTool) BuildCommand(sessionID string, resume bool, resumeSession
 		}
 	}
 	return cmd
+}
+
+// BuildHeadlessCommand implements ToolWithHeadlessPrompt. `opencode run`
+// runs to completion and exits with a status code; it takes the same
+// --session/--continue resume flags as the TUI and works in OpenCode v1 and
+// v2. The prompt goes in on stdin (`< <file>`), which both versions read as
+// the message when no positional is given: a positional prompt starting with
+// "-" is parsed as flags, and v2 repeats any args after "--". Stdin is always
+// redirected, so an open stdin inherited from the caller can't block the run.
+// It has no system-prompt flag, so a SystemPromptFile is rejected.
+func (c *OpencodeTool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
+	if spec.SystemPromptFile != "" {
+		return nil, fmt.Errorf("opencode run has no system-prompt flag")
+	}
+	base := c.BuildCommand(spec.SessionID, spec.Resume, spec.ResumeSessionID)
+	cmd := append([]string{base[0], "run"}, base[1:]...)
+	stdin := "/dev/null"
+	if spec.PromptFile != "" {
+		stdin = spec.PromptFile
+	}
+	return append(cmd, "<"+stdin), nil
 }
 
 // DiscoverSessionID returns the session found by the in-container DB query
