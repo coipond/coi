@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -28,8 +29,9 @@ Examples:
   # Push file
   coi file push ./config.json my-container:/workspace/config.json
 
-  # Push directory
-  coi file push -r ./src my-container:/workspace/src`,
+  # Push directory (creates /workspace/app; into an existing
+  # directory it creates <dir>/src)
+  coi file push -r ./src my-container:/workspace/app`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		localPath := args[0]
@@ -58,10 +60,14 @@ Examples:
 			if !recursive {
 				return &ExitCodeError{Code: 2, Message: "source is a directory, use -r flag"}
 			}
-			if err := mgr.PushDirectory(localPath, remotePath); err != nil {
+			target, err := resolvePushDestination(localPath, remotePath, mgr.PathKind)
+			if err != nil {
+				return &ExitCodeError{Code: 2, Message: err.Error()}
+			}
+			if err := mgr.PushDirectory(localPath, target); err != nil {
 				return fmt.Errorf("failed to push directory: %v", err)
 			}
-			fmt.Fprintf(os.Stderr, "Pushed directory %s -> %s:%s\n", localPath, containerName, remotePath)
+			fmt.Fprintf(os.Stderr, "Pushed directory %s -> %s:%s\n", localPath, containerName, target)
 		} else {
 			if err := mgr.PushFile(localPath, remotePath); err != nil {
 				return fmt.Errorf("failed to push file: %v", err)
@@ -129,6 +135,54 @@ Examples:
 
 		return nil
 	},
+}
+
+// resolvePushDestination is the container-side mirror of
+// resolvePullDestination for `coi file push -r`: it returns the exact path the
+// pushed directory gets. kind reports what a container path is (see
+// container.Manager.PathKind).
+//
+// Rules:
+//   - A trailing slash requires an existing directory.
+//   - An existing directory receives the pushed directory inside it, under
+//     the local directory's name.
+//   - Any other destination is the exact target. The final target must not
+//     already exist: nothing is merged into or replaced in the container.
+func resolvePushDestination(localPath, remotePath string, kind func(string) (string, error)) (string, error) {
+	abs, err := filepath.Abs(localPath)
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Base(abs)
+	if base == "/" || base == "." || base == ".." {
+		return "", fmt.Errorf("cannot derive a directory name from local path %q", localPath)
+	}
+
+	trailingSep := strings.HasSuffix(remotePath, "/")
+	target := strings.TrimRight(remotePath, "/")
+	if target == "" {
+		target = "/"
+	}
+	k, err := kind(target)
+	if err != nil {
+		return "", fmt.Errorf("failed to check destination %q: %w", remotePath, err)
+	}
+	switch {
+	case k == "dir":
+		target = path.Join(target, base)
+		if k, err = kind(target); err != nil {
+			return "", fmt.Errorf("failed to check destination %q: %w", target, err)
+		}
+	case trailingSep && k == "none":
+		return "", fmt.Errorf("destination %q does not exist: a trailing slash requires an existing directory (create it first, or drop the slash to push to that exact path)", remotePath)
+	case trailingSep:
+		return "", fmt.Errorf("destination %q is not a directory", remotePath)
+	}
+
+	if k != "none" {
+		return "", fmt.Errorf("destination %q already exists; remove it or choose another name", target)
+	}
+	return target, nil
 }
 
 // resolvePullDestination enforces the overwrite policy for `coi file pull`,

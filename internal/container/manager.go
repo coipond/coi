@@ -891,22 +891,59 @@ func copyFile(src, dst string) error {
 	return dstFile.Close()
 }
 
-// PushDirectory pushes a directory to the container recursively
+// PushDirectory pushes a directory to the container recursively, so that
+// containerPath is the pushed directory itself (not a directory inside it).
 func (m *Manager) PushDirectory(localPath, containerPath string) error {
 	// Check if source directory exists
 	if info, err := os.Stat(localPath); err != nil || !info.IsDir() {
 		return nil // Skip if not a directory (intentional nilerr)
 	}
-
-	// Incus creates a subdirectory when pushing, so we push to the parent
-	// e.g., pushing /local/dir to container/remote/parent/ creates /remote/parent/dir
-	// To get /remote/dir, we need to push to container/remote/
-	parentPath := containerPath[:strings.LastIndex(containerPath, "/")+1]
-	if parentPath == "" {
-		parentPath = "/"
+	// Incus names the pushed directory after the local one, so an absolute
+	// path is needed for "." or a trailing slash to carry the real name.
+	if abs, err := filepath.Abs(localPath); err == nil {
+		localPath = abs
 	}
-	dest := m.ContainerName + parentPath
-	return IncusExec("file", "push", "-r", localPath, dest)
+
+	target := strings.TrimRight(containerPath, "/")
+	parent := target[:strings.LastIndex(target, "/")+1]
+	if parent == "" {
+		parent = "/"
+	}
+
+	// Incus creates <dest>/<local name>, so push to the parent when the names
+	// match, e.g. /local/dir to container:/remote/ creates /remote/dir.
+	name := target[len(parent):]
+	if name == filepath.Base(localPath) {
+		return IncusExec("file", "push", "-r", localPath, m.ContainerName+parent)
+	}
+
+	// Different name: push into a temp dir in the container, then move it.
+	tmp, err := m.ExecArgsCapture([]string{"mktemp", "-d"}, ExecCommandOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create a temp dir in the container: %w", err)
+	}
+	tmp = strings.TrimSpace(tmp)
+	defer func() { _ = m.ExecArgs([]string{"rm", "-rf", tmp}, ExecCommandOptions{}) }()
+
+	if err := IncusExec("file", "push", "-r", localPath, m.ContainerName+tmp+"/"); err != nil {
+		return err
+	}
+	pushed := tmp + "/" + filepath.Base(localPath)
+	if err := m.ExecArgs([]string{"mv", "-T", pushed, target}, ExecCommandOptions{}); err != nil {
+		return fmt.Errorf("failed to move the pushed directory to %s: %w", target, err)
+	}
+	return nil
+}
+
+// PathKind reports what path is in the container: "dir", "link" (a symlink,
+// judged as the link itself), "other" (any other existing entry) or "none".
+func (m *Manager) PathKind(path string) (string, error) {
+	const script = `if [ -L "$1" ]; then echo link; elif [ -d "$1" ]; then echo dir; elif [ -e "$1" ]; then echo other; else echo none; fi`
+	out, err := m.ExecArgsCapture([]string{"sh", "-c", script, "sh", path}, ExecCommandOptions{})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // Chown changes ownership of a path in the container
