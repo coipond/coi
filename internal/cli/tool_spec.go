@@ -233,7 +233,7 @@ func (a *App) toolSpecCommand(cmd *cobra.Command) error {
 		return err
 	}
 
-	// Env: tool-derived only (model/effort, session-dir/XDG redirects), computed against the container's
+	// Env: tool-derived only, computed against the container's
 	// ACTUAL workspace mount — pi/omp/opencode derive session-dir/XDG paths from
 	// it, so a container that mounts the workspace somewhere other than
 	// /workspace (preserve_workspace_path / worktree) must get the real path,
