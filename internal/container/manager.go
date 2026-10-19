@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -891,22 +893,82 @@ func copyFile(src, dst string) error {
 	return dstFile.Close()
 }
 
-// PushDirectory pushes a directory to the container recursively
+// PushDirectory pushes a directory to the container recursively, so that
+// containerPath is the pushed directory itself (not a directory inside it).
 func (m *Manager) PushDirectory(localPath, containerPath string) error {
 	// Check if source directory exists
 	if info, err := os.Stat(localPath); err != nil || !info.IsDir() {
 		return nil // Skip if not a directory (intentional nilerr)
 	}
-
-	// Incus creates a subdirectory when pushing, so we push to the parent
-	// e.g., pushing /local/dir to container/remote/parent/ creates /remote/parent/dir
-	// To get /remote/dir, we need to push to container/remote/
-	parentPath := containerPath[:strings.LastIndex(containerPath, "/")+1]
-	if parentPath == "" {
-		parentPath = "/"
+	// Incus names the pushed directory after the local one, so an absolute
+	// path is needed for "." or a trailing slash to carry the real name.
+	if abs, err := filepath.Abs(localPath); err == nil {
+		localPath = abs
 	}
-	dest := m.ContainerName + parentPath
-	return IncusExec("file", "push", "-r", localPath, dest)
+
+	// Incus creates <dest>/<local name>, so push to the parent, e.g. /local/dir
+	// to container:/remote/ creates /remote/dir. When the target has another
+	// name, push a copy staged on the host under that name: exec (mktemp/mv
+	// in the container) would fail on a stopped container.
+	target := path.Clean("/" + containerPath)
+	if target == "/" {
+		return IncusExec("file", "push", "-r", localPath, m.ContainerName+"/")
+	}
+	parent, name := path.Dir(target), path.Base(target)
+	if !strings.HasSuffix(parent, "/") {
+		parent += "/"
+	}
+	src := localPath
+	if name != filepath.Base(localPath) {
+		stage, err := os.MkdirTemp("", "coi-push-*")
+		if err != nil {
+			return err
+		}
+		defer removeStage(stage)
+		src = filepath.Join(stage, name)
+		if err := stagePushTree(localPath, src); err != nil {
+			return fmt.Errorf("failed to stage %s for the push: %w", localPath, err)
+		}
+	}
+	return IncusExec("file", "push", "-r", src, m.ContainerName+parent)
+}
+
+// PathKind is what a container path is, as reported by Manager.PathKind.
+type PathKind string
+
+// Possible PathKind values.
+const (
+	PathDir   PathKind = "dir"   // a directory
+	PathOther PathKind = "other" // any other entry; a symlink counts as the link itself
+	PathNone  PathKind = "none"  // nothing at that path
+)
+
+// PathKind reports what a path is in the container. It uses the
+// instance files API, not exec, so it also works on a stopped container.
+func (m *Manager) PathKind(p string) (PathKind, error) {
+	// `incus query` rejects --project, so the project goes in the URL.
+	query := fmt.Sprintf("/1.0/instances/%s/files?path=%s&project=%s",
+		url.PathEscape(m.ContainerName), url.QueryEscape(p), url.QueryEscape(IncusProject))
+	cmd := execIncusCommand([]string{"query", query})
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := runIncus(cmd); err != nil {
+		err = ClassifyIncusErr(toExitError(err, strings.TrimSpace(stderr.String())), stderr.String())
+		if errors.Is(err, ErrContainerNotFound) || errors.Is(err, ErrIncusUnavailable) {
+			return "", err
+		}
+		if strings.Contains(strings.ToLower(stderr.String()), "not found") {
+			return PathNone, nil
+		}
+		return "", err
+	}
+	// A directory answers with its entry names as JSON; a file or symlink
+	// answers with its raw content.
+	var entries []string
+	if json.Unmarshal(stdout.Bytes(), &entries) == nil {
+		return PathDir, nil
+	}
+	return PathOther, nil
 }
 
 // Chown changes ownership of a path in the container
