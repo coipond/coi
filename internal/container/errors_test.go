@@ -88,3 +88,30 @@ func TestClassifyIncusErr_PreservesExitError(t *testing.T) {
 		t.Errorf("exit code lost: got %d, want 1", recovered.ExitCode)
 	}
 }
+
+func TestSentinelError(t *testing.T) {
+	err := SentinelError(ErrContainerNotFound, "container 'x' not found")
+	if err.Error() != "container 'x' not found" {
+		t.Errorf("Error() = %q, want the message alone", err.Error())
+	}
+	if !errors.Is(fmt.Errorf("phase: %w", err), ErrContainerNotFound) {
+		t.Error("wrapped SentinelError must match its sentinel")
+	}
+	if errors.Is(err, ErrIncusUnavailable) {
+		t.Error("SentinelError must not match another sentinel")
+	}
+	if ClassifyIncusErr(err, "") != err {
+		t.Error("ClassifyIncusErr must return a SentinelError unchanged")
+	}
+}
+
+func TestIncusNotAvailableError_NotInstalled(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	err := IncusNotAvailableError()
+	if err.Error() != "incus is not installed — please install Incus first" {
+		t.Errorf("Error() = %q", err.Error())
+	}
+	if !errors.Is(err, ErrIncusUnavailable) {
+		t.Error("IncusNotAvailableError must match ErrIncusUnavailable")
+	}
+}

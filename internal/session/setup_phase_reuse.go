@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/coipond/coi/internal/container"
 )
 
 // 4. Check if the container already exists and decide whether to reuse,
@@ -21,7 +23,8 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 	// "container not ready" only after the full ready_timeout wait.
 	if st.opts.ContainerName != "" {
 		if !exists {
-			return nil, fmt.Errorf("container '%s' not found - omit --container to launch a new container for this workspace", st.opts.ContainerName)
+			return nil, container.SentinelError(container.ErrContainerNotFound,
+				fmt.Sprintf("container '%s' not found - omit --container to launch a new container for this workspace", st.opts.ContainerName))
 		}
 		st.skipLaunch = true
 		st.opts.Logger("Using existing container, skipping creation...")

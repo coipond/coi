@@ -15,7 +15,7 @@ def test_shell_container_not_found(coi_binary, cleanup_containers, workspace_dir
     """
     Flow:
     1. Run coi shell --container with a name that cannot exist
-    2. Verify it exits non-zero quickly (no 30s ready_timeout hang)
+    2. Verify it exits 4 (container not found) quickly (no 30s ready_timeout hang)
     3. Verify the error names the missing container, not "not ready"
     """
     missing = "coi-does-not-exist-9c1f2a"
@@ -37,8 +37,10 @@ def test_shell_container_not_found(coi_binary, cleanup_containers, workspace_dir
         cwd=workspace_dir,
     )
 
-    assert result.returncode != 0, (
-        f"a missing --container must fail. stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    # Exit 4 is coi's documented "targeted container does not exist" code.
+    assert result.returncode == 4, (
+        f"a missing --container must exit 4, got {result.returncode}. "
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
     err = result.stderr + result.stdout
