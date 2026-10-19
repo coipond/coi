@@ -11,7 +11,6 @@ Setup: two containers from coi-default; the second is paused with `incus pause`.
 """
 
 import json
-import re
 import subprocess
 
 from support.helpers import calculate_container_name
@@ -34,6 +33,23 @@ def _incus_status(name):
         timeout=10,
     )
     return result.stdout.strip().upper()
+
+
+def _frozen_coi_containers():
+    """Frozen `coi-*` containers, read the way `coi unfreeze` reads them."""
+    result = subprocess.run(
+        ["incus", "list", "--format", "csv", "-c", "ns"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, f"incus list failed: {result.stderr}"
+    frozen = []
+    for line in result.stdout.splitlines():
+        name, _, status = line.partition(",")
+        if name.startswith("coi-") and status.strip().lower() == "frozen":
+            frozen.append(name)
+    return frozen
 
 
 def test_unfreeze_all_and_not_frozen(coi_binary, cleanup_containers, workspace_dir):
@@ -87,11 +103,16 @@ def test_unfreeze_all_and_not_frozen(coi_binary, cleanup_containers, workspace_d
 
     # === Phase 4: Unfreeze all ===
 
+    frozen = _frozen_coi_containers()
+    assert frozen_name in frozen, f"the paused container is not listed as frozen: {frozen}"
+
     result = _coi(coi_binary, "unfreeze")
     output = result.stdout + result.stderr
     assert result.returncode == 0, f"coi unfreeze failed:\n{output}"
     assert f"Unfroze container: {frozen_name}" in output, output
-    assert re.search(r"Unfroze [1-9]\d* container\(s\)", output), output
+    assert f"Unfroze {len(frozen)} container(s)" in output, (
+        f"expected the count of frozen coi-* containers ({frozen}):\n{output}"
+    )
     assert _incus_status(frozen_name) == "RUNNING"
     assert _incus_status(running_name) == "RUNNING"
 
