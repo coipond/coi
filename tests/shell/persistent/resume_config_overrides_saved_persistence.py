@@ -17,18 +17,10 @@ A fake HOME keeps the saved sessions (~/.coi/sessions-claude) to this test.
 import json
 import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
-from support.helpers import calculate_container_name
-
-
-def _write_persistence(workspace_dir, persistent):
-    coi_dir = Path(workspace_dir) / ".coi"
-    coi_dir.mkdir(parents=True, exist_ok=True)
-    value = "true" if persistent else "false"
-    (coi_dir / "config.toml").write_text(f"[container]\npersistent = {value}\n")
+from support.helpers import calculate_container_name, write_workspace_container_config
 
 
 def _shell(coi_binary, workspace_dir, env, *args):
@@ -53,7 +45,7 @@ def _kill(coi_binary, container_name, env):
     assert result.returncode == 0, f"coi kill {container_name} failed:\n{result.stderr}"
 
 
-def _list_mode(coi_binary, container_name, env):
+def _list_line(coi_binary, container_name, env):
     result = subprocess.run(
         [coi_binary, "list"],
         capture_output=True,
@@ -91,7 +83,7 @@ def test_resume_config_overrides_saved_persistence(
 
     # === Phase 1: save a session in the original mode ===
 
-    _write_persistence(workspace_dir, saved_persistent)
+    config_path = write_workspace_container_config(workspace_dir, persistent=saved_persistent)
     result = _shell(coi_binary, workspace_dir, env, "--slot", "1")
     assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
     _kill(coi_binary, container_name, env)
@@ -105,7 +97,8 @@ def test_resume_config_overrides_saved_persistence(
 
     # === Phase 2: resume with the opposite mode in config ===
 
-    _write_persistence(workspace_dir, configured)
+    config_path.unlink()
+    write_workspace_container_config(workspace_dir, persistent=configured)
     result = _shell(coi_binary, workspace_dir, env, f"--resume={sessions[0].name}")
     assert result.returncode == 0, f"coi shell --resume failed:\n{result.stderr}"
 
@@ -123,7 +116,7 @@ def test_resume_config_overrides_saved_persistence(
     assert json.loads(metadata_path.read_text())["persistent"] is configured, (
         f"the resumed session should be saved with persistent = {configured}"
     )
-    line = _list_mode(coi_binary, container_name, env)
+    line = _list_line(coi_binary, container_name, env)
     expected, unexpected = (
         ("(persistent)", "(ephemeral)") if configured else ("(ephemeral)", "(persistent)")
     )
