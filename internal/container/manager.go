@@ -933,10 +933,19 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 	return IncusExec("file", "push", "-r", src, m.ContainerName+parent)
 }
 
-// PathKind reports what a path is in the container: "dir", "other" (any other
-// existing entry; a symlink counts as the link itself) or "none". It uses the
+// PathKind is what a container path is, as reported by Manager.PathKind.
+type PathKind string
+
+// Possible PathKind values.
+const (
+	PathDir   PathKind = "dir"   // a directory
+	PathOther PathKind = "other" // any other entry; a symlink counts as the link itself
+	PathNone  PathKind = "none"  // nothing at that path
+)
+
+// PathKind reports what a path is in the container. It uses the
 // instance files API, not exec, so it also works on a stopped container.
-func (m *Manager) PathKind(p string) (string, error) {
+func (m *Manager) PathKind(p string) (PathKind, error) {
 	// `incus query` rejects --project, so the project goes in the URL.
 	query := fmt.Sprintf("/1.0/instances/%s/files?path=%s&project=%s",
 		url.PathEscape(m.ContainerName), url.QueryEscape(p), url.QueryEscape(IncusProject))
@@ -949,7 +958,7 @@ func (m *Manager) PathKind(p string) (string, error) {
 			return "", err
 		}
 		if strings.Contains(strings.ToLower(stderr.String()), "not found") {
-			return "none", nil
+			return PathNone, nil
 		}
 		return "", err
 	}
@@ -957,9 +966,9 @@ func (m *Manager) PathKind(p string) (string, error) {
 	// answers with its raw content.
 	var entries []string
 	if json.Unmarshal(stdout.Bytes(), &entries) == nil {
-		return "dir", nil
+		return PathDir, nil
 	}
-	return "other", nil
+	return PathOther, nil
 }
 
 // Chown changes ownership of a path in the container

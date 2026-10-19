@@ -9,6 +9,7 @@
 
 ### Breaking
 
+- [Breaking] **`coi file push -r` no longer merges into an existing directory** — the destination now follows the same rules as `coi file pull`: an existing directory receives the pushed directory inside it, a trailing `/` requires an existing directory, and any other destination is the exact target, which must not exist yet. So pushing `./src` again to an existing `c:/workspace/src` no longer updates it in place: it creates `/workspace/src/src`, and a push whose final target already exists is refused (exit 2). To update, push to the parent (`c:/workspace`) after removing the old copy, or push to a new name.
 - [Breaking] **`forward_env` and `[ssh] forward_agent = true` are ignored in project config** — both hand host secrets to the container (named host environment variables, the host SSH agent), so a cloned repo's `.coi/config.toml` or project profile can no longer turn them on; coi prints a warning and drops them. Set them in `~/.coi/config.toml`, a profile under `~/.coi/profiles/`, or the file named by `COI_CONFIG`. `forward_agent = false` in project config is still honored.
 
 ### Changed
@@ -17,7 +18,7 @@
 
 ### Bug Fixes
 
-- [Bug Fix] **`coi file push -r` honours a destination with a different name** — `coi file push -r ./src c:/tmp/renamed` created `/tmp/src`, because the directory was pushed to the destination's parent and Incus named it after the local directory. The destination now follows the same rules as `coi file pull`: an existing directory receives the pushed directory inside it (`/tmp/dest/src`), a trailing `/` requires an existing directory, and any other destination is the exact target. A final target that already exists is refused (exit 2) instead of merged into.
+- [Bug Fix] **`coi file push -r` honours a destination with a different name** — `coi file push -r ./src c:/tmp/renamed` created `/tmp/src`, because the directory was pushed to the destination's parent and Incus named it after the local directory. It now creates `/tmp/renamed`, also on a stopped container.
 - [Bug Fix] **`refresh_interval_minutes = 0` disables allowlist re-resolution** — an explicit `0` was treated as unset and replaced with the 30-minute default, so allowlist domains kept being re-resolved. `0` now turns refresh off; leaving the key out still means 30.
 - [Bug Fix] **README profile example loads again (#890)** — the `[limits]` example set `cpu = "4"` and `memory = "8GiB"` directly, which fails to load; it now uses `[limits.cpu] count` and `[limits.memory] limit`. A test now checks that every TOML example in the README loads. Stale comments in the shipped config files are fixed too: the default config named a nonexistent `writable_agent_config` (the opt-out is `writable_paths`), the starter config's disk rate example `"10MiB/s"` failed validation, and the nftables-unavailable hint pointed at the workspace `.coi/config.toml`, which can't change the network mode.
 - [Bug Fix] **`coi audit` prints the security monitor's records** — dumping a container's audit log (or a file with `--file`) printed nothing, because the monitor's threat events and snapshots were silently dropped as unrecognized. They are now printed as written.

@@ -65,7 +65,7 @@ func stagePushTree(src, dst string) error {
 	}
 	// Deepest first: a parent made read-only must not block its children.
 	for i := len(dirs) - 1; i >= 0; i-- {
-		if err := os.Chmod(dirs[i].path, dirs[i].mode.Perm()|dirs[i].mode&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)); err != nil {
+		if err := os.Chmod(dirs[i].path, chmodBits(dirs[i].mode)); err != nil {
 			return err
 		}
 	}
@@ -92,7 +92,13 @@ func copyFileExact(src, dst string, info fs.FileInfo) error {
 		return err
 	}
 	chownLike(dst, info)
-	return os.Chmod(dst, info.Mode().Perm()|info.Mode()&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky))
+	return os.Chmod(dst, chmodBits(info.Mode()))
+}
+
+// chmodBits is the part of mode that os.Chmod sets: permissions plus the
+// setuid, setgid and sticky bits.
+func chmodBits(mode fs.FileMode) fs.FileMode {
+	return mode.Perm() | mode&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
 }
 
 // chownLike gives p the owner of info, best-effort: a non-root user can only

@@ -139,8 +139,7 @@ Examples:
 
 // resolvePushDestination is the container-side mirror of
 // resolvePullDestination for `coi file push -r`: it returns the exact path the
-// pushed directory gets. kind reports what a container path is: "dir",
-// "none", or anything else for an existing non-directory (see
+// pushed directory gets. kind reports what a container path is (see
 // container.Manager.PathKind).
 //
 // Rules:
@@ -149,7 +148,7 @@ Examples:
 //     the local directory's name.
 //   - Any other destination is the exact target. The final target must not
 //     already exist: nothing is merged into or replaced in the container.
-func resolvePushDestination(localPath, remotePath string, kind func(string) (string, error)) (string, error) {
+func resolvePushDestination(localPath, remotePath string, kind func(string) (container.PathKind, error)) (string, error) {
 	abs, err := filepath.Abs(localPath)
 	if err != nil {
 		return "", err
@@ -169,18 +168,18 @@ func resolvePushDestination(localPath, remotePath string, kind func(string) (str
 		return "", fmt.Errorf("failed to check destination %q: %w", remotePath, err)
 	}
 	switch {
-	case k == "dir":
+	case k == container.PathDir:
 		target = path.Join(target, base)
 		if k, err = kind(target); err != nil {
 			return "", fmt.Errorf("failed to check destination %q: %w", target, err)
 		}
-	case trailingSep && k == "none":
+	case trailingSep && k == container.PathNone:
 		return "", fmt.Errorf("destination %q does not exist: a trailing slash requires an existing directory (create it first, or drop the slash to push to that exact path)", remotePath)
 	case trailingSep:
 		return "", fmt.Errorf("destination %q is not a directory", remotePath)
 	}
 
-	if k != "none" {
+	if k != container.PathNone {
 		return "", fmt.Errorf("destination %q already exists; remove it or choose another name", target)
 	}
 	return target, nil

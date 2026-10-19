@@ -6,16 +6,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/container"
 )
 
 // fakeKinds is a container filesystem for resolvePushDestination: paths not
-// listed are "none".
-func fakeKinds(kinds map[string]string) func(string) (string, error) {
-	return func(p string) (string, error) {
+// listed are container.PathNone.
+func fakeKinds(kinds map[string]container.PathKind) func(string) (container.PathKind, error) {
+	return func(p string) (container.PathKind, error) {
 		if k, ok := kinds[p]; ok {
 			return k, nil
 		}
-		return "none", nil
+		return container.PathNone, nil
 	}
 }
 
@@ -24,14 +26,14 @@ func TestResolvePushDestination(t *testing.T) {
 	if err := os.Mkdir(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	kinds := fakeKinds(map[string]string{
-		"/":              "dir",
-		"/tmp":           "dir",
-		"/tmp/existing":  "dir",
-		"/tmp/taken/src": "dir",
-		"/tmp/taken":     "dir",
-		"/tmp/file":      "other",
-		"/tmp/link":      "link",
+	kinds := fakeKinds(map[string]container.PathKind{
+		"/":              container.PathDir,
+		"/tmp":           container.PathDir,
+		"/tmp/existing":  container.PathDir,
+		"/tmp/taken/src": container.PathDir,
+		"/tmp/taken":     container.PathDir,
+		"/tmp/file":      container.PathOther,
+		"/tmp/link":      container.PathOther, // a symlink
 	})
 
 	tests := []struct {
@@ -72,14 +74,14 @@ func TestResolvePushDestination_DotUsesRealName(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	got, err := resolvePushDestination(".", "/tmp", fakeKinds(map[string]string{"/tmp": "dir"}))
+	got, err := resolvePushDestination(".", "/tmp", fakeKinds(map[string]container.PathKind{"/tmp": container.PathDir}))
 	if err != nil || got != "/tmp/project" {
 		t.Errorf("resolvePushDestination(\".\") = %q, %v; want /tmp/project", got, err)
 	}
 }
 
 func TestResolvePushDestination_KindError(t *testing.T) {
-	kind := func(string) (string, error) { return "", errors.New("exec failed") }
+	kind := func(string) (container.PathKind, error) { return "", errors.New("exec failed") }
 	if _, err := resolvePushDestination(t.TempDir(), "/tmp/x", kind); err == nil || !strings.Contains(err.Error(), "exec failed") {
 		t.Errorf("error = %v, want the probe error", err)
 	}

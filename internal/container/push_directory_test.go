@@ -22,15 +22,6 @@ func fakeIncusScript(t *testing.T, body string) string {
 	return log
 }
 
-func readCalls(t *testing.T, log string) []string {
-	t.Helper()
-	data, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return strings.Split(strings.TrimSpace(string(data)), "\n")
-}
-
 func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
 	log := fakeIncusScript(t, "exit 0")
 	src := filepath.Join(t.TempDir(), "src")
@@ -41,10 +32,10 @@ func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
 	if err := NewManager("c1").PushDirectory(src, "/tmp/src"); err != nil {
 		t.Fatalf("PushDirectory() error = %v", err)
 	}
-	calls := readCalls(t, log)
+	logged := calls(t, log)
 	want := "--project " + IncusProject + " file push -r " + src + " c1/tmp/"
-	if len(calls) != 1 || calls[0] != want {
-		t.Errorf("incus calls = %q, want [%q]", calls, want)
+	if len(logged) != 1 || logged[0] != want {
+		t.Errorf("incus calls = %q, want [%q]", logged, want)
 	}
 }
 
@@ -63,15 +54,15 @@ func TestPushDirectory_RenameStagesOnHost(t *testing.T) {
 	if err := NewManager("c1").PushDirectory(src, "/tmp/renamed/"); err != nil {
 		t.Fatalf("PushDirectory() error = %v", err)
 	}
-	calls := readCalls(t, log)
-	if len(calls) != 1 || !strings.Contains(calls[0], " file push -r ") || !strings.HasSuffix(calls[0], "/renamed c1/tmp/") {
-		t.Fatalf("incus calls = %q, want one push of a staged .../renamed to c1/tmp/", calls)
+	logged := calls(t, log)
+	if len(logged) != 1 || !strings.Contains(logged[0], " file push -r ") || !strings.HasSuffix(logged[0], "/renamed c1/tmp/") {
+		t.Fatalf("incus calls = %q, want one push of a staged .../renamed to c1/tmp/", logged)
 	}
 	staged, err := os.ReadFile(filepath.Join(filepath.Dir(log), "staged.txt"))
 	if err != nil || !strings.Contains(string(staged), "b.txt") {
 		t.Errorf("staged copy = %q, %v; want the source tree", staged, err)
 	}
-	stage := strings.Fields(calls[0])[5]
+	stage := strings.Fields(logged[0])[5]
 	if _, err := os.Stat(stage); !os.IsNotExist(err) {
 		t.Errorf("staged copy %s should be removed after the push", stage)
 	}
@@ -81,13 +72,13 @@ func TestPathKind(t *testing.T) {
 	tests := []struct {
 		name    string
 		body    string
-		want    string
+		want    PathKind
 		wantErr error
 	}{
-		{"directory lists its entries", `echo '["a.txt", "sub"]'`, "dir", nil},
-		{"empty directory", `echo '[]'`, "dir", nil},
-		{"file answers with content", `echo 'hello'`, "other", nil},
-		{"missing path", `echo 'Error: Not Found' >&2; exit 1`, "none", nil},
+		{"directory lists its entries", `echo '["a.txt", "sub"]'`, PathDir, nil},
+		{"empty directory", `echo '[]'`, PathDir, nil},
+		{"file answers with content", `echo 'hello'`, PathOther, nil},
+		{"missing path", `echo 'Error: Not Found' >&2; exit 1`, PathNone, nil},
 		{"missing container", `echo 'Error: Instance not found' >&2; exit 1`, "", ErrContainerNotFound},
 	}
 	for _, tt := range tests {
@@ -101,10 +92,10 @@ func TestPathKind(t *testing.T) {
 			} else if err != nil || got != tt.want {
 				t.Fatalf("PathKind() = %q, %v; want %q", got, err, tt.want)
 			}
-			calls := readCalls(t, log)
+			logged := calls(t, log)
 			want := "query /1.0/instances/c1/files?path=%2Ftmp%2Fx+y&project=" + IncusProject
-			if len(calls) != 1 || calls[0] != want {
-				t.Errorf("incus calls = %q, want [%q] (no --project: query rejects it)", calls, want)
+			if len(logged) != 1 || logged[0] != want {
+				t.Errorf("incus calls = %q, want [%q] (no --project: query rejects it)", logged, want)
 			}
 		})
 	}
