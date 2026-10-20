@@ -83,8 +83,11 @@ func TestOpencode2Tool_Registered(t *testing.T) {
 	if got.Name() != "opencode2" {
 		t.Errorf("Get(opencode2).Name() = %q", got.Name())
 	}
-	if slices.Contains(DefaultBuildAgents(), "opencode2") {
-		t.Error("opencode2 is opt-in: it must not be in DefaultBuildAgents()")
+	if !slices.Contains(DefaultBuildAgents(), "opencode2") {
+		t.Error("opencode2 is a default agent: it must be in DefaultBuildAgents()")
+	}
+	if slices.Contains(DefaultBuildAgents(), "opencode") {
+		t.Error("opencode (v1) is opt-in: it must not be in DefaultBuildAgents()")
 	}
 	if NewOpencode().Binary() != "opencode" {
 		t.Errorf("opencode Binary() = %q, want %q", NewOpencode().Binary(), "opencode")

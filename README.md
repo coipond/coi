@@ -103,8 +103,8 @@ Profiles support inheritance, ship AI-agent context files, and can carry their o
 
 - Claude Code (default)
 - Codex CLI
-- opencode
-- opencode2 (OpenCode v2, opt-in at build time)
+- opencode (OpenCode v1, opt-in at build time)
+- opencode2 (OpenCode v2)
 - pi
 - omp (Oh My Pi)
 

@@ -574,7 +574,8 @@ opencode_v1_release_tag() {
 }
 
 #######################################
-# Install opencode
+# Install opencode (OpenCode v1; opt-in: add "opencode" to
+# [container.build] agents)
 # See: https://opencode.ai
 #######################################
 install_opencode() {
@@ -657,9 +658,9 @@ opencode2_npm_version() {
 }
 
 #######################################
-# Install OpenCode v2 as opencode2 (opt-in: add "opencode2" to
-# [container.build] agents). It gets its own directory: the v1 install and
-# upstream's v2 installer both use ~/.opencode/bin/opencode.
+# Install OpenCode v2 as opencode2 (a default agent). It gets its own
+# directory: the v1 install and upstream's v2 installer both use
+# ~/.opencode/bin/opencode.
 #######################################
 install_opencode2() {
     log "Installing opencode2..."
@@ -1052,7 +1053,7 @@ cleanup() {
 # warned and skipped (coi validates the list host-side before build, so this is
 # defense-in-depth).
 install_selected_agents() {
-    local agents="${COI_AGENTS:-claude opencode pi}"
+    local agents="${COI_AGENTS:-claude opencode2 pi}"
     for agent in ${agents//,/ }; do
         case "$agent" in
             claude) install_claude_cli ;;

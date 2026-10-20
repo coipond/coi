@@ -4,8 +4,9 @@ Tests for selectable agents in the base image build (issue #454).
 profiles/default/build.sh used to call install_claude_cli / install_opencode /
 install_pi unconditionally. It now dispatches through install_selected_agents,
 which installs the agents named in $COI_AGENTS (comma/space separated) and falls
-back to the DEFAULT agent set when COI_AGENTS is unset (claude/opencode/pi —
-opt-in agents like codex are excluded per #698 and must be requested explicitly).
+back to the DEFAULT agent set when COI_AGENTS is unset (claude/opencode2/pi —
+opt-in agents like codex (#698) and OpenCode v1 (opencode) are excluded and must
+be requested explicitly).
 
 These tests source the REAL install_selected_agents from build.sh (like
 test_opencode_arch_selection.py sources opencode_asset_arch), stub the per-agent
@@ -53,16 +54,16 @@ def _run(coi_agents=None):
 
 
 def test_unset_installs_default_agents():
-    """COI_AGENTS unset installs the default agent set (historical default;
-    codex is opt-in per #698 and deliberately excluded)."""
+    """COI_AGENTS unset installs the default agent set (codex, per #698, and
+    OpenCode v1 are opt-in and deliberately excluded)."""
     agents, _ = _run(coi_agents=None)
-    assert agents == ["claude", "opencode", "pi"], agents
+    assert agents == ["claude", "opencode2", "pi"], agents
 
 
 def test_empty_installs_default_agents():
     """An empty COI_AGENTS also falls back to the default agent set."""
     agents, _ = _run(coi_agents="")
-    assert agents == ["claude", "opencode", "pi"], agents
+    assert agents == ["claude", "opencode2", "pi"], agents
 
 
 def test_codex_opt_in():
@@ -71,8 +72,11 @@ def test_codex_opt_in():
     assert agents == ["claude", "codex"], agents
 
 
-def test_opencode2_opt_in():
-    """opencode2 (OpenCode v2) installs only when explicitly requested, next to v1."""
+def test_opencode_v1_opt_in():
+    """OpenCode v1 (opencode) installs only when explicitly requested, alone or
+    next to v2."""
+    agents, _ = _run(coi_agents="opencode")
+    assert agents == ["opencode"], agents
     agents, _ = _run(coi_agents="opencode,opencode2")
     assert agents == ["opencode", "opencode2"], agents
 
@@ -171,9 +175,9 @@ def _probe(coi_binary, workspace_dir, script):
 
 @contextmanager
 def _rebuilt_coi_default(coi_binary, workspace_dir, agents):
-    """Rebuild coi-default with `[container.build] agents = agents`, then
-    restore the original image for sibling tests in this lane. Skips where
-    coi-default or incus is missing."""
+    """Rebuild coi-default with `[container.build] agents = agents` (None: no
+    agents key, so the default set), then restore the original image for
+    sibling tests in this lane. Skips where coi-default or incus is missing."""
     _skip_without_incus(coi_binary)
     if shutil.which("incus") is None:
         pytest.skip("incus CLI not available")
@@ -192,10 +196,11 @@ def _rebuilt_coi_default(coi_binary, workspace_dir, agents):
 
     coi_dir = Path(workspace_dir) / ".coi"
     coi_dir.mkdir(exist_ok=True)
-    agents_toml = ", ".join(f'"{a}"' for a in agents)
-    (coi_dir / "config.toml").write_text(
-        f'[container]\nimage = "coi-default"\n\n[container.build]\nagents = [{agents_toml}]\n'
-    )
+    config = '[container]\nimage = "coi-default"\n'
+    if agents is not None:
+        agents_toml = ", ".join(f'"{a}"' for a in agents)
+        config += f"\n[container.build]\nagents = [{agents_toml}]\n"
+    (coi_dir / "config.toml").write_text(config)
 
     try:
         build = subprocess.run(
@@ -267,7 +272,7 @@ def _rebuilt_coi_default(coi_binary, workspace_dir, agents):
 
 def test_slim_build_installs_only_selected_agents(coi_binary, workspace_dir):
     """End-to-end proof (#454, review finding 4): a real `coi build` with
-    agents=["claude"] produces a coi-default image that HAS claude but NOT opencode/pi.
+    agents=["claude"] produces a coi-default image that HAS claude but NOT the other agents.
 
     This is the one link the unit + hermetic tests cannot cover on their own — it
     exercises the whole chain for real: project config -> BuildOptions.Agents ->
@@ -281,29 +286,32 @@ def test_slim_build_installs_only_selected_agents(coi_binary, workspace_dir):
         out = _probe(
             coi_binary,
             workspace_dir,
-            "for a in claude opencode pi; do "
+            "for a in claude opencode opencode2 pi; do "
             'command -v "$a" >/dev/null 2>&1 && echo HAVE:$a || echo MISS:$a; done',
         )
-        assert "HAVE:claude" in out, f"claude must be installed with agents=[claude]:\n{out}"
-        assert "MISS:opencode" in out, f"opencode must be ABSENT with agents=[claude]:\n{out}"
-        assert "MISS:pi" in out, f"pi must be ABSENT with agents=[claude]:\n{out}"
+        lines = out.splitlines()
+        assert "HAVE:claude" in lines, f"claude must be installed with agents=[claude]:\n{out}"
+        assert "MISS:opencode" in lines, f"opencode must be ABSENT with agents=[claude]:\n{out}"
+        assert "MISS:pi" in lines, f"pi must be ABSENT with agents=[claude]:\n{out}"
+        assert "MISS:opencode2" in lines, f"opencode2 must be ABSENT with agents=[claude]:\n{out}"
 
 
-def test_opencode2_build_installs_v2_next_to_v1(coi_binary, workspace_dir):
-    """A real `coi build` with agents=["opencode", "opencode2"] installs OpenCode
-    v2 as opencode2 while `opencode` stays v1. Same image backup/restore as the
-    slim build test; runs only where coi-default + incus exist (core-build)."""
-    with _rebuilt_coi_default(coi_binary, workspace_dir, ["opencode", "opencode2"]):
+def test_default_build_installs_opencode2_not_v1(coi_binary, workspace_dir):
+    """A real `coi build` with no agents list installs OpenCode v2 as opencode2,
+    in its own directory, and no OpenCode v1 (opt-in). Same image backup/restore
+    as the slim build test; runs only where coi-default + incus exist
+    (core-build)."""
+    with _rebuilt_coi_default(coi_binary, workspace_dir, None):
         out = _probe(
             coi_binary,
             workspace_dir,
-            'echo "V1:$(opencode --version)"; echo "V2:$(opencode2 --version)"; '
-            "readlink -f /usr/local/bin/opencode /usr/local/bin/opencode2",
+            'echo "V2:$(opencode2 --version)"; readlink -f /usr/local/bin/opencode2; '
+            "command -v opencode >/dev/null 2>&1 && echo HAVE:opencode || echo MISS:opencode",
         )
-        assert re.search(r"^V1:1\.\d+\.\d+$", out, re.MULTILINE), f"opencode must stay v1:\n{out}"
         assert re.search(r"^V2:opencode v2\.\d+\.\d+$", out, re.MULTILINE), (
             f"opencode2 must be OpenCode v2:\n{out}"
         )
-        assert "/.opencode/bin/opencode" in out and "/.opencode2/bin/opencode" in out, (
-            f"v1 and v2 must live in separate directories:\n{out}"
+        assert "/.opencode2/bin/opencode" in out, f"opencode2 must have its own directory:\n{out}"
+        assert "MISS:opencode" in out.splitlines(), (
+            f"OpenCode v1 must not be installed by default:\n{out}"
         )
