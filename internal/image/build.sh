@@ -16,6 +16,7 @@ set -euo pipefail
 # Configuration
 CODE_USER="code"
 CODE_UID=1000
+OPENCODE_FALLBACK_VERSION="v1.19.3"
 
 log() {
     echo "[coi] $*"
@@ -558,8 +559,6 @@ opencode_asset_arch() {
 # not api.github.com, so it is not subject to API rate limits. If the lookup
 # fails, prints OPENCODE_FALLBACK_VERSION.
 #######################################
-OPENCODE_FALLBACK_VERSION="v1.19.3"
-
 opencode_v1_release_tag() {
     local tag
     tag="$(timeout 30 env GIT_TERMINAL_PROMPT=0 git ls-remote --tags --refs \

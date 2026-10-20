@@ -265,3 +265,13 @@ def test_install_opencode_fails_when_no_tag_downloads(tmp_path):
     assert result.returncode != 0, f"expected failure, got rc=0: {result.stdout}"
     assert [u.split("/")[-2] for u in urls] == ["v1.99.0"] * 3 + [fallback] * 3, urls
     assert "ERROR: opencode installation failed" in result.stdout
+
+
+def test_install_opencode_no_second_round_when_resolved_is_fallback(tmp_path):
+    """When the resolved tag is the fallback tag, a failed download is not
+    retried as a fallback."""
+    fallback = _fallback_version()
+    result, urls = _run_install(tmp_path, [fallback], [])
+    assert result.returncode != 0, f"expected failure, got rc=0: {result.stdout}"
+    assert [u.split("/")[-2] for u in urls] == [fallback] * 3, urls
+    assert "falling back" not in result.stdout
