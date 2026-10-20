@@ -622,7 +622,7 @@ install_opencode() {
     done
 
     if [ -z "$installed" ]; then
-        log "ERROR: opencode installation failed after 3 attempts."
+        log "ERROR: opencode installation failed after 3 attempts per tag."
         exit 1
     fi
 

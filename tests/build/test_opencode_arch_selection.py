@@ -13,9 +13,11 @@ function builds the download URL from the detected arch rather than a hardcoded
 suffix. Hermetic: no network, no Incus.
 """
 
+import io
 import os
 import re
 import subprocess
+import tarfile
 from pathlib import Path
 
 BUILD_SH = Path(__file__).resolve().parents[2] / "profiles" / "default" / "build.sh"
@@ -174,3 +176,92 @@ def test_install_opencode_downloads_a_release_tag():
     assert 'OPENCODE_VERSION="$(opencode_v1_release_tag)"' in content, (
         "install_opencode does not resolve the tag with opencode_v1_release_tag"
     )
+
+
+# Sources install_opencode and its helpers from build.sh and runs it with the
+# install paths moved under $TEST_ROOT. git, curl, sleep and chown are faked.
+_RUN_INSTALL = r"""
+set -euo pipefail
+CODE_USER=code
+chown() { :; }
+source <(grep '^OPENCODE_FALLBACK_VERSION=' "$BUILD_SH")
+for fn in log opencode_asset_arch opencode_v1_release_tag; do
+    source <(sed -n "/^${fn}()/,/^}/p" "$BUILD_SH")
+done
+source <(sed -n '/^install_opencode()/,/^}/p' "$BUILD_SH" |
+    sed -e "s|/home/\$CODE_USER|$TEST_ROOT/home|g" -e "s|/usr/local/bin|$TEST_ROOT/bin|g")
+install_opencode
+"""
+
+
+def _run_install(tmp_path, tags, downloadable):
+    """Run install_opencode with `tags` listed upstream; only the tags in
+    `downloadable` have a release asset. Returns (result, requested URLs)."""
+    fake_bin = tmp_path / "fakebin"
+    fake_bin.mkdir()
+    (tmp_path / "bin").mkdir()
+
+    binary = b"#!/bin/sh\necho 1.0.0-fake\n"
+    tarball = tmp_path / "opencode.tar.gz"
+    with tarfile.open(tarball, "w:gz") as tar:
+        info = tarfile.TarInfo("opencode")
+        info.size = len(binary)
+        info.mode = 0o755
+        tar.addfile(info, io.BytesIO(binary))
+
+    listing = "".join(f"0000000000000000000000000000000000000000\\trefs/tags/{t}\\n" for t in tags)
+    curl_log = tmp_path / "curl.log"
+    ok_cases = " | ".join(f"*/download/{t}/*" for t in downloadable) or "__none__"
+    scripts = {
+        "git": f"#!/bin/sh\nprintf '{listing}'\n",
+        "curl": (
+            f'#!/bin/sh\necho "$*" >> {curl_log}\n'
+            f'case "$*" in\n    {ok_cases}) cat {tarball} ;;\n    *) exit 22 ;;\nesac\n'
+        ),
+        "sleep": "#!/bin/sh\n:\n",
+    }
+    for name, body in scripts.items():
+        path = fake_bin / name
+        path.write_text(body)
+        path.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
+        "BUILD_SH": str(BUILD_SH),
+        "TEST_ROOT": str(tmp_path),
+    }
+    result = subprocess.run(
+        ["bash", "-c", _RUN_INSTALL], capture_output=True, text=True, env=env, timeout=60
+    )
+    urls = curl_log.read_text().split() if curl_log.exists() else []
+    return result, [u for u in urls if u.startswith("https://")]
+
+
+def test_install_opencode_installs_resolved_tag(tmp_path):
+    """The newest v1 tag is downloaded, with no fallback."""
+    result, urls = _run_install(tmp_path, ["v1.19.3", "v1.20.0", "v2.1.0"], ["v1.20.0"])
+    assert result.returncode == 0, f"install_opencode failed: {result.stdout}{result.stderr}"
+    assert [u.split("/")[-2] for u in urls] == ["v1.20.0"], urls
+    assert "WARNING" not in result.stdout + result.stderr
+    assert (tmp_path / "home" / ".opencode" / "bin" / "opencode").exists()
+
+
+def test_install_opencode_falls_back_when_resolved_download_fails(tmp_path):
+    """A resolved tag without a downloadable asset falls back to the fallback
+    tag after 3 attempts, and the fallback is logged."""
+    fallback = _fallback_version()
+    result, urls = _run_install(tmp_path, [fallback, "v1.99.0"], [fallback])
+    assert result.returncode == 0, f"install_opencode failed: {result.stdout}{result.stderr}"
+    assert [u.split("/")[-2] for u in urls] == ["v1.99.0"] * 3 + [fallback], urls
+    assert f"WARNING: opencode v1.99.0 download failed, falling back to {fallback}" in result.stdout
+    assert (tmp_path / "home" / ".opencode" / "bin" / "opencode").exists()
+
+
+def test_install_opencode_fails_when_no_tag_downloads(tmp_path):
+    """When the resolved and fallback tags both fail, the build fails."""
+    fallback = _fallback_version()
+    result, urls = _run_install(tmp_path, [fallback, "v1.99.0"], [])
+    assert result.returncode != 0, f"expected failure, got rc=0: {result.stdout}"
+    assert [u.split("/")[-2] for u in urls] == ["v1.99.0"] * 3 + [fallback] * 3, urls
+    assert "ERROR: opencode installation failed" in result.stdout
