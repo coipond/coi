@@ -25,9 +25,9 @@
 # [container.build]              # how `coi build` builds the base image
 # base = "ubuntu:24.04"          # base image to build from
 # compression = ""              # image compression: none | gzip | xz ("" = Incus default)
-# agents = ["claude", "opencode", "pi"]  # AI agents to install (any of claude/opencode/pi/codex/omp);
-#                                #   omit to install this default set — codex and omp are
-#                                #   opt-in and must be listed explicitly (#698)
+# agents = ["claude", "opencode", "pi"]  # AI agents to install (any of claude/opencode/opencode2/pi/codex/omp);
+#                                #   omit to install this default set — codex, omp and opencode2
+#                                #   are opt-in and must be listed explicitly (#698)
 
 [defaults]
 # Profile to apply when --profile is not passed, so your setup applies without

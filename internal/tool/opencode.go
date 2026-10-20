@@ -9,7 +9,7 @@ import (
 type OpencodeTool struct {
 	permissionMode  string // "bypass" (default) or "interactive"
 	contextFilePath string // absolute path to sandbox context file inside container (set by SetAutoContextPath)
-	binary          string // [tool] binary override; empty means "opencode"
+	binary          string // [tool] binary override, or opencode2's default; empty means "opencode"
 }
 
 // NewOpencode creates a new opencode tool instance
@@ -18,8 +18,8 @@ func NewOpencode() Tool { return &OpencodeTool{} }
 // Name returns "opencode".
 func (c *OpencodeTool) Name() string { return "opencode" }
 
-// Binary returns the executable to launch: the [tool] binary override if set,
-// else "opencode".
+// Binary returns the executable to launch: binary if set (the [tool] binary
+// override, or "opencode2" from NewOpencode2), else "opencode".
 func (c *OpencodeTool) Binary() string {
 	if c.binary != "" {
 		return c.binary
