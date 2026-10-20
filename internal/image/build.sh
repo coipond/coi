@@ -680,9 +680,9 @@ install_opencode2() {
 
     local version attempt installed=""
     for version in "$OPENCODE2_VERSION" "$OPENCODE2_FALLBACK_VERSION"; do
-        local DOWNLOAD_URL="https://registry.npmjs.org/@opencode/cli-linux-${OPENCODE_ARCH}/-/cli-linux-${OPENCODE_ARCH}-${version}.tgz"
+        local TARBALL_URL="https://registry.npmjs.org/@opencode/cli-linux-${OPENCODE_ARCH}/-/cli-linux-${OPENCODE_ARCH}-${version}.tgz"
         for attempt in 1 2 3; do
-            if curl -fsSL "$DOWNLOAD_URL" | tar xz -C "$INSTALL_DIR" --strip-components=2 package/bin/opencode; then
+            if curl -fsSL "$TARBALL_URL" | tar xz -C "$INSTALL_DIR" --strip-components=2 package/bin/opencode; then
                 chmod +x "$OPENCODE2_PATH"
                 chown "$CODE_USER:$CODE_USER" "$OPENCODE2_PATH"
                 installed=1
