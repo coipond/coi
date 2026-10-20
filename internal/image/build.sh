@@ -552,6 +552,28 @@ opencode_asset_arch() {
 }
 
 #######################################
+# Print the newest stable OpenCode v1.x release tag (vMAJOR.MINOR.PATCH).
+# OpenCode v2 ships through npm, so following GitHub "latest" would switch
+# majors silently once upstream moves it. git ls-remote uses the git endpoint,
+# not api.github.com, so it is not subject to API rate limits. If the lookup
+# fails, prints OPENCODE_FALLBACK_VERSION.
+#######################################
+OPENCODE_FALLBACK_VERSION="v1.19.3"
+
+opencode_v1_release_tag() {
+    local tag
+    tag="$(timeout 30 env GIT_TERMINAL_PROMPT=0 git ls-remote --tags --refs \
+        https://github.com/anomalyco/opencode 'v1.*' 2>/dev/null |
+        sed -n 's|.*refs/tags/\(v1\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' |
+        sort -V | tail -n 1 || true)"
+    if [[ -z "$tag" ]]; then
+        log "WARNING: could not list opencode v1 tags, using $OPENCODE_FALLBACK_VERSION" >&2
+        tag="$OPENCODE_FALLBACK_VERSION"
+    fi
+    echo "$tag"
+}
+
+#######################################
 # Install opencode
 # See: https://opencode.ai
 #######################################
@@ -565,32 +587,44 @@ install_opencode() {
         exit 1
     fi
 
-    # Download the binary from a fixed release tag, not /latest/: OpenCode v2
-    # ships through npm, and a moved "latest" would switch majors silently.
-    # The release download URL does NOT hit the GitHub API and is not subject
-    # to rate limits (unlike the official installer which calls api.github.com).
-    local OPENCODE_VERSION="v1.19.3"
+    # Download the binary from a release tag, not /latest/ (see
+    # opencode_v1_release_tag). The release download URL does NOT hit the
+    # GitHub API and is not subject to rate limits (unlike the official
+    # installer which calls api.github.com). A new tag can exist before its
+    # assets are uploaded, so a failed download falls back to the known tag.
+    local OPENCODE_VERSION
+    OPENCODE_VERSION="$(opencode_v1_release_tag)"
     local INSTALL_DIR="/home/$CODE_USER/.opencode/bin"
     local OPENCODE_PATH="$INSTALL_DIR/opencode"
-    local DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-${OPENCODE_ARCH}.tar.gz"
 
     mkdir -p "$INSTALL_DIR"
     chown "$CODE_USER:$CODE_USER" "$INSTALL_DIR"
 
-    local attempt
-    for attempt in 1 2 3; do
-        if curl -fsSL "$DOWNLOAD_URL" | tar xz -C "$INSTALL_DIR"; then
-            chmod +x "$OPENCODE_PATH"
-            chown "$CODE_USER:$CODE_USER" "$OPENCODE_PATH"
+    local version attempt installed=""
+    for version in "$OPENCODE_VERSION" "$OPENCODE_FALLBACK_VERSION"; do
+        local DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/download/${version}/opencode-linux-${OPENCODE_ARCH}.tar.gz"
+        for attempt in 1 2 3; do
+            if curl -fsSL "$DOWNLOAD_URL" | tar xz -C "$INSTALL_DIR"; then
+                chmod +x "$OPENCODE_PATH"
+                chown "$CODE_USER:$CODE_USER" "$OPENCODE_PATH"
+                installed=1
+                break 2
+            fi
+            if [ "$attempt" -lt 3 ]; then
+                log "opencode $version download failed (attempt $attempt/3), retrying in 10s..."
+                sleep 10
+            fi
+        done
+        if [ "$version" = "$OPENCODE_FALLBACK_VERSION" ]; then
             break
         fi
-        if [ "$attempt" -eq 3 ]; then
-            log "ERROR: opencode installation failed after 3 attempts."
-            exit 1
-        fi
-        log "opencode download failed (attempt $attempt/3), retrying in 10s..."
-        sleep 10
+        log "WARNING: opencode $version download failed, falling back to $OPENCODE_FALLBACK_VERSION"
     done
+
+    if [ -z "$installed" ]; then
+        log "ERROR: opencode installation failed after 3 attempts."
+        exit 1
+    fi
 
     if [[ ! -x "$OPENCODE_PATH" ]]; then
         log "ERROR: opencode binary not found at $OPENCODE_PATH after installation."

@@ -13,7 +13,7 @@
 
 ### Changed
 
-- [Change] **Image: OpenCode is pinned to v1.19.3** — `coi build` installed whatever OpenCode release GitHub marked "latest", so an upstream move to v2 would have switched majors on the next build. Takes effect on the next `coi build`.
+- [Change] **Image: OpenCode stays on v1.x** — `coi build` installed whatever OpenCode release GitHub marked "latest", so an upstream move to v2 would have switched majors on the next build. It now installs the newest v1.x release, and falls back to v1.19.3 when the release lookup or download fails. Takes effect on the next `coi build`.
 - [Change] **Faster container removal, and `coi build` shows progress** — `coi kill`, `coi shutdown`, `coi container delete` and `coi clean --pools` remove a stopped container up to 3 seconds sooner, and make fewer Incus calls for a running one. `coi build` now reports progress during base package install and while it publishes the image.
 
 ### Bug Fixes
