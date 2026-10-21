@@ -62,6 +62,62 @@ func TestRegister_DifferentWorkspace_Conflict(t *testing.T) {
 	}
 }
 
+func TestRegisterWorkspace_KeepsSavedProfile(t *testing.T) {
+	r := &Registry{
+		path:    tempRegistryPath(t),
+		entries: make(map[string]AliasEntry),
+	}
+
+	if err := r.Register("myproject", "/workspace/a", "pa"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RegisterWorkspace("myproject", "/workspace/a"); err != nil {
+		t.Fatalf("RegisterWorkspace failed: %v", err)
+	}
+	if entry := r.Lookup("myproject"); entry == nil || entry.Profile != "pa" {
+		t.Errorf("RegisterWorkspace must keep the saved profile, got %+v", entry)
+	}
+
+	// A non-empty profile from Register still replaces it.
+	if err := r.Register("myproject", "/workspace/a", "pb"); err != nil {
+		t.Fatal(err)
+	}
+	if entry := r.Lookup("myproject"); entry == nil || entry.Profile != "pb" {
+		t.Errorf("Register must replace the saved profile, got %+v", entry)
+	}
+}
+
+func TestRegisterWorkspace_NewAlias(t *testing.T) {
+	r := &Registry{
+		path:    tempRegistryPath(t),
+		entries: make(map[string]AliasEntry),
+	}
+
+	if err := r.RegisterWorkspace("myproject", "/workspace/a"); err != nil {
+		t.Fatalf("RegisterWorkspace failed: %v", err)
+	}
+	if entry := r.Lookup("myproject"); entry == nil || entry.Workspace != "/workspace/a" || entry.Profile != "" {
+		t.Errorf("unexpected entry %+v", entry)
+	}
+}
+
+func TestRegisterWorkspace_DifferentWorkspace_Conflict(t *testing.T) {
+	r := &Registry{
+		path:    tempRegistryPath(t),
+		entries: make(map[string]AliasEntry),
+	}
+
+	if err := r.Register("myproject", "/workspace/a", "pa"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RegisterWorkspace("myproject", "/workspace/b"); err == nil {
+		t.Fatal("Expected conflict error when registering same alias for different workspace")
+	}
+	if entry := r.Lookup("myproject"); entry == nil || entry.Workspace != "/workspace/a" || entry.Profile != "pa" {
+		t.Errorf("a conflict must leave the entry unchanged, got %+v", entry)
+	}
+}
+
 func TestLookup_Found(t *testing.T) {
 	r := &Registry{
 		path: tempRegistryPath(t),

@@ -69,6 +69,20 @@ func cloneMap[M ~map[K]V, K comparable, V any](in M) M {
 	return out
 }
 
+// builtinProfiles are the profiles coi provides itself, by name. Load injects
+// each one; a disk profile of that name replaces it.
+var builtinProfiles = map[string]func(*Config) ProfileConfig{
+	"default":  synthesizeDefaultProfile,
+	"hardened": func(*Config) ProfileConfig { return synthesizeHardenedProfile() },
+}
+
+// IsBuiltinProfile reports whether coi provides a profile of this name itself,
+// also when a disk profile of that name replaces it.
+func IsBuiltinProfile(name string) bool {
+	_, ok := builtinProfiles[name]
+	return ok
+}
+
 // synthesizeDefaultProfile creates a ProfileConfig from the loaded Config,
 // representing the "default" built-in profile.
 // All struct fields are copied by value (not aliased) so that applying
@@ -126,6 +140,8 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 		Monitoring:  &monitoring,
 		Timezone:    &timezone,
 		Source:      "(built-in)",
+
+		mountsFromConfig: true,
 	}
 	return p
 }

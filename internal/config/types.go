@@ -641,6 +641,10 @@ type ProfileConfig struct {
 	// load time — the authoritative signal for post-inheritance trust checks,
 	// instead of lexically reconstructing the root from Source.
 	Trusted bool `toml:"-"`
+	// mountsFromConfig marks Mounts as a copy of the config's own mounts (the
+	// synthesized "default" profile, or a profile inheriting them from it), so
+	// ApplyProfile does not add them a second time.
+	mountsFromConfig bool
 
 	// Extended fields — previously Config-only, now available in profiles
 	Paths      *PathsConfig      `toml:"paths"`
