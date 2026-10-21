@@ -78,7 +78,8 @@ func (c *Collector) Run(ctx context.Context, r io.Reader) error {
 // by internal/monitor.AuditLog) and emits each entry as an Event of type
 // "audit". This is what `coi audit <session>` (without --follow) returns when
 // there is no live container — it lets users inspect what was already logged.
-func HostAuditTail(path string, follow bool, sessionID, container string, out io.Writer) error {
+// With follow, it returns nil once ctx is done.
+func HostAuditTail(ctx context.Context, path string, follow bool, sessionID, container string, out io.Writer) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open audit log: %w", err)
@@ -96,7 +97,7 @@ func HostAuditTail(path string, follow bool, sessionID, container string, out io
 	// Tail mode: simple sleep-poll loop over the same fd. We don't pull
 	// in a heavy fsnotify dep just for this. A trailing partial line stays
 	// pending in c until the writer finishes it.
-	return tailFollow(c)
+	return tailFollow(ctx, c)
 }
 
 // copyHostAuditLines writes each record of a host-side audit log to out. Lines

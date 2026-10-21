@@ -498,7 +498,9 @@ var profileDeleteCmd = &cobra.Command{
 	Short: "Delete a profile",
 	Long: `Delete a profile directory and its config.toml.
 
-Without --force, prompts for confirmation before deleting.
+Without --force, prompts for confirmation before deleting. The default and
+hardened profiles cannot be deleted, also when a profile directory of that
+name replaces the built-in one.
 
 Examples:
   coi profile delete rust-dev
@@ -514,8 +516,12 @@ func (a *App) profileDeleteRunE(cmd *cobra.Command, args []string) error {
 	if p == nil {
 		return fmt.Errorf("profile '%s' not found", name)
 	}
-	if p.Source == "(built-in)" {
-		return fmt.Errorf("cannot delete built-in profile 'default'")
+	if config.IsBuiltinProfile(name) {
+		if p.Source == "(built-in)" {
+			return fmt.Errorf("cannot delete built-in profile '%s'", name)
+		}
+		return fmt.Errorf("cannot delete profile '%s': it replaces the built-in profile of that name; "+
+			"if you really want it gone, remove %s by hand", name, filepath.Dir(p.Source))
 	}
 
 	profileDir := filepath.Dir(p.Source)

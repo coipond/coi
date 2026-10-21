@@ -57,7 +57,7 @@ func runAudit(cmd *cobra.Command, args []string) error {
 
 	// --file overrides every other source.
 	if auditFile != "" {
-		return audit.HostAuditTail(auditFile, auditFollow, "", "", os.Stdout)
+		return audit.HostAuditTail(ctx, auditFile, auditFollow, "", "", os.Stdout)
 	}
 
 	containerName, err := app.resolveMonitorContainer(args)
@@ -66,13 +66,13 @@ func runAudit(cmd *cobra.Command, args []string) error {
 	}
 
 	if !auditFollow {
-		return runAuditDump(containerName)
+		return runAuditDump(ctx, containerName)
 	}
 	return runAuditFollow(ctx, containerName)
 }
 
 // runAuditDump prints the existing host-side audit log for a container.
-func runAuditDump(containerName string) error {
+func runAuditDump(ctx context.Context, containerName string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("get home directory: %w", err)
@@ -81,7 +81,7 @@ func runAuditDump(containerName string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("no audit log found for container %s (start a session with monitoring enabled, or use --follow for live in-container events)", containerName)
 	}
-	return audit.HostAuditTail(path, false, containerName, containerName, os.Stdout)
+	return audit.HostAuditTail(ctx, path, false, containerName, containerName, os.Stdout)
 }
 
 // runAuditFollow pushes the agent script into the container and streams its

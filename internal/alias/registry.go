@@ -70,15 +70,39 @@ func (r *Registry) Register(alias, workspace, profile string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if existing, ok := r.entries[alias]; ok {
-		if existing.Workspace != workspace {
-			return fmt.Errorf("alias %q is already registered to workspace %q (current request: %q)", alias, existing.Workspace, workspace)
-		}
+	if err := r.checkWorkspace(alias, workspace); err != nil {
+		return err
 	}
 
 	r.entries[alias] = AliasEntry{
 		Workspace: workspace,
 		Profile:   profile,
+	}
+	return nil
+}
+
+// RegisterWorkspace adds an alias or confirms its workspace, keeping the
+// profile already saved for it. It returns the same conflict error as Register.
+func (r *Registry) RegisterWorkspace(alias, workspace string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := r.checkWorkspace(alias, workspace); err != nil {
+		return err
+	}
+
+	r.entries[alias] = AliasEntry{
+		Workspace: workspace,
+		Profile:   r.entries[alias].Profile,
+	}
+	return nil
+}
+
+// checkWorkspace returns a conflict error if alias is mapped to another
+// workspace. The caller holds r.mu.
+func (r *Registry) checkWorkspace(alias, workspace string) error {
+	if existing, ok := r.entries[alias]; ok && existing.Workspace != workspace {
+		return fmt.Errorf("alias %q is already registered to workspace %q (current request: %q)", alias, existing.Workspace, workspace)
 	}
 	return nil
 }
