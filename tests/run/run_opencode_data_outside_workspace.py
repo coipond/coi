@@ -125,26 +125,56 @@ def test_opencode_data_mount_added_to_reused_container(
 ):
     """A persistent container created without the mounts (another tool, or an
     older coi) gets them on its next reuse with opencode, instead of opencode
-    silently starting over in the container's own home."""
+    silently starting over in the container's own home. Another tool's data
+    mount on the same path (opencode2 shares ~/.local/share/opencode) is
+    replaced: two disk devices on one path would stop the container starting."""
     slot = 4
     container_name = calculate_container_name(workspace_dir, slot)
     cfg_claude = tmp_path / "claude.toml"
     cfg_opencode = tmp_path / "opencode.toml"
     _write_cfg(cfg_claude, "claude", persistent=True)
     _write_cfg(cfg_opencode, "opencode", persistent=True)
-    try:
-        first = _run(coi_binary, workspace_dir, cfg_claude, slot, "true")
-        assert first.returncode == 0, f"first run failed:\n{first.stdout}{first.stderr}"
-        devices = subprocess.run(
+    other_tool_dir = tmp_path / "opencode2-share"
+    other_tool_dir.mkdir()
+
+    def devices():
+        return subprocess.run(
             ["incus", "config", "device", "list", container_name],
             capture_output=True,
             text=True,
             timeout=30,
-        ).stdout
-        assert "tool-data-opencode" not in devices, devices
+        ).stdout.split()
+
+    try:
+        first = _run(coi_binary, workspace_dir, cfg_claude, slot, "true")
+        assert first.returncode == 0, f"first run failed:\n{first.stdout}{first.stderr}"
+        assert not any(d.startswith("tool-data-opencode") for d in devices()), devices()
+
+        # The stopped container as another tool sharing the path would leave it.
+        add = subprocess.run(
+            [
+                "incus",
+                "config",
+                "device",
+                "add",
+                container_name,
+                "tool-data-opencode2-share",
+                "disk",
+                f"source={other_tool_dir}",
+                "path=/home/code/.local/share/opencode",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert add.returncode == 0, add.stderr
 
         second = _run(coi_binary, workspace_dir, cfg_opencode, slot, PROBE)
         _assert_probe(second, workspace_dir)
+        attached = devices()
+        assert "tool-data-opencode2-share" not in attached, attached
+        assert "tool-data-opencode-share" in attached, attached
+        assert "tool-data-opencode-state" in attached, attached
     finally:
         subprocess.run(
             [coi_binary, "container", "delete", container_name, "--force"],

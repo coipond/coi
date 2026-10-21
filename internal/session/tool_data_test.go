@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -212,5 +213,34 @@ func TestAttachMissingToolDataMounts_NoToolDataMounts(t *testing.T) {
 	}
 	if len(f.adds) != 0 {
 		t.Errorf("adds = %v, want none", f.adds)
+	}
+}
+
+// Switching a reused container between tools that share a data path (opencode
+// and opencode2 both use ~/.local/share/opencode) must drop the other tool's
+// mount first: Incus can't start a container with two disk devices on one path.
+// Unrelated devices — another path, or a user [[mounts]] entry — stay.
+func TestAttachMissingToolDataMounts_ReplacesOtherToolOnSamePath(t *testing.T) {
+	mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode(), t.TempDir())
+	f := &fakeDiskDevices{devices: map[string]container.DiskDevice{
+		"tool-data-opencode2-share": {Source: "/h/opencode2/share", Path: "/home/code/.local/share/opencode", Shift: true},
+		"tool-data-opencode2-state": {Source: "/h/opencode2/state", Path: "/home/code/.local/state/opencode", Shift: true},
+		"tool-data-other-cache":     {Source: "/h/other", Path: "/home/code/.cache/other", Shift: true},
+		"mount-0":                   {Source: "/h/user", Path: "/home/code/user", Shift: true},
+	}}
+
+	if err := AttachMissingToolDataMounts(f, mc, true, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sorted(f.removes), []string{"tool-data-opencode2-share", "tool-data-opencode2-state"}; !slices.Equal(got, want) {
+		t.Errorf("removes = %v, want %v", got, want)
+	}
+	if got, want := sorted(f.adds), []string{"tool-data-opencode-share", "tool-data-opencode-state"}; !slices.Equal(got, want) {
+		t.Errorf("adds = %v, want %v", got, want)
+	}
+	for _, keep := range []string{"tool-data-other-cache", "mount-0"} {
+		if _, ok := f.devices[keep]; !ok {
+			t.Errorf("%s was removed", keep)
+		}
 	}
 }

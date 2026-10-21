@@ -332,6 +332,11 @@ create_code_user() {
     mkdir -p "/home/$CODE_USER/.codex"
     mkdir -p "/home/$CODE_USER/.ssh"
     chmod 700 "/home/$CODE_USER/.ssh"
+    # coi mounts tool data dirs (opencode's ~/.local/{share,state}/opencode)
+    # from the host (#929). Pre-create their parents, owned by the code user
+    # via the chown -R below, whichever agents the image installs, so a mount
+    # target never leaves a root-owned ~/.local/{share,state} behind.
+    mkdir -p "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state"
     # Pre-populate known_hosts. Try ssh-keyscan first (fresh keys); fall back to
     # embedded static keys for hosts where the SSH endpoint is unreachable (e.g.
     # bitbucket.org blocks automated scans, may be in maintenance windows).
@@ -631,12 +636,6 @@ install_opencode() {
     fi
 
     ln -sf "$OPENCODE_PATH" /usr/local/bin/opencode
-
-    # coi mounts opencode's data/state dirs from the host (#929). Pre-create
-    # their parents owned by the code user so the mount targets never leave a
-    # root-owned ~/.local/{share,state} behind.
-    mkdir -p "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state"
-    chown "$CODE_USER:$CODE_USER" "/home/$CODE_USER/.local" "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state"
 
     log "opencode $(opencode --version 2>/dev/null || echo 'installed')"
 }

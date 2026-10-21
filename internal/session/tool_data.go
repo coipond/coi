@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/tool"
 )
+
+// toolDataDevicePrefix starts the Incus device name of every tool data mount.
+const toolDataDevicePrefix = "tool-data-"
 
 // ToolDataBaseDir returns the host directory holding per-workspace tool data
 // for t: <coiDir>/tool-data/<tool>/<workspace-hash>. Keyed by workspace (not
@@ -37,7 +41,7 @@ func ToolDataMounts(coiDir string, t tool.Tool, workspacePath string) []MountEnt
 		mounts = append(mounts, MountEntry{
 			HostPath:      filepath.Join(base, d.Name),
 			ContainerPath: filepath.Join(home, d.HomeRelPath),
-			DeviceName:    fmt.Sprintf("tool-data-%s-%s", t.Name(), d.Name),
+			DeviceName:    fmt.Sprintf("%s%s-%s", toolDataDevicePrefix, t.Name(), d.Name),
 			MigrateFrom:   filepath.Join(workspacePath, d.HomeRelPath),
 		})
 	}
@@ -109,9 +113,13 @@ func migrateMountSource(from, to string, logger func(string)) {
 // STOPPED container doesn't have yet — one created before #929, or before its
 // profile switched to the tool — and recreates the host dir of any that are
 // attached but whose source has gone (Incus refuses to start a container with
-// a missing disk source). [[mounts]] devices are otherwise never re-added on
-// reuse; these are coi's own, so converging them is safe. mgr must be able to
-// list its disk devices; when it can't, nothing is done.
+// a missing disk source). Another tool's data mount on the same container path
+// (opencode and opencode2 both use ~/.local/share/opencode) is removed first:
+// two disk devices can't share a path, so a tool switch would otherwise leave
+// the container unable to start. Its data stays in that tool's host dir.
+// [[mounts]] devices are otherwise never re-added on reuse; these are coi's
+// own, so converging them is safe. mgr must be able to list its disk devices;
+// when it can't, nothing is done.
 func AttachMissingToolDataMounts(mgr container.ContainerDevices, mc *MountConfig, useShift bool, logger func(string)) error {
 	if mc == nil {
 		return nil
@@ -133,6 +141,21 @@ func AttachMissingToolDataMounts(mgr container.ContainerDevices, mc *MountConfig
 	if err != nil {
 		logger(fmt.Sprintf("Warning: could not read devices (%v); tool data mounts not reconciled", err))
 		return nil
+	}
+	wantedNames := map[string]bool{}
+	wantedPaths := map[string]bool{}
+	for _, m := range wanted {
+		wantedNames[m.DeviceName] = true
+		wantedPaths[m.ContainerPath] = true
+	}
+	for name, d := range disks {
+		if !strings.HasPrefix(name, toolDataDevicePrefix) || wantedNames[name] || !wantedPaths[d.Path] {
+			continue
+		}
+		logger(fmt.Sprintf("Removing mount %s (%s): another tool's data dir on the same path", name, d.Path))
+		if err := mgr.RemoveDevice(name); err != nil {
+			return fmt.Errorf("failed to remove mount '%s': %w", name, err)
+		}
 	}
 	for _, m := range wanted {
 		if err := PrepareMountSource(m, logger); err != nil {
