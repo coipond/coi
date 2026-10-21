@@ -265,11 +265,11 @@ def test_tool_spec_opencode_out_of_band_prompt(coi_binary, workspace_dir, cleanu
 
 
 def test_tool_spec_env_uses_container_workspace_path(coi_binary, workspace_dir, cleanup_containers):
-    """A tool whose GetContainerEnv derives paths from the workspace (opencode's
-    XDG_*) must be computed against the container's ACTUAL workspace mount, not a
-    hardcoded /workspace. With preserve_workspace_path the workspace mounts at the
-    host path (under /tmp, not a system dir), so the env must reflect that."""
-    _write_config(workspace_dir, tool="opencode", preserve_workspace=True)
+    """A tool whose GetContainerEnv derives paths from the workspace (pi's
+    session dir) must be computed against the container's ACTUAL workspace mount,
+    not a hardcoded /workspace. With preserve_workspace_path the workspace mounts
+    at the host path (under /tmp, not a system dir), so the env must reflect that."""
+    _write_config(workspace_dir, tool="pi", preserve_workspace=True)
     child, container = _boot_container(coi_binary, workspace_dir)
     try:
         ws = _container_workspace_path(container)
@@ -277,8 +277,7 @@ def test_tool_spec_env_uses_container_workspace_path(coi_binary, workspace_dir, 
         assert ws != "/workspace", f"expected a preserved non-default mount, got {ws!r}"
 
         spec = _spec(coi_binary, container, workspace_dir, "spec-ws-1")
-        assert spec["env"].get("XDG_DATA_HOME") == f"{ws}/.local/share", spec["env"]
-        assert spec["env"].get("XDG_STATE_HOME") == f"{ws}/.local/state", spec["env"]
+        assert spec["env"].get("PI_CODING_AGENT_SESSION_DIR") == f"{ws}/.pi-sessions", spec["env"]
     finally:
         _teardown(coi_binary, child, container)
 

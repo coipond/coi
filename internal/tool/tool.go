@@ -379,7 +379,7 @@ type ToolWithModel interface {
 }
 
 // ToolWithContainerEnv is an optional interface for tools that need extra
-// environment variables set inside the container (e.g., to redirect data
+// environment variables set inside the container (e.g., to redirect session
 // storage to the workspace mount so it persists across ephemeral sessions).
 type ToolWithContainerEnv interface {
 	Tool
@@ -387,6 +387,28 @@ type ToolWithContainerEnv interface {
 	// the tool inside the container. workspacePath is the mount point
 	// inside the container (e.g. "/workspace").
 	GetContainerEnv(workspacePath string) map[string]string
+}
+
+// DataDir is a tool data directory inside the container that must outlive an
+// ephemeral container but must NOT live in the workspace.
+type DataDir struct {
+	// Name is a short, stable, path-safe label ("share", "state") naming the
+	// per-workspace host directory that backs this dir.
+	Name string
+	// HomeRelPath is the container path relative to the container user's home
+	// (e.g. ".local/share/opencode").
+	HomeRelPath string
+}
+
+// ToolWithDataDirs is an optional interface for tools whose runtime data (a
+// session database, undo snapshots, ...) lives outside their config dir. coi
+// mounts a per-workspace host directory (~/.coi/tool-data/<tool>/<hash>/<name>)
+// over each one, so the data persists across ephemeral containers without
+// sitting inside the workspace, where a tool that snapshots the work tree
+// would end up snapshotting its own data (#929).
+type ToolWithDataDirs interface {
+	Tool
+	DataDirs() []DataDir
 }
 
 // SetPermissionMode sets the permission mode for Claude Code.

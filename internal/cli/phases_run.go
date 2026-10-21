@@ -189,6 +189,16 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			// so the per-source fingerprint matches what `coi trust` recorded.
 			pc := ParsePortConfig(a.cfg)
 			s.mountConfig, s.socketConfig, s.credentialConfig, s.portConfig = a.gateRunForwarding(mc, sc, cc, pc, s.absWorkspace, s.wasRestarted)
+			// Tool data (opencode's session DB/snapshots) persists on the host
+			// outside the workspace (#929). coi-generated, so added past the
+			// trust gate.
+			if t := a.runDataTool(s); t != nil {
+				hostHome, err := os.UserHomeDir()
+				if err != nil {
+					return nil, fmt.Errorf("failed to get home directory: %w", err)
+				}
+				s.mountConfig = session.WithToolDataMounts(s.mountConfig, filepath.Join(hostHome, ".coi"), t, s.absWorkspace)
+			}
 
 			// A reused persistent container still carries the previous
 			// session's port devices; strip them while it is STOPPED so they
@@ -353,6 +363,9 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 					return err
 				} else if moved {
 					s.containerWorkspace = cwp
+				}
+				if err := session.AttachMissingToolDataMounts(mgr, s.mountConfig, s.useShift, logFn); err != nil {
+					return err
 				}
 				secErr := a.applySecurityMounts(secDevices, s.absWorkspace, s.containerWorkspace, s.containerName, s.useShift, layout)
 				secDevices.Finish() // before the start: drop devices not requested this run

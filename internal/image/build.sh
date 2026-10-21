@@ -632,6 +632,12 @@ install_opencode() {
 
     ln -sf "$OPENCODE_PATH" /usr/local/bin/opencode
 
+    # coi mounts opencode's data/state dirs from the host (#929). Pre-create
+    # their parents owned by the code user so the mount targets never leave a
+    # root-owned ~/.local/{share,state} behind.
+    mkdir -p "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state"
+    chown "$CODE_USER:$CODE_USER" "/home/$CODE_USER/.local" "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state"
+
     log "opencode $(opencode --version 2>/dev/null || echo 'installed')"
 }
 
