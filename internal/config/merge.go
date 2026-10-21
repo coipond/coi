@@ -1,6 +1,10 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+	"slices"
+)
 
 // Merge merges another config into this one (other takes precedence).
 func (c *Config) Merge(other *Config) {
@@ -262,8 +266,13 @@ func (c *Config) ApplyProfile(name string) error {
 			c.Prompts[k] = v
 		}
 	}
-	if len(profile.Mounts) > 0 {
-		c.Mounts.Default = append(c.Mounts.Default, profile.Mounts...)
+	for _, m := range profile.Mounts {
+		if profile.mountsFromConfig && slices.ContainsFunc(c.Mounts.Default, func(e MountEntry) bool {
+			return reflect.DeepEqual(e, m)
+		}) {
+			continue
+		}
+		c.Mounts.Default = append(c.Mounts.Default, m)
 	}
 	if len(profile.Sockets) > 0 {
 		c.Sockets = append(c.Sockets, profile.Sockets...)
@@ -480,6 +489,7 @@ func mergeProfiles(parent, child ProfileConfig) ProfileConfig {
 	// Arrays: if child defines them, they fully replace parent's. If not, inherit.
 	if result.Mounts == nil {
 		result.Mounts = parent.Mounts
+		result.mountsFromConfig = parent.mountsFromConfig
 	}
 	if result.Sockets == nil {
 		result.Sockets = parent.Sockets

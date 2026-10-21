@@ -90,6 +90,27 @@ func TestResolvePromptMode_InlineSuccess(t *testing.T) {
 	}
 }
 
+func TestResolvePromptMode_OpencodeAccepted(t *testing.T) {
+	a := &App{cfg: &config.Config{Tool: config.ToolConfig{Name: "opencode"}}}
+	cmd := newRunPromptCmd(t, []string{"--prompt", "do the thing"})
+	s := &runState{}
+	if err := a.resolvePromptMode(cmd, s, nil); err != nil {
+		t.Fatalf("opencode should run a headless prompt, got %v", err)
+	}
+	if s.promptTool == nil || s.promptTool.Name() != "opencode" {
+		t.Errorf("resolved tool should be opencode, got %v", s.promptTool)
+	}
+}
+
+func TestResolvePromptMode_UnsupportedToolRejected(t *testing.T) {
+	a := &App{cfg: &config.Config{Tool: config.ToolConfig{Name: "codex"}}}
+	cmd := newRunPromptCmd(t, []string{"--prompt", "do the thing"})
+	err := a.resolvePromptMode(cmd, &runState{}, nil)
+	if code := exitCode(t, err); code != 2 {
+		t.Errorf("a tool without headless support should exit 2, got %d", code)
+	}
+}
+
 func TestResolvePromptMode_InteractivePermissionRejected(t *testing.T) {
 	a := &App{cfg: &config.Config{Tool: config.ToolConfig{PermissionMode: "interactive"}}}
 	cmd := newRunPromptCmd(t, []string{"--prompt", "do it"})

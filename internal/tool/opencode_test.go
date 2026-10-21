@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,50 @@ func TestOpencodeTool_BuildCommand_ResumeWithID(t *testing.T) {
 		if cmd[i] != v {
 			t.Errorf("BuildCommand(resume with ID)[%d] = %q, want %q", i, cmd[i], v)
 		}
+	}
+}
+
+func TestOpencodeTool_BuildHeadlessCommand(t *testing.T) {
+	oc := NewOpencode().(ToolWithHeadlessPrompt)
+	tests := []struct {
+		name string
+		spec LaunchSpec
+		want string
+	}{
+		{"no prompt", LaunchSpec{SessionID: "sid", Print: true}, `opencode run </dev/null`},
+		{"fresh", LaunchSpec{SessionID: "sid", PromptFile: "/run/p", Print: true}, `opencode run </run/p`},
+		{"continue", LaunchSpec{Resume: true, PromptFile: "/run/p", Print: true}, `opencode run --continue </run/p`},
+		{"session", LaunchSpec{Resume: true, ResumeSessionID: "ses_1", PromptFile: "/run/p", Print: true}, `opencode run --session ses_1 </run/p`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := oc.BuildHeadlessCommand(tt.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(cmd, " "); got != tt.want {
+				t.Errorf("BuildHeadlessCommand = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpencodeTool_BuildHeadlessCommand_Binary(t *testing.T) {
+	oc := &OpencodeTool{}
+	oc.SetBinary("/opt/bin/opencode")
+	cmd, err := oc.BuildHeadlessCommand(LaunchSpec{PromptFile: "/run/p", Print: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd[0] != "/opt/bin/opencode" || cmd[1] != "run" {
+		t.Errorf("BuildHeadlessCommand = %v, want the [tool] binary then run", cmd)
+	}
+}
+
+func TestOpencodeTool_BuildHeadlessCommand_SystemPromptRejected(t *testing.T) {
+	oc := NewOpencode().(ToolWithHeadlessPrompt)
+	if _, err := oc.BuildHeadlessCommand(LaunchSpec{SystemPromptFile: "/run/s", Print: true}); err == nil {
+		t.Error("opencode run has no system-prompt flag; expected an error")
 	}
 }
 
