@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -510,11 +509,6 @@ Examples:
 	RunE: app.profileDeleteRunE,
 }
 
-// builtinProfileNames are the profiles coi provides itself
-// (internal/config/loader.go). A disk profile may replace one, but
-// `coi profile delete` never removes either.
-var builtinProfileNames = []string{"default", "hardened"}
-
 func (a *App) profileDeleteRunE(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
@@ -522,7 +516,7 @@ func (a *App) profileDeleteRunE(cmd *cobra.Command, args []string) error {
 	if p == nil {
 		return fmt.Errorf("profile '%s' not found", name)
 	}
-	if slices.Contains(builtinProfileNames, name) {
+	if config.IsBuiltinProfile(name) {
 		if p.Source == "(built-in)" {
 			return fmt.Errorf("cannot delete built-in profile '%s'", name)
 		}

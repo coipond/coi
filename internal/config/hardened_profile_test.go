@@ -80,3 +80,21 @@ func TestHardenedProfile_InjectedAsBuiltin(t *testing.T) {
 		t.Fatal("hardened profile must pin restricted network mode")
 	}
 }
+
+// Every built-in profile is (built-in) when synthesized and is reported by
+// IsBuiltinProfile, the check `coi profile delete` uses.
+func TestIsBuiltinProfile(t *testing.T) {
+	for _, name := range []string{"default", "hardened"} {
+		if !IsBuiltinProfile(name) {
+			t.Errorf("IsBuiltinProfile(%q) = false, want true", name)
+		}
+	}
+	if IsBuiltinProfile("rust-dev") {
+		t.Error(`IsBuiltinProfile("rust-dev") = true, want false`)
+	}
+	for name, synthesize := range builtinProfiles {
+		if p := synthesize(GetDefaultConfig()); p.Source != "(built-in)" {
+			t.Errorf("built-in profile %q Source = %q, want (built-in)", name, p.Source)
+		}
+	}
+}
