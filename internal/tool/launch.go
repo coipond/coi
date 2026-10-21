@@ -8,9 +8,9 @@ package tool
 // PromptFile and SystemPromptFile are IN-CONTAINER paths to files holding the
 // initial user prompt and an optional system prompt. Passing files (not the
 // text) keeps arbitrary prompt content off the launch command line — the tool
-// references the prompt via a `"$(cat <file>)"` substitution the container
-// shell expands when the orchestrator runs the command, so prompts with
-// quotes/newlines can't corrupt it.
+// references the prompt via a `"$(cat <file>)"` substitution or a `<file`
+// stdin redirect the container shell expands when the command runs, so
+// prompts with quotes/newlines can't corrupt it.
 type LaunchSpec struct {
 	SessionID        string
 	Resume           bool
@@ -38,6 +38,18 @@ type ToolWithPrompt interface {
 	// spec requests something the tool can't express (e.g. a system prompt on a
 	// tool without one) so the caller fails loudly instead of dropping it.
 	BuildCommandLaunch(spec LaunchSpec) ([]string, error)
+}
+
+// ToolWithHeadlessPrompt is implemented by tools whose headless (print-mode)
+// launch is a separate CLI form that carries the prompt itself, even when
+// their interactive launch can't (e.g. `opencode run <prompt-file`). It backs
+// `coi run --prompt`; `coi tool spec` keeps using ToolWithPrompt.
+type ToolWithHeadlessPrompt interface {
+	Tool
+	// BuildHeadlessCommand returns the full command for a run-to-completion
+	// launch of spec, run through a shell (it may redirect stdin). It errors
+	// on what the tool can't express.
+	BuildHeadlessCommand(spec LaunchSpec) ([]string, error)
 }
 
 // catSubst returns a `"$(cat <path>)"` token whose value the container shell

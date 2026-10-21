@@ -854,7 +854,13 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 			}
 			incusArgs = append(incusArgs, "--", "bash", "-c", strings.Join(argv, " "))
 
-			fmt.Fprintf(os.Stderr, "Running headless prompt with %s (session %s)...\n", t.Name(), s.promptSessionID)
+			// A ToolWithHeadlessPrompt tool (opencode) creates its own session
+			// id, so coi's id would mislead there.
+			if _, ok := t.(tool.ToolWithHeadlessPrompt); ok {
+				fmt.Fprintf(os.Stderr, "Running headless prompt with %s...\n", t.Name())
+			} else {
+				fmt.Fprintf(os.Stderr, "Running headless prompt with %s (session %s)...\n", t.Name(), s.promptSessionID)
+			}
 			if err := container.IncusExecStreamedContext(ctx, incusArgs...); err != nil {
 				if exitErr, ok := err.(*container.ExitError); ok {
 					fmt.Fprintf(os.Stderr, "\nAgent exited with code %d\n", exitErr.ExitCode)

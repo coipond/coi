@@ -665,3 +665,45 @@ class TestProfileAliasNoOverride:
             f"Project B should not conflict with project A when both use same profile. "
             f"rc={result_b.returncode}\nstderr: {result_b.stderr}"
         )
+
+
+# ============================================================
+# Saved alias profile tests
+# ============================================================
+
+
+class TestAliasSavedProfile:
+    """Test the profile that `coi shell --profile` saves for an alias."""
+
+    def test_run_keeps_profile_saved_by_shell(
+        self, coi_binary, workspace_dir, cleanup_containers, dummy_image
+    ):
+        """`coi run` with an alias keeps the profile `coi shell --profile` saved
+        for it in aliases.json, so `coi shell <alias>` still selects it."""
+        write_alias_config(workspace_dir, "keepprofile", image=dummy_image)
+        write_profile_config(workspace_dir, "pa")
+
+        registry = get_aliases_registry()
+        if "keepprofile" in registry:
+            del registry["keepprofile"]
+            reg_path = os.path.join(os.path.expanduser("~"), ".coi", "aliases.json")
+            with open(reg_path, "w") as f:
+                json.dump(registry, f)
+
+        result = run_coi(
+            coi_binary,
+            ["shell", "--background", "--profile", "pa"],
+            workspace_dir=workspace_dir,
+        )
+        assert result.returncode == 0, f"coi shell failed: {result.stderr}"
+        entry = get_aliases_registry().get("keepprofile")
+        assert entry == {"workspace": os.path.abspath(workspace_dir), "profile": "pa"}, (
+            f"coi shell --profile pa should save the profile: {entry}"
+        )
+
+        result = run_coi(coi_binary, ["run", "echo", "ok"], workspace_dir=workspace_dir)
+        assert result.returncode == 0, f"coi run failed: {result.stderr}"
+        entry = get_aliases_registry().get("keepprofile")
+        assert entry == {"workspace": os.path.abspath(workspace_dir), "profile": "pa"}, (
+            f"coi run should keep the saved profile: {entry}"
+        )
