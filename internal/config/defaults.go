@@ -70,9 +70,7 @@ func cloneMap[M ~map[K]V, K comparable, V any](in M) M {
 }
 
 // builtinProfiles are the profiles coi provides itself, by name. Load injects
-// each one; a disk profile of that name replaces it. "hardened" is a preset for
-// opening untrusted repos (restricted network, secret masking, immutability,
-// ephemeral, no SSH-agent forwarding, monitoring).
+// each one; a disk profile of that name replaces it.
 var builtinProfiles = map[string]func(*Config) ProfileConfig{
 	"default":  synthesizeDefaultProfile,
 	"hardened": func(*Config) ProfileConfig { return synthesizeHardenedProfile() },

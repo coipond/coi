@@ -81,8 +81,6 @@ func TestHardenedProfile_InjectedAsBuiltin(t *testing.T) {
 	}
 }
 
-// Every built-in profile is (built-in) when synthesized and is reported by
-// IsBuiltinProfile, the check `coi profile delete` uses.
 func TestIsBuiltinProfile(t *testing.T) {
 	for _, name := range []string{"default", "hardened"} {
 		if !IsBuiltinProfile(name) {
