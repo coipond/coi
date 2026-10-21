@@ -8,7 +8,10 @@ the command's real render pipeline (audit.HostAuditTail -> StreamEvents/ParseLin
 """
 
 import json
+import signal
 import subprocess
+
+import pytest
 
 # A valid audit event line (ParseLine requires a known `type`).
 EVENT = '{"ts":"2026-01-01T00:00:00Z","type":"audit","msg":"AUDIT-SENTINEL-7f3a"}'
@@ -79,3 +82,33 @@ def test_audit_file_passes_monitor_threat_events_through(coi_binary, tmp_path):
         f"the monitor threat event must be printed.\nstdout:\n{r.stdout}"
     )
     assert any(obj.get("msg") == "AUDIT-SENTINEL-7f3a" for obj in lines)
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM], ids=["SIGINT", "SIGTERM"])
+def test_audit_file_follow_stops_on_signal(coi_binary, tmp_path, sig):
+    """`coi audit --file <jsonl> --follow` prints the file, then exits 0 on
+    Ctrl+C (SIGINT) or SIGTERM instead of following forever."""
+    log = tmp_path / "session.jsonl"
+    log.write_text(EVENT + "\n")
+
+    proc = subprocess.Popen(
+        [coi_binary, "audit", "--file", str(log), "--follow"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        first = proc.stdout.readline()
+        assert "AUDIT-SENTINEL-7f3a" in first, f"the event must be printed first, got {first!r}"
+        proc.send_signal(sig)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            raise AssertionError(f"coi audit --follow kept running after {sig.name}") from None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert proc.returncode == 0, (
+        f"a signal-driven stop should exit 0, got {proc.returncode}. stderr:\n{proc.stderr.read()}"
+    )
