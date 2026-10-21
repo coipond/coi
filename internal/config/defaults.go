@@ -140,6 +140,8 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 		Monitoring:  &monitoring,
 		Timezone:    &timezone,
 		Source:      "(built-in)",
+
+		mountsFromConfig: true,
 	}
 	return p
 }
