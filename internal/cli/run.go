@@ -509,7 +509,8 @@ func validateAndPrepareAlias(aliasStr string) (string, error) {
 }
 
 // applyContainerAlias sets the user.coi.alias metadata on the container and
-// registers the alias in the global registry. No-op if alias is empty.
+// registers the alias in the global registry, keeping the profile `coi shell`
+// saved for it. No-op if alias is empty.
 func applyContainerAlias(effectiveAlias, containerName, absWorkspace string) error {
 	if effectiveAlias == "" {
 		return nil
@@ -525,7 +526,7 @@ func applyContainerAlias(effectiveAlias, containerName, absWorkspace string) err
 		fmt.Fprintf(os.Stderr, "Warning: Failed to load alias registry: %v\n", err)
 		return nil
 	}
-	if err := reg.Register(effectiveAlias, absWorkspace, ""); err != nil {
+	if err := reg.RegisterWorkspace(effectiveAlias, absWorkspace); err != nil {
 		return fmt.Errorf("alias conflict: %w", err)
 	}
 	if err := reg.Save(); err != nil {
