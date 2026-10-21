@@ -73,16 +73,11 @@ func Load() (_ *Config, err error) {
 		}
 	}
 
-	// Inject built-in "default" profile (can be overridden by disk-based profiles)
-	if _, exists := cfg.Profiles["default"]; !exists {
-		cfg.Profiles["default"] = synthesizeDefaultProfile(cfg)
-	}
-
-	// Inject built-in "hardened" profile: a hardened preset for opening untrusted
-	// repos (restricted network, secret masking, immutability, ephemeral,
-	// no SSH-agent forwarding, monitoring). Overridable by a disk profile.
-	if _, exists := cfg.Profiles["hardened"]; !exists {
-		cfg.Profiles["hardened"] = synthesizeHardenedProfile()
+	// Inject the built-in profiles; a disk profile of the same name overrides one.
+	for name, synthesize := range builtinProfiles {
+		if _, exists := cfg.Profiles[name]; !exists {
+			cfg.Profiles[name] = synthesize(cfg)
+		}
 	}
 
 	// Resolve profile inheritance after all profiles are loaded from all levels

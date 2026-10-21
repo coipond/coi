@@ -18,6 +18,7 @@ import (
 	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/session"
 	"github.com/coipond/coi/internal/timing"
+	"github.com/coipond/coi/internal/tool"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +56,8 @@ the container as a file (never on the command line), the agent's auth and
 context are seeded exactly as in an interactive session, and each fire is a
 fresh ephemeral session by default. --prompt-name looks the prompt up in the
 [prompts] config table (inline text or { file = "..." }, profile-inheritable).
-Prompt mode currently supports the claude tool with permission_mode = "bypass"
+Prompt mode currently supports the claude and opencode tools (opencode runs
+the prompt via "opencode run") with permission_mode = "bypass"
 (a headless run has no TTY to approve tool use).
 
 The container is ephemeral: it is cleaned up after the command completes (or
@@ -253,9 +255,9 @@ func (a *App) resolvePromptMode(cmd *cobra.Command, s *runState, args []string) 
 	if err != nil {
 		return &ExitCodeError{Code: 2, Message: err.Error()}
 	}
-	if t.Name() != "claude" {
+	if !supportsHeadlessPrompt(t) {
 		return &ExitCodeError{Code: 2, Message: fmt.Sprintf(
-			"coi run headless prompt mode currently supports only the claude tool (configured: %q)", t.Name())}
+			"coi run headless prompt mode currently supports only the claude and opencode tools (configured: %q)", t.Name())}
 	}
 
 	sessionID, err := session.GenerateSessionID()
@@ -267,6 +269,17 @@ func (a *App) resolvePromptMode(cmd *cobra.Command, s *runState, args []string) 
 	s.promptSessionID = sessionID
 	s.promptTool = t
 	return nil
+}
+
+// supportsHeadlessPrompt reports whether t can run a prompt to completion
+// under `coi run --prompt`: claude via its print mode, or a tool with a
+// separate headless form (opencode run).
+func supportsHeadlessPrompt(t tool.Tool) bool {
+	if t.Name() == "claude" {
+		return true
+	}
+	_, ok := t.(tool.ToolWithHeadlessPrompt)
+	return ok
 }
 
 // launchOrReuseContainer restarts an existing persistent container, or
@@ -496,7 +509,8 @@ func validateAndPrepareAlias(aliasStr string) (string, error) {
 }
 
 // applyContainerAlias sets the user.coi.alias metadata on the container and
-// registers the alias in the global registry. No-op if alias is empty.
+// registers the alias in the global registry, keeping the profile `coi shell`
+// saved for it. No-op if alias is empty.
 func applyContainerAlias(effectiveAlias, containerName, absWorkspace string) error {
 	if effectiveAlias == "" {
 		return nil
@@ -512,7 +526,7 @@ func applyContainerAlias(effectiveAlias, containerName, absWorkspace string) err
 		fmt.Fprintf(os.Stderr, "Warning: Failed to load alias registry: %v\n", err)
 		return nil
 	}
-	if err := reg.Register(effectiveAlias, absWorkspace, ""); err != nil {
+	if err := reg.RegisterWorkspace(effectiveAlias, absWorkspace); err != nil {
 		return fmt.Errorf("alias conflict: %w", err)
 	}
 	if err := reg.Save(); err != nil {
