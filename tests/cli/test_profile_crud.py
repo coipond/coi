@@ -249,6 +249,69 @@ def test_profile_delete_builtin_fails(coi_binary):
     assert "built-in" in result.stderr.lower()
 
 
+def test_profile_delete_hardened_builtin_fails(coi_binary, tmp_path):
+    """Deleting the built-in 'hardened' profile fails, and the error names it."""
+    result = subprocess.run(
+        [coi_binary, "profile", "delete", "hardened", "--force"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=tmp_path,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
+
+    assert result.returncode != 0
+    assert "cannot delete built-in profile 'hardened'" in result.stderr, result.stderr
+
+
+def _assert_disk_builtin_delete_refused(coi_binary, name, profile_dir, cwd, home):
+    (profile_dir / "config.toml").parent.mkdir(parents=True)
+    (profile_dir / "config.toml").write_text("")
+
+    result = subprocess.run(
+        [coi_binary, "profile", "delete", name, "--force"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=cwd,
+        env={**os.environ, "HOME": str(home)},
+    )
+
+    assert result.returncode != 0, f"delete of disk '{name}' must fail:\n{result.stderr}"
+    assert f"cannot delete profile '{name}'" in result.stderr, result.stderr
+    assert str(profile_dir) in result.stderr, result.stderr
+    assert "Deleted profile" not in result.stderr
+    assert (profile_dir / "config.toml").exists(), "the profile directory must be kept"
+
+
+def test_profile_delete_disk_default_user_refused(coi_binary, tmp_path):
+    """A user ~/.coi/profiles/default replaces the built-in 'default', but
+    `profile delete default` still refuses and keeps the directory."""
+    home, ws = tmp_path / "home", tmp_path / "ws"
+    ws.mkdir()
+    _assert_disk_builtin_delete_refused(
+        coi_binary, "default", home / ".coi" / "profiles" / "default", ws, home
+    )
+
+
+def test_profile_delete_disk_default_project_refused(coi_binary, tmp_path):
+    """A project .coi/profiles/default is refused the same way."""
+    home, ws = tmp_path / "home", tmp_path / "ws"
+    home.mkdir()
+    _assert_disk_builtin_delete_refused(
+        coi_binary, "default", ws / ".coi" / "profiles" / "default", ws, home
+    )
+
+
+def test_profile_delete_disk_hardened_refused(coi_binary, tmp_path):
+    """A disk profile named 'hardened' is refused too."""
+    home, ws = tmp_path / "home", tmp_path / "ws"
+    ws.mkdir()
+    _assert_disk_builtin_delete_refused(
+        coi_binary, "hardened", home / ".coi" / "profiles" / "hardened", ws, home
+    )
+
+
 def test_profile_edit_nonexistent_fails(coi_binary):
     """Editing a profile that doesn't exist should fail."""
     result = subprocess.run(
