@@ -21,6 +21,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`coi audit --file <path> --follow` stops on Ctrl+C and SIGTERM** — it kept following the file until a read or write error, and the signals did not end it. It now stops and exits 0, as `coi audit <container> --follow` does.
 - [Bug Fix] **`--profile default` works with config mounts** — the built-in `default` profile is a copy of the config, so applying it (`--profile default`, `[defaults] profile = "default"`, or a profile with `inherits = "default"`) added every `[[mounts.default]]` entry a second time, and the session failed with `nested mount paths detected: '/data' and '/data' conflict`. Applying it now adds no mount the config already has. A disk profile named `default` and other profiles still add their mounts.
 - [Bug Fix] **`coi run` keeps the profile saved for an alias** — `coi shell --profile pa` saves `pa` for the workspace's alias in `~/.coi/aliases.json`, so `coi shell <alias>` later selects it. A `coi run` in that workspace removed the saved profile, and `coi shell <alias>` then ran without it. `coi run` now registers the alias and keeps the saved profile.
 - [Bug Fix] **`coi file push -r` honours a destination with a different name** — `coi file push -r ./src c:/tmp/renamed` created `/tmp/src`, because the directory was pushed to the destination's parent and Incus named it after the local directory. It now creates `/tmp/renamed`, also on a stopped container.
