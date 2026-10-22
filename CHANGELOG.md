@@ -9,6 +9,7 @@
 ### Bug Fixes
 
 - [Bug Fix] **Image builds no longer hang on a slow apt mirror** — with `COI_APT_MIRROR` set, a mirror that kept sending data very slowly never hit apt's timeout, so one package download could take an hour. Package list updates and downloads from the mirror now have a 5-minute limit (`COI_APT_MIRROR_TIMEOUT`, in seconds); past it, the build switches to the default Ubuntu archive.
+- [Bug Fix] **`max_processes = 0` lifts an earlier process limit** — `[limits.runtime] max_processes = 0` (unlimited) in a later layer was treated as unset, so a limit from an earlier layer stayed: `~/.coi/config.toml` with `500` and a project config with `0` still ran with `500`, and so did an applied profile or a child profile over a parent with `500`. An explicit `0` now overrides the earlier limit at every layer; a layer that does not set `max_processes` keeps the earlier value. `coi profile info` now also shows an explicit `max_processes = 0`.
 
 ## 0.16.0 (2026-10-23)
 

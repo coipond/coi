@@ -163,11 +163,11 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 	// Note: CPU/memory/disk limits must be applied before container start via
 	// coi container launch flags. Only runtime limits can be applied post-boot.
 	if opts.LimitsConfig != nil {
-		if opts.LimitsConfig.Runtime.MaxProcesses != 0 {
+		if config.IntVal(opts.LimitsConfig.Runtime.MaxProcesses) != 0 {
 			applyOpts := limits.ApplyOptions{
 				ContainerName: opts.ContainerName,
 				Runtime: limits.RuntimeLimits{
-					MaxProcesses: opts.LimitsConfig.Runtime.MaxProcesses,
+					MaxProcesses: config.IntVal(opts.LimitsConfig.Runtime.MaxProcesses),
 				},
 			}
 			if err := limits.ApplyResourceLimits(applyOpts); err != nil {
