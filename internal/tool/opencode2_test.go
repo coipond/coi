@@ -55,6 +55,21 @@ func TestOpencode2Tool_NoSessionDiscovery(t *testing.T) {
 	}
 }
 
+func TestOpencode2Tool_DataDirs(t *testing.T) {
+	tdd, ok := NewOpencode2().(ToolWithDataDirs)
+	if !ok {
+		t.Fatal("Opencode2Tool should implement ToolWithDataDirs")
+	}
+	want := []DataDir{
+		{Name: "share", HomeRelPath: ".local/share/opencode", FromWorkspace: true},
+		{Name: "state", HomeRelPath: ".local/state/opencode", FromWorkspace: true},
+		{Name: "plan", HomeRelPath: ".opencode/plan"},
+	}
+	if got := tdd.DataDirs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("DataDirs() = %v, want %v", got, want)
+	}
+}
+
 func TestOpencode2Tool_BuildHeadlessCommand(t *testing.T) {
 	oc := NewOpencode2().(ToolWithHeadlessPrompt)
 	got, err := oc.BuildHeadlessCommand(LaunchSpec{PromptFile: "/tmp/prompt.txt"})

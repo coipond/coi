@@ -475,6 +475,11 @@ type DataDir struct {
 	// HomeRelPath is the container path relative to the container user's home
 	// (e.g. ".local/share/opencode").
 	HomeRelPath string
+	// FromWorkspace marks a dir that coi versions before #929 kept in the
+	// workspace at <workspace>/<HomeRelPath>; that data is moved to the host
+	// dir the first time the mount is added. Leave it false for any other dir,
+	// or a project's own files at that path would be moved out of it.
+	FromWorkspace bool
 }
 
 // ToolWithDataDirs is an optional interface for tools whose runtime data (a

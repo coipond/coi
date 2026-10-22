@@ -26,9 +26,10 @@ func ToolDataBaseDir(coiDir string, t tool.Tool, workspacePath string) string {
 // with per-workspace host dirs under coiDir, or nil when t has none. They are
 // coi-generated, so always trusted, and writable.
 //
-// MigrateFrom points at where coi versions before #929 kept the same dir: in
-// the workspace, via XDG_DATA_HOME/XDG_STATE_HOME=<workspace>/.local/... —
-// PrepareMountSource moves that data over the first time the mount is added.
+// For a dir marked FromWorkspace, MigrateFrom points at where coi versions
+// before #929 kept it: in the workspace, via
+// XDG_DATA_HOME/XDG_STATE_HOME=<workspace>/.local/... — PrepareMountSource
+// moves that data over the first time the mount is added.
 func ToolDataMounts(coiDir string, t tool.Tool, workspacePath string) []MountEntry {
 	tdd, ok := t.(tool.ToolWithDataDirs)
 	if !ok {
@@ -38,12 +39,15 @@ func ToolDataMounts(coiDir string, t tool.Tool, workspacePath string) []MountEnt
 	home := "/home/" + container.CodeUser
 	var mounts []MountEntry
 	for _, d := range tdd.DataDirs() {
-		mounts = append(mounts, MountEntry{
+		m := MountEntry{
 			HostPath:      filepath.Join(base, d.Name),
 			ContainerPath: filepath.Join(home, d.HomeRelPath),
 			DeviceName:    fmt.Sprintf("%s%s-%s", toolDataDevicePrefix, t.Name(), d.Name),
-			MigrateFrom:   filepath.Join(workspacePath, d.HomeRelPath),
-		})
+		}
+		if d.FromWorkspace {
+			m.MigrateFrom = filepath.Join(workspacePath, d.HomeRelPath)
+		}
+		mounts = append(mounts, m)
 	}
 	return mounts
 }
@@ -126,7 +130,7 @@ func AttachMissingToolDataMounts(mgr container.ContainerDevices, mc *MountConfig
 	}
 	var wanted []MountEntry
 	for _, m := range mc.Mounts {
-		if m.MigrateFrom != "" {
+		if strings.HasPrefix(m.DeviceName, toolDataDevicePrefix) {
 			wanted = append(wanted, m)
 		}
 	}
