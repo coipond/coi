@@ -367,7 +367,11 @@ func discoverContainerSession(mgr container.ContainerManager, t tool.Tool, resum
 	if !ok || !resume || os.Getenv("COI_USE_DUMMY") == "1" {
 		return
 	}
-	argv := append([]string{"timeout", strconv.Itoa(sessionDiscoveryTimeoutSec)}, d.SessionDiscoveryCommand(workspacePath)...)
+	lookup := d.SessionDiscoveryCommand(workspacePath)
+	if len(lookup) == 0 {
+		return
+	}
+	argv := append([]string{"timeout", strconv.Itoa(sessionDiscoveryTimeoutSec)}, lookup...)
 	out, err := mgr.ExecArgsCapture(argv, opts)
 	if err != nil {
 		return

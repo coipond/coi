@@ -18,3 +18,8 @@ func (c *Opencode2Tool) Name() string { return "opencode2" }
 
 // SessionsDirName returns "sessions-opencode2".
 func (c *Opencode2Tool) SessionsDirName() string { return "sessions-opencode2" }
+
+// SessionDiscoveryCommand returns nil: OpenCode v2 keeps sessions in
+// session_v2, which the inherited v1 query does not read, so opencode2 resumes
+// with --continue.
+func (c *Opencode2Tool) SessionDiscoveryCommand(string) []string { return nil }

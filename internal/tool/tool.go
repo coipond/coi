@@ -459,7 +459,8 @@ type ToolWithContainerEnv interface {
 type ToolWithContainerSessionDiscovery interface {
 	Tool
 	// SessionDiscoveryCommand returns the argv that prints the latest session
-	// of workspacePath (the mount point inside the container).
+	// of workspacePath (the mount point inside the container), or nil to skip
+	// the lookup.
 	SessionDiscoveryCommand(workspacePath string) []string
 	// SetSessionDiscoveryOutput stores the session ID found in output.
 	SetSessionDiscoveryOutput(output string)

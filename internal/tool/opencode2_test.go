@@ -45,6 +45,16 @@ func TestOpencode2Tool_BuildCommand(t *testing.T) {
 	}
 }
 
+func TestOpencode2Tool_NoSessionDiscovery(t *testing.T) {
+	d, ok := NewOpencode2().(ToolWithContainerSessionDiscovery)
+	if !ok {
+		t.Fatal("Opencode2Tool should implement ToolWithContainerSessionDiscovery (embedded)")
+	}
+	if got := d.SessionDiscoveryCommand("/workspace"); got != nil {
+		t.Errorf("SessionDiscoveryCommand() = %v, want nil", got)
+	}
+}
+
 func TestOpencode2Tool_BuildHeadlessCommand(t *testing.T) {
 	oc := NewOpencode2().(ToolWithHeadlessPrompt)
 	got, err := oc.BuildHeadlessCommand(LaunchSpec{PromptFile: "/tmp/prompt.txt"})
