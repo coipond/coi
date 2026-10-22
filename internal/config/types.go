@@ -952,7 +952,7 @@ func (c *LimitsConfig) HasAny() bool {
 		c.Disk.Max != "" ||
 		c.Disk.Size != "" ||
 		c.Disk.Priority != 0 ||
-		c.Runtime.MaxProcesses != 0
+		IntVal(c.Runtime.MaxProcesses) != 0
 }
 
 // CPULimits contains CPU resource limits
@@ -982,7 +982,7 @@ type DiskLimits struct {
 // RuntimeLimits contains time-based and process limits
 type RuntimeLimits struct {
 	MaxDuration  string `toml:"max_duration"`  // "2h", "30m", "1h30m", "" (unlimited)
-	MaxProcesses int    `toml:"max_processes"` // 0 = unlimited
+	MaxProcesses *int   `toml:"max_processes"` // 0 = unlimited; a pointer so an explicit 0 overrides an earlier limit
 	AutoStop     *bool  `toml:"auto_stop"`     // auto-stop when limit reached
 	StopGraceful *bool  `toml:"stop_graceful"` // graceful vs force stop
 }

@@ -118,9 +118,7 @@ func mergeLimits(base *LimitsConfig, other *LimitsConfig) {
 	if other.Runtime.MaxDuration != "" {
 		base.Runtime.MaxDuration = other.Runtime.MaxDuration
 	}
-	if other.Runtime.MaxProcesses != 0 {
-		base.Runtime.MaxProcesses = other.Runtime.MaxProcesses
-	}
+	mergePtr(&base.Runtime.MaxProcesses, other.Runtime.MaxProcesses)
 	if other.Runtime.AutoStop != nil {
 		base.Runtime.AutoStop = other.Runtime.AutoStop
 	}

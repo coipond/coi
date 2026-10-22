@@ -724,7 +724,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 				Priority: opts.LimitsConfig.Disk.Priority,
 			},
 			Runtime: limits.RuntimeLimits{
-				MaxProcesses: opts.LimitsConfig.Runtime.MaxProcesses,
+				MaxProcesses: config.IntVal(opts.LimitsConfig.Runtime.MaxProcesses),
 			},
 			Project: opts.IncusProject,
 		}

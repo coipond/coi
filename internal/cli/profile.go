@@ -221,14 +221,14 @@ func printLimits(l *config.LimitsConfig) {
 			fmt.Printf("tmpfs_size = %q\n", l.Disk.TmpfsSize)
 		}
 	}
-	if l.Runtime.MaxDuration != "" || l.Runtime.MaxProcesses != 0 {
+	if l.Runtime.MaxDuration != "" || l.Runtime.MaxProcesses != nil {
 		fmt.Println()
 		fmt.Println("[limits.runtime]")
 		if l.Runtime.MaxDuration != "" {
 			fmt.Printf("max_duration = %q\n", l.Runtime.MaxDuration)
 		}
-		if l.Runtime.MaxProcesses != 0 {
-			fmt.Printf("max_processes = %d\n", l.Runtime.MaxProcesses)
+		if l.Runtime.MaxProcesses != nil {
+			fmt.Printf("max_processes = %d\n", *l.Runtime.MaxProcesses)
 		}
 	}
 }
