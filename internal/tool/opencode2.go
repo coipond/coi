@@ -6,7 +6,7 @@ import "path/filepath"
 // "opencode2". It launches like opencode (same --continue/--session/run
 // flags) and reuses its config bundle and container env; only the name,
 // binary, sessions dir, session lookup (opencode2 has none, so a resume uses
-// --continue) and its extra plan data dir.
+// --continue) and the extra plan data dir differ.
 type Opencode2Tool struct {
 	OpencodeTool
 }
