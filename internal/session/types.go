@@ -18,6 +18,11 @@ type MountEntry struct {
 	// whose host path escapes the workspace behind explicit trust (`coi trust`).
 	Untrusted  bool
 	SourcePath string
+
+	// MigrateFrom, when set, is an older location of this mount's data: the
+	// first time the mount is added, it is moved to HostPath (see
+	// PrepareMountSource). Only set on coi-generated mounts.
+	MigrateFrom string
 }
 
 // MountConfig holds all mount configurations for a session

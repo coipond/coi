@@ -10,7 +10,11 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from support.helpers import write_trusted_coi_config, write_workspace_container_config
+from support.helpers import (
+    tool_data_dir,
+    write_trusted_coi_config,
+    write_workspace_container_config,
+)
 
 FAKE_OPENCODE = """#!/bin/sh
 printf '%s\\n' "$@" > /workspace/.opencode-args
@@ -74,8 +78,8 @@ def test_run_prompt_real_opencode(coi_binary, cleanup_containers, workspace_dir,
     """The real opencode from the default image, with no credentials. The
     configured model does not exist, so opencode stores the prompt in its
     session database, fails before any model call, and exits 1. The database
-    lives in the workspace (XDG_DATA_HOME), so the test reads the prompt back
-    from it on the host."""
+    lives in a host dir outside the workspace (#929), so the test reads the
+    prompt back from it on the host."""
     prompt = tmp_path / "task.md"
     prompt.write_text(PROMPT)
 
@@ -85,6 +89,14 @@ def test_run_prompt_real_opencode(coi_binary, cleanup_containers, workspace_dir,
         'OPENCODE_CONFIG_CONTENT = \'{"model": "coi-test/none"}\'\n'
     )
     env.pop("COI_USE_DUMMY", None)
+    data_dir = tool_data_dir(workspace_dir, "opencode", "share")
+    try:
+        _check_real_opencode_prompt(coi_binary, workspace_dir, tmp_path, prompt, env, data_dir)
+    finally:
+        shutil.rmtree(data_dir.parent, ignore_errors=True)
+
+
+def _check_real_opencode_prompt(coi_binary, workspace_dir, tmp_path, prompt, env, data_dir):
     result = subprocess.run(
         [coi_binary, "run", "--workspace", workspace_dir, "--prompt-file", str(prompt)],
         capture_output=True,
@@ -99,8 +111,12 @@ def test_run_prompt_real_opencode(coi_binary, cleanup_containers, workspace_dir,
         f"Got {result.returncode}. output:\n{output}"
     )
 
+    assert not (Path(workspace_dir) / ".local").exists(), (
+        "opencode data must not land in the workspace: its snapshot repo tracks "
+        "the work tree and would snapshot itself (#929)"
+    )
+
     # Copy the database (and its WAL) so sqlite can open it outside the mount.
-    data_dir = Path(workspace_dir) / ".local" / "share" / "opencode"
     assert (data_dir / "opencode.db").exists(), (
         f"opencode did not create its session database. output:\n{output}"
     )
