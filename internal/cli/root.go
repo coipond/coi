@@ -220,12 +220,6 @@ func commandUsesIncusGroup(name string) bool {
 // apply), so this applies at most once and can never stack on top of another
 // profile.
 //
-// This is the single guard for a misconfigured [defaults] profile: it runs only
-// for the commands that consume the default profile (coi shell/run), before any
-// container work, so a typo fails those sessions fast without breaking unrelated
-// commands. A name that resolves to no known profile is reported with an
-// actionable message rather than ApplyProfile's terser wording.
-//
 // It returns whether it applied a profile so the caller can recompute
 // a.persistent for its own context — the profile may set [container] persistent,
 // but the caller decides how that reconciles with session-resume metadata, which
@@ -247,8 +241,14 @@ func (a *App) applyDefaultProfileFallback(cmd *cobra.Command) (bool, error) {
 
 // defaultProfileFallbackName returns the [defaults] profile that
 // applyDefaultProfileFallback would apply, or "" when another source already
-// chose a profile or none is configured. It validates the name but applies
-// nothing.
+// chose a profile or none is configured. It applies nothing.
+//
+// This is the single guard for a misconfigured [defaults] profile: it runs only
+// for the commands that consume the default profile (coi shell/run, directly or
+// through applyDefaultProfileFallback), before any container work, so a typo
+// fails those sessions fast without breaking unrelated commands. A name that
+// resolves to no known profile is reported with an actionable message rather
+// than ApplyProfile's terser wording.
 func (a *App) defaultProfileFallbackName(cmd *cobra.Command) (string, error) {
 	if a.profile != "" || cmd.Flags().Changed("profile") {
 		return "", nil
