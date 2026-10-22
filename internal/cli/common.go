@@ -44,6 +44,16 @@ func resolveNameOrAlias(nameOrAlias string) (string, error) {
 	return nameOrAlias, nil
 }
 
+// validateSlotFlag rejects a negative --slot: it would name the container
+// <prefix><hash>--<n>, which ParseContainerName (and so list, attach and
+// resume) does not accept.
+func validateSlotFlag(slot int) error {
+	if slot < 0 {
+		return &ExitCodeError{Code: ExitUsage, Message: fmt.Sprintf("invalid --slot %d: use a positive slot number, or 0 to auto-allocate", slot)}
+	}
+	return nil
+}
+
 // stderrLogFn is the shared line logger for the session helpers that take a
 // func(string): it writes msg to stderr with a trailing newline.
 func stderrLogFn(msg string) {

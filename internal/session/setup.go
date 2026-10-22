@@ -558,6 +558,11 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 			result.ContainerWorkspacePath = cwp
 		}
 	}
+	if opts.ContainerName == "" {
+		if err := AttachMissingToolDataMounts(result.Manager, opts.MountConfig, reuseUseShift, opts.Logger); err != nil {
+			return err
+		}
+	}
 	reusePaths, reuseImmutable, reuseErr := applySessionSecurity(secDevices, *opts, reuseCWP, reuseUseShift, reuseLayout, reuseWritableHooks, containerName)
 	secDevices.Finish()
 	opts.Security.ProtectedPaths = reusePaths
