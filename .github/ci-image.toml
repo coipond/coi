@@ -1,0 +1,5 @@
+# Agents in the CI test image (`coi build` with COI_CONFIG pointing here).
+# The default set installs only OpenCode v2 (opencode2); the integration tests
+# exercise both opencode tools, so v1 is added. Part of the image cache key.
+[container.build]
+agents = ["claude", "opencode", "opencode2", "pi"]
