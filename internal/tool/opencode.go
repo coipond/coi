@@ -87,7 +87,7 @@ func (c *OpencodeTool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
 
 // DiscoverSessionID returns the session found by the in-container DB query
 // (SetSessionDiscoveryOutput), or "" so BuildCommand falls back to --continue.
-// opencode keeps sessions in SQLite in the workspace, not in stateDir.
+// opencode keeps sessions in SQLite in its data dir, not in stateDir.
 func (c *OpencodeTool) DiscoverSessionID(stateDir string) string { return c.discoveredID }
 
 // SessionDiscoveryCommand implements ToolWithContainerSessionDiscovery: it

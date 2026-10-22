@@ -45,7 +45,7 @@ func TestDiscoverContainerSession_ResumesDiscoveredOpencodeSession(t *testing.T)
 	t.Setenv("COI_USE_DUMMY", "")
 	mgr := &fakeDiscoveryManager{out: `[{"id":"ses_abc123"}]`}
 	oc := tool.NewOpencode()
-	env := map[string]string{"XDG_DATA_HOME": "/workspace/.local/share"}
+	env := map[string]string{"HOME": "/home/code"}
 
 	discoverContainerSession(mgr, oc, true, "/workspace", container.ExecCommandOptions{Cwd: "/workspace", Env: env})
 
@@ -55,8 +55,8 @@ func TestDiscoverContainerSession_ResumesDiscoveredOpencodeSession(t *testing.T)
 	if mgr.argv[0] != "timeout" || mgr.argv[2] != "opencode" || mgr.argv[3] != "db" {
 		t.Errorf("argv = %q, want timeout N opencode db ...", mgr.argv)
 	}
-	if mgr.opts.Env["XDG_DATA_HOME"] != "/workspace/.local/share" {
-		t.Errorf("lookup env = %v, want the tool's XDG_DATA_HOME", mgr.opts.Env)
+	if mgr.opts.Env["HOME"] != "/home/code" {
+		t.Errorf("lookup env = %v, want the launch env's HOME", mgr.opts.Env)
 	}
 	if got := buildCLICommand("coi-id", true, false, t.TempDir(), "coi-id", oc); got != "opencode --session ses_abc123" {
 		t.Errorf("buildCLICommand() = %q, want %q", got, "opencode --session ses_abc123")
@@ -139,8 +139,8 @@ func TestPrepareLaunch_ResumesDiscoveredOpencodeSession(t *testing.T) {
 			if mgr.calls != 1 {
 				t.Fatalf("lookup calls = %d, want 1", mgr.calls)
 			}
-			if got := mgr.opts.Env["XDG_DATA_HOME"]; got != "/workspace/.local/share" {
-				t.Errorf("lookup XDG_DATA_HOME = %q, want %q", got, "/workspace/.local/share")
+			if got := mgr.opts.Env["HOME"]; got != "/home/code" {
+				t.Errorf("lookup HOME = %q, want %q", got, "/home/code")
 			}
 			if mgr.opts.Cwd != "/workspace" || mgr.opts.User == nil || *mgr.opts.User != uid {
 				t.Errorf("lookup cwd/user = %q/%v, want /workspace as uid %d", mgr.opts.Cwd, mgr.opts.User, uid)

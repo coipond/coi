@@ -1,12 +1,12 @@
 """
 Test that coi shell --resume with [tool] name = "opencode" resumes the same
-opencode session (`--session ses_...`), found in opencode's SQLite DB in the
-workspace, instead of `--continue`.
+opencode session (`--session ses_...`), found in opencode's SQLite DB (the
+per-workspace ~/.local/share/opencode mount), instead of `--continue`.
 
 Flow:
 1. Write .coi/config.toml with [tool] name = "opencode"
 2. Start coi shell with the real opencode binary (creates the DB)
-3. Import a session with a known ses_ id into the workspace's DB
+3. Import a session with a known ses_ id into opencode's DB
 4. Exit opencode, poweroff, wait for the container to go
 5. Run coi shell --resume
 6. Verify the relaunched opencode runs with --session <that id>
@@ -29,14 +29,7 @@ from support.helpers import (
 
 SESSION_ID = "ses_0c01resume0aBcDeFgHiJkLmNo"
 
-OPENCODE_ENV = [
-    "--env",
-    "HOME=/home/code",
-    "--env",
-    "XDG_DATA_HOME=/workspace/.local/share",
-    "--env",
-    "XDG_STATE_HOME=/workspace/.local/state",
-]
+OPENCODE_ENV = ["--env", "HOME=/home/code"]
 
 
 def _exec_as_code(container_name, cmd, timeout=60):
@@ -126,7 +119,7 @@ def test_opencode_resume_lands_in_same_session(coi_binary, cleanup_containers, w
     _shutdown(child, coi_binary, container_name)
 
     assert SESSION_ID in listed.stdout, (
-        f"opencode import should create the session in the workspace DB.\n"
+        f"opencode import should create the session in opencode's DB.\n"
         f"import: {imported.stdout}{imported.stderr}\ndb: {listed.stdout}{listed.stderr}"
     )
 
