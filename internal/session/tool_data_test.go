@@ -45,6 +45,51 @@ func TestToolDataMounts_Opencode(t *testing.T) {
 	}
 }
 
+// opencode2's plan dir was never in the workspace, so it has no MigrateFrom: a
+// project's own .opencode/plan stays where it is.
+func TestToolDataMounts_Opencode2Plan(t *testing.T) {
+	ws := "/home/u/project"
+	got := ToolDataMounts("/home/u/.coi", tool.NewOpencode2(), ws)
+	if len(got) != 3 {
+		t.Fatalf("ToolDataMounts() = %+v, want share, state and plan", got)
+	}
+	plan := got[2]
+	want := MountEntry{
+		HostPath:      filepath.Join("/home/u/.coi", "tool-data", "opencode2", WorkspaceHash(ws), "plan"),
+		ContainerPath: "/home/code/.opencode/plan",
+		DeviceName:    "tool-data-opencode2-plan",
+	}
+	if plan.HostPath != want.HostPath || plan.ContainerPath != want.ContainerPath ||
+		plan.DeviceName != want.DeviceName || plan.MigrateFrom != "" || plan.Readonly {
+		t.Errorf("plan mount = %+v, want %+v", plan, want)
+	}
+	if got[0].MigrateFrom != "/home/u/project/.local/share/opencode" {
+		t.Errorf("share MigrateFrom = %q, want the pre-#929 workspace path", got[0].MigrateFrom)
+	}
+}
+
+func TestPrepareMountSource_PlanKeepsWorkspaceDir(t *testing.T) {
+	ws := t.TempDir()
+	own := filepath.Join(ws, ".opencode", "plan", "keep.md")
+	if err := os.MkdirAll(filepath.Dir(own), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(own, []byte("project file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := ToolDataMounts(t.TempDir(), tool.NewOpencode2(), ws)[2]
+
+	if err := PrepareMountSource(plan, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(own); err != nil {
+		t.Errorf("the workspace's own .opencode/plan was moved: %v", err)
+	}
+	if entries, _ := os.ReadDir(plan.HostPath); len(entries) != 0 {
+		t.Errorf("host plan dir = %v, want it empty", entries)
+	}
+}
+
 func TestToolDataMounts_ToolWithoutDataDirs(t *testing.T) {
 	if got := ToolDataMounts("/c", tool.NewClaude(), "/ws"); got != nil {
 		t.Errorf("claude has no data dirs, got %+v", got)
@@ -199,6 +244,21 @@ func TestAttachMissingToolDataMounts(t *testing.T) {
 	// The attached device's host dir is (re)created so the container can start.
 	if _, err := os.Stat(share.HostPath); err != nil {
 		t.Errorf("share host dir not created: %v", err)
+	}
+}
+
+// A tool data mount without MigrateFrom (opencode2's plan dir) is still one of
+// coi's own, so a reused stopped container gets it too.
+func TestAttachMissingToolDataMounts_AddsMountWithoutMigration(t *testing.T) {
+	mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
+	f := &fakeDiskDevices{devices: map[string]container.DiskDevice{}}
+
+	if err := AttachMissingToolDataMounts(f, mc, true, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"tool-data-opencode2-plan", "tool-data-opencode2-share", "tool-data-opencode2-state"}
+	if got := sorted(f.adds); !slices.Equal(got, want) {
+		t.Errorf("adds = %v, want %v", got, want)
 	}
 }
 
