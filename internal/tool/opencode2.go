@@ -3,7 +3,8 @@ package tool
 // Opencode2Tool implements Tool for OpenCode v2, installed next to v1 as
 // "opencode2". It launches like opencode (same --continue/--session/run
 // flags) and reuses its config bundle and container env; only the name,
-// binary and sessions dir differ.
+// binary, sessions dir and session lookup differ (opencode2 has none, so a
+// resume uses --continue).
 type Opencode2Tool struct {
 	OpencodeTool
 }

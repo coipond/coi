@@ -89,7 +89,7 @@ func TestDiscoverContainerSession_Skipped(t *testing.T) {
 		{"not resuming", tool.NewOpencode(), false, ""},
 		{"dummy mode", tool.NewOpencode(), true, "1"},
 		{"tool without container discovery", tool.NewClaude(), true, ""},
-		{"opencode2 (no v2 query yet)", tool.NewOpencode2(), true, ""},
+		{"opencode2", tool.NewOpencode2(), true, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
