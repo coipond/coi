@@ -60,20 +60,19 @@ func TestBuildCLICommand_Opencode_DummyModeResume(t *testing.T) {
 	}
 }
 
-// TestMergeToolEnv_Opencode verifies that opencode's XDG env vars are merged
-// into the container environment.
+// TestMergeToolEnv_Opencode verifies that opencode adds no env (its data dirs
+// are host mounts, #929) and leaves the existing env alone.
 func TestMergeToolEnv_Opencode(t *testing.T) {
 	env := map[string]string{"HOME": "/home/code"}
 	oc := tool.NewOpencode()
 	mergeToolEnv(env, oc, "/workspace")
 
-	if env["XDG_DATA_HOME"] != "/workspace/.local/share" {
-		t.Errorf("XDG_DATA_HOME = %q, want %q", env["XDG_DATA_HOME"], "/workspace/.local/share")
+	if _, ok := env["XDG_DATA_HOME"]; ok {
+		t.Errorf("XDG_DATA_HOME = %q, want unset", env["XDG_DATA_HOME"])
 	}
-	if env["XDG_STATE_HOME"] != "/workspace/.local/state" {
-		t.Errorf("XDG_STATE_HOME = %q, want %q", env["XDG_STATE_HOME"], "/workspace/.local/state")
+	if _, ok := env["XDG_STATE_HOME"]; ok {
+		t.Errorf("XDG_STATE_HOME = %q, want unset", env["XDG_STATE_HOME"])
 	}
-	// HOME should not be overwritten
 	if env["HOME"] != "/home/code" {
 		t.Errorf("HOME = %q, want %q", env["HOME"], "/home/code")
 	}

@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -246,28 +247,29 @@ func TestOpencodeTool_GetSandboxSettings_BypassDefault(t *testing.T) {
 	}
 }
 
-func TestOpencodeTool_ImplementsContainerEnv(t *testing.T) {
+func TestOpencodeTool_ContainerEnvIsEmpty(t *testing.T) {
 	oc := NewOpencode()
 
 	twce, ok := oc.(ToolWithContainerEnv)
 	if !ok {
-		t.Fatal("OpencodeTool should implement ToolWithContainerEnv")
+		t.Fatal("OpencodeTool should keep implementing ToolWithContainerEnv so stale XDG env gets unset")
 	}
-
-	env := twce.GetContainerEnv("/workspace")
-	if env["XDG_DATA_HOME"] != "/workspace/.local/share" {
-		t.Errorf("XDG_DATA_HOME = %q, want %q", env["XDG_DATA_HOME"], "/workspace/.local/share")
-	}
-	if env["XDG_STATE_HOME"] != "/workspace/.local/state" {
-		t.Errorf("XDG_STATE_HOME = %q, want %q", env["XDG_STATE_HOME"], "/workspace/.local/state")
+	if env := twce.GetContainerEnv("/workspace"); len(env) != 0 {
+		t.Errorf("GetContainerEnv() = %v, want empty: data dirs are host mounts now, not workspace redirects (#929)", env)
 	}
 }
 
-func TestOpencodeTool_GetContainerEnv_CustomWorkspace(t *testing.T) {
-	oc := &OpencodeTool{}
-	env := oc.GetContainerEnv("/home/user/project")
-	if env["XDG_DATA_HOME"] != "/home/user/project/.local/share" {
-		t.Errorf("XDG_DATA_HOME = %q, want %q", env["XDG_DATA_HOME"], "/home/user/project/.local/share")
+func TestOpencodeTool_DataDirs(t *testing.T) {
+	tdd, ok := NewOpencode().(ToolWithDataDirs)
+	if !ok {
+		t.Fatal("OpencodeTool should implement ToolWithDataDirs")
+	}
+	want := []DataDir{
+		{Name: "share", HomeRelPath: ".local/share/opencode"},
+		{Name: "state", HomeRelPath: ".local/state/opencode"},
+	}
+	if got := tdd.DataDirs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("DataDirs() = %v, want %v", got, want)
 	}
 }
 

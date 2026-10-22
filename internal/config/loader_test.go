@@ -9,6 +9,9 @@ import (
 )
 
 func TestLoad(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COI_CONFIG", "")
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
@@ -211,6 +214,9 @@ func TestDotCoiTomlDeprecationError(t *testing.T) {
 }
 
 func TestDotCoiDirConfigLoads(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COI_CONFIG", "")
+
 	// Create a temp directory with .coi/config.toml and change to it
 	tmpDir := t.TempDir()
 	oldDir, err := os.Getwd()

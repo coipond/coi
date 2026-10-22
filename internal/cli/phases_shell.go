@@ -379,6 +379,9 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 			if err != nil {
 				return nil, fmt.Errorf("invalid mount configuration: %w", err)
 			}
+			// Tool data (opencode's session DB/snapshots) persists on the host
+			// outside the workspace (#929).
+			mountConfig = session.WithToolDataMounts(mountConfig, baseDir, ti, s.absWorkspace)
 			socketConfig, err := ParseSocketConfig(a.cfg)
 			if err != nil {
 				return nil, fmt.Errorf("invalid socket configuration: %w", err)
