@@ -633,6 +633,20 @@ func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName
 	return a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree)
 }
 
+// runDataTool is the tool whose data dirs a `coi run` container mounts: the
+// --prompt tool, else the configured [tool] (so a later `coi container exec`
+// or tool-spec launch of it finds its history). nil when neither resolves.
+func (a *App) runDataTool(s *runState) tool.Tool {
+	if s.promptTool != nil {
+		return s.promptTool
+	}
+	t, err := getConfiguredTool(a.cfg)
+	if err != nil {
+		return nil
+	}
+	return t
+}
+
 // addMount adds a single configured directory mount to the container.
 func addMount(mgr container.ContainerManager, mount session.MountEntry, useShift, rawIdmapActive bool) error {
 	if mount.Readonly {
@@ -645,8 +659,10 @@ func addMount(mgr container.ContainerManager, mount session.MountEntry, useShift
 		}
 		fmt.Fprintf(os.Stderr, "Adding mount (read-only): %s -> %s\n", mount.HostPath, mount.ContainerPath)
 	} else {
-		if err := os.MkdirAll(mount.HostPath, 0o755); err != nil {
-			return fmt.Errorf("failed to create mount directory '%s': %w", mount.HostPath, err)
+		if err := session.PrepareMountSource(mount, func(msg string) {
+			fmt.Fprintln(os.Stderr, msg)
+		}); err != nil {
+			return err
 		}
 		fmt.Fprintf(os.Stderr, "Adding mount: %s -> %s\n", mount.HostPath, mount.ContainerPath)
 	}

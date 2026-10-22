@@ -52,6 +52,9 @@ func (a *App) resolveWorkspacePhase(cmd *cobra.Command, s *shellState) session.P
 	return session.PhaseFunc{
 		PhaseName: "resolve-workspace",
 		RunFn: func(_ context.Context) (session.Teardown, error) {
+			if err := validateSlotFlag(a.slot); err != nil {
+				return nil, err
+			}
 			absWorkspace, err := filepath.Abs(a.workspace)
 			if err != nil {
 				return nil, fmt.Errorf("invalid workspace path: %w", err)
@@ -363,6 +366,9 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 			if err != nil {
 				return nil, fmt.Errorf("invalid mount configuration: %w", err)
 			}
+			// Tool data (opencode's session DB/snapshots) persists on the host
+			// outside the workspace (#929).
+			mountConfig = session.WithToolDataMounts(mountConfig, baseDir, ti, s.absWorkspace)
 			socketConfig, err := ParseSocketConfig(a.cfg)
 			if err != nil {
 				return nil, fmt.Errorf("invalid socket configuration: %w", err)

@@ -175,14 +175,23 @@ func (c *OpencodeTool) StateConfigFileName() string { return mustBundle("opencod
 // Opencode needs sandbox permission bypass even without host config dir.
 func (c *OpencodeTool) AlwaysSetupConfig() bool { return mustBundle("opencode").AlwaysSetup }
 
-// GetContainerEnv implements ToolWithContainerEnv.
-// Redirects XDG data and state directories to the workspace mount so opencode's
-// SQLite database persists across ephemeral container recreations.
-// Without this, data lives in ~/.local/share/opencode/ (inside the container)
-// and is destroyed when the ephemeral container is deleted.
-func (c *OpencodeTool) GetContainerEnv(workspacePath string) map[string]string {
-	return map[string]string{
-		"XDG_DATA_HOME":  filepath.Join(workspacePath, ".local", "share"),
-		"XDG_STATE_HOME": filepath.Join(workspacePath, ".local", "state"),
+// GetContainerEnv implements ToolWithContainerEnv. Opencode needs no extra env:
+// its data lives at the XDG defaults, which DataDirs backs with host mounts.
+// It still returns an (empty) map so the container-env reconcile unsets the
+// XDG_DATA_HOME/XDG_STATE_HOME that older coi versions pointed at the
+// workspace on a reused persistent container.
+func (c *OpencodeTool) GetContainerEnv(_ string) map[string]string {
+	return map[string]string{}
+}
+
+// DataDirs implements ToolWithDataDirs. Opencode keeps its SQLite session
+// database and its snapshot git repo in the XDG data dir, and prompt history
+// and model picks in the XDG state dir. The snapshot repo tracks the whole
+// workspace, so these must stay out of it: under /workspace each snapshot
+// re-added the snapshot repo itself, growing it without bound (#929).
+func (c *OpencodeTool) DataDirs() []DataDir {
+	return []DataDir{
+		{Name: "share", HomeRelPath: filepath.Join(".local", "share", "opencode")},
+		{Name: "state", HomeRelPath: filepath.Join(".local", "state", "opencode")},
 	}
 }
