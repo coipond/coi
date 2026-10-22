@@ -103,7 +103,8 @@ Profiles support inheritance, ship AI-agent context files, and can carry their o
 
 - Claude Code (default)
 - Codex CLI
-- opencode
+- opencode (OpenCode v1, opt-in at build time)
+- opencode2 (OpenCode v2)
 - pi
 - omp (Oh My Pi)
 
@@ -112,7 +113,7 @@ Pick one in config or a profile:
 ```toml
 # ~/.coi/config.toml or ./.coi/config.toml
 [tool]
-name = "claude"              # or "codex", "opencode", "pi", "omp"
+name = "claude"              # or "codex", "opencode", "opencode2", "pi", "omp"
 permission_mode = "bypass"   # run autonomously ("bypass") or ask first ("interactive")
 ```
 

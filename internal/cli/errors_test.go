@@ -22,6 +22,8 @@ func TestExitCodeFor(t *testing.T) {
 		{"incus unavailable", fmt.Errorf("ctx: %w", container.ErrIncusUnavailable), ExitIncusUnavailable},
 		{"container not found", fmt.Errorf("ctx: %w", container.ErrContainerNotFound), ExitContainerNotFound},
 		{"config error", &config.ConfigError{Err: errors.New("bad toml")}, ExitConfig},
+		{"incus not installed (shell/run/build check)", fmt.Errorf("validate-env: %w", container.SentinelError(container.ErrIncusUnavailable, "incus is not installed — please install Incus first")), ExitIncusUnavailable},
+		{"--container target missing", container.SentinelError(container.ErrContainerNotFound, "container 'x' not found"), ExitContainerNotFound},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

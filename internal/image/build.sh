@@ -17,6 +17,7 @@ set -euo pipefail
 CODE_USER="code"
 CODE_UID=1000
 OPENCODE_FALLBACK_VERSION="v1.19.3"
+OPENCODE2_FALLBACK_VERSION="2.1.0"
 
 log() {
     echo "[coi] $*"
@@ -578,7 +579,8 @@ opencode_v1_release_tag() {
 }
 
 #######################################
-# Install opencode
+# Install opencode (OpenCode v1; opt-in: add "opencode" to
+# [container.build] agents)
 # See: https://opencode.ai
 #######################################
 install_opencode() {
@@ -638,6 +640,84 @@ install_opencode() {
     ln -sf "$OPENCODE_PATH" /usr/local/bin/opencode
 
     log "opencode $(opencode --version 2>/dev/null || echo 'installed')"
+}
+
+#######################################
+# Print the newest stable OpenCode v2.x version (MAJOR.MINOR.PATCH) of the
+# npm package @opencode/cli-linux-<arch>. v2 has no GitHub release assets:
+# it ships only through npm. The abbreviated registry document lists every
+# version. If the lookup fails, prints OPENCODE2_FALLBACK_VERSION.
+#######################################
+opencode2_npm_version() {
+    local arch="$1" version
+    version="$(curl -fsSL --max-time 60 \
+        -H 'Accept: application/vnd.npm.install-v1+json' \
+        "https://registry.npmjs.org/@opencode/cli-linux-${arch}" 2>/dev/null |
+        jq -r '.versions | keys[]' 2>/dev/null |
+        grep -E '^2\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+    if [[ -z "$version" ]]; then
+        log "WARNING: could not list opencode v2 versions, using $OPENCODE2_FALLBACK_VERSION" >&2
+        version="$OPENCODE2_FALLBACK_VERSION"
+    fi
+    echo "$version"
+}
+
+#######################################
+# Install OpenCode v2 as opencode2 (a default agent). It gets its own
+# directory: the v1 install and upstream's v2 installer both use
+# ~/.opencode/bin/opencode.
+#######################################
+install_opencode2() {
+    log "Installing opencode2..."
+
+    local OPENCODE_ARCH
+    if ! OPENCODE_ARCH="$(opencode_asset_arch)"; then
+        log "ERROR: unsupported CPU architecture '$(uname -m)' for opencode2."
+        exit 1
+    fi
+
+    local OPENCODE2_VERSION
+    OPENCODE2_VERSION="$(opencode2_npm_version "$OPENCODE_ARCH")"
+    local INSTALL_DIR="/home/$CODE_USER/.opencode2/bin"
+    local OPENCODE2_PATH="$INSTALL_DIR/opencode"
+
+    mkdir -p "$INSTALL_DIR"
+    chown "$CODE_USER:$CODE_USER" "$INSTALL_DIR"
+
+    local version attempt installed=""
+    for version in "$OPENCODE2_VERSION" "$OPENCODE2_FALLBACK_VERSION"; do
+        local TARBALL_URL="https://registry.npmjs.org/@opencode/cli-linux-${OPENCODE_ARCH}/-/cli-linux-${OPENCODE_ARCH}-${version}.tgz"
+        for attempt in 1 2 3; do
+            if curl -fsSL "$TARBALL_URL" | tar xz -C "$INSTALL_DIR" --strip-components=2 package/bin/opencode; then
+                chmod +x "$OPENCODE2_PATH"
+                chown "$CODE_USER:$CODE_USER" "$OPENCODE2_PATH"
+                installed=1
+                break 2
+            fi
+            if [ "$attempt" -lt 3 ]; then
+                log "opencode2 $version download failed (attempt $attempt/3), retrying in 10s..."
+                sleep 10
+            fi
+        done
+        if [ "$version" = "$OPENCODE2_FALLBACK_VERSION" ]; then
+            break
+        fi
+        log "WARNING: opencode2 $version download failed, falling back to $OPENCODE2_FALLBACK_VERSION"
+    done
+
+    if [ -z "$installed" ]; then
+        log "ERROR: opencode2 installation failed after 3 attempts per version."
+        exit 1
+    fi
+
+    if [[ ! -x "$OPENCODE2_PATH" ]]; then
+        log "ERROR: opencode2 binary not found at $OPENCODE2_PATH after installation."
+        exit 1
+    fi
+
+    ln -sf "$OPENCODE2_PATH" /usr/local/bin/opencode2
+
+    log "opencode2 $(opencode2 --version 2>/dev/null || echo 'installed')"
 }
 
 #######################################
@@ -978,11 +1058,12 @@ cleanup() {
 # warned and skipped (coi validates the list host-side before build, so this is
 # defense-in-depth).
 install_selected_agents() {
-    local agents="${COI_AGENTS:-claude opencode pi}"
+    local agents="${COI_AGENTS:-claude opencode2 pi}"
     for agent in ${agents//,/ }; do
         case "$agent" in
             claude) install_claude_cli ;;
             opencode) install_opencode ;;
+            opencode2) install_opencode2 ;;
             pi) install_pi ;;
             codex) install_codex ;;
             omp) install_omp ;;

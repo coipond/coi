@@ -15,6 +15,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from support.helpers import calculate_container_name, tool_data_dir
 
 # Prints what the tests check, one fact per line, and writes a file through
@@ -187,13 +189,15 @@ def test_opencode_data_mount_added_to_reused_container(
 FAKE_SERVER = Path(__file__).resolve().parent.parent / "support" / "fake_openai.py"
 
 # Real opencode against a fake OpenAI-compatible model served inside the
-# container: no token, no network. Each `opencode run` is a full agent step,
+# container: no token, no network. Each `<binary> run` is a full agent step,
 # which takes snapshots of the work tree. Then report where the snapshot repo
 # lives and whether it tracked the workspace and/or opencode's own files.
+# v1 and v2 use the same data dir; v2's run also starts a background
+# `serve --service`, which inherits the /dev/null redirects.
 SNAPSHOT_PROBE = (
     "python3 /workspace/.fake-openai.py 18080 > /tmp/fake-openai.log 2>&1 & sleep 2; "
     "for i in 1 2 3; do "
-    'timeout 90 opencode run "say ok $i" </dev/null >/dev/null 2>&1 || echo "RUN_FAILED $i rc=$?"; '
+    'timeout 90 {binary} run "say ok $i" </dev/null >/dev/null 2>&1 || echo "RUN_FAILED $i rc=$?"; '
     "done; "
     "G=$(dirname \"$(find ~/.local/share/opencode/snapshot -name HEAD -not -path '*/logs/*' | head -1)\"); "
     'echo "SNAPSHOT=$G"; '
@@ -223,14 +227,16 @@ def _value(lines, key):
     return None
 
 
+# The tool name is also its binary and its tool-data dir name.
+@pytest.mark.parametrize("tool", ["opencode", "opencode2"])
 def test_opencode_snapshots_do_not_track_their_own_data(
-    coi_binary, cleanup_containers, workspace_dir, tmp_path
+    coi_binary, cleanup_containers, workspace_dir, tmp_path, tool
 ):
-    """The #929 regression itself. With the data dir inside the workspace the
-    snapshot repo re-added its own objects every step (~800 of its own files
-    after the second prompt, 200M after eight). Its data must live outside the
-    work tree: the snapshots still track the workspace, but none of opencode's
-    files, and nothing appears in the workspace."""
+    """The #929 regression itself, for OpenCode v1 and v2. With the data dir
+    inside the workspace the snapshot repo re-added its own objects every step
+    (~800 of its own files after the second prompt, 200M after eight). Its data
+    must live outside the work tree: the snapshots still track the workspace,
+    but none of opencode's files, and nothing appears in the workspace."""
     ws = Path(workspace_dir)
     subprocess.run(["git", "init", "-q"], cwd=ws, check=True)
     (ws / "a.txt").write_text("hello\n")
@@ -244,12 +250,12 @@ def test_opencode_snapshots_do_not_track_their_own_data(
 
     cfg = tmp_path / "cfg.toml"
     cfg.write_text(
-        '[tool]\nname = "opencode"\n\n'
+        f'[tool]\nname = "{tool}"\n\n'
         "[defaults.environment]\n"
         f"OPENCODE_CONFIG_CONTENT = '{json.dumps(OPENCODE_FAKE_CONFIG)}'\n"
     )
     try:
-        result = _run(coi_binary, workspace_dir, cfg, 1, SNAPSHOT_PROBE)
+        result = _run(coi_binary, workspace_dir, cfg, 1, SNAPSHOT_PROBE.format(binary=tool))
         output = result.stdout + result.stderr
         lines = result.stdout.splitlines()
         assert result.returncode == 0, f"probe failed. output:\n{output}"
@@ -266,8 +272,8 @@ def test_opencode_snapshots_do_not_track_their_own_data(
             f"the snapshot repo tracked opencode's own data (#929). output:\n{output}"
         )
         assert not (ws / ".local").exists(), output
-        assert (tool_data_dir(workspace_dir, "opencode", "share") / "snapshot").is_dir(), (
+        assert (tool_data_dir(workspace_dir, tool, "share") / "snapshot").is_dir(), (
             f"the snapshot repo should persist in the host tool-data dir. output:\n{output}"
         )
     finally:
-        shutil.rmtree(tool_data_dir(workspace_dir, "opencode", "share").parent, ignore_errors=True)
+        shutil.rmtree(tool_data_dir(workspace_dir, tool, "share").parent, ignore_errors=True)

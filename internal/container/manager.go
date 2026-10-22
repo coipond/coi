@@ -1010,20 +1010,22 @@ func Available() bool {
 //     was started before the group was added — a re-login is needed.
 //  4. User is not in the incus-admin group at all.
 //  5. Group is active in the session but the Incus daemon is not running.
+//
+// Every case matches ErrIncusUnavailable, so the CLI exits 3.
 func IncusNotAvailableError() error {
 	if _, err := exec.LookPath("incus"); err != nil {
-		return fmt.Errorf("incus is not installed — please install Incus first")
+		return incusUnavailable("incus is not installed — please install Incus first")
 	}
 
 	currentUser, err := user.Current()
 	if err != nil {
-		return fmt.Errorf("incus is not available — please ensure you are in the incus-admin group")
+		return incusUnavailable("incus is not available — please ensure you are in the incus-admin group")
 	}
 
 	incusGroup, err := user.LookupGroup("incus-admin")
 	if err != nil {
 		// Group doesn't exist — Incus not installed properly or daemon not running.
-		return fmt.Errorf("incus is not available — the incus-admin group does not exist; please install Incus")
+		return incusUnavailable("incus is not available — the incus-admin group does not exist; please install Incus")
 	}
 
 	// Use os.Getgroups() (getgroups(2)) to get the actual supplementary GIDs
@@ -1035,24 +1037,29 @@ func IncusNotAvailableError() error {
 		for _, gid := range activeGIDs {
 			if gid == incusGID {
 				// Group is active but incus still doesn't work — daemon issue.
-				return fmt.Errorf("incus is not available — please check that the Incus daemon is running (sudo systemctl start incus)")
+				return incusUnavailable("incus is not available — please check that the Incus daemon is running (sudo systemctl start incus)")
 			}
 		}
 	}
 
 	// Group exists but is not active — check whether it's in /etc/group.
 	if UserInGroupFile(currentUser.Username, "incus-admin") {
-		return fmt.Errorf(
+		return incusUnavailable(
 			"you have been added to the incus-admin group but your current session does not have it active yet\n" +
 				"Log out and back in, or run: newgrp incus-admin",
 		)
 	}
 
-	return fmt.Errorf(
+	return incusUnavailable(
 		"incus is not available — please add your user to the incus-admin group and re-login:\n" +
 			"  sudo usermod -aG incus-admin $USER\n" +
 			"Then log out and back in, or run: newgrp incus-admin",
 	)
+}
+
+// incusUnavailable returns msg as an error matching ErrIncusUnavailable.
+func incusUnavailable(msg string) error {
+	return SentinelError(ErrIncusUnavailable, msg)
 }
 
 // UserInGroupFile reports whether username appears in the member list of
