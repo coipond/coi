@@ -564,7 +564,7 @@ func TestLimitsHasAny(t *testing.T) {
 		func(c *LimitsConfig) { c.Memory.Limit = "1GiB" },
 		func(c *LimitsConfig) { c.Disk.Read = "10MB" },
 		func(c *LimitsConfig) { c.Disk.Priority = 5 },
-		func(c *LimitsConfig) { c.Runtime.MaxProcesses = 100 },
+		func(c *LimitsConfig) { n := 100; c.Runtime.MaxProcesses = &n },
 	} {
 		c := &LimitsConfig{}
 		mut(c)

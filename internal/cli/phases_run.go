@@ -460,7 +460,7 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 							Priority: limitsConfig.Disk.Priority,
 						},
 						Runtime: limits.RuntimeLimits{
-							MaxProcesses: limitsConfig.Runtime.MaxProcesses,
+							MaxProcesses: config.IntVal(limitsConfig.Runtime.MaxProcesses),
 						},
 						Project: a.cfg.Incus.Project,
 					}
