@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -38,7 +39,7 @@ func TestHostAuditTail_MonitorRecords(t *testing.T) {
 	log.Close()
 
 	var out bytes.Buffer
-	if err := HostAuditTail(path, false, "coi-test", "coi-test", &out); err != nil {
+	if err := HostAuditTail(context.Background(), path, false, "coi-test", "coi-test", &out); err != nil {
 		t.Fatalf("HostAuditTail: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -147,5 +148,33 @@ func TestCopyHostAuditLines_FinalLineWithoutNewline(t *testing.T) {
 	}
 	if got := strings.TrimSpace(out.String()); got != `{"id":"last"}` {
 		t.Errorf("final unterminated record dropped: %q", got)
+	}
+}
+
+// `coi audit --file <path> --follow` stops on Ctrl+C or SIGTERM: the follow
+// loop returns nil once ctx is done, also while it waits for new data.
+func TestHostAuditTail_FollowStopsOnCancel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "coi-test.jsonl")
+	if err := os.WriteFile(path, []byte(`{"id":"threat-1"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- HostAuditTail(ctx, path, true, "coi-test", "coi-test", &out) }()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("HostAuditTail after cancel: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HostAuditTail --follow did not return after the context was cancelled")
+	}
+	if !strings.Contains(out.String(), `"threat-1"`) {
+		t.Errorf("the existing record should be printed before the stop, got %q", out.String())
 	}
 }
