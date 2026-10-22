@@ -177,75 +177,35 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 			}
 			s.sessionsDir = sessionsDir
 
-			// Resolve the resume/continue ID.
-			resumeID := a.resume
-			if a.continueSession != "" {
-				resumeID = a.continueSession
-			}
-			// No profile selected by --profile or an alias: fall back to
-			// [defaults] profile (#607) BEFORE the resume lookup — the profile
-			// may carry [container] session_name, which keys which saved
-			// sessions the auto-resume below can even see. A resume-remembered
-			// profile still wins: the metadata block below applies it ON TOP
-			// (ApplyProfile merges over), preserving the
-			// explicit > alias > resume > default precedence.
-			if applied, err := a.applyDefaultProfileFallback(cmd); err != nil {
+			resumeID, metadata, err := a.resolveResumeAndProfile(cmd, sessionsDir, s.absWorkspace)
+			if err != nil {
 				return nil, err
-			} else if applied {
-				// The profile may set [container] persistent; on resume the
-				// metadata reconciliation below still overrides via
-				// resumePersistence.
-				a.persistent = config.BoolVal(a.cfg.Container.Persistent)
-			}
-
-			resumeFlagSet := cmd.Flags().Changed("resume") || cmd.Flags().Changed("continue")
-
-			if resumeFlagSet && (resumeID == "" || resumeID == "auto") {
-				resumeID, err = session.GetLatestSessionForWorkspace(sessionsDir, s.absWorkspace, a.sessionName())
-				if err != nil {
-					return nil, fmt.Errorf("no previous session to resume for this workspace: %w", err)
-				}
-				fmt.Fprintf(os.Stderr, "Auto-detected session: %s\n", resumeID)
-			} else if resumeID != "" {
-				if !session.SessionExists(sessionsDir, resumeID) {
-					return nil, fmt.Errorf("session '%s' not found - check available sessions with: coi list --all", resumeID)
-				}
-				fmt.Fprintf(os.Stderr, "Resuming session: %s\n", resumeID)
 			}
 			s.resumeID = resumeID
+			resumeFlagSet := cmd.Flags().Changed("resume") || cmd.Flags().Changed("continue")
 
-			// Inherit persistent flag, profile, and slot from session metadata.
+			// Inherit persistent flag and slot from session metadata.
 			var resumeSlot int
-			if resumeID != "" {
-				metadataPath := filepath.Join(sessionsDir, resumeID, "metadata.json")
-				if metadata, err := session.LoadSessionMetadata(metadataPath); err == nil {
-					if !cmd.Flags().Changed("profile") && metadata.ProfileName != "" {
-						a.profile = metadata.ProfileName
-						if err := a.cfg.ApplyProfile(a.profile); err != nil {
-							return nil, fmt.Errorf("failed to apply saved profile '%s': %w", a.profile, err)
-						}
-						fmt.Fprintf(os.Stderr, "Inherited profile '%s' from session\n", a.profile)
-					}
-					// Session metadata records how the session was actually
-					// created and is the default on resume — but an EXPLICIT
-					// [container] persistent in the effective config wins, so
-					// a user can still convert a session's mode (with the
-					// --persistent flag removed, config is the only lever;
-					// unconditional metadata would make ephemeral-ness sticky
-					// forever, re-recorded into metadata on every resume).
-					a.persistent = resumePersistence(a.cfg.Container.Persistent, metadata.Persistent)
-					if a.persistent != metadata.Persistent {
-						fmt.Fprintf(os.Stderr,
-							"Config [container] persistent = %v overrides the session's saved mode\n",
-							a.persistent)
-					}
-					if a.persistent {
-						fmt.Fprintf(os.Stderr, "Inherited persistent mode from session\n")
-					}
-					if !cmd.Flags().Changed("slot") {
-						if _, origSlot, err := session.ParseContainerName(metadata.ContainerName); err == nil {
-							resumeSlot = origSlot
-						}
+			if metadata != nil {
+				// Session metadata records how the session was actually
+				// created and is the default on resume — but an EXPLICIT
+				// [container] persistent in the effective config wins, so
+				// a user can still convert a session's mode (with the
+				// --persistent flag removed, config is the only lever;
+				// unconditional metadata would make ephemeral-ness sticky
+				// forever, re-recorded into metadata on every resume).
+				a.persistent = resumePersistence(a.cfg.Container.Persistent, metadata.Persistent)
+				if a.persistent != metadata.Persistent {
+					fmt.Fprintf(os.Stderr,
+						"Config [container] persistent = %v overrides the session's saved mode\n",
+						a.persistent)
+				}
+				if a.persistent {
+					fmt.Fprintf(os.Stderr, "Inherited persistent mode from session\n")
+				}
+				if !cmd.Flags().Changed("slot") {
+					if _, origSlot, err := session.ParseContainerName(metadata.ContainerName); err == nil {
+						resumeSlot = origSlot
 					}
 				}
 			}
@@ -658,4 +618,67 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			return nil, runErr
 		},
 	}
+}
+
+// resolveResumeAndProfile resolves the session to resume (empty for a new
+// session) and its metadata (nil if none), and applies exactly one profile:
+// explicit --profile > alias-saved profile > the resumed session's profile >
+// [defaults] profile. The explicit and alias profiles were applied earlier and
+// set a.profile; ApplyProfile merges additively, so applying a second profile
+// on top would stack the two.
+func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorkspace string) (string, *session.SessionMetadata, error) {
+	resumeID := a.resume
+	if a.continueSession != "" {
+		resumeID = a.continueSession
+	}
+
+	defaultProfile, err := a.defaultProfileFallbackName(cmd)
+	if err != nil {
+		return "", nil, err
+	}
+
+	resumeFlagSet := cmd.Flags().Changed("resume") || cmd.Flags().Changed("continue")
+	if resumeFlagSet && (resumeID == "" || resumeID == "auto") {
+		// The default profile may carry [container] session_name, which keys
+		// which saved sessions auto-resume can see (#607).
+		sessionName := a.sessionName()
+		if defaultProfile != "" {
+			if p := a.cfg.GetProfile(defaultProfile); p != nil && p.Container.SessionName != "" {
+				sessionName = p.Container.SessionName
+			}
+		}
+		resumeID, err = session.GetLatestSessionForWorkspace(sessionsDir, absWorkspace, sessionName)
+		if err != nil {
+			return "", nil, fmt.Errorf("no previous session to resume for this workspace: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Auto-detected session: %s\n", resumeID)
+	} else if resumeID != "" {
+		if !session.SessionExists(sessionsDir, resumeID) {
+			return "", nil, fmt.Errorf("session '%s' not found - check available sessions with: coi list --all", resumeID)
+		}
+		fmt.Fprintf(os.Stderr, "Resuming session: %s\n", resumeID)
+	}
+
+	var metadata *session.SessionMetadata
+	if resumeID != "" {
+		if m, err := session.LoadSessionMetadata(filepath.Join(sessionsDir, resumeID, "metadata.json")); err == nil {
+			metadata = m
+		}
+	}
+
+	if a.profile == "" && !cmd.Flags().Changed("profile") && metadata != nil && metadata.ProfileName != "" {
+		a.profile = metadata.ProfileName
+		if err := a.cfg.ApplyProfile(a.profile); err != nil {
+			return "", nil, fmt.Errorf("failed to apply saved profile '%s': %w", a.profile, err)
+		}
+		container.Configure(a.cfg.Incus.Project, a.cfg.Incus.CodeUser, a.cfg.Incus.CodeUID)
+		fmt.Fprintf(os.Stderr, "Inherited profile '%s' from session\n", a.profile)
+	} else if applied, err := a.applyDefaultProfileFallback(cmd); err != nil {
+		return "", nil, err
+	} else if applied {
+		// The profile may set [container] persistent; on resume the caller's
+		// metadata reconciliation still overrides via resumePersistence.
+		a.persistent = config.BoolVal(a.cfg.Container.Persistent)
+	}
+	return resumeID, metadata, nil
 }

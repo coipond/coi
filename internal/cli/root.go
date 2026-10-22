@@ -231,17 +231,9 @@ func commandUsesIncusGroup(name string) bool {
 // but the caller decides how that reconciles with session-resume metadata, which
 // this helper cannot see.
 func (a *App) applyDefaultProfileFallback(cmd *cobra.Command) (bool, error) {
-	if a.profile != "" || cmd.Flags().Changed("profile") {
-		return false, nil
-	}
-	name := a.cfg.Defaults.Profile
-	if name == "" {
-		return false, nil
-	}
-	if a.cfg.GetProfile(name) == nil {
-		return false, fmt.Errorf(
-			"[defaults] profile = %q does not name a known profile; "+
-				"run 'coi profile list' to see available profiles", name)
+	name, err := a.defaultProfileFallbackName(cmd)
+	if err != nil || name == "" {
+		return false, err
 	}
 	if err := a.cfg.ApplyProfile(name); err != nil {
 		return false, err
@@ -251,6 +243,26 @@ func (a *App) applyDefaultProfileFallback(cmd *cobra.Command) (bool, error) {
 	// explicit --profile and alias/resume paths do.
 	container.Configure(a.cfg.Incus.Project, a.cfg.Incus.CodeUser, a.cfg.Incus.CodeUID)
 	return true, nil
+}
+
+// defaultProfileFallbackName returns the [defaults] profile that
+// applyDefaultProfileFallback would apply, or "" when another source already
+// chose a profile or none is configured. It validates the name but applies
+// nothing.
+func (a *App) defaultProfileFallbackName(cmd *cobra.Command) (string, error) {
+	if a.profile != "" || cmd.Flags().Changed("profile") {
+		return "", nil
+	}
+	name := a.cfg.Defaults.Profile
+	if name == "" {
+		return "", nil
+	}
+	if a.cfg.GetProfile(name) == nil {
+		return "", fmt.Errorf(
+			"[defaults] profile = %q does not name a known profile; "+
+				"run 'coi profile list' to see available profiles", name)
+	}
+	return name, nil
 }
 
 // removedFlagConfig maps each removed, config-shaped CLI flag to the config
