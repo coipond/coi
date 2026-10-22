@@ -102,7 +102,7 @@ func TestDiscoverContainerSession_Skipped(t *testing.T) {
 	}
 }
 
-// The launch paths must run the lookup with the tool's merged env before they
+// The launch paths must run the lookup with the launch env before they
 // build the command, so a resume reaches opencode as --session <id>.
 func TestPrepareLaunch_ResumesDiscoveredOpencodeSession(t *testing.T) {
 	t.Setenv("COI_USE_DUMMY", "")
