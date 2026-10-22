@@ -191,7 +191,7 @@ func (c *OpencodeTool) GetContainerEnv(_ string) map[string]string {
 // re-added the snapshot repo itself, growing it without bound (#929).
 func (c *OpencodeTool) DataDirs() []DataDir {
 	return []DataDir{
-		{Name: "share", HomeRelPath: filepath.Join(".local", "share", "opencode")},
-		{Name: "state", HomeRelPath: filepath.Join(".local", "state", "opencode")},
+		{Name: "share", HomeRelPath: filepath.Join(".local", "share", "opencode"), FromWorkspace: true},
+		{Name: "state", HomeRelPath: filepath.Join(".local", "state", "opencode"), FromWorkspace: true},
 	}
 }

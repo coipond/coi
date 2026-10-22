@@ -1,10 +1,12 @@
 package tool
 
+import "path/filepath"
+
 // Opencode2Tool implements Tool for OpenCode v2, installed next to v1 as
 // "opencode2". It launches like opencode (same --continue/--session/run
 // flags) and reuses its config bundle and container env; only the name,
-// binary, sessions dir and session lookup differ (opencode2 has none, so a
-// resume uses --continue).
+// binary, sessions dir, session lookup (opencode2 has none, so a resume uses
+// --continue) and the extra plan data dir differ.
 type Opencode2Tool struct {
 	OpencodeTool
 }
@@ -24,3 +26,10 @@ func (c *Opencode2Tool) SessionsDirName() string { return "sessions-opencode2" }
 // session_v2, which the inherited v1 query does not read, so opencode2 resumes
 // with --continue.
 func (c *Opencode2Tool) SessionDiscoveryCommand(string) []string { return nil }
+
+// DataDirs implements ToolWithDataDirs: opencode's data dirs, plus
+// ~/.opencode/plan, where v2's Plan agent writes its plan files (v1 wrote them
+// to <workspace>/.opencode/plans, which the workspace already keeps).
+func (c *Opencode2Tool) DataDirs() []DataDir {
+	return append(c.OpencodeTool.DataDirs(), DataDir{Name: "plan", HomeRelPath: filepath.Join(".opencode", "plan")})
+}
