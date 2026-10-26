@@ -369,10 +369,11 @@ func (g *GitConfig) EffectiveProtectedBranches() []string {
 
 // SecurityConfig contains security-related settings for workspace protection
 type SecurityConfig struct {
-	// ProtectedPaths is a list of paths (relative to workspace) to mount read-only
-	// These paths are protected to prevent containers from modifying files that could
-	// execute automatically on the host (e.g., git hooks, IDE configs, etc.)
-	// Defaults: [".git/hooks", ".git/config", ".husky", ".vscode"]
+	// ProtectedPaths is a list of paths (relative to workspace) to mount
+	// read-only. These paths are protected to prevent containers from modifying
+	// files that could execute automatically on the host (e.g., git hooks, IDE
+	// configs, agent tool settings). Defaults: see [security] protected_paths in
+	// internal/config/embedded/default_config.toml.
 	ProtectedPaths []string `toml:"protected_paths"`
 	// AdditionalProtectedPaths allows adding more paths without replacing defaults
 	AdditionalProtectedPaths []string `toml:"additional_protected_paths"`
