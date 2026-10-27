@@ -6,6 +6,10 @@
 
 - [Change] **Smaller sandbox context file** — `SANDBOX_CONTEXT.md` is about half its previous size, so it takes less of the agent's context window. It contains the same rules and environment facts: the repeated autonomy text is merged into one place, tables are now short lists, and the git identity steps are a short list instead of a shell script.
 
+### Bug Fixes
+
+- [Bug Fix] **Image builds no longer hang on a slow apt mirror** — with `COI_APT_MIRROR` set, a mirror that kept sending data very slowly never hit apt's timeout, so one package download could take an hour. Package list updates and downloads from the mirror now have a 5-minute limit (`COI_APT_MIRROR_TIMEOUT`, in seconds); past it, the build switches to the default Ubuntu archive.
+
 ## 0.16.0 (2026-10-23)
 
 ### Features

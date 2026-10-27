@@ -137,14 +137,37 @@ restore_default_apt_sources() {
 # CI: the in-region mirror answering "502 Proxy Error" and timing out
 # connections for hours), switch back to the stock Ubuntu archive once,
 # refresh the index and retry, instead of failing the whole build.
+#
+# A mirror can also be slow without failing: it keeps sending a trickle of
+# bytes, so apt's own 30s timeout never fires (observed in CI: a ~10s package
+# download taking 61 minutes). So while the mirror is active, `update` and the
+# download half of `install` get a time limit (COI_APT_MIRROR_TIMEOUT seconds,
+# default 300), and running past it counts as a failure. Only the download is
+# limited: `install` first fetches with --download-only, which is safe to stop,
+# then installs from the local cache with no limit, so dpkg is never killed
+# mid-install.
 apt_get() {
-    if DEBIAN_FRONTEND=noninteractive apt-get "$@"; then
-        return 0
-    fi
     if [ "${APT_MIRROR_ACTIVE:-0}" != 1 ]; then
-        return 1
+        DEBIAN_FRONTEND=noninteractive apt-get "$@"
+        return
     fi
-    log "WARNING: apt-get $1 failed via mirror ${COI_APT_MIRROR}; falling back to the default Ubuntu archive"
+    local limit="${COI_APT_MIRROR_TIMEOUT:-300}"
+    local mirror_ok=1
+    case "$1" in
+        update)
+            timeout -k 30 "$limit" env DEBIAN_FRONTEND=noninteractive apt-get "$@" || mirror_ok=0
+            ;;
+        install)
+            timeout -k 30 "$limit" env DEBIAN_FRONTEND=noninteractive apt-get install --download-only "${@:2}" || mirror_ok=0
+            ;;
+    esac
+    if [ "$mirror_ok" = 1 ]; then
+        [ "$1" = update ] && return 0
+        if DEBIAN_FRONTEND=noninteractive apt-get "$@"; then
+            return 0
+        fi
+    fi
+    log "WARNING: apt-get $1 failed or took over ${limit}s via mirror ${COI_APT_MIRROR}; falling back to the default Ubuntu archive"
     restore_default_apt_sources
     DEBIAN_FRONTEND=noninteractive apt-get update -qq || return 1
     [ "$1" = update ] && return 0
