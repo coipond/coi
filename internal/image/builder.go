@@ -737,7 +737,9 @@ func agentEnv(agents []string) map[string]string {
 // buildScriptEnv is agentEnv plus any host-provided build knobs forwarded into
 // the build container. COI_APT_MIRROR lets the caller (CI) point the build's
 // apt at a fast in-region mirror instead of the intermittently-slow default
-// archive.ubuntu.com; unset means the build keeps the stock mirrors. Kept
+// archive.ubuntu.com; unset means the build keeps the stock mirrors.
+// COI_APT_MIRROR_TIMEOUT (seconds) caps how long that mirror may take before
+// the build falls back to the stock archive. Kept
 // separate from agentEnv so the forwarding is unit-testable.
 func buildScriptEnv(agents []string, cloudInit bool) map[string]string {
 	env := agentEnv(agents)
@@ -749,6 +751,9 @@ func buildScriptEnv(agents []string, cloudInit bool) map[string]string {
 	}
 	if mirror := os.Getenv("COI_APT_MIRROR"); mirror != "" {
 		set("COI_APT_MIRROR", mirror)
+		if limit := os.Getenv("COI_APT_MIRROR_TIMEOUT"); limit != "" {
+			set("COI_APT_MIRROR_TIMEOUT", limit)
+		}
 	}
 	if cloudInit {
 		set("COI_CLOUD_INIT", "1")
