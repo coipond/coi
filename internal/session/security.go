@@ -35,7 +35,7 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // error if a mount failed. The list is returned even on error so a partial failure
 // still applies the immutable attribute to the full set.
 func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig) ([]string, error) {
-	return setupSecurityMounts(mgr, workspacePath, containerWorkspacePath, protectedPaths, useShift, sec, nil)
+	return setupSecurityMounts(mgr, workspacePath, containerWorkspacePath, protectedPaths, useShift, sec, nil, false)
 }
 
 // diskBatchMounter is the optional Manager method that adds many disk devices
@@ -46,10 +46,12 @@ type diskBatchMounter interface {
 
 // setupSecurityMounts is SetupSecurityMounts with the nested git scan
 // optionally started earlier (nil scans now). The nested git entries, whose
-// number grows with the submodules, are mounted in one batch.
-func setupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, nestedScan func() nestedGitScan) ([]string, error) {
+// number grows with the submodules, are mounted in one batch. writableHooks
+// ([git] writable_hooks) leaves the nested hooks dirs writable, as it does the
+// root one.
+func setupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, nestedScan func() nestedGitScan, writableHooks bool) ([]string, error) {
 	protectedPaths = ExpandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec)
-	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, nestedScan)
+	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, nestedScan, writableHooks)
 	if len(protectedPaths) == 0 {
 		return protectedPaths, nil
 	}
@@ -178,7 +180,7 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 		// real internals; keep the non-.git protections.
 		securityPaths = StripGitProtectedPaths(securityPaths)
 	}
-	effectivePaths, mErr := setupSecurityMounts(mgr, opts.WorkspacePath, containerWorkspacePath, securityPaths, useShift, opts.Security.Config, opts.Security.nestedGitScan)
+	effectivePaths, mErr := setupSecurityMounts(mgr, opts.WorkspacePath, containerWorkspacePath, securityPaths, useShift, opts.Security.Config, opts.Security.nestedGitScan, worktreeWritableHooks)
 	if mErr != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to setup security mounts: %v", mErr))
 		// Non-fatal: continue even if a read-only protection mount fails.
@@ -485,12 +487,13 @@ type nestedGitScan struct {
 // disable_protection, writable_paths, symlinks and idempotency are handled as
 // in ExpandGitWorktreeProtectedPaths.
 func ExpandNestedGitProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig) []string {
-	return expandNestedGit(workspacePath, paths, sec, nil)
+	return expandNestedGit(workspacePath, paths, sec, nil, false)
 }
 
 // expandNestedGit is ExpandNestedGitProtectedPaths with the scan optionally
-// started earlier (startNestedGitScan); nil scans now.
-func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityConfig, scan func() nestedGitScan) []string {
+// started earlier (startNestedGitScan; nil scans now) and the hooks entries
+// left out when writableHooks is set.
+func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityConfig, scan func() nestedGitScan, writableHooks bool) []string {
 	if sec != nil && sec.DisableProtection {
 		return paths
 	}
@@ -516,6 +519,9 @@ func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityC
 	}
 	for _, gitDir := range found.gitDirs {
 		for _, entry := range nestedGitDirEntries {
+			if entry == "hooks" && writableHooks {
+				continue
+			}
 			rel := filepath.Join(gitDir, entry)
 			if materializeNestedGitEntry(workspacePath, rel, entry == "hooks") {
 				add(rel)
@@ -542,13 +548,14 @@ func StartNestedGitScan(workspacePath string) NestedGitScan {
 }
 
 // SetupSecurityMountsWithScan is SetupSecurityMounts with a scan started
-// earlier by StartNestedGitScan, so the walk overlaps the caller's Incus calls.
-func SetupSecurityMountsWithScan(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan) ([]string, error) {
+// earlier by StartNestedGitScan, so the walk overlaps the caller's Incus calls,
+// and with writableHooks ([git] writable_hooks) leaving nested hooks writable.
+func SetupSecurityMountsWithScan(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) ([]string, error) {
 	result := scan.result
 	if scan.workspacePath != workspacePath {
 		result = nil
 	}
-	return setupSecurityMounts(mgr, workspacePath, containerWorkspacePath, protectedPaths, useShift, sec, result)
+	return setupSecurityMounts(mgr, workspacePath, containerWorkspacePath, protectedPaths, useShift, sec, result, writableHooks)
 }
 
 // startNestedGitScan runs scanNestedGit in the background and returns a func
@@ -563,12 +570,17 @@ func startNestedGitScan(workspacePath string) func() nestedGitScan {
 
 // scanNestedGit finds the git dirs and .git files below the workspace root.
 // It only reads: materializing happens in expandNestedGit, after the
-// disable_protection check.
+// disable_protection check. A submodule checkout's .git file is also found
+// from its git dir's core.worktree, so a checkout below nestedGitSearchDepth
+// is covered too.
 func scanNestedGit(workspacePath string) nestedGitScan {
 	var found nestedGitScan
 	var addGitDir func(string)
 	addGitDir = func(gitDirRel string) {
 		found.gitDirs = append(found.gitDirs, gitDirRel)
+		if f, ok := submoduleGitFile(workspacePath, gitDirRel); ok {
+			found.gitFiles = append(found.gitFiles, f)
+		}
 		walkGitModules(workspacePath, filepath.Join(gitDirRel, "modules"), 1, addGitDir)
 	}
 	addGitFile := func(rel string) { found.gitFiles = append(found.gitFiles, rel) }
@@ -578,6 +590,62 @@ func scanNestedGit(workspacePath string) nestedGitScan {
 	}
 	walkNestedGit(workspacePath, "", 0, addGitFile, addGitDir)
 	return found
+}
+
+// submoduleGitFile returns the .git file of the checkout named by the
+// core.worktree of the git dir at gitDirRel, when that file is inside the
+// workspace and reached without symlinks.
+func submoduleGitFile(workspacePath, gitDirRel string) (string, bool) {
+	gitDir := filepath.Join(workspacePath, gitDirRel)
+	worktree := gitConfigCoreWorktree(filepath.Join(gitDir, "config"))
+	if worktree == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(worktree) {
+		worktree = filepath.Join(gitDir, worktree)
+	}
+	rel, err := filepath.Rel(workspacePath, filepath.Join(worktree, ".git"))
+	if err != nil || validateRelPath(rel) != nil || !strings.HasSuffix(rel, string(filepath.Separator)+".git") {
+		return "", false
+	}
+	current := workspacePath
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", false
+		}
+		if i < len(parts)-1 && !info.IsDir() {
+			return "", false // missing, a file or a symlink on the way
+		}
+		if i == len(parts)-1 && !info.Mode().IsRegular() {
+			return "", false
+		}
+	}
+	return rel, true
+}
+
+// gitConfigCoreWorktree reads core.worktree from a git config file; "" when
+// absent or unreadable.
+func gitConfigCoreWorktree(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	inCore := false
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			inCore = strings.EqualFold(strings.Trim(line, "[] \t"), "core")
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if inCore && ok && strings.EqualFold(strings.TrimSpace(key), "worktree") {
+			return strings.Trim(strings.TrimSpace(value), `"`)
+		}
+	}
+	return ""
 }
 
 // walkGitModules calls addGitDir for each git dir (a dir with a HEAD file)

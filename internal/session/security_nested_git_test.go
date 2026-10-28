@@ -267,7 +267,7 @@ func TestSetupSecurityMounts_PrefetchedScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pre, err := setupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil, startNestedGitScan(tmp))
+	pre, err := setupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil, startNestedGitScan(tmp), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestExpandNestedGit_DisabledMaterializesNothing(t *testing.T) {
 	mkGitDir(t, tmp, ".git/modules/lib")
 	scan := startNestedGitScan(tmp)
 	sec := &config.SecurityConfig{DisableProtection: true}
-	if out := expandNestedGit(tmp, nil, sec, scan); len(out) != 0 {
+	if out := expandNestedGit(tmp, nil, sec, scan, false); len(out) != 0 {
 		t.Errorf("want no paths, got %v", out)
 	}
 	if _, err := os.Lstat(filepath.Join(tmp, ".git/modules/lib/config.worktree")); !os.IsNotExist(err) {
@@ -306,12 +306,148 @@ func TestSetupSecurityMountsWithScan(t *testing.T) {
 		"other workspace": StartNestedGitScan(other),
 		"zero value":      {},
 	} {
-		got, err := SetupSecurityMountsWithScan(&recordingDevices{}, ws, "/workspace", nil, false, nil, scan)
+		got, err := SetupSecurityMountsWithScan(&recordingDevices{}, ws, "/workspace", nil, false, nil, scan, false)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if !slices.Equal(got, want) {
 			t.Errorf("%s: got %v, want %v", name, got, want)
 		}
+	}
+}
+
+// gitCmd runs git in dir with an isolated config, allowing file:// submodules.
+func gitCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "protocol.file.allow=always", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// A submodule checkout below nestedGitSearchDepth still gets its .git file
+// protected: it is found from the module's core.worktree.
+func TestSetupSecurityMounts_DeepSubmoduleGitFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	lib, ws := filepath.Join(tmp, "lib"), filepath.Join(tmp, "ws")
+	for _, d := range []string{lib, ws} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		gitCmd(t, d, "init", "-q")
+		gitCmd(t, d, "commit", "-q", "--allow-empty", "-m", "init")
+	}
+	deep := filepath.Join("third_party", "github.com", "org", "lib")
+	gitCmd(t, ws, "submodule", "add", "-q", lib, deep)
+
+	got, err := SetupSecurityMounts(&recordingDevices{}, ws, "/workspace", nil, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(deep, ".git"); !slices.Contains(got, want) {
+		t.Errorf("expected %q in %v", want, got)
+	}
+}
+
+func TestSubmoduleGitFile_RejectsUnsafeWorktrees(t *testing.T) {
+	ws := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, ".git/modules/lib")
+	cfg := filepath.Join(ws, ".git/modules/lib/config")
+	write := func(worktree string) {
+		t.Helper()
+		if err := os.WriteFile(cfg, []byte("[core]\n\tbare = false\n\tworktree = "+worktree+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkGitFile := func(dir string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mkGitFile(filepath.Join(ws, "a/b/c/d/lib"))
+	write("../../../a/b/c/d/lib")
+	if got, ok := submoduleGitFile(ws, ".git/modules/lib"); !ok || got != filepath.Join("a/b/c/d/lib", ".git") {
+		t.Errorf("relative core.worktree: got %q, %v", got, ok)
+	}
+
+	outside := t.TempDir()
+	mkGitFile(outside)
+	write(outside)
+	if got, ok := submoduleGitFile(ws, ".git/modules/lib"); ok {
+		t.Errorf("worktree outside the workspace must be ignored, got %q", got)
+	}
+
+	if err := os.Symlink(outside, filepath.Join(ws, "link")); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(ws, "link"))
+	if got, ok := submoduleGitFile(ws, ".git/modules/lib"); ok {
+		t.Errorf("worktree through a symlink must be ignored, got %q", got)
+	}
+
+	write(filepath.Join(ws, "a/b/c/d"))
+	if got, ok := submoduleGitFile(ws, ".git/modules/lib"); ok {
+		t.Errorf("worktree without a .git file must be ignored, got %q", got)
+	}
+}
+
+// [git] writable_hooks leaves the nested hooks dirs writable.
+func TestSetupSecurityMounts_WritableHooksSkipsNestedHooks(t *testing.T) {
+	tmp := t.TempDir()
+	mkGitDir(t, tmp, ".git")
+	mkGitDir(t, tmp, ".git/modules/lib")
+	mkGitDir(t, tmp, "sub/.git")
+
+	got, err := SetupSecurityMountsWithScan(&recordingDevices{}, tmp, "/workspace", nil, false, nil, NestedGitScan{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range got {
+		if filepath.Base(p) == "hooks" {
+			t.Errorf("hooks must stay writable, got %q in %v", p, got)
+		}
+	}
+	if !slices.Contains(got, filepath.Join(".git/modules/lib", "config")) || !slices.Contains(got, filepath.Join("sub/.git", "config")) {
+		t.Errorf("non-hooks entries must stay protected, got %v", got)
+	}
+}
+
+// An early scan's result is what gets mounted: a git dir only the given scan
+// reports (below the walk depth) is protected.
+func TestSetupSecurityMountsWithScan_UsesEarlyScan(t *testing.T) {
+	ws := t.TempDir()
+	mkGitDir(t, ws, "a/b/c/d/.git")
+	scan := NestedGitScan{workspacePath: ws, result: func() nestedGitScan {
+		return nestedGitScan{gitDirs: []string{"a/b/c/d/.git"}}
+	}}
+	got, err := SetupSecurityMountsWithScan(&recordingDevices{}, ws, "/workspace", nil, false, nil, scan, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContainsAll(t, got, gitDirEntries("a/b/c/d/.git"))
+}
+
+func TestStartSetupNestedGitScan(t *testing.T) {
+	opts := SetupOptions{WorkspacePath: t.TempDir()}
+	startSetupNestedGitScan(&opts)
+	if opts.Security.nestedGitScan == nil {
+		t.Error("Setup must start the nested git scan")
+	}
+	opts = SetupOptions{WorkspacePath: t.TempDir()}
+	opts.Security.Config = &config.SecurityConfig{DisableProtection: true}
+	startSetupNestedGitScan(&opts)
+	if opts.Security.nestedGitScan != nil {
+		t.Error("no scan when protection is disabled")
 	}
 }

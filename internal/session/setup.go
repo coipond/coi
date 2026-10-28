@@ -151,6 +151,15 @@ func TmuxSessionTarget(containerName string) string { return "=" + TmuxSessionNa
 // for pane commands like send-keys and capture-pane).
 func TmuxPaneTarget(containerName string) string { return TmuxSessionTarget(containerName) + ":" }
 
+// startSetupNestedGitScan starts the nested git walk, which reads the whole
+// tree to a bounded depth, so it overlaps the Incus calls before the security
+// mounts. Nothing is started when protection is disabled.
+func startSetupNestedGitScan(opts *SetupOptions) {
+	if opts.Security.nestedGitScan == nil && opts.WorkspacePath != "" && (opts.Security.Config == nil || !opts.Security.Config.DisableProtection) {
+		opts.Security.nestedGitScan = startNestedGitScan(opts.WorkspacePath)
+	}
+}
+
 // Setup initializes a container for a Claude session.
 //
 // It builds the container up in a fixed sequence of small phases (see
@@ -166,11 +175,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		}
 	}
 
-	// The nested git walk reads the whole tree to a bounded depth; start it now
-	// so it overlaps the Incus calls before the security mounts.
-	if opts.Security.nestedGitScan == nil && opts.WorkspacePath != "" && (opts.Security.Config == nil || !opts.Security.Config.DisableProtection) {
-		opts.Security.nestedGitScan = startNestedGitScan(opts.WorkspacePath)
-	}
+	startSetupNestedGitScan(&opts)
 
 	st := &setupState{opts: opts, result: &SetupResult{}}
 

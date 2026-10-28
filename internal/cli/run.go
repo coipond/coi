@@ -694,7 +694,7 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 	// returns the effective list to drive logging + the immutable pass over the same
 	// set. The immutable pass runs even on a partial mount error, so it is gated on
 	// the returned list rather than the error.
-	effectivePaths, err := session.SetupSecurityMountsWithScan(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security, a.nestedGitScan)
+	effectivePaths, err := session.SetupSecurityMountsWithScan(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security, a.nestedGitScan, config.BoolVal(a.cfg.Git.WritableHooks))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to setup security mounts: %v\n", err)
 	} else if len(effectivePaths) > 0 {

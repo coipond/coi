@@ -43,7 +43,9 @@ func TestMountDisks_OnePatchForManyDevices(t *testing.T) {
 	logPath, bodyDir := fakeQueryIncus(t)
 	m := &Manager{ContainerName: "c1"}
 
-	if err := m.MountDisks(diskMounts(500, "")); err != nil {
+	mounts := diskMounts(500, "")
+	mounts[3].Shift = true
+	if err := m.MountDisks(mounts); err != nil {
 		t.Fatal(err)
 	}
 	got := calls(t, logPath)
@@ -74,11 +76,14 @@ func TestMountDisks_OnePatchForManyDevices(t *testing.T) {
 			t.Errorf("protect-7 %s = %q, want %q", k, body.Devices["protect-7"][k], v)
 		}
 	}
+	if body.Devices["protect-3"]["shift"] != "true" {
+		t.Errorf("Shift mount must send shift=true, got %v", body.Devices["protect-3"])
+	}
 }
 
 // A body over the argument limit is split; every chunk stays under it.
 func TestMountDisks_ChunksLargeBodies(t *testing.T) {
-	logPath, _ := fakeQueryIncus(t)
+	logPath, bodyDir := fakeQueryIncus(t)
 	m := &Manager{ContainerName: "c1"}
 
 	if err := m.MountDisks(diskMounts(2000, strings.Repeat("x", 60))); err != nil {
@@ -97,6 +102,28 @@ func TestMountDisks_ChunksLargeBodies(t *testing.T) {
 	}
 	if patches < 2 {
 		t.Errorf("expected the body to be split, got %d PATCH calls", patches)
+	}
+
+	names := map[string]bool{}
+	for i := range patches {
+		b, err := os.ReadFile(filepath.Join(bodyDir, strconv.Itoa(i)+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Devices map[string]json.RawMessage `json:"devices"`
+		}
+		if err := json.Unmarshal(b, &body); err != nil {
+			t.Fatal(err)
+		}
+		for n := range body.Devices {
+			names[n] = true
+		}
+	}
+	for i := range 2000 {
+		if !names["protect-"+strconv.Itoa(i)] {
+			t.Errorf("device protect-%d missing from the PATCH bodies", i)
+		}
 	}
 }
 
