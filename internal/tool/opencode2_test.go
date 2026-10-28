@@ -61,9 +61,9 @@ func TestOpencode2Tool_DataDirs(t *testing.T) {
 		t.Fatal("Opencode2Tool should implement ToolWithDataDirs")
 	}
 	want := []DataDir{
-		{Name: "share", HomeRelPath: ".local/share/opencode", FromWorkspace: true},
-		{Name: "state", HomeRelPath: ".local/state/opencode", FromWorkspace: true},
-		{Name: "plan", HomeRelPath: ".opencode/plan"},
+		{Name: "share", HomeRelPath: ".local/share/opencode"},
+		{Name: "state", HomeRelPath: ".local/state/opencode"},
+		{Name: "plan", HomeRelPath: ".opencode/plan", FromContainer: true},
 	}
 	if got := tdd.DataDirs(); !reflect.DeepEqual(got, want) {
 		t.Errorf("DataDirs() = %v, want %v", got, want)

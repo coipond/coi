@@ -40,9 +40,10 @@ func ToolDataMounts(coiDir string, t tool.Tool, workspacePath string) []MountEnt
 	var mounts []MountEntry
 	for _, d := range tdd.DataDirs() {
 		m := MountEntry{
-			HostPath:      filepath.Join(base, d.Name),
-			ContainerPath: filepath.Join(home, d.HomeRelPath),
-			DeviceName:    fmt.Sprintf("%s%s-%s", toolDataDevicePrefix, t.Name(), d.Name),
+			HostPath:          filepath.Join(base, d.Name),
+			ContainerPath:     filepath.Join(home, d.HomeRelPath),
+			DeviceName:        fmt.Sprintf("%s%s-%s", toolDataDevicePrefix, t.Name(), d.Name),
+			CopyFromContainer: d.FromContainer,
 		}
 		if d.FromWorkspace {
 			m.MigrateFrom = filepath.Join(workspacePath, d.HomeRelPath)
@@ -121,7 +122,7 @@ func migrateMountSource(from, to string, logger func(string)) {
 // (opencode and opencode2 both use ~/.local/share/opencode) is removed first:
 // two disk devices can't share a path, so a tool switch would otherwise leave
 // the container unable to start. Its data stays in that tool's host dir.
-// A new mount without MigrateFrom covers a dir that older coi left in the
+// A new mount with CopyFromContainer covers a dir that older coi left in the
 // container (opencode2's plan dir in coi 0.16), so what the container holds
 // there is copied to the host dir first; the mount would hide it otherwise.
 // [[mounts]] devices are otherwise never re-added on reuse; these are coi's
@@ -166,7 +167,7 @@ func AttachMissingToolDataMounts(mgr container.ContainerDevices, mc *MountConfig
 	}
 	for _, m := range wanted {
 		_, attached := disks[m.DeviceName]
-		if !attached && m.MigrateFrom == "" {
+		if !attached && m.CopyFromContainer {
 			copyContainerDataDir(mgr, m, logger)
 		}
 		if err := PrepareMountSource(m, logger); err != nil {

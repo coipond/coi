@@ -480,6 +480,11 @@ type DataDir struct {
 	// dir the first time the mount is added. Leave it false for any other dir,
 	// or a project's own files at that path would be moved out of it.
 	FromWorkspace bool
+	// FromContainer marks a dir that older coi left unmounted in the container
+	// (opencode2's plan dir in coi 0.16); a reused container's copy is moved
+	// to the host dir before the mount hides it. Leave it false for a dir
+	// another tool may own at that path, or its data would be taken over.
+	FromContainer bool
 }
 
 // ToolWithDataDirs is an optional interface for tools whose runtime data (a
