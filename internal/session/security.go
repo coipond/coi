@@ -1,6 +1,8 @@
 package session
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -33,6 +35,7 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // still applies the immutable attribute to the full set.
 func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig) ([]string, error) {
 	protectedPaths = ExpandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec)
+	protectedPaths = ExpandNestedGitProtectedPaths(workspacePath, protectedPaths, sec)
 	if len(protectedPaths) == 0 {
 		return protectedPaths, nil
 	}
@@ -407,6 +410,162 @@ func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *
 	return out
 }
 
+// nestedGitSearchDepth bounds how deep below the workspace root the walk for
+// nested .git entries goes (a/b/c/.git is the deepest found).
+const nestedGitSearchDepth = 3
+
+// gitModulesSearchDepth bounds the walk below a modules/ dir. Submodule names
+// may contain slashes, so one git dir can sit several levels down.
+const gitModulesSearchDepth = 8
+
+// nestedGitDirEntries are the per-git-dir entries protected for every git dir
+// below the workspace root, mirroring the root .git defaults.
+var nestedGitDirEntries = []string{"hooks", "config", "config.worktree", filepath.Join("info", "attributes")}
+
+// ExpandNestedGitProtectedPaths returns paths plus protected entries for the git
+// dirs below the workspace root: submodule git dirs (.git/modules/**, nested
+// modules included) and nested repositories (<dir>/.git, up to
+// nestedGitSearchDepth). For each such git dir its hooks, config,
+// config.worktree and info/attributes are added, materialized like the root
+// .git defaults so they cannot be planted. A .git file (submodule or worktree
+// checkout) is protected itself, so its gitdir pointer cannot be redirected.
+//
+// Host git reads these on a plain `git status` in the superproject (it recurses
+// into submodules), so a writable submodule config is host code execution
+// (core.fsmonitor), the same class the root .git defaults close. Discovery
+// runs at setup: a git dir created during the session stays unprotected until
+// the next launch.
+//
+// disable_protection, writable_paths, symlinks and idempotency are handled as
+// in ExpandGitWorktreeProtectedPaths.
+func ExpandNestedGitProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig) []string {
+	if sec != nil && sec.DisableProtection {
+		return paths
+	}
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		seen[filepath.ToSlash(p)] = true
+	}
+	out := append([]string(nil), paths...)
+	add := func(rel string) {
+		if seen[filepath.ToSlash(rel)] || validateRelPath(rel) != nil {
+			return
+		}
+		if sec != nil && sec.IsWritablePath(rel) {
+			return
+		}
+		seen[filepath.ToSlash(rel)] = true
+		out = append(out, rel)
+	}
+	var addGitDir func(string)
+	addGitDir = func(gitDirRel string) {
+		for _, entry := range nestedGitDirEntries {
+			rel := filepath.Join(gitDirRel, entry)
+			if materializeNestedGitEntry(workspacePath, rel, entry == "hooks") {
+				add(rel)
+			}
+		}
+		walkGitModules(workspacePath, filepath.Join(gitDirRel, "modules"), 1, addGitDir)
+	}
+
+	if isRealDir(filepath.Join(workspacePath, ".git")) {
+		walkGitModules(workspacePath, filepath.Join(".git", "modules"), 1, addGitDir)
+	}
+	walkNestedGit(workspacePath, "", 0, add, addGitDir)
+	return out
+}
+
+// walkGitModules calls addGitDir for each git dir (a dir with a HEAD file)
+// below modulesRel. A dir without HEAD is a segment of a slashed submodule
+// name and is descended into.
+func walkGitModules(workspacePath, modulesRel string, depth int, addGitDir func(string)) {
+	dir := filepath.Join(workspacePath, modulesRel)
+	if depth > gitModulesSearchDepth || !isRealDir(dir) {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		rel := filepath.Join(modulesRel, e.Name())
+		if info, err := os.Lstat(filepath.Join(workspacePath, rel, "HEAD")); err == nil && info.Mode().IsRegular() {
+			addGitDir(rel)
+			continue
+		}
+		walkGitModules(workspacePath, rel, depth+1, addGitDir)
+	}
+}
+
+// walkNestedGit finds <dir>/.git below the workspace root (the root .git is
+// covered by the static defaults). A .git dir is a nested repository; a .git
+// file is a submodule or worktree checkout whose gitdir lives elsewhere.
+func walkNestedGit(workspacePath, dirRel string, depth int, add func(string), addGitDir func(string)) {
+	entries, err := os.ReadDir(filepath.Join(workspacePath, dirRel))
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		rel := filepath.Join(dirRel, e.Name())
+		if e.Name() == ".git" {
+			if depth == 0 {
+				continue
+			}
+			switch {
+			case e.Type().IsRegular():
+				add(rel)
+			case e.IsDir():
+				addGitDir(rel)
+			}
+			continue
+		}
+		if e.IsDir() && depth < nestedGitSearchDepth {
+			walkNestedGit(workspacePath, rel, depth+1, add, addGitDir)
+		}
+	}
+}
+
+// materializeNestedGitEntry makes sure rel exists as a real (non-symlink)
+// directory or file, creating a missing one inside an existing parent, and
+// reports whether it can be protected.
+func materializeNestedGitEntry(workspacePath, rel string, isDir bool) bool {
+	hostPath := filepath.Join(workspacePath, rel)
+	if _, err := os.Lstat(hostPath); os.IsNotExist(err) {
+		if isDir {
+			if !isRealDir(filepath.Dir(hostPath)) || os.Mkdir(hostPath, 0o755) != nil {
+				return false
+			}
+		} else if createProtectedFilePlaceholder(hostPath, rel) != nil {
+			return false
+		}
+	}
+	info, err := os.Lstat(hostPath)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	return info.IsDir() == isDir
+}
+
+func isRealDir(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.IsDir()
+}
+
+// isNestedGitPath reports whether rel lies in or is a git dir below the
+// workspace root: .git/modules/... or any later .git segment.
+func isNestedGitPath(rel string) bool {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	for i, part := range parts {
+		if part == ".git" && i > 0 {
+			return true
+		}
+	}
+	return len(parts) > 1 && parts[0] == ".git" && parts[1] == "modules"
+}
+
 // ensureProtectedExists materializes hostPath so it has a real inode
 // to read-only-mount over. Known default directory-type entries are
 // created via a symlink-safe walk. The known file-type entry
@@ -511,6 +670,12 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 
 // pathToDeviceName converts a path to a valid Incus device name
 func pathToDeviceName(path string) string {
+	// Nested git paths come from repo-controlled names: hash them so they
+	// cannot collide with each other or exceed the device name limit.
+	if isNestedGitPath(path) {
+		sum := sha256.Sum256([]byte(path))
+		return protectDevicePrefix + hex.EncodeToString(sum[:])[:16]
+	}
 	// Replace path separators and dots with dashes
 	name := strings.ReplaceAll(path, "/", "-")
 	name = strings.ReplaceAll(name, ".", "")
