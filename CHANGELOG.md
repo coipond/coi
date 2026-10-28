@@ -4,6 +4,7 @@
 
 ### Changed
 
+- [Change] **`coi images` suggests current Debian and Alpine releases** — the remote image hint listed `debian:11` and `alpine:3.19`, which are past end of life. It now lists `debian:13, debian:12` and `alpine:3.24`.
 - [Change] **Smaller sandbox context file** — `SANDBOX_CONTEXT.md` is about half its previous size, so it takes less of the agent's context window. It contains the same rules and environment facts: the repeated autonomy text is merged into one place, tables are now short lists, and the git identity steps are a short list instead of a shell script.
 
 ### Bug Fixes
