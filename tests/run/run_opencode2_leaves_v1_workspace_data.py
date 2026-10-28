@@ -23,7 +23,7 @@ from support.helpers import tool_data_dir
 PROBE = (
     'echo "SHARE=$(ls -A ~/.local/share/opencode | tr "\\n" " ")"; '
     'echo "STATE=$(ls -A ~/.local/state/opencode | tr "\\n" " ")"; '
-    "cat ~/.local/share/opencode/opencode.db 2>/dev/null"
+    "cat ~/.local/share/opencode/opencode.db 2>/dev/null || true"
 )
 
 
