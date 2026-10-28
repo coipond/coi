@@ -53,6 +53,12 @@ func TestBuildScriptEnv_AptMirror(t *testing.T) {
 		t.Errorf("expected both COI_AGENTS and COI_APT_MIRROR, got %v", env)
 	}
 
+	// The mirror time limit rides along with the mirror, and only with it.
+	t.Setenv("COI_APT_MIRROR_TIMEOUT", "120")
+	if env := buildScriptEnv(nil, false); env["COI_APT_MIRROR_TIMEOUT"] != "120" {
+		t.Errorf("COI_APT_MIRROR_TIMEOUT not forwarded, got %v", env)
+	}
+
 	t.Setenv("COI_APT_MIRROR", "")
 	if env := buildScriptEnv(nil, false); env != nil {
 		t.Errorf("unset mirror + no agents should yield nil env, got %v", env)

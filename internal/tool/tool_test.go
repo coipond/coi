@@ -669,16 +669,17 @@ func TestRenderContextFileContent(t *testing.T) {
 		{"OS info", "Ubuntu"},
 		{"architecture", "amd64"},
 		{"docker row", "Docker-in-Docker"},
-		{"troubleshooting section", "Troubleshooting"},
+		{"docker troubleshooting", "sudo systemctl start docker"},
+		{"sudo chown fix", "sudo chown -R"},
 		{"limitations section", "Limitations"},
 		{"protected paths", ".git/hooks, .vscode"},
 		{"ephemeral warning", "System-level changes"},
 		{"timezone", "America/New_York"},
 		{"tool name", "claude"},
 		{"container name", "coi-test-1"},
-		{"autonomous operation section", "Autonomous Operation"},
+		{"autonomy guidance", "full autonomy"},
 		{"never ask confirmation", "Never ask for confirmation"},
-		{"act autonomously guidance", "expected to act, not ask"},
+		{"act autonomously guidance", "Act, don't ask"},
 		{"git configuration section", "Git Configuration"},
 		{"git ssh recommendation", "Use SSH for git operations"},
 		{"git identity warning", `NEVER fabricate`},
@@ -712,7 +713,7 @@ func TestRenderContextFileContent_DockerUnavailable(t *testing.T) {
 	}
 	// The pre-installed-tools line and the docker troubleshooting bullet must
 	// be gated out too.
-	if strings.Contains(content, "Docker not responding") {
+	if strings.Contains(content, "systemctl start docker") {
 		t.Error("hardened context must omit the docker troubleshooting bullet")
 	}
 
@@ -988,7 +989,7 @@ func TestRenderContextFileContent_GitAuthHints_SSHOnly(t *testing.T) {
 	if !strings.Contains(content, "Use SSH for git operations") {
 		t.Error("Expected SSH recommendation for git operations")
 	}
-	if !strings.Contains(content, `ssh -T -o StrictHostKeyChecking=accept-new -o BatchMode=yes "git@${ssh_host}"`) {
+	if !strings.Contains(content, "ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@") {
 		t.Error("Expected ssh -T command for identity discovery")
 	}
 	if !strings.Contains(content, "git remote get-url origin") {
@@ -1055,7 +1056,7 @@ func TestRenderContextFileContent_GitAuthHints_BothSSHAndToken(t *testing.T) {
 	if !strings.Contains(content, "GH_TOKEN/GITHUB_TOKEN may have limited scope") {
 		t.Error("Expected token scope warning")
 	}
-	if !strings.Contains(content, `ssh -T -o StrictHostKeyChecking=accept-new -o BatchMode=yes "git@${ssh_host}"`) {
+	if !strings.Contains(content, "ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@") {
 		t.Error("Expected ssh -T command for identity discovery")
 	}
 	if !strings.Contains(content, "NEVER fabricate") {

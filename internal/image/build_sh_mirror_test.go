@@ -12,6 +12,7 @@ import (
 // restore_default_apt_sources / apt_get from build.sh and runs `script` in bash
 // with a temp ubuntu.sources and a fake apt-get on PATH. The fake apt-get logs
 // each call and fails while the sources point at the mirror unless okOnMirror.
+// With FAKE_HANG_ON_MIRROR set, it hangs while pointed at the mirror instead.
 func runMirrorFallback(t *testing.T, mirror string, okOnMirror, okOnDefault bool, script string) (out, sources string, err error) {
 	t.Helper()
 	if _, lookErr := exec.LookPath("bash"); lookErr != nil {
@@ -29,6 +30,7 @@ func runMirrorFallback(t *testing.T, mirror string, okOnMirror, okOnDefault bool
 	boolStr := map[bool]string{true: "0", false: "1"}
 	fake := `#!/bin/sh
 echo "apt-get $*" >> "` + filepath.Join(dir, "calls.log") + `"
+if [ -n "${FAKE_HANG_ON_MIRROR:-}" ] && grep -q azure "` + src + `"; then exec sleep 30; fi
 if grep -q "` + "azure" + `" "` + src + `"; then exit ` + boolStr[okOnMirror] + `; fi
 exit ` + boolStr[okOnDefault] + `
 `
@@ -68,8 +70,10 @@ func TestAptGet_FallsBackFromFailingMirror(t *testing.T) {
 	if strings.Contains(sources, "azure") || !strings.Contains(sources, "http://archive.ubuntu.com/ubuntu") {
 		t.Errorf("stock sources should be restored, got:\n%s", sources)
 	}
-	if strings.Count(out, "apt-get install -y -qq git") != 2 || !strings.Contains(out, "apt-get update -qq") {
-		t.Errorf("want install, update, install again; calls:\n%s", out)
+	if !strings.Contains(out, "apt-get install --download-only -y -qq git") ||
+		!strings.Contains(out, "apt-get update -qq") ||
+		strings.Count(out, "apt-get install -y -qq git") != 1 {
+		t.Errorf("want mirror download, update, then one install from the stock archive; calls:\n%s", out)
 	}
 }
 
@@ -82,6 +86,30 @@ func TestAptGet_UsesWorkingMirror(t *testing.T) {
 	}
 	if !strings.Contains(sources, "azure.archive.ubuntu.com") {
 		t.Errorf("sources should point at the mirror, got:\n%s", sources)
+	}
+	if !strings.Contains(out, "apt-get install --download-only -y -qq git") ||
+		strings.Count(out, "apt-get install -y -qq git") != 1 {
+		t.Errorf("want a time-limited download, then the install; calls:\n%s", out)
+	}
+}
+
+// A mirror that stalls (slow, but never erroring) is abandoned after
+// COI_APT_MIRROR_TIMEOUT and the build falls back to the stock archive.
+func TestAptGet_FallsBackFromStalledMirror(t *testing.T) {
+	for _, step := range []string{"install -y -qq git", "update -qq"} {
+		t.Run(strings.Fields(step)[0], func(t *testing.T) {
+			out, sources, err := runMirrorFallback(t, "http://azure.archive.ubuntu.com/ubuntu", true, true,
+				`export FAKE_HANG_ON_MIRROR=1 COI_APT_MIRROR_TIMEOUT=1; configure_apt_mirror; apt_get `+step+` && echo STEP_OK`)
+			if err != nil || !strings.Contains(out, "STEP_OK") {
+				t.Fatalf("step should succeed via the fallback (err=%v):\n%s", err, out)
+			}
+			if !strings.Contains(out, "took over 1s") {
+				t.Errorf("the stall should be logged:\n%s", out)
+			}
+			if strings.Contains(sources, "azure") {
+				t.Errorf("stock sources should be restored, got:\n%s", sources)
+			}
+		})
 	}
 }
 
