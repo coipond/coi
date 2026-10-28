@@ -51,6 +51,8 @@ type SecurityOptions struct {
 	Docker                    bool                   // [container] docker: nesting + syscall interception + low-port sysctl (precedence vs ReduceKernelSurface resolved by container.HardeningPolicy.DockerEnabled)
 	ReduceKernelSurface       bool                   // [security] reduce_kernel_surface: deny high-risk kernel-escape syscalls; wins over Docker
 	ReduceKernelSurfaceStrict bool                   // [security] reduce_kernel_surface_strict: additionally deny perf_event_open (implies ReduceKernelSurface)
+
+	nestedGitScan func() nestedGitScan // started by Setup; nil scans at mount time
 }
 
 // NetworkOptions groups network isolation and host<->container forwarding.
@@ -162,6 +164,12 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		opts.Logger = func(msg string) {
 			fmt.Fprintf(os.Stderr, "[setup] %s\n", msg)
 		}
+	}
+
+	// The nested git walk reads the whole tree to a bounded depth; start it now
+	// so it overlaps the Incus calls before the security mounts.
+	if opts.Security.nestedGitScan == nil && opts.WorkspacePath != "" && (opts.Security.Config == nil || !opts.Security.Config.DisableProtection) {
+		opts.Security.nestedGitScan = startNestedGitScan(opts.WorkspacePath)
 	}
 
 	st := &setupState{opts: opts, result: &SetupResult{}}

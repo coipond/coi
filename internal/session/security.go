@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
@@ -34,15 +35,37 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // error if a mount failed. The list is returned even on error so a partial failure
 // still applies the immutable attribute to the full set.
 func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig) ([]string, error) {
+	return setupSecurityMounts(mgr, workspacePath, containerWorkspacePath, protectedPaths, useShift, sec, nil)
+}
+
+// diskBatchMounter is the optional Manager method that adds many disk devices
+// in one Incus call.
+type diskBatchMounter interface {
+	MountDisks(mounts []container.DiskMount) error
+}
+
+// setupSecurityMounts is SetupSecurityMounts with the nested git scan
+// optionally started earlier (nil scans now). The nested git entries, whose
+// number grows with the submodules, are mounted in one batch.
+func setupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, nestedScan func() nestedGitScan) ([]string, error) {
 	protectedPaths = ExpandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec)
-	protectedPaths = ExpandNestedGitProtectedPaths(workspacePath, protectedPaths, sec)
+	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, nestedScan)
 	if len(protectedPaths) == 0 {
 		return protectedPaths, nil
 	}
 
 	var warnings []string
+	var batch []container.DiskMount
 	for _, relPath := range protectedPaths {
-		if err := setupProtectedPath(mgr, workspacePath, containerWorkspacePath, relPath, useShift); err != nil {
+		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift)
+		if err == nil {
+			if isNestedGitPath(relPath) {
+				batch = append(batch, d)
+				continue
+			}
+			err = mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly)
+		}
+		if err != nil {
 			if errors.Is(err, errGitDirIndirection) {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", relPath, err))
 				continue
@@ -57,6 +80,9 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 				return protectedPaths, fmt.Errorf("failed to protect %s: %w", relPath, err)
 			}
 		}
+	}
+	if err := mountDiskBatch(mgr, batch); err != nil {
+		return protectedPaths, fmt.Errorf("failed to protect nested git paths: %w", err)
 	}
 
 	if len(warnings) > 0 {
@@ -152,7 +178,7 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 		// real internals; keep the non-.git protections.
 		securityPaths = StripGitProtectedPaths(securityPaths)
 	}
-	effectivePaths, mErr := SetupSecurityMounts(mgr, opts.WorkspacePath, containerWorkspacePath, securityPaths, useShift, opts.Security.Config)
+	effectivePaths, mErr := setupSecurityMounts(mgr, opts.WorkspacePath, containerWorkspacePath, securityPaths, useShift, opts.Security.Config, opts.Security.nestedGitScan)
 	if mErr != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to setup security mounts: %v", mErr))
 		// Non-fatal: continue even if a read-only protection mount fails.
@@ -201,10 +227,28 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 	return effectivePaths, hasImmutable, nil
 }
 
-// setupProtectedPath mounts a single path as read-only
-func setupProtectedPath(mgr container.ContainerDevices, workspacePath, containerWorkspacePath, relPath string, useShift bool) error {
+// mountDiskBatch adds mounts in one call when mgr supports it, else one by one.
+func mountDiskBatch(mgr container.ContainerDevices, mounts []container.DiskMount) error {
+	if len(mounts) == 0 {
+		return nil
+	}
+	if bm, ok := mgr.(diskBatchMounter); ok {
+		return bm.MountDisks(mounts)
+	}
+	for _, d := range mounts {
+		if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prepareProtectedPath validates and materializes one protected path and
+// returns its read-only disk device, without mounting it.
+func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string, useShift bool) (container.DiskMount, error) {
+	var none container.DiskMount
 	if err := validateRelPath(relPath); err != nil {
-		return err
+		return none, err
 	}
 	cleaned := filepath.Clean(relPath)
 
@@ -222,38 +266,34 @@ func setupProtectedPath(mgr container.ContainerDevices, workspacePath, container
 		gitInfo, err := os.Lstat(gitDir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return os.ErrNotExist // Not a git repo
+				return none, os.ErrNotExist // Not a git repo
 			}
-			return fmt.Errorf("failed to stat .git: %w", err)
+			return none, fmt.Errorf("failed to stat .git: %w", err)
 		}
 		if gitInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%w: .git is a symlink, so git commands may fail and git protected paths cannot be mounted from the workspace", errGitDirIndirection)
+			return none, fmt.Errorf("%w: .git is a symlink, so git commands may fail and git protected paths cannot be mounted from the workspace", errGitDirIndirection)
 		}
 		if !gitInfo.IsDir() {
-			return fmt.Errorf("%w: .git is a file, so git commands may fail and git protected paths are not applied because git internals may live outside the mounted workspace", errGitDirIndirection)
+			return none, fmt.Errorf("%w: .git is a file, so git commands may fail and git protected paths are not applied because git internals may live outside the mounted workspace", errGitDirIndirection)
 		}
 	}
 
 	if err := ensureProtectedExists(workspacePath, hostPath, cleaned); err != nil {
-		return err // os.ErrNotExist surfaces for unknown / user-added missing paths
+		return none, err // os.ErrNotExist surfaces for unknown / user-added missing paths
 	}
 
 	// Use Lstat to avoid following symlinks (security measure)
 	info, err := os.Lstat(hostPath)
 	if err != nil {
-		return fmt.Errorf("failed to stat %s after materialization: %w", cleaned, err)
+		return none, fmt.Errorf("failed to stat %s after materialization: %w", cleaned, err)
 	}
 
 	// Security check: reject symlinks to prevent mounting arbitrary host paths
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink; refusing to mount for security reasons", cleaned)
+		return none, fmt.Errorf("%s is a symlink; refusing to mount for security reasons", cleaned)
 	}
 
-	// Generate unique device name from path
-	deviceName := pathToDeviceName(cleaned)
-
-	// Mount as read-only
-	return mgr.MountDisk(deviceName, hostPath, containerPath, useShift, true)
+	return container.DiskMount{Name: pathToDeviceName(cleaned), Source: hostPath, Path: containerPath, Shift: useShift, Readonly: true}, nil
 }
 
 // validateRelPath rejects protected_paths entries that are empty,
@@ -422,6 +462,12 @@ const gitModulesSearchDepth = 8
 // below the workspace root, mirroring the root .git defaults.
 var nestedGitDirEntries = []string{"hooks", "config", "config.worktree", filepath.Join("info", "attributes")}
 
+// nestedGitScan is what scanNestedGit found below the workspace root.
+type nestedGitScan struct {
+	gitDirs  []string // submodule git dirs and nested .git dirs
+	gitFiles []string // .git files of submodule or worktree checkouts
+}
+
 // ExpandNestedGitProtectedPaths returns paths plus protected entries for the git
 // dirs below the workspace root: submodule git dirs (.git/modules/**, nested
 // modules included) and nested repositories (<dir>/.git, up to
@@ -439,9 +485,20 @@ var nestedGitDirEntries = []string{"hooks", "config", "config.worktree", filepat
 // disable_protection, writable_paths, symlinks and idempotency are handled as
 // in ExpandGitWorktreeProtectedPaths.
 func ExpandNestedGitProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig) []string {
+	return expandNestedGit(workspacePath, paths, sec, nil)
+}
+
+// expandNestedGit is ExpandNestedGitProtectedPaths with the scan optionally
+// started earlier (startNestedGitScan); nil scans now.
+func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityConfig, scan func() nestedGitScan) []string {
 	if sec != nil && sec.DisableProtection {
 		return paths
 	}
+	if scan == nil {
+		scan = func() nestedGitScan { return scanNestedGit(workspacePath) }
+	}
+	found := scan()
+
 	seen := make(map[string]bool, len(paths))
 	for _, p := range paths {
 		seen[filepath.ToSlash(p)] = true
@@ -457,22 +514,47 @@ func ExpandNestedGitProtectedPaths(workspacePath string, paths []string, sec *co
 		seen[filepath.ToSlash(rel)] = true
 		out = append(out, rel)
 	}
-	var addGitDir func(string)
-	addGitDir = func(gitDirRel string) {
+	for _, gitDir := range found.gitDirs {
 		for _, entry := range nestedGitDirEntries {
-			rel := filepath.Join(gitDirRel, entry)
+			rel := filepath.Join(gitDir, entry)
 			if materializeNestedGitEntry(workspacePath, rel, entry == "hooks") {
 				add(rel)
 			}
 		}
+	}
+	for _, f := range found.gitFiles {
+		add(f)
+	}
+	return out
+}
+
+// startNestedGitScan runs scanNestedGit in the background and returns a func
+// that waits for its result. Setup starts it before the container is created,
+// so the walk of a large tree overlaps the Incus calls instead of adding to
+// the launch time.
+func startNestedGitScan(workspacePath string) func() nestedGitScan {
+	ch := make(chan nestedGitScan, 1)
+	go func() { ch <- scanNestedGit(workspacePath) }()
+	return sync.OnceValue(func() nestedGitScan { return <-ch })
+}
+
+// scanNestedGit finds the git dirs and .git files below the workspace root.
+// It only reads: materializing happens in expandNestedGit, after the
+// disable_protection check.
+func scanNestedGit(workspacePath string) nestedGitScan {
+	var found nestedGitScan
+	var addGitDir func(string)
+	addGitDir = func(gitDirRel string) {
+		found.gitDirs = append(found.gitDirs, gitDirRel)
 		walkGitModules(workspacePath, filepath.Join(gitDirRel, "modules"), 1, addGitDir)
 	}
+	addGitFile := func(rel string) { found.gitFiles = append(found.gitFiles, rel) }
 
 	if isRealDir(filepath.Join(workspacePath, ".git")) {
 		walkGitModules(workspacePath, filepath.Join(".git", "modules"), 1, addGitDir)
 	}
-	walkNestedGit(workspacePath, "", 0, add, addGitDir)
-	return out
+	walkNestedGit(workspacePath, "", 0, addGitFile, addGitDir)
+	return found
 }
 
 // walkGitModules calls addGitDir for each git dir (a dir with a HEAD file)
@@ -503,7 +585,7 @@ func walkGitModules(workspacePath, modulesRel string, depth int, addGitDir func(
 // walkNestedGit finds <dir>/.git below the workspace root (the root .git is
 // covered by the static defaults). A .git dir is a nested repository; a .git
 // file is a submodule or worktree checkout whose gitdir lives elsewhere.
-func walkNestedGit(workspacePath, dirRel string, depth int, add func(string), addGitDir func(string)) {
+func walkNestedGit(workspacePath, dirRel string, depth int, addGitFile, addGitDir func(string)) {
 	entries, err := os.ReadDir(filepath.Join(workspacePath, dirRel))
 	if err != nil {
 		return
@@ -516,14 +598,14 @@ func walkNestedGit(workspacePath, dirRel string, depth int, add func(string), ad
 			}
 			switch {
 			case e.Type().IsRegular():
-				add(rel)
+				addGitFile(rel)
 			case e.IsDir():
 				addGitDir(rel)
 			}
 			continue
 		}
 		if e.IsDir() && depth < nestedGitSearchDepth {
-			walkNestedGit(workspacePath, rel, depth+1, add, addGitDir)
+			walkNestedGit(workspacePath, rel, depth+1, addGitFile, addGitDir)
 		}
 	}
 }

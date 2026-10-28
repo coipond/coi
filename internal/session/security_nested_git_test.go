@@ -5,10 +5,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 )
 
 // mkGitDir creates a minimal git dir (HEAD, config, hooks, info) at rel.
@@ -221,5 +223,70 @@ func TestPathToDeviceName_NestedGitHashed(t *testing.T) {
 	}
 	if got := pathToDeviceName(".git/hooks"); got != "protect-git-hooks" {
 		t.Errorf("root default name changed: %q", got)
+	}
+}
+
+// batchDevices is recordingDevices plus MountDisks, counting batch calls.
+type batchDevices struct {
+	recordingDevices
+	batches [][]container.DiskMount
+}
+
+func (b *batchDevices) MountDisks(mounts []container.DiskMount) error {
+	b.batches = append(b.batches, mounts)
+	return nil
+}
+
+// The Incus call count must not grow with the number of submodules: the
+// nested entries go in one MountDisks batch.
+func TestSetupSecurityMounts_NestedGitInOneBatch(t *testing.T) {
+	for _, n := range []int{1, 10, 100} {
+		tmp := t.TempDir()
+		mkGitDir(t, tmp, ".git")
+		for i := range n {
+			mkGitDir(t, tmp, filepath.Join(".git", "modules", "m"+strconv.Itoa(i)))
+		}
+		dev := &batchDevices{}
+		if _, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", ".git/config"}, false, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(dev.mounts) != 2 || len(dev.batches) != 1 || len(dev.batches[0]) != 4*n {
+			t.Errorf("n=%d: want 2 single mounts and 1 batch of %d, got %d mounts, batches %d", n, 4*n, len(dev.mounts), len(dev.batches))
+		}
+	}
+}
+
+// A scan started early (Setup) gives the same mounts as one run at mount time.
+func TestSetupSecurityMounts_PrefetchedScan(t *testing.T) {
+	tmp := t.TempDir()
+	mkGitDir(t, tmp, ".git")
+	mkGitDir(t, tmp, ".git/modules/lib")
+	mkGitDir(t, tmp, "sub/.git")
+
+	sync, err := SetupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pre, err := setupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil, startNestedGitScan(tmp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(sync, pre) || len(pre) != 8 {
+		t.Errorf("prefetched scan %v differs from sync scan %v", pre, sync)
+	}
+}
+
+// disable_protection writes nothing, even with a scan already done.
+func TestExpandNestedGit_DisabledMaterializesNothing(t *testing.T) {
+	tmp := t.TempDir()
+	mkGitDir(t, tmp, ".git")
+	mkGitDir(t, tmp, ".git/modules/lib")
+	scan := startNestedGitScan(tmp)
+	sec := &config.SecurityConfig{DisableProtection: true}
+	if out := expandNestedGit(tmp, nil, sec, scan); len(out) != 0 {
+		t.Errorf("want no paths, got %v", out)
+	}
+	if _, err := os.Lstat(filepath.Join(tmp, ".git/modules/lib/config.worktree")); !os.IsNotExist(err) {
+		t.Errorf("placeholder must not be created when protection is disabled: %v", err)
 	}
 }
