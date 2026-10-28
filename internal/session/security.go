@@ -30,28 +30,20 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // opt-outs (disable_protection / writable_paths) honored during expansion; it may
 // be nil (expand unconditionally).
 //
+// The git dirs below the root (submodules, nested repositories) are expanded
+// here too (expandNestedGit), from scan: a scan started early with
+// StartNestedGitScan so the walk overlaps the caller's Incus calls, or the zero
+// value to scan now. Their entries, whose number grows with the submodules,
+// are mounted in one batch. writableHooks ([git] writable_hooks) leaves their
+// hooks dirs writable, as it does the root one.
+//
 // Returns the effective (expanded) protected-path list, so the caller can drive
 // its logging and host-immutable passes over the same set that was mounted, and an
 // error if a mount failed. The list is returned even on error so a partial failure
 // still applies the immutable attribute to the full set.
-func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig) ([]string, error) {
-	return setupSecurityMounts(mgr, workspacePath, containerWorkspacePath, protectedPaths, useShift, sec, nil, false)
-}
-
-// diskBatchMounter is the optional Manager method that adds many disk devices
-// in one Incus call.
-type diskBatchMounter interface {
-	MountDisks(mounts []container.DiskMount) error
-}
-
-// setupSecurityMounts is SetupSecurityMounts with the nested git scan
-// optionally started earlier (nil scans now). The nested git entries, whose
-// number grows with the submodules, are mounted in one batch. writableHooks
-// ([git] writable_hooks) leaves the nested hooks dirs writable, as it does the
-// root one.
-func setupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, nestedScan func() nestedGitScan, writableHooks bool) ([]string, error) {
+func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) ([]string, error) {
 	protectedPaths = ExpandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec)
-	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, nestedScan, writableHooks)
+	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, scan, writableHooks)
 	if len(protectedPaths) == 0 {
 		return protectedPaths, nil
 	}
@@ -92,6 +84,12 @@ func setupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 	}
 
 	return protectedPaths, nil
+}
+
+// diskBatchMounter is the optional Manager method that adds many disk devices
+// in one Incus call.
+type diskBatchMounter interface {
+	MountDisks(mounts []container.DiskMount) error
 }
 
 // securityDeviceStripper is the container API slice StripSecurityDevices needs.
@@ -172,7 +170,7 @@ func StripSecurityDevices(mgr securityDeviceStripper, logger func(string)) {
 // failure (a configured secret could not be masked); the caller must abort start
 // rather than launch with the secret exposed. Read-only protected-mount failures
 // are logged and non-fatal, matching prior behavior.
-func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, containerWorkspacePath string, useShift bool, worktreeLayout *GitWorktreeLayout, worktreeWritableHooks bool, containerName string) (effectivePaths []string, hasImmutable bool, err error) {
+func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, containerWorkspacePath string, useShift bool, worktreeLayout *GitWorktreeLayout, worktreeWritableHooks bool, containerName string, nestedScan NestedGitScan) (effectivePaths []string, hasImmutable bool, err error) {
 	securityPaths := opts.Security.ProtectedPaths
 	if worktreeLayout != nil {
 		// Workspace .git is a file; its .git/* defaults can't be protected here
@@ -180,7 +178,7 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 		// real internals; keep the non-.git protections.
 		securityPaths = StripGitProtectedPaths(securityPaths)
 	}
-	effectivePaths, mErr := setupSecurityMounts(mgr, opts.WorkspacePath, containerWorkspacePath, securityPaths, useShift, opts.Security.Config, opts.Security.nestedGitScan, worktreeWritableHooks)
+	effectivePaths, mErr := SetupSecurityMounts(mgr, opts.WorkspacePath, containerWorkspacePath, securityPaths, useShift, opts.Security.Config, nestedScan, worktreeWritableHooks)
 	if mErr != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to setup security mounts: %v", mErr))
 		// Non-fatal: continue even if a read-only protection mount fails.
@@ -464,13 +462,39 @@ const gitModulesSearchDepth = 8
 // below the workspace root, mirroring the root .git defaults.
 var nestedGitDirEntries = []string{"hooks", "config", "config.worktree", filepath.Join("info", "attributes")}
 
-// nestedGitScan is what scanNestedGit found below the workspace root.
-type nestedGitScan struct {
+// nestedGitFound is what scanNestedGit found below the workspace root.
+type nestedGitFound struct {
 	gitDirs  []string // submodule git dirs and nested .git dirs
 	gitFiles []string // .git files of submodule or worktree checkouts
 }
 
-// ExpandNestedGitProtectedPaths returns paths plus protected entries for the git
+// NestedGitScan is a nested git scan of one workspace, started early by
+// StartNestedGitScan. The zero value, or a scan of another workspace, scans
+// when the result is needed.
+type NestedGitScan struct {
+	workspacePath string
+	result        func() nestedGitFound
+}
+
+// StartNestedGitScan starts the nested git scan of workspacePath in the
+// background. A caller starts it before the container launch and passes it to
+// SetupSecurityMounts, so a walk of a large tree overlaps the Incus calls
+// instead of adding to the launch time.
+func StartNestedGitScan(workspacePath string) NestedGitScan {
+	ch := make(chan nestedGitFound, 1)
+	go func() { ch <- scanNestedGit(workspacePath) }()
+	return NestedGitScan{workspacePath: workspacePath, result: sync.OnceValue(func() nestedGitFound { return <-ch })}
+}
+
+// resultFor waits for the scan when it is of workspacePath, else scans now.
+func (s NestedGitScan) resultFor(workspacePath string) nestedGitFound {
+	if s.result == nil || s.workspacePath != workspacePath {
+		return scanNestedGit(workspacePath)
+	}
+	return s.result()
+}
+
+// expandNestedGit returns paths plus protected entries for the git
 // dirs below the workspace root: submodule git dirs (.git/modules/**, nested
 // modules included) and nested repositories (<dir>/.git, up to
 // nestedGitSearchDepth). For each such git dir its hooks, config,
@@ -485,22 +509,12 @@ type nestedGitScan struct {
 // the next launch.
 //
 // disable_protection, writable_paths, symlinks and idempotency are handled as
-// in ExpandGitWorktreeProtectedPaths.
-func ExpandNestedGitProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig) []string {
-	return expandNestedGit(workspacePath, paths, sec, nil, false)
-}
-
-// expandNestedGit is ExpandNestedGitProtectedPaths with the scan optionally
-// started earlier (startNestedGitScan; nil scans now) and the hooks entries
-// left out when writableHooks is set.
-func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityConfig, scan func() nestedGitScan, writableHooks bool) []string {
+// in ExpandGitWorktreeProtectedPaths; writableHooks leaves the hooks entries out.
+func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) []string {
 	if sec != nil && sec.DisableProtection {
 		return paths
 	}
-	if scan == nil {
-		scan = func() nestedGitScan { return scanNestedGit(workspacePath) }
-	}
-	found := scan()
+	found := scan.resultFor(workspacePath)
 
 	seen := make(map[string]bool, len(paths))
 	for _, p := range paths {
@@ -534,47 +548,13 @@ func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityC
 	return out
 }
 
-// NestedGitScan is a nested git scan started early by StartNestedGitScan.
-// The zero value, or a scan of another workspace, scans at mount time.
-type NestedGitScan struct {
-	workspacePath string
-	result        func() nestedGitScan
-}
-
-// StartNestedGitScan starts the nested git scan of workspacePath in the
-// background, for a caller that mounts later (SetupSecurityMountsWithScan).
-func StartNestedGitScan(workspacePath string) NestedGitScan {
-	return NestedGitScan{workspacePath: workspacePath, result: startNestedGitScan(workspacePath)}
-}
-
-// SetupSecurityMountsWithScan is SetupSecurityMounts with a scan started
-// earlier by StartNestedGitScan, so the walk overlaps the caller's Incus calls,
-// and with writableHooks ([git] writable_hooks) leaving nested hooks writable.
-func SetupSecurityMountsWithScan(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) ([]string, error) {
-	result := scan.result
-	if scan.workspacePath != workspacePath {
-		result = nil
-	}
-	return setupSecurityMounts(mgr, workspacePath, containerWorkspacePath, protectedPaths, useShift, sec, result, writableHooks)
-}
-
-// startNestedGitScan runs scanNestedGit in the background and returns a func
-// that waits for its result. Setup starts it before the container is created,
-// so the walk of a large tree overlaps the Incus calls instead of adding to
-// the launch time.
-func startNestedGitScan(workspacePath string) func() nestedGitScan {
-	ch := make(chan nestedGitScan, 1)
-	go func() { ch <- scanNestedGit(workspacePath) }()
-	return sync.OnceValue(func() nestedGitScan { return <-ch })
-}
-
 // scanNestedGit finds the git dirs and .git files below the workspace root.
 // It only reads: materializing happens in expandNestedGit, after the
 // disable_protection check. A submodule checkout's .git file is also found
 // from its git dir's core.worktree, so a checkout below nestedGitSearchDepth
 // is covered too.
-func scanNestedGit(workspacePath string) nestedGitScan {
-	var found nestedGitScan
+func scanNestedGit(workspacePath string) nestedGitFound {
+	var found nestedGitFound
 	var addGitDir func(string)
 	addGitDir = func(gitDirRel string) {
 		found.gitDirs = append(found.gitDirs, gitDirRel)

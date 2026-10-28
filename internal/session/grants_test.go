@@ -205,7 +205,7 @@ func (m *grantsMounter) MountDisk(name, _, _ string, _, _ bool) error {
 func TestBuildGrants_FallbackListsPlaceholders(t *testing.T) {
 	ws := t.TempDir()
 	m := &grantsMounter{}
-	paths, err := SetupSecurityMounts(m, ws, "/workspace", []string{".vscode"}, false, nil)
+	paths, err := SetupSecurityMounts(m, ws, "/workspace", []string{".vscode"}, false, nil, NestedGitScan{}, false)
 	if err != nil || len(m.mounted) != 1 {
 		t.Fatalf("setup mounted %v, err %v", m.mounted, err)
 	}

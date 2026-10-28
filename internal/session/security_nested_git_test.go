@@ -47,7 +47,7 @@ func assertContainsAll(t *testing.T, got, want []string) {
 	}
 }
 
-func TestExpandNestedGitProtectedPaths_Submodules(t *testing.T) {
+func TestExpandNestedGit_Submodules(t *testing.T) {
 	tmp := t.TempDir()
 	mkGitDir(t, tmp, ".git")
 	mkGitDir(t, tmp, ".git/modules/lib")
@@ -60,7 +60,7 @@ func TestExpandNestedGitProtectedPaths_Submodules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := ExpandNestedGitProtectedPaths(tmp, []string{".git/config"}, nil)
+	out := expandNestedGit(tmp, []string{".git/config"}, nil, NestedGitScan{}, false)
 
 	var want []string
 	want = append(want, gitDirEntries(".git/modules/lib")...)
@@ -78,7 +78,7 @@ func TestExpandNestedGitProtectedPaths_Submodules(t *testing.T) {
 	}
 }
 
-func TestExpandNestedGitProtectedPaths_NestedRepoAndDepth(t *testing.T) {
+func TestExpandNestedGit_NestedRepoAndDepth(t *testing.T) {
 	tmp := t.TempDir()
 	mkGitDir(t, tmp, ".git")
 	mkGitDir(t, tmp, "sub/.git")
@@ -89,7 +89,7 @@ func TestExpandNestedGitProtectedPaths_NestedRepoAndDepth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := ExpandNestedGitProtectedPaths(tmp, nil, nil)
+	out := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false)
 
 	var want []string
 	want = append(want, gitDirEntries("sub/.git")...)
@@ -109,24 +109,24 @@ func TestExpandNestedGitProtectedPaths_NestedRepoAndDepth(t *testing.T) {
 	}
 }
 
-func TestExpandNestedGitProtectedPaths_OptOutsAndSymlinks(t *testing.T) {
+func TestExpandNestedGit_OptOutsAndSymlinks(t *testing.T) {
 	tmp := t.TempDir()
 	mkGitDir(t, tmp, ".git")
 	mkGitDir(t, tmp, ".git/modules/lib")
 	hooks := filepath.Join(".git", "modules", "lib", "hooks")
 
 	sec := &config.SecurityConfig{DisableProtection: true}
-	if out := ExpandNestedGitProtectedPaths(tmp, nil, sec); len(out) != 0 {
+	if out := expandNestedGit(tmp, nil, sec, NestedGitScan{}, false); len(out) != 0 {
 		t.Errorf("disable_protection should suppress expansion, got %v", out)
 	}
 
 	sec = &config.SecurityConfig{WritablePaths: []string{hooks}}
-	if out := ExpandNestedGitProtectedPaths(tmp, nil, sec); slices.Contains(out, hooks) {
+	if out := expandNestedGit(tmp, nil, sec, NestedGitScan{}, false); slices.Contains(out, hooks) {
 		t.Errorf("writable_paths entry %q should be excluded, got %v", hooks, out)
 	}
 
-	expanded := ExpandNestedGitProtectedPaths(tmp, nil, nil)
-	if again := ExpandNestedGitProtectedPaths(tmp, expanded, nil); len(again) != len(expanded) {
+	expanded := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false)
+	if again := expandNestedGit(tmp, expanded, nil, NestedGitScan{}, false); len(again) != len(expanded) {
 		t.Errorf("re-expanding must be a no-op, got %v then %v", expanded, again)
 	}
 
@@ -136,7 +136,7 @@ func TestExpandNestedGitProtectedPaths_OptOutsAndSymlinks(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(tmp, hooks)); err != nil {
 		t.Fatal(err)
 	}
-	if out := ExpandNestedGitProtectedPaths(tmp, nil, nil); slices.Contains(out, hooks) {
+	if out := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false); slices.Contains(out, hooks) {
 		t.Errorf("symlinked hooks must not be added, got %v", out)
 	}
 
@@ -147,7 +147,7 @@ func TestExpandNestedGitProtectedPaths_OptOutsAndSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(tmp, "elsewhere"), filepath.Join(linked, ".git", "modules")); err != nil {
 		t.Fatal(err)
 	}
-	if out := ExpandNestedGitProtectedPaths(linked, nil, nil); len(out) != 0 {
+	if out := expandNestedGit(linked, nil, nil, NestedGitScan{}, false); len(out) != 0 {
 		t.Errorf("symlinked modules dir must not be followed, got %v", out)
 	}
 }
@@ -180,7 +180,7 @@ func TestSetupSecurityMounts_ProtectsRealSubmodule(t *testing.T) {
 	git(ws, "submodule", "add", "-q", lib, "lib")
 
 	rec := &recordingDevices{}
-	effective, err := SetupSecurityMounts(rec, ws, "/workspace", nil, false, nil)
+	effective, err := SetupSecurityMounts(rec, ws, "/workspace", nil, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestSetupSecurityMounts_NestedGitInOneBatch(t *testing.T) {
 			mkGitDir(t, tmp, filepath.Join(".git", "modules", "m"+strconv.Itoa(i)))
 		}
 		dev := &batchDevices{}
-		if _, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", ".git/config"}, false, nil); err != nil {
+		if _, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", ".git/config"}, false, nil, NestedGitScan{}, false); err != nil {
 			t.Fatal(err)
 		}
 		if len(dev.mounts) != 2 || len(dev.batches) != 1 || len(dev.batches[0]) != 4*n {
@@ -263,11 +263,11 @@ func TestSetupSecurityMounts_PrefetchedScan(t *testing.T) {
 	mkGitDir(t, tmp, ".git/modules/lib")
 	mkGitDir(t, tmp, "sub/.git")
 
-	sync, err := SetupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil)
+	sync, err := SetupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pre, err := setupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil, startNestedGitScan(tmp), false)
+	pre, err := SetupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil, StartNestedGitScan(tmp), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestExpandNestedGit_DisabledMaterializesNothing(t *testing.T) {
 	tmp := t.TempDir()
 	mkGitDir(t, tmp, ".git")
 	mkGitDir(t, tmp, ".git/modules/lib")
-	scan := startNestedGitScan(tmp)
+	scan := StartNestedGitScan(tmp)
 	sec := &config.SecurityConfig{DisableProtection: true}
 	if out := expandNestedGit(tmp, nil, sec, scan, false); len(out) != 0 {
 		t.Errorf("want no paths, got %v", out)
@@ -291,9 +291,9 @@ func TestExpandNestedGit_DisabledMaterializesNothing(t *testing.T) {
 	}
 }
 
-// SetupSecurityMountsWithScan uses a scan of the same workspace and ignores
+// SetupSecurityMounts uses a scan of the same workspace and ignores
 // one of another workspace (that one is rescanned at mount time).
-func TestSetupSecurityMountsWithScan(t *testing.T) {
+func TestSetupSecurityMounts(t *testing.T) {
 	ws := t.TempDir()
 	mkGitDir(t, ws, ".git")
 	mkGitDir(t, ws, ".git/modules/lib")
@@ -306,7 +306,7 @@ func TestSetupSecurityMountsWithScan(t *testing.T) {
 		"other workspace": StartNestedGitScan(other),
 		"zero value":      {},
 	} {
-		got, err := SetupSecurityMountsWithScan(&recordingDevices{}, ws, "/workspace", nil, false, nil, scan, false)
+		got, err := SetupSecurityMounts(&recordingDevices{}, ws, "/workspace", nil, false, nil, scan, false)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -345,7 +345,7 @@ func TestSetupSecurityMounts_DeepSubmoduleGitFile(t *testing.T) {
 	deep := filepath.Join("third_party", "github.com", "org", "lib")
 	gitCmd(t, ws, "submodule", "add", "-q", lib, deep)
 
-	got, err := SetupSecurityMounts(&recordingDevices{}, ws, "/workspace", nil, false, nil)
+	got, err := SetupSecurityMounts(&recordingDevices{}, ws, "/workspace", nil, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +409,7 @@ func TestSetupSecurityMounts_WritableHooksSkipsNestedHooks(t *testing.T) {
 	mkGitDir(t, tmp, ".git/modules/lib")
 	mkGitDir(t, tmp, "sub/.git")
 
-	got, err := SetupSecurityMountsWithScan(&recordingDevices{}, tmp, "/workspace", nil, false, nil, NestedGitScan{}, true)
+	got, err := SetupSecurityMounts(&recordingDevices{}, tmp, "/workspace", nil, false, nil, NestedGitScan{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,13 +425,13 @@ func TestSetupSecurityMounts_WritableHooksSkipsNestedHooks(t *testing.T) {
 
 // An early scan's result is what gets mounted: a git dir only the given scan
 // reports (below the walk depth) is protected.
-func TestSetupSecurityMountsWithScan_UsesEarlyScan(t *testing.T) {
+func TestSetupSecurityMounts_UsesEarlyScan(t *testing.T) {
 	ws := t.TempDir()
 	mkGitDir(t, ws, "a/b/c/d/.git")
-	scan := NestedGitScan{workspacePath: ws, result: func() nestedGitScan {
-		return nestedGitScan{gitDirs: []string{"a/b/c/d/.git"}}
+	scan := NestedGitScan{workspacePath: ws, result: func() nestedGitFound {
+		return nestedGitFound{gitDirs: []string{"a/b/c/d/.git"}}
 	}}
-	got, err := SetupSecurityMountsWithScan(&recordingDevices{}, ws, "/workspace", nil, false, nil, scan, false)
+	got, err := SetupSecurityMounts(&recordingDevices{}, ws, "/workspace", nil, false, nil, scan, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,15 +439,13 @@ func TestSetupSecurityMountsWithScan_UsesEarlyScan(t *testing.T) {
 }
 
 func TestStartSetupNestedGitScan(t *testing.T) {
-	opts := SetupOptions{WorkspacePath: t.TempDir()}
-	startSetupNestedGitScan(&opts)
-	if opts.Security.nestedGitScan == nil {
-		t.Error("Setup must start the nested git scan")
+	ws := t.TempDir()
+	if scan := startSetupNestedGitScan(SetupOptions{WorkspacePath: ws}); scan.result == nil || scan.workspacePath != ws {
+		t.Error("Setup must start the nested git scan of its workspace")
 	}
-	opts = SetupOptions{WorkspacePath: t.TempDir()}
+	opts := SetupOptions{WorkspacePath: ws}
 	opts.Security.Config = &config.SecurityConfig{DisableProtection: true}
-	startSetupNestedGitScan(&opts)
-	if opts.Security.nestedGitScan != nil {
+	if scan := startSetupNestedGitScan(opts); scan.result != nil {
 		t.Error("no scan when protection is disabled")
 	}
 }
@@ -482,7 +480,7 @@ func TestApplySessionSecurity_WritableHooksLeavesNestedHooks(t *testing.T) {
 		opts := SetupOptions{WorkspacePath: ws, Logger: func(string) {}}
 		opts.Security.ProtectedPaths = []string{".git/config"}
 		mgr := &sessionMountRecorder{}
-		if _, _, err := applySessionSecurity(mgr, opts, "/workspace", false, nil, writable, "c1"); err != nil {
+		if _, _, err := applySessionSecurity(mgr, opts, "/workspace", false, nil, writable, "c1", NestedGitScan{}); err != nil {
 			t.Fatal(err)
 		}
 		if slices.Contains(mgr.paths, nestedHooks) == writable {

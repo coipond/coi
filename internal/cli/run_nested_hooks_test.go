@@ -8,6 +8,7 @@ import (
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/session"
 )
 
 // mountRecorder records the disk mounts coi run makes, single and batched.
@@ -52,7 +53,7 @@ func TestApplySecurityMounts_WritableHooksLeavesNestedHooks(t *testing.T) {
 		off := false
 		cfg.Security.HostImmutable = &off
 		mgr := &mountRecorder{}
-		if err := (&App{cfg: cfg}).applySecurityMounts(mgr, ws, "/workspace", "c1", false, nil); err != nil {
+		if err := (&App{cfg: cfg}).applySecurityMounts(mgr, ws, "/workspace", "c1", false, nil, session.NestedGitScan{}); err != nil {
 			t.Fatal(err)
 		}
 		got := strings.Join(mgr.paths, "\n")

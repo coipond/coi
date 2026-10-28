@@ -25,6 +25,9 @@ import (
 type runState struct {
 	// After resolve-workspace
 	absWorkspace string
+	// nestedGitScan is the nested git walk started before the launch,
+	// consumed by applySecurityMounts.
+	nestedGitScan session.NestedGitScan
 
 	// releaseLaunchLock releases the per-workspace launch lock taken at slot
 	// selection (session.AcquireLaunchLock); called once the container is up.
@@ -299,7 +302,7 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				}
 				s.containerWorkspace = a.resolveContainerWorkspacePath(s.absWorkspace, layout != nil)
 				defer timing.Start(timing.CatStep, "apply-workspace-mounts")()
-				return a.applyWorkspaceMounts(mgr, s.containerName, s.absWorkspace, &s.containerWorkspace, s.mountConfig, s.useShift, s.rawIdmapActive, false, layout)
+				return a.applyWorkspaceMounts(mgr, s.containerName, s.absWorkspace, &s.containerWorkspace, s.mountConfig, s.useShift, s.rawIdmapActive, false, layout, s.nestedGitScan)
 			}
 
 			// preRestart reconciles a REUSED persistent container's security devices
@@ -370,7 +373,7 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				if err := session.AttachMissingToolDataMounts(mgr, s.mountConfig, s.useShift, logFn); err != nil {
 					return err
 				}
-				secErr := a.applySecurityMounts(secDevices, s.absWorkspace, s.containerWorkspace, s.containerName, s.useShift, layout)
+				secErr := a.applySecurityMounts(secDevices, s.absWorkspace, s.containerWorkspace, s.containerName, s.useShift, layout, s.nestedGitScan)
 				secDevices.Finish() // before the start: drop devices not requested this run
 				return secErr
 			}
