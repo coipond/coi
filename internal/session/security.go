@@ -528,6 +528,29 @@ func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityC
 	return out
 }
 
+// NestedGitScan is a nested git scan started early by StartNestedGitScan.
+// The zero value, or a scan of another workspace, scans at mount time.
+type NestedGitScan struct {
+	workspacePath string
+	result        func() nestedGitScan
+}
+
+// StartNestedGitScan starts the nested git scan of workspacePath in the
+// background, for a caller that mounts later (SetupSecurityMountsWithScan).
+func StartNestedGitScan(workspacePath string) NestedGitScan {
+	return NestedGitScan{workspacePath: workspacePath, result: startNestedGitScan(workspacePath)}
+}
+
+// SetupSecurityMountsWithScan is SetupSecurityMounts with a scan started
+// earlier by StartNestedGitScan, so the walk overlaps the caller's Incus calls.
+func SetupSecurityMountsWithScan(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan) ([]string, error) {
+	result := scan.result
+	if scan.workspacePath != workspacePath {
+		result = nil
+	}
+	return setupSecurityMounts(mgr, workspacePath, containerWorkspacePath, protectedPaths, useShift, sec, result)
+}
+
 // startNestedGitScan runs scanNestedGit in the background and returns a func
 // that waits for its result. Setup starts it before the container is created,
 // so the walk of a large tree overlaps the Incus calls instead of adding to

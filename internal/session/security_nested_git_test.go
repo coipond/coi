@@ -290,3 +290,28 @@ func TestExpandNestedGit_DisabledMaterializesNothing(t *testing.T) {
 		t.Errorf("placeholder must not be created when protection is disabled: %v", err)
 	}
 }
+
+// SetupSecurityMountsWithScan uses a scan of the same workspace and ignores
+// one of another workspace (that one is rescanned at mount time).
+func TestSetupSecurityMountsWithScan(t *testing.T) {
+	ws := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, ".git/modules/lib")
+	other := t.TempDir()
+	mkGitDir(t, other, ".git")
+
+	want := gitDirEntries(".git/modules/lib")
+	for name, scan := range map[string]NestedGitScan{
+		"same workspace":  StartNestedGitScan(ws),
+		"other workspace": StartNestedGitScan(other),
+		"zero value":      {},
+	} {
+		got, err := SetupSecurityMountsWithScan(&recordingDevices{}, ws, "/workspace", nil, false, nil, scan)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: got %v, want %v", name, got, want)
+		}
+	}
+}

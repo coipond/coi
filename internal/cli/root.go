@@ -10,6 +10,7 @@ import (
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/network"
+	"github.com/coipond/coi/internal/session"
 	"github.com/coipond/coi/internal/timing"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +28,7 @@ const rootVersionTemplate = "Coi (Code on Incus) v{{.Version}}\n"
 // package-level vars makes it easier to construct an isolated instance in
 // tests and clears the path toward a multi-session daemon model.
 type App struct {
+	nestedGitScan   session.NestedGitScan // coi run: started before the container launch
 	workspace       string
 	slot            int
 	persistent      bool // config-driven: [container] persistent (no CLI flag)

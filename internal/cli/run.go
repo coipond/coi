@@ -153,6 +153,11 @@ func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Start the nested git walk now so it overlaps the container launch.
+	if !a.cfg.Security.DisableProtection {
+		a.nestedGitScan = session.StartNestedGitScan(absWorkspace)
+	}
+
 	s := &runState{absWorkspace: absWorkspace}
 
 	// Prompt mode (#701): resolve the predefined prompt and validate its flags
@@ -689,7 +694,7 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 	// returns the effective list to drive logging + the immutable pass over the same
 	// set. The immutable pass runs even on a partial mount error, so it is gated on
 	// the returned list rather than the error.
-	effectivePaths, err := session.SetupSecurityMounts(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security)
+	effectivePaths, err := session.SetupSecurityMountsWithScan(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security, a.nestedGitScan)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to setup security mounts: %v\n", err)
 	} else if len(effectivePaths) > 0 {
