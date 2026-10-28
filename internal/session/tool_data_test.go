@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -259,6 +260,150 @@ func TestAttachMissingToolDataMounts_AddsMountWithoutMigration(t *testing.T) {
 	want := []string{"tool-data-opencode2-plan", "tool-data-opencode2-share", "tool-data-opencode2-state"}
 	if got := sorted(f.adds); !slices.Equal(got, want) {
 		t.Errorf("adds = %v, want %v", got, want)
+	}
+}
+
+// The real manager must satisfy containerDirPuller, or the copy never runs.
+var _ containerDirPuller = (*container.Manager)(nil)
+
+// fakeDataDirContainer is a stopped container whose files are a map of
+// container dir -> file name -> content.
+type fakeDataDirContainer struct {
+	fakeDiskDevices
+	dirs    map[string]map[string]string
+	pullErr error
+	pulls   []string
+}
+
+func (f *fakeDataDirContainer) PathKind(p string) (container.PathKind, error) {
+	if _, ok := f.dirs[p]; ok {
+		return container.PathDir, nil
+	}
+	return container.PathNone, nil
+}
+
+func (f *fakeDataDirContainer) PullDirectory(containerPath, localPath string) error {
+	f.pulls = append(f.pulls, containerPath)
+	if f.pullErr != nil {
+		return f.pullErr
+	}
+	if _, ok := f.devices["tool-data-opencode2-plan"]; ok {
+		return errors.New("pulled after the mount was added")
+	}
+	for name, content := range f.dirs[containerPath] {
+		if err := os.MkdirAll(localPath, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(localPath, name), []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// A 0.16 opencode2 container keeps its plans in its rootfs. The new plan
+// mount would hide them, so they are copied to the new host dir before the
+// mount is added. Dirs with MigrateFrom come from the workspace instead.
+func TestAttachMissingToolDataMounts_CopiesContainerPlans(t *testing.T) {
+	mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
+	plan := mc.Mounts[2]
+	f := &fakeDataDirContainer{
+		fakeDiskDevices: fakeDiskDevices{devices: map[string]container.DiskDevice{}},
+		dirs: map[string]map[string]string{
+			"/home/code/.opencode/plan":        {"old.md": "plan"},
+			"/home/code/.local/share/opencode": {"opencode.db": "db"},
+		},
+	}
+	var logs []string
+
+	if err := AttachMissingToolDataMounts(f, mc, true, func(s string) { logs = append(logs, s) }); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/home/code/.opencode/plan"}; !slices.Equal(f.pulls, want) {
+		t.Fatalf("pulls = %v, want %v", f.pulls, want)
+	}
+	if b, _ := os.ReadFile(filepath.Join(plan.HostPath, "old.md")); string(b) != "plan" {
+		t.Errorf("host old.md = %q, want plan", b)
+	}
+	if _, ok := f.devices[plan.DeviceName]; !ok {
+		t.Errorf("plan mount not added")
+	}
+	if !slices.ContainsFunc(logs, func(s string) bool { return strings.Contains(s, "Copied tool data out of the container") }) {
+		t.Errorf("logs = %v, want the copy reported", logs)
+	}
+}
+
+// Nothing is copied when the host dir already holds data, when the mount is
+// already attached, or when the container has no such dir.
+func TestAttachMissingToolDataMounts_SkipsContainerCopy(t *testing.T) {
+	newContainer := func(devices map[string]container.DiskDevice) *fakeDataDirContainer {
+		return &fakeDataDirContainer{
+			fakeDiskDevices: fakeDiskDevices{devices: devices},
+			dirs:            map[string]map[string]string{"/home/code/.opencode/plan": {"old.md": "plan"}},
+		}
+	}
+
+	t.Run("host dir exists", func(t *testing.T) {
+		mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
+		writeFile(t, filepath.Join(mc.Mounts[2].HostPath, "new.md"), "new")
+		f := newContainer(map[string]container.DiskDevice{})
+		if err := AttachMissingToolDataMounts(f, mc, true, func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.pulls) != 0 {
+			t.Errorf("pulls = %v, want none", f.pulls)
+		}
+	})
+
+	t.Run("already attached", func(t *testing.T) {
+		mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
+		plan := mc.Mounts[2]
+		f := newContainer(map[string]container.DiskDevice{
+			plan.DeviceName: {Source: plan.HostPath, Path: plan.ContainerPath, Shift: true},
+		})
+		if err := AttachMissingToolDataMounts(f, mc, true, func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.pulls) != 0 {
+			t.Errorf("pulls = %v, want none", f.pulls)
+		}
+	})
+
+	t.Run("no dir in container", func(t *testing.T) {
+		mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
+		f := newContainer(map[string]container.DiskDevice{})
+		f.dirs = nil
+		if err := AttachMissingToolDataMounts(f, mc, true, func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.pulls) != 0 {
+			t.Errorf("pulls = %v, want none", f.pulls)
+		}
+		if info, err := os.Stat(mc.Mounts[2].HostPath); err != nil || !info.IsDir() {
+			t.Errorf("plan host dir not created: %v", err)
+		}
+	})
+}
+
+// A failed copy warns and still adds the mount: the plans stay in the
+// container, and the session starts.
+func TestAttachMissingToolDataMounts_ContainerCopyFails(t *testing.T) {
+	mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
+	f := &fakeDataDirContainer{
+		fakeDiskDevices: fakeDiskDevices{devices: map[string]container.DiskDevice{}},
+		dirs:            map[string]map[string]string{"/home/code/.opencode/plan": {"old.md": "plan"}},
+		pullErr:         errors.New("boom"),
+	}
+	var logs []string
+
+	if err := AttachMissingToolDataMounts(f, mc, true, func(s string) { logs = append(logs, s) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.devices["tool-data-opencode2-plan"]; !ok {
+		t.Errorf("plan mount not added")
+	}
+	if !slices.ContainsFunc(logs, func(s string) bool { return strings.Contains(s, "Warning: could not copy /home/code/.opencode/plan") }) {
+		t.Errorf("logs = %v, want a copy warning", logs)
 	}
 }
 

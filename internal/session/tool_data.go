@@ -121,6 +121,9 @@ func migrateMountSource(from, to string, logger func(string)) {
 // (opencode and opencode2 both use ~/.local/share/opencode) is removed first:
 // two disk devices can't share a path, so a tool switch would otherwise leave
 // the container unable to start. Its data stays in that tool's host dir.
+// A new mount without MigrateFrom covers a dir that older coi left in the
+// container (opencode2's plan dir in coi 0.16), so what the container holds
+// there is copied to a new host dir first; the mount would hide it otherwise.
 // [[mounts]] devices are otherwise never re-added on reuse; these are coi's
 // own, so converging them is safe. mgr must be able to list its disk devices;
 // when it can't, nothing is done.
@@ -162,10 +165,14 @@ func AttachMissingToolDataMounts(mgr container.ContainerDevices, mc *MountConfig
 		}
 	}
 	for _, m := range wanted {
+		_, attached := disks[m.DeviceName]
+		if !attached && m.MigrateFrom == "" {
+			copyContainerDataDir(mgr, m, logger)
+		}
 		if err := PrepareMountSource(m, logger); err != nil {
 			return err
 		}
-		if _, attached := disks[m.DeviceName]; attached {
+		if attached {
 			continue
 		}
 		logger(fmt.Sprintf("Adding mount: %s -> %s", m.HostPath, m.ContainerPath))
@@ -174,4 +181,37 @@ func AttachMissingToolDataMounts(mgr container.ContainerDevices, mc *MountConfig
 		}
 	}
 	return nil
+}
+
+// containerDirPuller reads a stopped container's files (the files API, no
+// exec).
+type containerDirPuller interface {
+	PathKind(p string) (container.PathKind, error)
+	PullDirectory(containerPath, localPath string) error
+}
+
+// copyContainerDataDir copies m's container dir to its host dir when the host
+// dir doesn't exist yet. A failed copy only warns: the data stays in the
+// container, hidden by the mount.
+func copyContainerDataDir(mgr container.ContainerDevices, m MountEntry, logger func(string)) {
+	if _, err := os.Lstat(m.HostPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	puller, ok := mgr.(containerDirPuller)
+	if !ok {
+		return
+	}
+	kind, err := puller.PathKind(m.ContainerPath)
+	if err != nil {
+		logger(fmt.Sprintf("Warning: could not check %s in the container (%v); its data is hidden by the new mount", m.ContainerPath, err))
+		return
+	}
+	if kind != container.PathDir {
+		return
+	}
+	if err := puller.PullDirectory(m.ContainerPath, m.HostPath); err != nil {
+		logger(fmt.Sprintf("Warning: could not copy %s from the container to %s (%v); its data is hidden by the new mount", m.ContainerPath, m.HostPath, err))
+		return
+	}
+	logger(fmt.Sprintf("Copied tool data out of the container: %s -> %s", m.ContainerPath, m.HostPath))
 }

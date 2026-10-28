@@ -8,7 +8,7 @@
 
 ### Bug Fixes
 
-- [Bug Fix] **opencode2 keeps its plan files across ephemeral sessions** — OpenCode v2's Plan agent writes plans to `~/.opencode/plan`, which went away with an ephemeral container. That dir is now a per-workspace host directory, `~/.coi/tool-data/opencode2/<hash>/plan/`, mounted into the container like opencode's data dirs (a persistent container gets the mount on its next start). A workspace's own `.opencode/plan` is not touched.
+- [Bug Fix] **opencode2 keeps its plan files across ephemeral sessions** — OpenCode v2's Plan agent writes plans to `~/.opencode/plan`, which went away with an ephemeral container. That dir is now a per-workspace host directory, `~/.coi/tool-data/opencode2/<hash>/plan/`, mounted into the container like opencode's data dirs. A persistent container gets the mount on its next start; the plans it already holds are copied to that directory first. A workspace's own `.opencode/plan` is not touched.
 - [Bug Fix] **Image builds no longer hang on a slow apt mirror** — with `COI_APT_MIRROR` set, a mirror that kept sending data very slowly never hit apt's timeout, so one package download could take an hour. Package list updates and downloads from the mirror now have a 5-minute limit (`COI_APT_MIRROR_TIMEOUT`, in seconds); past it, the build switches to the default Ubuntu archive.
 
 ## 0.16.0 (2026-10-23)
