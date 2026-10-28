@@ -290,10 +290,10 @@ func (f *fakeDataDirContainer) PullDirectory(containerPath, localPath string) er
 	if _, ok := f.devices["tool-data-opencode2-plan"]; ok {
 		return errors.New("pulled after the mount was added")
 	}
+	if err := os.MkdirAll(localPath, 0o755); err != nil {
+		return err
+	}
 	for name, content := range f.dirs[containerPath] {
-		if err := os.MkdirAll(localPath, 0o755); err != nil {
-			return err
-		}
 		if err := os.WriteFile(filepath.Join(localPath, name), []byte(content), 0o644); err != nil {
 			return err
 		}
@@ -333,8 +333,8 @@ func TestAttachMissingToolDataMounts_CopiesContainerPlans(t *testing.T) {
 	}
 }
 
-// Nothing is copied when the host dir already holds data, when the mount is
-// already attached, or when the container has no such dir.
+// Nothing is copied when the mount is already attached, or when the container
+// has no such dir.
 func TestAttachMissingToolDataMounts_SkipsContainerCopy(t *testing.T) {
 	newContainer := func(devices map[string]container.DiskDevice) *fakeDataDirContainer {
 		return &fakeDataDirContainer{
@@ -342,18 +342,6 @@ func TestAttachMissingToolDataMounts_SkipsContainerCopy(t *testing.T) {
 			dirs:            map[string]map[string]string{"/home/code/.opencode/plan": {"old.md": "plan"}},
 		}
 	}
-
-	t.Run("host dir exists", func(t *testing.T) {
-		mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
-		writeFile(t, filepath.Join(mc.Mounts[2].HostPath, "new.md"), "new")
-		f := newContainer(map[string]container.DiskDevice{})
-		if err := AttachMissingToolDataMounts(f, mc, true, func(string) {}); err != nil {
-			t.Fatal(err)
-		}
-		if len(f.pulls) != 0 {
-			t.Errorf("pulls = %v, want none", f.pulls)
-		}
-	})
 
 	t.Run("already attached", func(t *testing.T) {
 		mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
@@ -383,6 +371,49 @@ func TestAttachMissingToolDataMounts_SkipsContainerCopy(t *testing.T) {
 			t.Errorf("plan host dir not created: %v", err)
 		}
 	})
+}
+
+// The host dir is shared by every slot on the workspace. Each 0.16 slot's
+// plans are moved in on its first reuse; an entry the host dir already holds
+// is kept and the container's copy is skipped with a warning.
+func TestAttachMissingToolDataMounts_MergesPlansIntoSharedHostDir(t *testing.T) {
+	coiDir, ws := t.TempDir(), t.TempDir()
+	plan := WithToolDataMounts(nil, coiDir, tool.NewOpencode2(), ws).Mounts[2]
+	slot := func(files map[string]string) *fakeDataDirContainer {
+		return &fakeDataDirContainer{
+			fakeDiskDevices: fakeDiskDevices{devices: map[string]container.DiskDevice{}},
+			dirs:            map[string]map[string]string{"/home/code/.opencode/plan": files},
+		}
+	}
+	var logs []string
+	logger := func(s string) { logs = append(logs, s) }
+
+	if err := AttachMissingToolDataMounts(slot(map[string]string{"slot1.md": "one", "same.md": "first"}), WithToolDataMounts(nil, coiDir, tool.NewOpencode2(), ws), true, logger); err != nil {
+		t.Fatal(err)
+	}
+	if err := AttachMissingToolDataMounts(slot(map[string]string{"slot2.md": "two", "same.md": "second"}), WithToolDataMounts(nil, coiDir, tool.NewOpencode2(), ws), true, logger); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, want := range map[string]string{"slot1.md": "one", "slot2.md": "two", "same.md": "first"} {
+		if b, _ := os.ReadFile(filepath.Join(plan.HostPath, name)); string(b) != want {
+			t.Errorf("host %s = %q, want %q", name, b, want)
+		}
+	}
+	if !slices.ContainsFunc(logs, func(s string) bool {
+		return strings.Contains(s, "same.md already exists") && strings.Contains(s, "stays hidden in the container")
+	}) {
+		t.Errorf("logs = %v, want the skipped same.md reported", logs)
+	}
+	entries, err := os.ReadDir(filepath.Dir(plan.HostPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".pull-") {
+			t.Errorf("temp dir %s left behind", e.Name())
+		}
+	}
 }
 
 // A failed copy warns and still adds the mount: the plans stay in the

@@ -123,7 +123,7 @@ func migrateMountSource(from, to string, logger func(string)) {
 // the container unable to start. Its data stays in that tool's host dir.
 // A new mount without MigrateFrom covers a dir that older coi left in the
 // container (opencode2's plan dir in coi 0.16), so what the container holds
-// there is copied to a new host dir first; the mount would hide it otherwise.
+// there is copied to the host dir first; the mount would hide it otherwise.
 // [[mounts]] devices are otherwise never re-added on reuse; these are coi's
 // own, so converging them is safe. mgr must be able to list its disk devices;
 // when it can't, nothing is done.
@@ -190,13 +190,12 @@ type containerDirPuller interface {
 	PullDirectory(containerPath, localPath string) error
 }
 
-// copyContainerDataDir copies m's container dir to its host dir when the host
-// dir doesn't exist yet. A failed copy only warns: the data stays in the
+// copyContainerDataDir copies m's container dir into its host dir. The host
+// dir is shared by every container on the workspace (one per slot), so it may
+// already hold data: only entries it lacks are moved in, and the rest are
+// skipped, never overwritten. A failed copy only warns: the data stays in the
 // container, hidden by the mount.
 func copyContainerDataDir(mgr container.ContainerDevices, m MountEntry, logger func(string)) {
-	if _, err := os.Lstat(m.HostPath); err == nil || !errors.Is(err, os.ErrNotExist) {
-		return
-	}
 	puller, ok := mgr.(containerDirPuller)
 	if !ok {
 		return
@@ -209,9 +208,49 @@ func copyContainerDataDir(mgr container.ContainerDevices, m MountEntry, logger f
 	if kind != container.PathDir {
 		return
 	}
-	if err := puller.PullDirectory(m.ContainerPath, m.HostPath); err != nil {
+	warn := func(err error) {
 		logger(fmt.Sprintf("Warning: could not copy %s from the container to %s (%v); its data is hidden by the new mount", m.ContainerPath, m.HostPath, err))
+	}
+	// Pull next to the host dir, so the moves below are renames on one
+	// filesystem.
+	if err := os.MkdirAll(filepath.Dir(m.HostPath), 0o755); err != nil {
+		warn(err)
 		return
+	}
+	tmp, err := os.MkdirTemp(filepath.Dir(m.HostPath), ".pull-*")
+	if err != nil {
+		warn(err)
+		return
+	}
+	defer os.RemoveAll(tmp)
+	pulled := filepath.Join(tmp, filepath.Base(m.HostPath))
+	if err := puller.PullDirectory(m.ContainerPath, pulled); err != nil {
+		warn(err)
+		return
+	}
+	if _, err := os.Lstat(m.HostPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.Rename(pulled, m.HostPath); err != nil {
+			warn(err)
+			return
+		}
+		logger(fmt.Sprintf("Copied tool data out of the container: %s -> %s", m.ContainerPath, m.HostPath))
+		return
+	}
+	entries, err := os.ReadDir(pulled)
+	if err != nil {
+		warn(err)
+		return
+	}
+	for _, e := range entries {
+		dst := filepath.Join(m.HostPath, e.Name())
+		if _, err := os.Lstat(dst); err == nil || !errors.Is(err, os.ErrNotExist) {
+			logger(fmt.Sprintf("Warning: %s already exists; %s/%s stays hidden in the container", dst, m.ContainerPath, e.Name()))
+			continue
+		}
+		if err := os.Rename(filepath.Join(pulled, e.Name()), dst); err != nil {
+			warn(err)
+			return
+		}
 	}
 	logger(fmt.Sprintf("Copied tool data out of the container: %s -> %s", m.ContainerPath, m.HostPath))
 }
