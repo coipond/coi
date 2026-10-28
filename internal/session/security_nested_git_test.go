@@ -451,3 +451,45 @@ func TestStartSetupNestedGitScan(t *testing.T) {
 		t.Error("no scan when protection is disabled")
 	}
 }
+
+// sessionMountRecorder is a ContainerManager that records disk mounts.
+type sessionMountRecorder struct {
+	container.ContainerManager
+	paths []string
+}
+
+func (m *sessionMountRecorder) MountDisk(_, _, path string, _, _ bool) error {
+	m.paths = append(m.paths, path)
+	return nil
+}
+
+func (m *sessionMountRecorder) MountDisks(mounts []container.DiskMount) error {
+	for _, d := range mounts {
+		m.paths = append(m.paths, d.Path)
+	}
+	return nil
+}
+
+// coi shell passes its writable-hooks signal to the nested git expansion.
+func TestApplySessionSecurity_WritableHooksLeavesNestedHooks(t *testing.T) {
+	ws := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, ".git/modules/lib")
+	nestedHooks := filepath.Join("/workspace", ".git/modules/lib/hooks")
+	nestedConfig := filepath.Join("/workspace", ".git/modules/lib/config")
+
+	for _, writable := range []bool{true, false} {
+		opts := SetupOptions{WorkspacePath: ws, Logger: func(string) {}}
+		opts.Security.ProtectedPaths = []string{".git/config"}
+		mgr := &sessionMountRecorder{}
+		if _, _, err := applySessionSecurity(mgr, opts, "/workspace", false, nil, writable, "c1"); err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(mgr.paths, nestedHooks) == writable {
+			t.Errorf("writable=%v: nested hooks mounted=%v, mounts %v", writable, !writable, mgr.paths)
+		}
+		if !slices.Contains(mgr.paths, nestedConfig) {
+			t.Errorf("writable=%v: nested config must stay protected, mounts %v", writable, mgr.paths)
+		}
+	}
+}
