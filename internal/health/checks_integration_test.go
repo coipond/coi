@@ -53,17 +53,10 @@ func TestCheckIncus_VersionCheck(t *testing.T) {
 		t.Fatalf("Version from CheckIncus (%q) should be parseable: %v", versionStr, err)
 	}
 
-	if container.MeetsMinimumVersion(v) && len(container.AffectingAdvisories(v)) > 0 {
-		if result.Status != StatusWarning {
-			t.Errorf("Version %s has a known advisory but status is %s: %s", versionStr, result.Status, result.Message)
-		}
-		if !strings.Contains(result.Message, "GHSA-") {
-			t.Errorf("Warning message should name the advisory, got %q", result.Message)
-		}
-	} else if container.MeetsMinimumVersion(v) {
-		// At or above the hard minimum with no known advisory the check is
-		// StatusOK — including a [6.1, recommended) band, which only adds an
-		// advisory note so `coi health` exit 0 is preserved on supported hosts.
+	if container.MeetsMinimumVersion(v) {
+		// At or above the hard minimum the check is StatusOK — including the
+		// [6.1, recommended) band, which only adds an advisory note so `coi
+		// health` exit 0 is preserved on supported hosts.
 		if result.Status != StatusOK {
 			t.Errorf("Version %s meets the minimum but status is %s: %s", versionStr, result.Status, result.Message)
 		}
@@ -83,9 +76,9 @@ func TestCheckIncus_VersionCheck(t *testing.T) {
 }
 
 // evaluateIncusVersion should return StatusWarning with zabbly upgrade instructions for old versions
-// (6.0.x, 5.x), StatusWarning naming the advisory for versions below an advisory's fix, StatusOK
-// for fixed versions, and degrade gracefully (StatusOK) when the version output is unparseable or
-// empty.
+// (6.0.x, 5.x), StatusWarning with "recommended" advice for versions between the hard minimum and
+// the recommended floor, StatusOK for recommended-or-newer versions, and degrade gracefully
+// (StatusOK) when the version output is unparseable or empty.
 func TestEvaluateIncusVersion_OldVersion(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -112,34 +105,22 @@ func TestEvaluateIncusVersion_OldVersion(t *testing.T) {
 			"zabbly",
 		},
 		{
-			"6.1 meets the minimum but warns about the advisory",
+			"6.1 meets the minimum; recommended-floor note stays StatusOK (must not flip exit code)",
 			"Client version: 6.1\nServer version: 6.1",
-			StatusWarning,
-			"GHSA-wfvq-qh87-gm4j",
-		},
-		{
-			"7.4 warns about the advisory",
-			"Server version: 7.4",
-			StatusWarning,
-			"GHSA-wfvq-qh87-gm4j",
-		},
-		{
-			"7.5.0 passes",
-			"Client version: 7.5.0\nServer version: 7.5.0",
 			StatusOK,
-			"7.5.0",
+			"recommended",
+		},
+		{
+			"7.4 stays StatusOK with the recommended-floor note",
+			"Client version: 7.4\nServer version: 7.4",
+			StatusOK,
+			"7.5+ is recommended",
 		},
 		{
 			"7.5.1 passes",
 			"Server version: 7.5.1",
 			StatusOK,
 			"7.5.1",
-		},
-		{
-			"8.0 passes",
-			"Server version: 8.0",
-			StatusOK,
-			"8.0",
 		},
 		{
 			"single line fallback",

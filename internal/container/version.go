@@ -23,38 +23,6 @@ const (
 	RecommendedIncusVersionMinor = 5
 )
 
-// IncusAdvisory is a published Incus security advisory on a code path coi
-// uses. Versions below FixedMajor.FixedMinor are affected.
-type IncusAdvisory struct {
-	ID         string
-	Summary    string
-	FixedMajor int
-	FixedMinor int
-}
-
-// IncusAdvisories lists the advisories `coi health` warns about.
-var IncusAdvisories = []IncusAdvisory{
-	{
-		// coi runs `incus file pull -r` on the host (coi file pull -r and the
-		// session-save fallback) against a container it does not trust.
-		ID:         "GHSA-wfvq-qh87-gm4j",
-		Summary:    "arbitrary host file write via a malicious incus-agent during recursive file pull",
-		FixedMajor: 7,
-		FixedMinor: 5,
-	},
-}
-
-// AffectingAdvisories returns the IncusAdvisories that affect version v.
-func AffectingAdvisories(v *IncusVersion) []IncusAdvisory {
-	var affecting []IncusAdvisory
-	for _, a := range IncusAdvisories {
-		if v.Major < a.FixedMajor || (v.Major == a.FixedMajor && v.Minor < a.FixedMinor) {
-			affecting = append(affecting, a)
-		}
-	}
-	return affecting
-}
-
 // IncusVersion represents a parsed Incus version
 type IncusVersion struct {
 	Major int

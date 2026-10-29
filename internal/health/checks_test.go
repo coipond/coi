@@ -481,22 +481,17 @@ func TestCheckIncusStoragePools_UnknownPoolIsMissing(t *testing.T) {
 	}
 }
 
-func TestEvaluateIncusVersion_AdvisoryWarns(t *testing.T) {
+func TestEvaluateIncusVersion_BelowRecommendedStaysOK(t *testing.T) {
 	result := evaluateIncusVersion("Client version: 7.4\nServer version: 7.4")
-	if result.Status != StatusWarning {
-		t.Fatalf("status = %s, want warning: %s", result.Status, result.Message)
+	if result.Status != StatusOK {
+		t.Fatalf("status = %s, want ok: %s", result.Status, result.Message)
 	}
-	for _, want := range []string{"7.4", "GHSA-wfvq-qh87-gm4j", "7.5+"} {
-		if !strings.Contains(result.Message, want) {
-			t.Errorf("message should contain %q, got %q", want, result.Message)
-		}
-	}
-	if ids, _ := result.Details["advisories"].([]string); len(ids) != 1 || ids[0] != "GHSA-wfvq-qh87-gm4j" {
-		t.Errorf("details advisories = %v", result.Details["advisories"])
+	if !strings.Contains(result.Message, "7.5+ is recommended") {
+		t.Errorf("message should recommend 7.5+, got %q", result.Message)
 	}
 
 	result = evaluateIncusVersion("Server version: 7.5.1")
-	if result.Status != StatusOK || strings.Contains(result.Message, "GHSA-") {
-		t.Errorf("7.5.1 should pass without an advisory, got %s: %s", result.Status, result.Message)
+	if result.Status != StatusOK || strings.Contains(result.Message, "recommended") {
+		t.Errorf("7.5.1 should pass without a note, got %s: %s", result.Status, result.Message)
 	}
 }

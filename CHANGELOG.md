@@ -2,12 +2,9 @@
 
 ## Unreleased
 
-### Breaking
-
-- [Breaking] **`coi health` warns on Incus older than 7.5** — Incus before 7.5.0 has security advisory GHSA-wfvq-qh87-gm4j: a malicious incus-agent in the container can write arbitrary files on the host during `incus file pull -r`, which `coi file pull -r` and the session save run. On such a host the `incus` check is now a warning that names the advisory, and `coi health` exits 1 (degraded) instead of 0. The recommended Incus version is now 7.5 (was 6.7). The minimum stays 6.1.
-
 ### Changed
 
+- [Change] **Incus 7.5 is the recommended version** — `coi health` now notes that 7.5+ is recommended on Incus 6.1 to 7.4 (was 6.7). The note does not change the check's status or the exit code. The minimum stays 6.1.
 - [Change] **`coi image list` gives remote and custom image hints that work** — the remote image hint listed `debian:11` and `alpine:3.19`, which are past end of life, and suggested `[container] image = "ubuntu:24.04"`, which coi rejects because `[container] image` must name a local image alias. It now lists `images:debian/13, images:debian/12` and `images:alpine/3.24` and shows how to copy one under a local alias first (`incus image copy images:ubuntu/24.04 local: --alias my-ubuntu`, then `image = "my-ubuntu"`). The custom image hint pointed to the removed `coi build custom`; it now points to a profile's `[container.build]` section and `coi build --profile <name>`.
 - [Change] **Smaller sandbox context file** — `SANDBOX_CONTEXT.md` is about half its previous size, so it takes less of the agent's context window. It contains the same rules and environment facts: the repeated autonomy text is merged into one place, tables are now short lists, and the git identity steps are a short list instead of a shell script.
 
