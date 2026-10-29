@@ -242,7 +242,7 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 	return effectivePaths, hasImmutable, nil
 }
 
-// parentPinMounts returns a read-write disk device that mounts each directory
+// parentPinMounts returns read-write disk devices that mount each directory
 // between root and a protected path over itself (pin-). A mount point cannot
 // be renamed or removed in the container, so a parent of a read-only mount
 // cannot be moved aside and recreated without it (mv .git .git.old; mkdir

@@ -15,18 +15,9 @@ Tests that:
 import subprocess
 from pathlib import Path
 
-from support.helpers import make_workspace_writable
+from support.helpers import make_workspace_writable, run_coi_in_workspace
 
 GIT = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
-
-
-def _run_in_container(coi_binary, workspace_dir, script):
-    return subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "--", "sh", "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
 
 
 def _assert_rename_blocked(result):
@@ -41,11 +32,16 @@ def test_root_git_dir_rename_blocked(coi_binary, workspace_dir, cleanup_containe
     make_workspace_writable(workspace_dir)
     ws = Path(workspace_dir)
 
-    result = _run_in_container(
+    result = run_coi_in_workspace(
         coi_binary,
         workspace_dir,
-        "cd /workspace && mv .git .git.old && mkdir -p .git/hooks "
-        "&& echo 'touch /tmp/pwned' > .git/hooks/pre-commit",
+        [
+            "sh",
+            "-c",
+            "cd /workspace && mv .git .git.old && mkdir -p .git/hooks "
+            "&& echo 'touch /tmp/pwned' > .git/hooks/pre-commit",
+        ],
+        timeout=180,
     )
 
     _assert_rename_blocked(result)
@@ -77,11 +73,16 @@ def test_submodule_git_dir_rename_blocked(coi_binary, workspace_dir, tmp_path, c
     assert (modules / "lib" / "HEAD").is_file()
 
     for src in (".git/modules/lib", ".git/modules"):
-        result = _run_in_container(
+        result = run_coi_in_workspace(
             coi_binary,
             workspace_dir,
-            f"cd /workspace && mv {src} {src}.old && mkdir -p .git/modules/lib/hooks "
-            "&& echo 'touch /tmp/pwned' > .git/modules/lib/hooks/post-checkout",
+            [
+                "sh",
+                "-c",
+                f"cd /workspace && mv {src} {src}.old && mkdir -p .git/modules/lib/hooks "
+                "&& echo 'touch /tmp/pwned' > .git/modules/lib/hooks/post-checkout",
+            ],
+            timeout=180,
         )
 
         _assert_rename_blocked(result)
@@ -96,10 +97,15 @@ def test_pinned_parent_dirs_stay_writable(coi_binary, workspace_dir, cleanup_con
     make_workspace_writable(workspace_dir)
     git_dir = Path(workspace_dir) / ".git"
 
-    result = _run_in_container(
+    result = run_coi_in_workspace(
         coi_binary,
         workspace_dir,
-        "echo probe > /workspace/.git/coi-probe && echo '*.tmp' > /workspace/.git/info/exclude",
+        [
+            "sh",
+            "-c",
+            "echo probe > /workspace/.git/coi-probe && echo '*.tmp' > /workspace/.git/info/exclude",
+        ],
+        timeout=180,
     )
 
     assert result.returncode == 0, f"write failed: {result.stdout + result.stderr}"
