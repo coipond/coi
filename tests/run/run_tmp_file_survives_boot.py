@@ -38,7 +38,7 @@ def test_run_tmp_file_survives_boot(coi_binary, cleanup_containers, workspace_di
     2. Second run restarts the container (full boot); the command writes
        /tmp/coi-boot-probe at once, waits for systemd-tmpfiles-setup to be
        active, then reads the file back
-    3. Verify the file content, not "probe-file-missing"
+    3. Verify the output has "probe-written", not "probe-missing"
     """
     slot = 9
     container_name = calculate_container_name(workspace_dir, slot)
