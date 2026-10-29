@@ -194,8 +194,10 @@ FAKE_SERVER = Path(__file__).resolve().parent.parent / "support" / "fake_openai.
 # lives and whether it tracked the workspace and/or opencode's own files.
 # v1 and v2 use the same data dir; v2's run also starts a background
 # `serve --service`, which inherits the /dev/null redirects.
+# The server log stays out of /tmp: `coi run` starts the command before boot
+# ends, and systemd-tmpfiles-setup then empties /tmp (`D /tmp` in tmpfiles.d).
 SNAPSHOT_PROBE = (
-    "python3 /workspace/.fake-openai.py 18080 > /tmp/fake-openai.log 2>&1 & sleep 2; "
+    "python3 /workspace/.fake-openai.py 18080 > ~/fake-openai.log 2>&1 & sleep 2; "
     "for i in 1 2 3; do "
     'timeout 90 {binary} run "say ok $i" </dev/null >/dev/null 2>&1 || echo "RUN_FAILED $i rc=$?"; '
     "done; "
@@ -203,7 +205,7 @@ SNAPSHOT_PROBE = (
     'echo "SNAPSHOT=$G"; '
     'echo "TRACKED=$(git --git-dir "$G" --work-tree /workspace ls-files | grep -c a.txt)"; '
     'echo "SELF=$(git --git-dir "$G" --work-tree /workspace ls-files | grep -c opencode/)"; '
-    "echo \"REQUESTS=$(grep -c 'POST /v1/chat/completions' /tmp/fake-openai.log)\""
+    "echo \"REQUESTS=$(grep -c 'POST /v1/chat/completions' ~/fake-openai.log)\""
 )
 
 OPENCODE_FAKE_CONFIG = {

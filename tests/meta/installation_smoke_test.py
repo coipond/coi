@@ -147,7 +147,7 @@ def test_full_installation_process(meta_container, coi_binary):
     )
 
     # Phase 2: Install Go. Use the latest stable release rather than a pinned
-    # version: the repo's go.mod sets a minimum (currently `go 1.25.0`) and a
+    # version: the repo's go.mod sets a minimum (currently `go 1.26.0`) and a
     # too-old pinned Go fails the build deterministically with "go.mod requires
     # go >= ...". Fetching latest keeps this smoke test correct across future
     # go.mod bumps; fall back to a known-good version if go.dev is unreachable.
@@ -158,7 +158,7 @@ def test_full_installation_process(meta_container, coi_binary):
         GO_VERSION="$(wget -qO- https://go.dev/VERSION?m=text | head -1 | sed 's/^go//')"
         case "$GO_VERSION" in
             [0-9]*) : ;;                 # looks like a version
-            *) GO_VERSION="1.25.4" ;;    # fallback if the lookup failed
+            *) GO_VERSION="1.26.10" ;;   # fallback if the lookup failed
         esac
         echo "Installing Go ${GO_VERSION}"
         wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz

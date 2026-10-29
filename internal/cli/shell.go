@@ -648,8 +648,7 @@ func (a *App) enterTmux(result *session.SetupResult, l *tmuxLaunch, detached boo
 	switch {
 	case l.existing && detached:
 		// Send command to existing session
-		sendCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", shellQuote(session.TmuxPaneTarget(result.ContainerName)), l.cliCmd)
-		if _, err := result.Manager.ExecCommand(sendCmd, container.ExecCommandOptions{
+		if _, err := result.Manager.ExecCommand(tmuxSendKeysCmd(result.ContainerName, l.cliCmd), container.ExecCommandOptions{
 			Capture: true,
 			User:    l.userPtr,
 		}); err != nil {
