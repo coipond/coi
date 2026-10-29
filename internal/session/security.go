@@ -37,6 +37,9 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // are mounted in one batch. writableHooks ([git] writable_hooks) leaves their
 // hooks dirs writable, as it does the root one.
 //
+// The dirs between the workspace root and each protected path are pinned
+// (parentPinMounts), except at or below a sec.SecretPaths mask.
+//
 // Returns the effective (expanded) protected-path list, so the caller can drive
 // its logging and host-immutable passes over the same set that was mounted, and an
 // error if a mount failed. The list is returned even on error so a partial failure
@@ -76,9 +79,25 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 			}
 		}
 	}
-	batch = append(batch, parentPinMounts(workspacePath, containerWorkspacePath, prepared, useShift)...)
-	if err := mountDiskBatch(mgr, batch); err != nil {
-		return protectedPaths, fmt.Errorf("failed to protect nested git paths or parent dirs: %w", err)
+	var masked []string
+	if sec != nil && len(sec.SecretPaths) > 0 {
+		masks, _ := expandSecretPaths(workspacePath, sec.SecretPaths)
+		for _, m := range masks {
+			masked = append(masked, filepath.Clean(m.relPath))
+		}
+	}
+	pins := parentPinMounts(workspacePath, containerWorkspacePath, prepared, masked, useShift)
+	if err := mountDiskBatch(mgr, append(batch, pins...)); err != nil {
+		// A pin can share its path with a device added elsewhere (a user
+		// mount): keep the nested git entries and lose only that pin.
+		if err := mountDiskBatch(mgr, batch); err != nil {
+			return protectedPaths, fmt.Errorf("failed to protect nested git paths: %w", err)
+		}
+		for _, d := range pins {
+			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
+				warnings = append(warnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
+			}
+		}
 	}
 
 	if len(warnings) > 0 {
@@ -251,9 +270,10 @@ func mountDiskBatch(mgr container.ContainerDevices, mounts []container.DiskMount
 // be renamed or removed in the container, so a parent of a read-only mount
 // cannot be moved aside and recreated without it (mv .git .git.old; mkdir
 // .git). rels are relative to root, which is mounted at containerRoot. A
-// parent that is a protected path itself is already a mount point; the walk
-// stops at a symlink or a non-directory.
-func parentPinMounts(root, containerRoot string, rels []string, useShift bool) []container.DiskMount {
+// parent that is a protected path itself is already a mount point. The walk
+// stops at a symlink, a non-directory and at or below a masked path (rel to
+// root), which is a mount point over an empty read-only dir.
+func parentPinMounts(root, containerRoot string, rels, masked []string, useShift bool) []container.DiskMount {
 	protected := make(map[string]bool, len(rels))
 	for _, rel := range rels {
 		protected[rel] = true
@@ -266,7 +286,7 @@ func parentPinMounts(root, containerRoot string, rels []string, useShift bool) [
 			parent := filepath.Join(parts[:i]...)
 			ok, checked := realDir[parent]
 			if !checked {
-				ok = isRealDir(filepath.Join(root, parent))
+				ok = isRealDir(filepath.Join(root, parent)) && !underAny(parent, masked)
 				realDir[parent] = ok
 				if ok && !protected[parent] {
 					containerPath := filepath.Join(containerRoot, parent)
@@ -279,6 +299,16 @@ func parentPinMounts(root, containerRoot string, rels []string, useShift bool) [
 		}
 	}
 	return pins
+}
+
+// underAny reports whether rel is one of paths or below one.
+func underAny(rel string, paths []string) bool {
+	for _, p := range paths {
+		if rel == p || strings.HasPrefix(rel, p+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // pinDeviceName derives the device name of a parent pin from its container
