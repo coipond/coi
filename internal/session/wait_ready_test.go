@@ -3,6 +3,9 @@ package session
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -117,5 +120,69 @@ func TestWaitForReady_BriefNotRunningIsTolerated(t *testing.T) {
 	f := &readyFake{readyAfter: 4, stoppedFor: stoppedConfirmations - 1}
 	if err := waitForReady(context.Background(), f, 5*time.Second, time.Millisecond, func(string) {}); err != nil {
 		t.Fatalf("container that recovers must be ready, got %v", err)
+	}
+}
+
+// The readiness probe holds a systemd guest back until sysinit.target, i.e.
+// until systemd-tmpfiles-setup has emptied /tmp, and passes at once without
+// systemd. Run against a fake PID 1 name and a fake systemctl.
+func TestReadyProbeScript(t *testing.T) {
+	cases := []struct {
+		name      string
+		pid1      string
+		systemctl bool
+		sysinit   string // is-active sysinit.target answer
+		state     string // is-system-running answer
+		ready     bool
+	}{
+		{name: "no systemd", pid1: "bash", ready: true},
+		{name: "no systemctl", pid1: "systemd", ready: true},
+		{name: "early boot", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "initializing", ready: false},
+		{name: "tmpfiles running", pid1: "systemd", systemctl: true, sysinit: "activating", state: "starting", ready: false},
+		{name: "manager not answering", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "offline", ready: false},
+		{name: "past sysinit", pid1: "systemd", systemctl: true, sysinit: "active", state: "starting", ready: true},
+		{name: "booted", pid1: "systemd", systemctl: true, sysinit: "active", state: "running", ready: true},
+		{name: "emergency mode", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "maintenance", ready: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			comm := filepath.Join(dir, "comm")
+			if err := os.WriteFile(comm, []byte(tc.pid1+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(dir, "bin")
+			if err := os.Mkdir(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range []string{"bash", "cat", "grep"} {
+				path, err := exec.LookPath(tool)
+				if err != nil {
+					t.Skipf("%s not found", tool)
+				}
+				if err := os.Symlink(path, filepath.Join(bin, tool)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.systemctl {
+				fake := `#!/bin/bash
+case "$1" in
+is-active) [ "` + tc.sysinit + `" = active ] ;;
+is-system-running) echo ` + tc.state + `; [ "` + tc.state + `" = running ] ;;
+*) exit 1 ;;
+esac
+`
+				if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte(fake), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			script := strings.ReplaceAll(readyProbeScript, "/proc/1/comm", comm)
+			cmd := exec.Command(filepath.Join(bin, "bash"), "-c", script)
+			cmd.Env = []string{"PATH=" + bin}
+			err := cmd.Run()
+			if got := err == nil; got != tc.ready {
+				t.Errorf("ready = %v (%v), want %v", got, err, tc.ready)
+			}
+		})
 	}
 }
