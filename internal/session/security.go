@@ -48,11 +48,12 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 		return protectedPaths, nil
 	}
 
-	var warnings []string
+	var warnings, prepared []string
 	var batch []container.DiskMount
 	for _, relPath := range protectedPaths {
 		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift)
 		if err == nil {
+			prepared = append(prepared, filepath.Clean(relPath))
 			if isNestedGitPath(relPath) {
 				batch = append(batch, d)
 				continue
@@ -75,8 +76,9 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 			}
 		}
 	}
+	batch = append(batch, parentPinMounts(workspacePath, containerWorkspacePath, prepared, useShift)...)
 	if err := mountDiskBatch(mgr, batch); err != nil {
-		return protectedPaths, fmt.Errorf("failed to protect nested git paths: %w", err)
+		return protectedPaths, fmt.Errorf("failed to protect nested git paths or parent dirs: %w", err)
 	}
 
 	if len(warnings) > 0 {
@@ -113,11 +115,12 @@ const (
 	protectDevicePrefix = "protect-"
 	maskDevicePrefix    = "mask-"
 	gitcDevicePrefix    = "gitc-"
+	pinDevicePrefix     = "pin-"
 )
 
 // stripSecurityDevicePrefixes is the reuse-strip list; it MUST list exactly the
 // prefixes above (each family created is a family stripped on reuse).
-var stripSecurityDevicePrefixes = []string{protectDevicePrefix, maskDevicePrefix, gitcDevicePrefix}
+var stripSecurityDevicePrefixes = []string{protectDevicePrefix, maskDevicePrefix, gitcDevicePrefix, pinDevicePrefix}
 
 // StripSecurityDevices removes the creation-time security device families (see
 // stripSecurityDevicePrefixes) from a REUSED persistent container, so the caller
@@ -241,6 +244,48 @@ func mountDiskBatch(mgr container.ContainerDevices, mounts []container.DiskMount
 		}
 	}
 	return nil
+}
+
+// parentPinMounts returns a read-write disk device that mounts each directory
+// between root and a protected path over itself (pin-). A mount point cannot
+// be renamed or removed in the container, so a parent of a read-only mount
+// cannot be moved aside and recreated without it (mv .git .git.old; mkdir
+// .git). rels are relative to root, which is mounted at containerRoot. A
+// parent that is a protected path itself is already a mount point; the walk
+// stops at a symlink or a non-directory.
+func parentPinMounts(root, containerRoot string, rels []string, useShift bool) []container.DiskMount {
+	protected := make(map[string]bool, len(rels))
+	for _, rel := range rels {
+		protected[rel] = true
+	}
+	realDir := map[string]bool{}
+	var pins []container.DiskMount
+	for _, rel := range rels {
+		parts := strings.Split(rel, string(filepath.Separator))
+		for i := 1; i < len(parts); i++ {
+			parent := filepath.Join(parts[:i]...)
+			ok, checked := realDir[parent]
+			if !checked {
+				ok = isRealDir(filepath.Join(root, parent))
+				realDir[parent] = ok
+				if ok && !protected[parent] {
+					containerPath := filepath.Join(containerRoot, parent)
+					pins = append(pins, container.DiskMount{Name: pinDeviceName(containerPath), Source: filepath.Join(root, parent), Path: containerPath, Shift: useShift})
+				}
+			}
+			if !ok {
+				break
+			}
+		}
+	}
+	return pins
+}
+
+// pinDeviceName derives the device name of a parent pin from its container
+// path, so pins of the workspace and of a git common dir cannot collide.
+func pinDeviceName(containerPath string) string {
+	sum := sha256.Sum256([]byte(containerPath))
+	return pinDevicePrefix + hex.EncodeToString(sum[:])[:16]
 }
 
 // prepareProtectedPath validates and materializes one protected path and
