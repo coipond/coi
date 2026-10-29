@@ -480,3 +480,23 @@ func TestCheckIncusStoragePools_UnknownPoolIsMissing(t *testing.T) {
 		t.Errorf("an unresolvable pool should be reported missing, message: %q", result.Message)
 	}
 }
+
+func TestEvaluateIncusVersion_AdvisoryWarns(t *testing.T) {
+	result := evaluateIncusVersion("Client version: 7.4\nServer version: 7.4")
+	if result.Status != StatusWarning {
+		t.Fatalf("status = %s, want warning: %s", result.Status, result.Message)
+	}
+	for _, want := range []string{"7.4", "GHSA-wfvq-qh87-gm4j", "7.5+"} {
+		if !strings.Contains(result.Message, want) {
+			t.Errorf("message should contain %q, got %q", want, result.Message)
+		}
+	}
+	if ids, _ := result.Details["advisories"].([]string); len(ids) != 1 || ids[0] != "GHSA-wfvq-qh87-gm4j" {
+		t.Errorf("details advisories = %v", result.Details["advisories"])
+	}
+
+	result = evaluateIncusVersion("Server version: 7.5.1")
+	if result.Status != StatusOK || strings.Contains(result.Message, "GHSA-") {
+		t.Errorf("7.5.1 should pass without an advisory, got %s: %s", result.Status, result.Message)
+	}
+}

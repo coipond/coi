@@ -129,6 +129,55 @@ func TestMeetsMinimumVersion(t *testing.T) {
 	}
 }
 
+func TestAffectingAdvisories(t *testing.T) {
+	tests := []struct {
+		name  string
+		major int
+		minor int
+		want  []string
+	}{
+		{"minimum", 6, 1, []string{"GHSA-wfvq-qh87-gm4j"}},
+		{"last affected", 7, 4, []string{"GHSA-wfvq-qh87-gm4j"}},
+		{"fixed", 7, 5, nil},
+		{"newer", 8, 0, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := &IncusVersion{Major: tt.major, Minor: tt.minor, Raw: "test"}
+			var got []string
+			for _, a := range AffectingAdvisories(v) {
+				got = append(got, a.ID)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("AffectingAdvisories(%d.%d) = %v, want %v", tt.major, tt.minor, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMeetsRecommendedVersion(t *testing.T) {
+	tests := []struct {
+		name  string
+		major int
+		minor int
+		want  bool
+	}{
+		{"below", 7, 4, false},
+		{"exact", 7, 5, true},
+		{"higher major", 8, 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := &IncusVersion{Major: tt.major, Minor: tt.minor, Raw: "test"}
+			if got := MeetsRecommendedVersion(v); got != tt.want {
+				t.Errorf("MeetsRecommendedVersion(%d.%d) = %v, want %v", tt.major, tt.minor, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFormatMinVersionError(t *testing.T) {
 	v := &IncusVersion{Major: 6, Minor: 0, Raw: "6.0.3"}
 	msg := FormatMinVersionError(v)

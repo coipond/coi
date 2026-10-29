@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Breaking
+
+- [Breaking] **`coi health` warns on Incus older than 7.5** — Incus before 7.5.0 has security advisory GHSA-wfvq-qh87-gm4j: a malicious incus-agent in the container can write arbitrary files on the host during `incus file pull -r`, which `coi file pull -r` and the session save run. On such a host the `incus` check is now a warning that names the advisory, and `coi health` exits 1 (degraded) instead of 0. The recommended Incus version is now 7.5 (was 6.7). The minimum stays 6.1.
+
 ### Changed
 
 - [Change] **`coi image list` gives remote and custom image hints that work** — the remote image hint listed `debian:11` and `alpine:3.19`, which are past end of life, and suggested `[container] image = "ubuntu:24.04"`, which coi rejects because `[container] image` must name a local image alias. It now lists `images:debian/13, images:debian/12` and `images:alpine/3.24` and shows how to copy one under a local alias first (`incus image copy images:ubuntu/24.04 local: --alias my-ubuntu`, then `image = "my-ubuntu"`). The custom image hint pointed to the removed `coi build custom`; it now points to a profile's `[container.build]` section and `coi build --profile <name>`.

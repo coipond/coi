@@ -82,6 +82,26 @@ func evaluateIncusVersion(versionOutput string) HealthCheck {
 		}
 	}
 
+	if advisories := container.AffectingAdvisories(v); len(advisories) > 0 {
+		ids := make([]string, 0, len(advisories))
+		notes := make([]string, 0, len(advisories))
+		for _, a := range advisories {
+			ids = append(ids, a.ID)
+			notes = append(notes, fmt.Sprintf("%s (%s, fixed in %d.%d)", a.ID, a.Summary, a.FixedMajor, a.FixedMinor))
+		}
+		return HealthCheck{
+			Name:   "incus",
+			Status: StatusWarning,
+			Message: fmt.Sprintf("Running (version %s) — affected by Incus security advisory %s; upgrade to %d.%d+ (https://github.com/zabbly/incus)",
+				versionStr, strings.Join(notes, "; "), container.RecommendedIncusVersionMajor, container.RecommendedIncusVersionMinor),
+			Details: map[string]interface{}{
+				"version":     versionStr,
+				"recommended": fmt.Sprintf("%d.%d", container.RecommendedIncusVersionMajor, container.RecommendedIncusVersionMinor),
+				"advisories":  ids,
+			},
+		}
+	}
+
 	if !container.MeetsRecommendedVersion(v) {
 		// Advisory only — NOT a warning. The version meets Coi's hard minimum
 		// (6.1) and works, so this must not flip the overall status to degraded
