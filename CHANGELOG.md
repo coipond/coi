@@ -4,7 +4,7 @@
 
 ### Changed
 
-- [Change] **`coi images` suggests current Debian and Alpine releases** — the remote image hint listed `debian:11` and `alpine:3.19`, which are past end of life. It now lists `debian:13, debian:12` and `alpine:3.24`.
+- [Change] **`coi images` gives remote and custom image hints that work** — the remote image hint listed `debian:11` and `alpine:3.19`, which are past end of life, and suggested `[container] image = "ubuntu:24.04"`, which coi rejects because `[container] image` must name a local image alias. It now lists `images:debian/13, images:debian/12` and `images:alpine/3.24` and shows how to copy one under a local alias first (`incus image copy images:ubuntu/24.04 local: --alias my-ubuntu`, then `image = "my-ubuntu"`). The custom image hint pointed to the removed `coi build custom`; it now points to a profile's `[container.build]` section and `coi build --profile <name>`.
 - [Change] **Smaller sandbox context file** — `SANDBOX_CONTEXT.md` is about half its previous size, so it takes less of the agent's context window. It contains the same rules and environment facts: the repeated autonomy text is merged into one place, tables are now short lists, and the git identity steps are a short list instead of a shell script.
 
 ### Bug Fixes
