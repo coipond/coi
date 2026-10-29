@@ -1050,6 +1050,7 @@ set -g escape-time 10
 # off, many terminals send the wheel as Up/Down keys and the shell steps
 # through its history instead. A plain drag now selects in tmux copy mode;
 # hold Shift (Option in some macOS terminals) for the terminal's own selection.
+# In a pager without mouse support (less, man), the wheel opens copy mode.
 set -g mouse on
 EOF
     chmod 644 /etc/tmux.conf

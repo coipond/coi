@@ -88,8 +88,7 @@ func tmuxSendCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Send command to tmux session
-	tmuxCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", shellQuote(session.TmuxPaneTarget(containerName)), command)
+	tmuxCmd := tmuxSendKeysCmd(containerName, command)
 
 	opts := container.ExecCommandOptions{
 		Interactive: false,
@@ -104,6 +103,14 @@ func tmuxSendCommand(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Sent command to session %s\n", session.TmuxSessionName(containerName))
 	return nil
+}
+
+// tmuxSendKeysCmd types command and Enter into the tool's pane. With mouse
+// mode on, a wheel scroll leaves the pane in copy mode, which would swallow
+// the keys, so it leaves any mode first.
+func tmuxSendKeysCmd(containerName, command string) string {
+	pane := shellQuote(session.TmuxPaneTarget(containerName))
+	return fmt.Sprintf("tmux copy-mode -q -t %s \\; send-keys -t %s %q Enter", pane, pane, command)
 }
 
 func tmuxCaptureCommand(cmd *cobra.Command, args []string) error {
