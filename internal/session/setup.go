@@ -290,7 +290,7 @@ type startLogReader interface {
 // earlier can have its /tmp files deleted under it. Images without systemd
 // need only the exec; a manager that answers it is out of early boot
 // (emergency mode, shutdown) is ready too, so the wait cannot hang there.
-const readyProbeScript = `[ "$(cat /proc/1/comm 2>/dev/null)" = systemd ] || exit 0
+const readyProbeScript = `read -r pid1 </proc/1/comm 2>/dev/null; [ "$pid1" = systemd ] || exit 0
 command -v systemctl >/dev/null 2>&1 || exit 0
 systemctl is-active --quiet sysinit.target && exit 0
 systemctl is-system-running 2>/dev/null | grep -qxE 'running|degraded|maintenance|stopping'`

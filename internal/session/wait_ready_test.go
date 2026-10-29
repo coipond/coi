@@ -137,12 +137,15 @@ func TestReadyProbeScript(t *testing.T) {
 	}{
 		{name: "no systemd", pid1: "bash", ready: true},
 		{name: "no systemctl", pid1: "systemd", ready: true},
+		{name: "other init with systemctl", pid1: "init", systemctl: true, sysinit: "inactive", state: "offline", ready: true},
 		{name: "early boot", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "initializing", ready: false},
 		{name: "tmpfiles running", pid1: "systemd", systemctl: true, sysinit: "activating", state: "starting", ready: false},
 		{name: "manager not answering", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "offline", ready: false},
 		{name: "past sysinit", pid1: "systemd", systemctl: true, sysinit: "active", state: "starting", ready: true},
 		{name: "booted", pid1: "systemd", systemctl: true, sysinit: "active", state: "running", ready: true},
 		{name: "emergency mode", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "maintenance", ready: true},
+		{name: "sysinit failed", pid1: "systemd", systemctl: true, sysinit: "failed", state: "degraded", ready: true},
+		{name: "shutting down", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "stopping", ready: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,7 +158,7 @@ func TestReadyProbeScript(t *testing.T) {
 			if err := os.Mkdir(bin, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			for _, tool := range []string{"bash", "cat", "grep"} {
+			for _, tool := range []string{"bash", "grep"} {
 				path, err := exec.LookPath(tool)
 				if err != nil {
 					t.Skipf("%s not found", tool)
