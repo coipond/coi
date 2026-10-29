@@ -87,18 +87,11 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 		}
 	}
 	pins := parentPinMounts(workspacePath, containerWorkspacePath, prepared, masked, useShift)
-	if err := mountDiskBatch(mgr, append(batch, pins...)); err != nil {
-		// A pin can share its path with a device added elsewhere (a user
-		// mount): keep the nested git entries and lose only that pin.
-		if err := mountDiskBatch(mgr, batch); err != nil {
-			return protectedPaths, fmt.Errorf("failed to protect nested git paths: %w", err)
-		}
-		for _, d := range pins {
-			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
-				warnings = append(warnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
-			}
-		}
+	pinWarnings, err := mountNestedAndPins(mgr, batch, pins)
+	if err != nil {
+		return protectedPaths, fmt.Errorf("failed to protect nested git paths: %w", err)
 	}
+	warnings = append(warnings, pinWarnings...)
 
 	if len(warnings) > 0 {
 		return protectedPaths, errors.New(strings.Join(warnings, "; "))
@@ -249,22 +242,6 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 	return effectivePaths, hasImmutable, nil
 }
 
-// mountDiskBatch adds mounts in one call when mgr supports it, else one by one.
-func mountDiskBatch(mgr container.ContainerDevices, mounts []container.DiskMount) error {
-	if len(mounts) == 0 {
-		return nil
-	}
-	if bm, ok := mgr.(diskBatchMounter); ok {
-		return bm.MountDisks(mounts)
-	}
-	for _, d := range mounts {
-		if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // parentPinMounts returns a read-write disk device that mounts each directory
 // between root and a protected path over itself (pin-). A mount point cannot
 // be renamed or removed in the container, so a parent of a read-only mount
@@ -316,6 +293,42 @@ func underAny(rel string, paths []string) bool {
 func pinDeviceName(containerPath string) string {
 	sum := sha256.Sum256([]byte(containerPath))
 	return pinDevicePrefix + hex.EncodeToString(sum[:])[:16]
+}
+
+// mountNestedAndPins mounts the nested git entries and then the parent pins.
+// A pin can share its path with a device added elsewhere (a user mount), so
+// a failed pin is a warning and never costs the nested git entries or the
+// other pins. A batch is retried as separate PATCHes, which merge the devices
+// map, so re-sending a device that an earlier chunk added is a no-op.
+func mountNestedAndPins(mgr container.ContainerDevices, nested, pins []container.DiskMount) (pinWarnings []string, err error) {
+	bm, ok := mgr.(diskBatchMounter)
+	if !ok {
+		for _, d := range nested {
+			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
+				return nil, err
+			}
+		}
+		for _, d := range pins {
+			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
+				pinWarnings = append(pinWarnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
+			}
+		}
+		return pinWarnings, nil
+	}
+	if len(nested)+len(pins) == 0 || bm.MountDisks(append(nested, pins...)) == nil {
+		return nil, nil
+	}
+	if len(nested) > 0 {
+		if err := bm.MountDisks(nested); err != nil {
+			return nil, err
+		}
+	}
+	for _, d := range pins {
+		if err := bm.MountDisks([]container.DiskMount{d}); err != nil {
+			pinWarnings = append(pinWarnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
+		}
+	}
+	return pinWarnings, nil
 }
 
 // prepareProtectedPath validates and materializes one protected path and

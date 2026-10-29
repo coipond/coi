@@ -169,11 +169,81 @@ func TestSetupSecurityMounts_PinCollisionKeepsNestedGit(t *testing.T) {
 		t.Fatalf("want a warning for the /workspace/.claude pin, got %v", err)
 	}
 
-	if len(dev.batches) != 1 || len(dev.batches[0]) != 4 {
+	if len(dev.batches) == 0 || len(dev.batches[0]) != 4 {
 		t.Fatalf("want the 4 nested git entries in one batch, got %v", dev.batches)
 	}
+	var got []string
+	for _, b := range dev.batches[1:] {
+		if len(b) != 1 || !strings.HasPrefix(b[0].Name, pinDevicePrefix) {
+			t.Fatalf("want one pin per retried batch, got %v", b)
+		}
+		got = append(got, b[0].Path)
+	}
+	slices.Sort(got)
 	want := []string{"/workspace/.git", "/workspace/.git/modules", "/workspace/.git/modules/lib", "/workspace/.git/modules/lib/info"}
-	if got := pinPaths(dev.mounts); !slices.Equal(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("pins = %v, want %v", got, want)
+	}
+}
+
+// incusLikeManager refuses, like Incus, a device whose name or path is taken.
+type incusLikeManager struct {
+	container.ContainerManager
+	paths map[string]string // device name -> path
+}
+
+func (m *incusLikeManager) MountDisk(name, _, path string, _, _ bool) error {
+	if _, ok := m.paths[name]; ok {
+		return errors.New("The device already exists")
+	}
+	for _, p := range m.paths {
+		if p == path {
+			return errors.New("More than one disk device uses the same path")
+		}
+	}
+	m.paths[name] = path
+	return nil
+}
+
+func (m *incusLikeManager) ListDevices() ([]string, error) {
+	var names []string
+	for n := range m.paths {
+		names = append(names, n)
+	}
+	return names, nil
+}
+
+func (m *incusLikeManager) RemoveDevice(name string) error {
+	delete(m.paths, name)
+	return nil
+}
+
+// On reuse (the reconciler adds devices one by one) a colliding pin is the
+// only device lost: the nested git entries and the later pins are added.
+func TestSetupSecurityMounts_PinCollisionOnReuse(t *testing.T) {
+	tmp := t.TempDir()
+	mkGitDir(t, tmp, ".git")
+	mkGitDir(t, tmp, ".git/modules/lib")
+	for _, d := range []string{".claude", ".codex"} {
+		if err := os.MkdirAll(filepath.Join(tmp, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mgr := &incusLikeManager{paths: map[string]string{"user-claude": "/workspace/.claude"}}
+	rec := NewSecurityDeviceReconciler(mgr, func(string) {})
+
+	_, err := SetupSecurityMounts(rec, tmp, "/workspace", []string{".git/hooks", ".claude/settings.json", ".codex/config.toml"}, false, nil, NestedGitScan{}, false)
+	if err == nil || err.Error() != "parent dir /workspace/.claude not pinned: More than one disk device uses the same path" {
+		t.Fatalf("want only the /workspace/.claude pin warning, got %v", err)
+	}
+
+	mounted := map[string]bool{}
+	for _, p := range mgr.paths {
+		mounted[p] = true
+	}
+	for _, p := range []string{"/workspace/.git", "/workspace/.codex", "/workspace/.git/modules", "/workspace/.git/modules/lib", "/workspace/.git/modules/lib/info", "/workspace/.git/modules/lib/hooks", "/workspace/.git/modules/lib/config"} {
+		if !mounted[p] {
+			t.Errorf("%s not mounted; devices %v", p, mgr.paths)
+		}
 	}
 }

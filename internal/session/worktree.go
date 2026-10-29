@@ -293,9 +293,8 @@ func SetupCommonDirProtection(mgr container.ContainerDevices, commonDir string, 
 		}
 		protected = append(protected, s.rel)
 	}
-	if err := mountDiskBatch(mgr, parentPinMounts(commonDir, commonDir, protected, nil, useShift)); err != nil {
-		warnings = append(warnings, fmt.Sprintf("parent dirs: %v", err))
-	}
+	pinWarnings, _ := mountNestedAndPins(mgr, nil, parentPinMounts(commonDir, commonDir, protected, nil, useShift))
+	warnings = append(warnings, pinWarnings...)
 	if len(warnings) > 0 {
 		return protected, errors.New(strings.Join(warnings, "; "))
 	}
