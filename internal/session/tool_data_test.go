@@ -64,8 +64,61 @@ func TestToolDataMounts_Opencode2Plan(t *testing.T) {
 		plan.DeviceName != want.DeviceName || plan.MigrateFrom != "" || plan.Readonly {
 		t.Errorf("plan mount = %+v, want %+v", plan, want)
 	}
-	if got[0].MigrateFrom != "/home/u/project/.local/share/opencode" {
-		t.Errorf("share MigrateFrom = %q, want the pre-#929 workspace path", got[0].MigrateFrom)
+	if !plan.CopyFromContainer {
+		t.Error("plan CopyFromContainer = false, want the 0.16 container plans copied")
+	}
+}
+
+// OpenCode v1 and v2 never share a DB: on one workspace each tool gets its own
+// host dirs, and only v1 takes the data older coi kept in the workspace (v1's).
+// v1 exits on a DB v2 created, and v2 would import a v1 DB's sessions.
+func TestToolDataMounts_OpencodeVersionsKeepOwnData(t *testing.T) {
+	ws := "/home/u/project"
+	v1 := ToolDataMounts("/home/u/.coi", tool.NewOpencode(), ws)
+	v2 := ToolDataMounts("/home/u/.coi", tool.NewOpencode2(), ws)
+	for i, name := range []string{"share", "state"} {
+		if v1[i].ContainerPath != v2[i].ContainerPath {
+			t.Errorf("%s: container paths %q and %q, want the same", name, v1[i].ContainerPath, v2[i].ContainerPath)
+		}
+		if v1[i].HostPath == v2[i].HostPath {
+			t.Errorf("%s: both tools use host dir %s", name, v1[i].HostPath)
+		}
+		if v1[i].MigrateFrom == "" {
+			t.Errorf("%s: opencode has no MigrateFrom, want the pre-#929 workspace path", name)
+		}
+		if v2[i].MigrateFrom != "" || v2[i].CopyFromContainer {
+			t.Errorf("%s: opencode2 mount = %+v, want no data taken from the workspace or container", name, v2[i])
+		}
+	}
+}
+
+// With v1 data left in the workspace by older coi, running opencode2 first
+// leaves it there for opencode.
+func TestPrepareMountSource_Opencode2LeavesV1WorkspaceData(t *testing.T) {
+	coiDir := t.TempDir()
+	ws := t.TempDir()
+	legacy := filepath.Join(ws, ".local", "share", "opencode", "opencode.db")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v2 := ToolDataMounts(coiDir, tool.NewOpencode2(), ws)[0]
+	if err := PrepareMountSource(v2, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(v2.HostPath); len(entries) != 0 {
+		t.Errorf("opencode2 host dir = %v, want it empty", entries)
+	}
+
+	v1 := ToolDataMounts(coiDir, tool.NewOpencode(), ws)[0]
+	if err := PrepareMountSource(v1, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(v1.HostPath, "opencode.db")); string(b) != "v1" {
+		t.Errorf("opencode host opencode.db = %q, want v1", b)
 	}
 }
 
@@ -248,7 +301,7 @@ func TestAttachMissingToolDataMounts(t *testing.T) {
 	}
 }
 
-// A tool data mount without MigrateFrom (opencode2's plan dir) is still one of
+// A tool data mount without MigrateFrom (all of opencode2's) is still one of
 // coi's own, so a reused stopped container gets it too.
 func TestAttachMissingToolDataMounts_AddsMountWithoutMigration(t *testing.T) {
 	mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
@@ -303,7 +356,8 @@ func (f *fakeDataDirContainer) PullDirectory(containerPath, localPath string) er
 
 // A 0.16 opencode2 container keeps its plans in its rootfs. The new plan
 // mount would hide them, so they are copied to the new host dir before the
-// mount is added. Dirs with MigrateFrom come from the workspace instead.
+// mount is added. Nothing else is copied: what the container holds at
+// opencode's paths is not opencode2's.
 func TestAttachMissingToolDataMounts_CopiesContainerPlans(t *testing.T) {
 	mc := WithToolDataMounts(nil, t.TempDir(), tool.NewOpencode2(), t.TempDir())
 	plan := mc.Mounts[2]
