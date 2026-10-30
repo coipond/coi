@@ -759,6 +759,24 @@ func TestClassifyDisks_WritablePrefixIsAMount(t *testing.T) {
 	}
 }
 
+// A parent pin mounts a dir already granted over itself, so it is in no row;
+// a pin- device that mounts anything else is listed as a mount.
+func TestClassifyDisks_ParentPinsAreNotMounts(t *testing.T) {
+	_, mounts, protected, masked := classifyDisks(map[string]container.DiskDevice{
+		"workspace":                          {Source: "/home/u/proj", Path: "/workspace"},
+		pinDeviceName("/workspace/.claude"):  {Source: "/home/u/proj/.claude", Path: "/workspace/.claude"},
+		pinDeviceName("/home/u/repo/.git/x"): {Source: "/home/u/repo/.git/x", Path: "/home/u/repo/.git/x"},
+		pinDeviceName("/workspace/.codex"):   {Source: "/home/u/other", Path: "/workspace/.codex"},
+		"pin-0000000000000000":               {Source: "/srv", Path: "/srv"},
+	}, "/workspace")
+	if len(mounts) != 2 || mounts[0].ContainerPath != "/srv" || mounts[1].ContainerPath != "/workspace/.codex" {
+		t.Errorf("mounts = %+v, want only the two look-alikes", mounts)
+	}
+	if len(protected) != 0 || len(masked) != 0 {
+		t.Errorf("protected = %v, masked = %v", protected, masked)
+	}
+}
+
 // Limits and Docker follow the container, which keeps what it was created
 // with. A Docker setting config would change on restart is flagged as such;
 // one an Incus profile pins is flagged as the profile's, since a restart
