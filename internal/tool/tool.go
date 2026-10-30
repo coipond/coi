@@ -4,6 +4,7 @@
 package tool
 
 import (
+	"bufio"
 	"bytes"
 	_ "embed"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/coipond/coi/internal/tool/credentials"
 )
@@ -166,11 +168,15 @@ func (c *ClaudeTool) BuildCommand(sessionID string, resume bool, resumeSessionID
 	return cmd
 }
 
-// DiscoverSessionID returns the ID of the first .jsonl session file in
-// stateDir/projects/-workspace, or "" if none is found.
+// DiscoverSessionID returns the ID of the most recently active conversation in
+// stateDir/projects/-workspace, or "" if there is none. One saved session can
+// hold several transcripts — `/clear` and resuming another conversation each
+// start a new <id>.jsonl — so the latest one is picked, not the first by name
+// (which could resume a stale or empty conversation Claude then refuses with
+// "No conversation found"). Transcripts with a user/assistant message beat
+// those without; recency is the newest message timestamp inside the file,
+// falling back to mtime (a session saved by `incus file pull` may not keep it).
 func (c *ClaudeTool) DiscoverSessionID(stateDir string) string {
-	// Claude stores sessions as .jsonl files in projects/-workspace/
-	// This logic is extracted from cleanup.go:387-411
 	projectsDir := filepath.Join(stateDir, "projects", "-workspace")
 
 	entries, err := os.ReadDir(projectsDir)
@@ -178,14 +184,68 @@ func (c *ClaudeTool) DiscoverSessionID(stateDir string) string {
 		return ""
 	}
 
-	// Find the first .jsonl file (Claude session file)
+	var best claudeTranscript
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
-			return strings.TrimSuffix(entry.Name(), ".jsonl")
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		t := scanClaudeTranscript(filepath.Join(projectsDir, entry.Name()))
+		if best.id == "" || t.newerThan(best) {
+			best = t
 		}
 	}
+	return best.id
+}
 
-	return ""
+// claudeTranscript is what DiscoverSessionID ranks a transcript by.
+type claudeTranscript struct {
+	id          string
+	hasMessages bool
+	lastMessage string // newest message timestamp (RFC 3339, sorts lexically)
+	modTime     time.Time
+}
+
+func (t claudeTranscript) newerThan(o claudeTranscript) bool {
+	if t.hasMessages != o.hasMessages {
+		return t.hasMessages
+	}
+	if t.lastMessage != o.lastMessage {
+		return t.lastMessage > o.lastMessage
+	}
+	return t.modTime.After(o.modTime)
+}
+
+func scanClaudeTranscript(path string) claudeTranscript {
+	t := claudeTranscript{id: strings.TrimSuffix(filepath.Base(path), ".jsonl")}
+	if info, err := os.Stat(path); err == nil {
+		t.modTime = info.ModTime()
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return t
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024) // tool results make long lines
+	for sc.Scan() {
+		line := sc.Bytes()
+		// Cheap pre-filter: only message entries are decoded.
+		if !bytes.Contains(line, []byte(`"type":"user"`)) && !bytes.Contains(line, []byte(`"type":"assistant"`)) {
+			continue
+		}
+		var e struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+		}
+		if json.Unmarshal(line, &e) != nil || (e.Type != "user" && e.Type != "assistant") {
+			continue
+		}
+		t.hasMessages = true
+		if e.Timestamp > t.lastMessage {
+			t.lastMessage = e.Timestamp
+		}
+	}
+	return t
 }
 
 // GetSandboxSettings returns the settings.json entries to inject: bypass
@@ -379,7 +439,7 @@ type ToolWithModel interface {
 }
 
 // ToolWithContainerEnv is an optional interface for tools that need extra
-// environment variables set inside the container (e.g., to redirect data
+// environment variables set inside the container (e.g., to redirect session
 // storage to the workspace mount so it persists across ephemeral sessions).
 type ToolWithContainerEnv interface {
 	Tool
@@ -387,6 +447,50 @@ type ToolWithContainerEnv interface {
 	// the tool inside the container. workspacePath is the mount point
 	// inside the container (e.g. "/workspace").
 	GetContainerEnv(workspacePath string) map[string]string
+}
+
+// ToolWithContainerSessionDiscovery is an optional interface for tools whose
+// sessions live in a store that only the tool can read in the container (e.g.
+// opencode's SQLite DB under ~/.local/share/opencode), so DiscoverSessionID
+// cannot find them in the saved state on the host. On resume coi runs
+// SessionDiscoveryCommand in the container (with the tool's container env)
+// and passes its stdout to SetSessionDiscoveryOutput; DiscoverSessionID then
+// returns the session found there.
+type ToolWithContainerSessionDiscovery interface {
+	Tool
+	// SessionDiscoveryCommand returns the argv that prints the latest session
+	// of workspacePath (the mount point inside the container), or nil to skip
+	// the lookup.
+	SessionDiscoveryCommand(workspacePath string) []string
+	// SetSessionDiscoveryOutput stores the session ID found in output.
+	SetSessionDiscoveryOutput(output string)
+}
+
+// DataDir is a tool data directory inside the container that must outlive an
+// ephemeral container but must NOT live in the workspace.
+type DataDir struct {
+	// Name is a short, stable, path-safe label ("share", "state") naming the
+	// per-workspace host directory that backs this dir.
+	Name string
+	// HomeRelPath is the container path relative to the container user's home
+	// (e.g. ".local/share/opencode").
+	HomeRelPath string
+	// FromWorkspace marks a dir that coi versions before #929 kept in the
+	// workspace at <workspace>/<HomeRelPath>; that data is moved to the host
+	// dir the first time the mount is added. Leave it false for any other dir,
+	// or a project's own files at that path would be moved out of it.
+	FromWorkspace bool
+}
+
+// ToolWithDataDirs is an optional interface for tools whose runtime data (a
+// session database, undo snapshots, ...) lives outside their config dir. coi
+// mounts a per-workspace host directory (~/.coi/tool-data/<tool>/<hash>/<name>)
+// over each one, so the data persists across ephemeral containers without
+// sitting inside the workspace, where a tool that snapshots the work tree
+// would end up snapshotting its own data (#929).
+type ToolWithDataDirs interface {
+	Tool
+	DataDirs() []DataDir
 }
 
 // SetPermissionMode sets the permission mode for Claude Code.

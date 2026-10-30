@@ -1352,6 +1352,17 @@ def calculate_container_name(workspace_dir, slot, session_name=None):
     return f"{prefix}{identity_id}-{slot}"
 
 
+def tool_data_dir(workspace_dir, tool, name):
+    """Host dir backing one of a tool's data dirs for a workspace (#929):
+    ~/.coi/tool-data/<tool>/<workspace-hash>/<name>, mirroring
+    session.ToolDataBaseDir (keyed by the workspace path, like
+    calculate_container_name without a session name)."""
+    import hashlib
+
+    digest = hashlib.sha256(os.path.abspath(workspace_dir).encode()).hexdigest()[:8]
+    return Path.home() / ".coi" / "tool-data" / tool / digest / name
+
+
 def extract_container_name(result):
     """Extract the container name a `coi shell --background` launch reported.
 

@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -140,6 +142,93 @@ func (m *Manager) MountDisk(name, source, path string, shift, readonly bool) err
 	}
 
 	return IncusExec(args...)
+}
+
+// DiskMount is one disk device for MountDisks.
+type DiskMount struct {
+	Name, Source, Path string
+	Shift, Readonly    bool
+}
+
+// maxDevicePatchBytes keeps one MountDisks PATCH body under the kernel's
+// per-argument limit (MAX_ARG_STRLEN, 128 KiB): Incus 6.x `query` takes the
+// body only as an argument.
+const maxDevicePatchBytes = 96 * 1024
+
+// MountDisks adds disk devices with one `incus query -X PATCH` per
+// maxDevicePatchBytes of devices instead of one `config device add` each.
+// PATCH merges the devices map into the existing devices, but it resets an
+// omitted description, so the current one is read first and sent back.
+func (m *Manager) MountDisks(mounts []DiskMount) error {
+	if len(mounts) == 0 {
+		return nil
+	}
+	instanceURL := fmt.Sprintf("/1.0/instances/%s?project=%s",
+		url.PathEscape(m.ContainerName), url.QueryEscape(IncusProject))
+	current, err := m.incusQuery("GET", instanceURL, "")
+	if err != nil {
+		return fmt.Errorf("failed to read instance %s: %w", m.ContainerName, err)
+	}
+	var inst struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(current), &inst); err != nil {
+		return fmt.Errorf("failed to parse instance %s: %w", m.ContainerName, err)
+	}
+
+	devices := map[string]map[string]string{}
+	size := 0
+	flush := func() error {
+		if len(devices) == 0 {
+			return nil
+		}
+		body, err := json.Marshal(map[string]any{"description": inst.Description, "devices": devices})
+		if err != nil {
+			return err
+		}
+		if _, err := m.incusQuery("PATCH", instanceURL, string(body)); err != nil {
+			return fmt.Errorf("failed to add disk devices: %w", err)
+		}
+		devices, size = map[string]map[string]string{}, 0
+		return nil
+	}
+	for _, d := range mounts {
+		dev := map[string]string{"type": "disk", "source": d.Source, "path": d.Path}
+		if d.Shift {
+			dev["shift"] = "true"
+		}
+		if d.Readonly {
+			dev["readonly"] = "true"
+		}
+		entry, err := json.Marshal(map[string]any{d.Name: dev})
+		if err != nil {
+			return err
+		}
+		if size+len(entry) > maxDevicePatchBytes {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		devices[d.Name] = dev
+		size += len(entry)
+	}
+	return flush()
+}
+
+// incusQuery runs `incus query -X method [--data body] url` and returns stdout.
+// `incus query` rejects --project, so the project goes in the URL.
+func (m *Manager) incusQuery(method, queryURL, body string) (string, error) {
+	args := []string{"query", "-X", method}
+	if body != "" {
+		args = append(args, "--data", body)
+	}
+	cmd := execIncusCommand(append(args, queryURL))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := runIncus(cmd); err != nil {
+		return "", ClassifyIncusErr(toExitError(err, strings.TrimSpace(stderr.String())), stderr.String())
+	}
+	return stdout.String(), nil
 }
 
 // AddProxyDevice adds a proxy device to the container for forwarding connections
@@ -891,22 +980,82 @@ func copyFile(src, dst string) error {
 	return dstFile.Close()
 }
 
-// PushDirectory pushes a directory to the container recursively
+// PushDirectory pushes a directory to the container recursively, so that
+// containerPath is the pushed directory itself (not a directory inside it).
 func (m *Manager) PushDirectory(localPath, containerPath string) error {
 	// Check if source directory exists
 	if info, err := os.Stat(localPath); err != nil || !info.IsDir() {
 		return nil // Skip if not a directory (intentional nilerr)
 	}
-
-	// Incus creates a subdirectory when pushing, so we push to the parent
-	// e.g., pushing /local/dir to container/remote/parent/ creates /remote/parent/dir
-	// To get /remote/dir, we need to push to container/remote/
-	parentPath := containerPath[:strings.LastIndex(containerPath, "/")+1]
-	if parentPath == "" {
-		parentPath = "/"
+	// Incus names the pushed directory after the local one, so an absolute
+	// path is needed for "." or a trailing slash to carry the real name.
+	if abs, err := filepath.Abs(localPath); err == nil {
+		localPath = abs
 	}
-	dest := m.ContainerName + parentPath
-	return IncusExec("file", "push", "-r", localPath, dest)
+
+	// Incus creates <dest>/<local name>, so push to the parent, e.g. /local/dir
+	// to container:/remote/ creates /remote/dir. When the target has another
+	// name, push a copy staged on the host under that name: exec (mktemp/mv
+	// in the container) would fail on a stopped container.
+	target := path.Clean("/" + containerPath)
+	if target == "/" {
+		return IncusExec("file", "push", "-r", localPath, m.ContainerName+"/")
+	}
+	parent, name := path.Dir(target), path.Base(target)
+	if !strings.HasSuffix(parent, "/") {
+		parent += "/"
+	}
+	src := localPath
+	if name != filepath.Base(localPath) {
+		stage, err := os.MkdirTemp("", "coi-push-*")
+		if err != nil {
+			return err
+		}
+		defer removeStage(stage)
+		src = filepath.Join(stage, name)
+		if err := stagePushTree(localPath, src); err != nil {
+			return fmt.Errorf("failed to stage %s for the push: %w", localPath, err)
+		}
+	}
+	return IncusExec("file", "push", "-r", src, m.ContainerName+parent)
+}
+
+// PathKind is what a container path is, as reported by Manager.PathKind.
+type PathKind string
+
+// Possible PathKind values.
+const (
+	PathDir   PathKind = "dir"   // a directory
+	PathOther PathKind = "other" // any other entry; a symlink counts as the link itself
+	PathNone  PathKind = "none"  // nothing at that path
+)
+
+// PathKind reports what a path is in the container. It uses the
+// instance files API, not exec, so it also works on a stopped container.
+func (m *Manager) PathKind(p string) (PathKind, error) {
+	// `incus query` rejects --project, so the project goes in the URL.
+	query := fmt.Sprintf("/1.0/instances/%s/files?path=%s&project=%s",
+		url.PathEscape(m.ContainerName), url.QueryEscape(p), url.QueryEscape(IncusProject))
+	cmd := execIncusCommand([]string{"query", query})
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := runIncus(cmd); err != nil {
+		err = ClassifyIncusErr(toExitError(err, strings.TrimSpace(stderr.String())), stderr.String())
+		if errors.Is(err, ErrContainerNotFound) || errors.Is(err, ErrIncusUnavailable) {
+			return "", err
+		}
+		if strings.Contains(strings.ToLower(stderr.String()), "not found") {
+			return PathNone, nil
+		}
+		return "", err
+	}
+	// A directory answers with its entry names as JSON; a file or symlink
+	// answers with its raw content.
+	var entries []string
+	if json.Unmarshal(stdout.Bytes(), &entries) == nil {
+		return PathDir, nil
+	}
+	return PathOther, nil
 }
 
 // Chown changes ownership of a path in the container
@@ -948,20 +1097,22 @@ func Available() bool {
 //     was started before the group was added — a re-login is needed.
 //  4. User is not in the incus-admin group at all.
 //  5. Group is active in the session but the Incus daemon is not running.
+//
+// Every case matches ErrIncusUnavailable, so the CLI exits 3.
 func IncusNotAvailableError() error {
 	if _, err := exec.LookPath("incus"); err != nil {
-		return fmt.Errorf("incus is not installed — please install Incus first")
+		return incusUnavailable("incus is not installed — please install Incus first")
 	}
 
 	currentUser, err := user.Current()
 	if err != nil {
-		return fmt.Errorf("incus is not available — please ensure you are in the incus-admin group")
+		return incusUnavailable("incus is not available — please ensure you are in the incus-admin group")
 	}
 
 	incusGroup, err := user.LookupGroup("incus-admin")
 	if err != nil {
 		// Group doesn't exist — Incus not installed properly or daemon not running.
-		return fmt.Errorf("incus is not available — the incus-admin group does not exist; please install Incus")
+		return incusUnavailable("incus is not available — the incus-admin group does not exist; please install Incus")
 	}
 
 	// Use os.Getgroups() (getgroups(2)) to get the actual supplementary GIDs
@@ -973,24 +1124,29 @@ func IncusNotAvailableError() error {
 		for _, gid := range activeGIDs {
 			if gid == incusGID {
 				// Group is active but incus still doesn't work — daemon issue.
-				return fmt.Errorf("incus is not available — please check that the Incus daemon is running (sudo systemctl start incus)")
+				return incusUnavailable("incus is not available — please check that the Incus daemon is running (sudo systemctl start incus)")
 			}
 		}
 	}
 
 	// Group exists but is not active — check whether it's in /etc/group.
 	if UserInGroupFile(currentUser.Username, "incus-admin") {
-		return fmt.Errorf(
+		return incusUnavailable(
 			"you have been added to the incus-admin group but your current session does not have it active yet\n" +
 				"Log out and back in, or run: newgrp incus-admin",
 		)
 	}
 
-	return fmt.Errorf(
+	return incusUnavailable(
 		"incus is not available — please add your user to the incus-admin group and re-login:\n" +
 			"  sudo usermod -aG incus-admin $USER\n" +
 			"Then log out and back in, or run: newgrp incus-admin",
 	)
+}
+
+// incusUnavailable returns msg as an error matching ErrIncusUnavailable.
+func incusUnavailable(msg string) error {
+	return SentinelError(ErrIncusUnavailable, msg)
 }
 
 // UserInGroupFile reports whether username appears in the member list of

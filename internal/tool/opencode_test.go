@@ -1,6 +1,8 @@
 package tool
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -57,11 +59,111 @@ func TestOpencodeTool_BuildCommand_ResumeWithID(t *testing.T) {
 	}
 }
 
+func TestOpencodeTool_BuildHeadlessCommand(t *testing.T) {
+	oc := NewOpencode().(ToolWithHeadlessPrompt)
+	tests := []struct {
+		name string
+		spec LaunchSpec
+		want string
+	}{
+		{"no prompt", LaunchSpec{SessionID: "sid", Print: true}, `opencode run </dev/null`},
+		{"fresh", LaunchSpec{SessionID: "sid", PromptFile: "/run/p", Print: true}, `opencode run </run/p`},
+		{"continue", LaunchSpec{Resume: true, PromptFile: "/run/p", Print: true}, `opencode run --continue </run/p`},
+		{"session", LaunchSpec{Resume: true, ResumeSessionID: "ses_1", PromptFile: "/run/p", Print: true}, `opencode run --session ses_1 </run/p`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := oc.BuildHeadlessCommand(tt.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(cmd, " "); got != tt.want {
+				t.Errorf("BuildHeadlessCommand = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpencodeTool_BuildHeadlessCommand_Binary(t *testing.T) {
+	oc := &OpencodeTool{}
+	oc.SetBinary("/opt/bin/opencode")
+	cmd, err := oc.BuildHeadlessCommand(LaunchSpec{PromptFile: "/run/p", Print: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd[0] != "/opt/bin/opencode" || cmd[1] != "run" {
+		t.Errorf("BuildHeadlessCommand = %v, want the [tool] binary then run", cmd)
+	}
+}
+
+func TestOpencodeTool_BuildHeadlessCommand_SystemPromptRejected(t *testing.T) {
+	oc := NewOpencode().(ToolWithHeadlessPrompt)
+	if _, err := oc.BuildHeadlessCommand(LaunchSpec{SystemPromptFile: "/run/s", Print: true}); err == nil {
+		t.Error("opencode run has no system-prompt flag; expected an error")
+	}
+}
+
 func TestOpencodeTool_DiscoverSessionID(t *testing.T) {
 	oc := NewOpencode()
 	id := oc.DiscoverSessionID("/some/path")
 	if id != "" {
 		t.Errorf("DiscoverSessionID() = %q, want %q", id, "")
+	}
+}
+
+func TestOpencodeTool_SessionDiscoveryCommand(t *testing.T) {
+	oc := NewOpencode().(*OpencodeTool)
+	cmd := oc.SessionDiscoveryCommand("/work'space")
+	want := []string{
+		"opencode", "db",
+		"SELECT id FROM session WHERE parent_id IS NULL AND time_archived IS NULL" +
+			" AND directory = '/work''space' ORDER BY time_updated DESC LIMIT 1",
+		"--format", "json",
+	}
+	if strings.Join(cmd, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("SessionDiscoveryCommand() = %q, want %q", cmd, want)
+	}
+
+	oc.SetBinary("/opt/oc/bin/opencode")
+	if got := oc.SessionDiscoveryCommand("/workspace")[0]; got != "/opt/oc/bin/opencode" {
+		t.Errorf("SessionDiscoveryCommand()[0] = %q, want the [tool] binary override", got)
+	}
+}
+
+func TestOpencodeTool_SetSessionDiscoveryOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{"one row", "[\n  {\n    \"id\": \"ses_1a2B3c\"\n  }\n]\n", "ses_1a2B3c"},
+		{"log line before the rows", "INFO migrating\n[{\"id\":\"ses_x9\"}]", "ses_x9"},
+		{"no rows", "[]\n", ""},
+		{"empty output", "", ""},
+		{"not json", "Error: no such table: session", ""},
+		{"unexpected id shape", `[{"id":"ses_1; rm -rf /"}]`, ""},
+		{"not an opencode id", `[{"id":"abc"}]`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oc := NewOpencode().(*OpencodeTool)
+			oc.SetSessionDiscoveryOutput(tt.output)
+			if got := oc.DiscoverSessionID("/ignored"); got != tt.want {
+				t.Errorf("DiscoverSessionID() = %q, want %q", got, tt.want)
+			}
+			if got := strings.Join(oc.BuildCommand("", true, oc.DiscoverSessionID("")), " "); tt.want != "" && got != "opencode --session "+tt.want {
+				t.Errorf("BuildCommand(resume) = %q, want --session %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpencodeTool_SetSessionDiscoveryOutput_ClearsPrevious(t *testing.T) {
+	oc := NewOpencode().(*OpencodeTool)
+	oc.SetSessionDiscoveryOutput(`[{"id":"ses_old"}]`)
+	oc.SetSessionDiscoveryOutput("[]")
+	if got := oc.DiscoverSessionID(""); got != "" {
+		t.Errorf("DiscoverSessionID() = %q, want \"\" after an empty lookup", got)
 	}
 }
 
@@ -201,28 +303,29 @@ func TestOpencodeTool_GetSandboxSettings_BypassDefault(t *testing.T) {
 	}
 }
 
-func TestOpencodeTool_ImplementsContainerEnv(t *testing.T) {
+func TestOpencodeTool_ContainerEnvIsEmpty(t *testing.T) {
 	oc := NewOpencode()
 
 	twce, ok := oc.(ToolWithContainerEnv)
 	if !ok {
-		t.Fatal("OpencodeTool should implement ToolWithContainerEnv")
+		t.Fatal("OpencodeTool should keep implementing ToolWithContainerEnv so stale XDG env gets unset")
 	}
-
-	env := twce.GetContainerEnv("/workspace")
-	if env["XDG_DATA_HOME"] != "/workspace/.local/share" {
-		t.Errorf("XDG_DATA_HOME = %q, want %q", env["XDG_DATA_HOME"], "/workspace/.local/share")
-	}
-	if env["XDG_STATE_HOME"] != "/workspace/.local/state" {
-		t.Errorf("XDG_STATE_HOME = %q, want %q", env["XDG_STATE_HOME"], "/workspace/.local/state")
+	if env := twce.GetContainerEnv("/workspace"); len(env) != 0 {
+		t.Errorf("GetContainerEnv() = %v, want empty: data dirs are host mounts now, not workspace redirects (#929)", env)
 	}
 }
 
-func TestOpencodeTool_GetContainerEnv_CustomWorkspace(t *testing.T) {
-	oc := &OpencodeTool{}
-	env := oc.GetContainerEnv("/home/user/project")
-	if env["XDG_DATA_HOME"] != "/home/user/project/.local/share" {
-		t.Errorf("XDG_DATA_HOME = %q, want %q", env["XDG_DATA_HOME"], "/home/user/project/.local/share")
+func TestOpencodeTool_DataDirs(t *testing.T) {
+	tdd, ok := NewOpencode().(ToolWithDataDirs)
+	if !ok {
+		t.Fatal("OpencodeTool should implement ToolWithDataDirs")
+	}
+	want := []DataDir{
+		{Name: "share", HomeRelPath: ".local/share/opencode", FromWorkspace: true},
+		{Name: "state", HomeRelPath: ".local/state/opencode", FromWorkspace: true},
+	}
+	if got := tdd.DataDirs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("DataDirs() = %v, want %v", got, want)
 	}
 }
 

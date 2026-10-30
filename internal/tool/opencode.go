@@ -1,12 +1,23 @@
 package tool
 
-import "path/filepath"
+import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+// opencodeSessionID matches opencode's session IDs ("ses_" + base62). It also
+// keeps a discovered ID shell-safe for the launch command.
+var opencodeSessionID = regexp.MustCompile(`^ses_[A-Za-z0-9]+$`)
 
 // OpencodeTool implements Tool for opencode (https://opencode.ai)
 type OpencodeTool struct {
 	permissionMode  string // "bypass" (default) or "interactive"
 	contextFilePath string // absolute path to sandbox context file inside container (set by SetAutoContextPath)
-	binary          string // [tool] binary override; empty means "opencode"
+	binary          string // [tool] binary override, or opencode2's default; empty means "opencode"
+	discoveredID    string // set by SetSessionDiscoveryOutput
 }
 
 // NewOpencode creates a new opencode tool instance
@@ -15,8 +26,8 @@ func NewOpencode() Tool { return &OpencodeTool{} }
 // Name returns "opencode".
 func (c *OpencodeTool) Name() string { return "opencode" }
 
-// Binary returns the executable to launch: the [tool] binary override if set,
-// else "opencode".
+// Binary returns the executable to launch: binary if set (the [tool] binary
+// override, or "opencode2" from NewOpencode2), else "opencode".
 func (c *OpencodeTool) Binary() string {
 	if c.binary != "" {
 		return c.binary
@@ -39,8 +50,8 @@ func (c *OpencodeTool) ConfigDirName() string { return mustBundle("opencode").Co
 func (c *OpencodeTool) SessionsDirName() string { return "sessions-opencode" }
 
 // BuildCommand builds the opencode launch command.
-// When resume is true, passes --continue to auto-resume the last session,
-// or --session <id> if a specific session ID is provided.
+// When resume is true, passes --session <id> if a session ID is known (see
+// DiscoverSessionID), else --continue to resume opencode's last session.
 func (c *OpencodeTool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
 	cmd := []string{c.Binary()}
 	if resume {
@@ -53,8 +64,56 @@ func (c *OpencodeTool) BuildCommand(sessionID string, resume bool, resumeSession
 	return cmd
 }
 
-// DiscoverSessionID returns "" because opencode uses SQLite (not JSONL files).
-func (c *OpencodeTool) DiscoverSessionID(stateDir string) string { return "" }
+// BuildHeadlessCommand implements ToolWithHeadlessPrompt. `opencode run`
+// runs to completion and exits with a status code; it takes the same
+// --session/--continue resume flags as the TUI and works in OpenCode v1 and
+// v2. The prompt goes in on stdin (`< <file>`), which both versions read as
+// the message when no positional is given: a positional prompt starting with
+// "-" is parsed as flags, and v2 repeats any args after "--". Stdin is always
+// redirected, so an open stdin inherited from the caller can't block the run.
+// It has no system-prompt flag, so a SystemPromptFile is rejected.
+func (c *OpencodeTool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
+	if spec.SystemPromptFile != "" {
+		return nil, fmt.Errorf("opencode run has no system-prompt flag")
+	}
+	base := c.BuildCommand(spec.SessionID, spec.Resume, spec.ResumeSessionID)
+	cmd := append([]string{base[0], "run"}, base[1:]...)
+	stdin := "/dev/null"
+	if spec.PromptFile != "" {
+		stdin = spec.PromptFile
+	}
+	return append(cmd, "<"+stdin), nil
+}
+
+// DiscoverSessionID returns the session found by the in-container DB query
+// (SetSessionDiscoveryOutput), or "" so BuildCommand falls back to --continue.
+// opencode keeps sessions in SQLite in its data dir, not in stateDir.
+func (c *OpencodeTool) DiscoverSessionID(stateDir string) string { return c.discoveredID }
+
+// SessionDiscoveryCommand implements ToolWithContainerSessionDiscovery: it
+// queries opencode's own DB (`opencode db` resolves the channel-specific DB
+// file) for the latest root, unarchived session of the workspace.
+func (c *OpencodeTool) SessionDiscoveryCommand(workspacePath string) []string {
+	query := "SELECT id FROM session WHERE parent_id IS NULL AND time_archived IS NULL" +
+		" AND directory = '" + strings.ReplaceAll(workspacePath, "'", "''") + "'" +
+		" ORDER BY time_updated DESC LIMIT 1"
+	return []string{c.Binary(), "db", query, "--format", "json"}
+}
+
+// SetSessionDiscoveryOutput implements ToolWithContainerSessionDiscovery. It
+// parses the JSON rows printed by SessionDiscoveryCommand; anything else
+// (no rows, a log line, an ID of unexpected shape) leaves no session.
+func (c *OpencodeTool) SetSessionDiscoveryOutput(output string) {
+	c.discoveredID = ""
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	if start := strings.Index(output, "["); start >= 0 {
+		if json.Unmarshal([]byte(output[start:]), &rows) == nil && len(rows) > 0 && opencodeSessionID.MatchString(rows[0].ID) {
+			c.discoveredID = rows[0].ID
+		}
+	}
+}
 
 // GetSandboxSettings returns the opencode permission config.
 // In bypass mode (default): injects {"permission": {"*": "allow"}} so opencode runs
@@ -116,14 +175,23 @@ func (c *OpencodeTool) StateConfigFileName() string { return mustBundle("opencod
 // Opencode needs sandbox permission bypass even without host config dir.
 func (c *OpencodeTool) AlwaysSetupConfig() bool { return mustBundle("opencode").AlwaysSetup }
 
-// GetContainerEnv implements ToolWithContainerEnv.
-// Redirects XDG data and state directories to the workspace mount so opencode's
-// SQLite database persists across ephemeral container recreations.
-// Without this, data lives in ~/.local/share/opencode/ (inside the container)
-// and is destroyed when the ephemeral container is deleted.
-func (c *OpencodeTool) GetContainerEnv(workspacePath string) map[string]string {
-	return map[string]string{
-		"XDG_DATA_HOME":  filepath.Join(workspacePath, ".local", "share"),
-		"XDG_STATE_HOME": filepath.Join(workspacePath, ".local", "state"),
+// GetContainerEnv implements ToolWithContainerEnv. Opencode needs no extra env:
+// its data lives at the XDG defaults, which DataDirs backs with host mounts.
+// It still returns an (empty) map so the container-env reconcile unsets the
+// XDG_DATA_HOME/XDG_STATE_HOME that older coi versions pointed at the
+// workspace on a reused persistent container.
+func (c *OpencodeTool) GetContainerEnv(_ string) map[string]string {
+	return map[string]string{}
+}
+
+// DataDirs implements ToolWithDataDirs. Opencode keeps its SQLite session
+// database and its snapshot git repo in the XDG data dir, and prompt history
+// and model picks in the XDG state dir. The snapshot repo tracks the whole
+// workspace, so these must stay out of it: under /workspace each snapshot
+// re-added the snapshot repo itself, growing it without bound (#929).
+func (c *OpencodeTool) DataDirs() []DataDir {
+	return []DataDir{
+		{Name: "share", HomeRelPath: filepath.Join(".local", "share", "opencode"), FromWorkspace: true},
+		{Name: "state", HomeRelPath: filepath.Join(".local", "state", "opencode"), FromWorkspace: true},
 	}
 }

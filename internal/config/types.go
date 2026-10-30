@@ -369,10 +369,11 @@ func (g *GitConfig) EffectiveProtectedBranches() []string {
 
 // SecurityConfig contains security-related settings for workspace protection
 type SecurityConfig struct {
-	// ProtectedPaths is a list of paths (relative to workspace) to mount read-only
-	// These paths are protected to prevent containers from modifying files that could
-	// execute automatically on the host (e.g., git hooks, IDE configs, etc.)
-	// Defaults: [".git/hooks", ".git/config", ".husky", ".vscode"]
+	// ProtectedPaths is a list of paths (relative to workspace) to mount
+	// read-only. These paths are protected to prevent containers from modifying
+	// files that could execute automatically on the host (e.g., git hooks, IDE
+	// configs, agent tool settings). Defaults: see [security] protected_paths in
+	// internal/config/embedded/default_config.toml.
 	ProtectedPaths []string `toml:"protected_paths"`
 	// AdditionalProtectedPaths allows adding more paths without replacing defaults
 	AdditionalProtectedPaths []string `toml:"additional_protected_paths"`
@@ -641,6 +642,10 @@ type ProfileConfig struct {
 	// load time — the authoritative signal for post-inheritance trust checks,
 	// instead of lexically reconstructing the root from Source.
 	Trusted bool `toml:"-"`
+	// mountsFromConfig marks Mounts as a copy of the config's own mounts (the
+	// synthesized "default" profile, or a profile inheriting them from it), so
+	// ApplyProfile does not add them a second time.
+	mountsFromConfig bool
 
 	// Extended fields — previously Config-only, now available in profiles
 	Paths      *PathsConfig      `toml:"paths"`
@@ -948,7 +953,7 @@ func (c *LimitsConfig) HasAny() bool {
 		c.Disk.Max != "" ||
 		c.Disk.Size != "" ||
 		c.Disk.Priority != 0 ||
-		c.Runtime.MaxProcesses != 0
+		IntVal(c.Runtime.MaxProcesses) != 0
 }
 
 // CPULimits contains CPU resource limits
@@ -978,7 +983,7 @@ type DiskLimits struct {
 // RuntimeLimits contains time-based and process limits
 type RuntimeLimits struct {
 	MaxDuration  string `toml:"max_duration"`  // "2h", "30m", "1h30m", "" (unlimited)
-	MaxProcesses int    `toml:"max_processes"` // 0 = unlimited
+	MaxProcesses *int   `toml:"max_processes"` // 0 = unlimited; a pointer so an explicit 0 overrides an earlier limit
 	AutoStop     *bool  `toml:"auto_stop"`     // auto-stop when limit reached
 	StopGraceful *bool  `toml:"stop_graceful"` // graceful vs force stop
 }

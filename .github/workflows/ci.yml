@@ -549,7 +549,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/coi-image.tar.gz
-          key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**') }}
+          key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**', '.github/ci-image.toml') }}
 
       - name: Import Coi image from cache
         if: steps.cache-coi-image.outputs.cache-hit == 'true'
@@ -570,7 +570,8 @@ jobs:
           max_attempts=5
           for attempt in $(seq 1 "$max_attempts"); do
             echo "Attempt $attempt of $max_attempts..."
-            if ./coi build; then
+            # Both OpenCode versions: see .github/ci-image.toml.
+            if COI_CONFIG=.github/ci-image.toml ./coi build; then
               echo "Image built successfully on attempt $attempt"
               break
             fi
@@ -591,7 +592,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/coi-image.tar.gz
-          key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**') }}
+          key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**', '.github/ci-image.toml') }}
 
       - name: Free disk space for image-intensive tests
         if: matrix.test_group.name == 'core-build' || matrix.test_group.name == 'core-run'
@@ -738,7 +739,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/coi-image.tar.gz
-          key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**') }}
+          key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**', '.github/ci-image.toml') }}
 
       - name: Restore base Ubuntu image from cache (restore-only)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

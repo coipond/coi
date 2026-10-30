@@ -116,8 +116,8 @@ func setupMounts(mgr container.ContainerDevices, mountConfig *MountConfig, useSh
 			}
 		} else {
 			// Create host directory if it doesn't exist (writable mounts only)
-			if err := os.MkdirAll(mount.HostPath, 0o755); err != nil {
-				return fmt.Errorf("failed to create mount directory '%s': %w", mount.HostPath, err)
+			if err := PrepareMountSource(mount, logger); err != nil {
+				return err
 			}
 		}
 

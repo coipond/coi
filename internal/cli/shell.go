@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -353,6 +354,31 @@ func mergeToolEnv(env map[string]string, t tool.Tool, workspacePath string) {
 	}
 }
 
+// sessionDiscoveryTimeoutSec bounds the in-container session lookup, so a
+// stuck tool never blocks the launch.
+const sessionDiscoveryTimeoutSec = 30
+
+// discoverContainerSession runs a ToolWithContainerSessionDiscovery tool's
+// session lookup in the container before a resume, so DiscoverSessionID (and
+// so buildCLICommand) sees the session. Best-effort: on any failure the tool
+// resumes with its own fallback. Skipped in dummy mode (the stub has no DB).
+func discoverContainerSession(mgr container.ContainerManager, t tool.Tool, resume bool, workspacePath string, opts container.ExecCommandOptions) {
+	d, ok := t.(tool.ToolWithContainerSessionDiscovery)
+	if !ok || !resume || os.Getenv("COI_USE_DUMMY") == "1" {
+		return
+	}
+	lookup := d.SessionDiscoveryCommand(workspacePath)
+	if len(lookup) == 0 {
+		return
+	}
+	argv := append([]string{"timeout", strconv.Itoa(sessionDiscoveryTimeoutSec)}, lookup...)
+	out, err := mgr.ExecArgsCapture(argv, opts)
+	if err != nil {
+		return
+	}
+	d.SetSessionDiscoveryOutput(out)
+}
+
 // runPreLaunch executes any pre-launch commands for the tool inside the container.
 // Commands are run via ExecArgs (no shell interpretation) to prevent injection.
 // Returns an error if any pre-launch command fails.
@@ -457,10 +483,15 @@ type directLaunch struct {
 // buildContainerEnv: it merges the tool's env and runs the pre-launch steps,
 // so a failure stops the launch before the grants report claims a start.
 func (a *App) prepareDirect(result *session.SetupResult, containerEnv map[string]string, userPtr *int, sessionID string, useResumeFlag, restoreOnly bool, sessionsDir, resumeID string, t tool.Tool) (*directLaunch, error) {
-	cmdToRun := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
-
 	workspacePath := session.ContainerWorkspace(result)
 	mergeToolEnv(containerEnv, t, workspacePath)
+
+	discoverContainerSession(result.Manager, t, useResumeFlag || restoreOnly, workspacePath, container.ExecCommandOptions{
+		User: userPtr,
+		Cwd:  workspacePath,
+		Env:  containerEnv,
+	})
+	cmdToRun := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
 
 	// Run pre-launch commands (e.g., symlink creation) before the tool starts
 	if err := runPreLaunch(result.Manager, t, container.ExecCommandOptions{
@@ -562,8 +593,13 @@ func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]s
 		env:           containerEnv,
 	}
 
-	cliCmd := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
 	mergeToolEnv(containerEnv, t, l.workspacePath)
+	discoverContainerSession(result.Manager, t, useResumeFlag || restoreOnly, l.workspacePath, container.ExecCommandOptions{
+		User: userPtr,
+		Cwd:  l.workspacePath,
+		Env:  containerEnv,
+	})
+	cliCmd := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
 
 	// Run pre-launch commands (e.g., symlink creation) before the tool starts
 	if err := runPreLaunch(result.Manager, t, container.ExecCommandOptions{
@@ -612,8 +648,7 @@ func (a *App) enterTmux(result *session.SetupResult, l *tmuxLaunch, detached boo
 	switch {
 	case l.existing && detached:
 		// Send command to existing session
-		sendCmd := fmt.Sprintf("tmux send-keys -t %s %q Enter", shellQuote(session.TmuxPaneTarget(result.ContainerName)), l.cliCmd)
-		if _, err := result.Manager.ExecCommand(sendCmd, container.ExecCommandOptions{
+		if _, err := result.Manager.ExecCommand(tmuxSendKeysCmd(result.ContainerName, l.cliCmd), container.ExecCommandOptions{
 			Capture: true,
 			User:    l.userPtr,
 		}); err != nil {

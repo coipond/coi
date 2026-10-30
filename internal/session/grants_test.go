@@ -205,7 +205,7 @@ func (m *grantsMounter) MountDisk(name, _, _ string, _, _ bool) error {
 func TestBuildGrants_FallbackListsPlaceholders(t *testing.T) {
 	ws := t.TempDir()
 	m := &grantsMounter{}
-	paths, err := SetupSecurityMounts(m, ws, "/workspace", []string{".vscode"}, false, nil)
+	paths, err := SetupSecurityMounts(m, ws, "/workspace", []string{".vscode"}, false, nil, NestedGitScan{}, false)
 	if err != nil || len(m.mounted) != 1 {
 		t.Fatalf("setup mounted %v, err %v", m.mounted, err)
 	}
@@ -755,6 +755,24 @@ func TestClassifyDisks_WritablePrefixIsAMount(t *testing.T) {
 		t.Errorf("mounts = %+v, want the two writable look-alikes", mounts)
 	}
 	if strings.Join(protected, ",") != ".git/hooks" || strings.Join(masked, ",") != ".env" {
+		t.Errorf("protected = %v, masked = %v", protected, masked)
+	}
+}
+
+// A parent pin mounts a dir already granted over itself, so it is in no row;
+// a pin- device that mounts anything else is listed as a mount.
+func TestClassifyDisks_ParentPinsAreNotMounts(t *testing.T) {
+	_, mounts, protected, masked := classifyDisks(map[string]container.DiskDevice{
+		"workspace":                          {Source: "/home/u/proj", Path: "/workspace"},
+		pinDeviceName("/workspace/.claude"):  {Source: "/home/u/proj/.claude", Path: "/workspace/.claude"},
+		pinDeviceName("/home/u/repo/.git/x"): {Source: "/home/u/repo/.git/x", Path: "/home/u/repo/.git/x"},
+		pinDeviceName("/workspace/.codex"):   {Source: "/home/u/other", Path: "/workspace/.codex"},
+		"pin-0000000000000000":               {Source: "/srv", Path: "/srv"},
+	}, "/workspace")
+	if len(mounts) != 2 || mounts[0].ContainerPath != "/srv" || mounts[1].ContainerPath != "/workspace/.codex" {
+		t.Errorf("mounts = %+v, want only the two look-alikes", mounts)
+	}
+	if len(protected) != 0 || len(masked) != 0 {
 		t.Errorf("protected = %v, masked = %v", protected, masked)
 	}
 }

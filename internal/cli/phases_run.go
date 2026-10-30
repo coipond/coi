@@ -25,6 +25,9 @@ import (
 type runState struct {
 	// After resolve-workspace
 	absWorkspace string
+	// nestedGitScan is the nested git walk started before the launch,
+	// consumed by applySecurityMounts.
+	nestedGitScan session.NestedGitScan
 
 	// releaseLaunchLock releases the per-workspace launch lock taken at slot
 	// selection (session.AcquireLaunchLock); called once the container is up.
@@ -82,6 +85,9 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "validate-env",
 		RunFn: func(ctx context.Context) (_ session.Teardown, retErr error) {
+			if err := validateSlotFlag(a.slot); err != nil {
+				return nil, err
+			}
 			if !container.Available() {
 				return nil, container.IncusNotAvailableError()
 			}
@@ -189,6 +195,16 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			// so the per-source fingerprint matches what `coi trust` recorded.
 			pc := ParsePortConfig(a.cfg)
 			s.mountConfig, s.socketConfig, s.credentialConfig, s.portConfig = a.gateRunForwarding(mc, sc, cc, pc, s.absWorkspace, s.wasRestarted)
+			// Tool data (opencode's session DB/snapshots) persists on the host
+			// outside the workspace (#929). coi-generated, so added past the
+			// trust gate.
+			if t := a.runDataTool(s); t != nil {
+				hostHome, err := os.UserHomeDir()
+				if err != nil {
+					return nil, fmt.Errorf("failed to get home directory: %w", err)
+				}
+				s.mountConfig = session.WithToolDataMounts(s.mountConfig, filepath.Join(hostHome, ".coi"), t, s.absWorkspace)
+			}
 
 			// A reused persistent container still carries the previous
 			// session's port devices; strip them while it is STOPPED so they
@@ -286,7 +302,7 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				}
 				s.containerWorkspace = a.resolveContainerWorkspacePath(s.absWorkspace, layout != nil)
 				defer timing.Start(timing.CatStep, "apply-workspace-mounts")()
-				return a.applyWorkspaceMounts(mgr, s.containerName, s.absWorkspace, &s.containerWorkspace, s.mountConfig, s.useShift, s.rawIdmapActive, false, layout)
+				return a.applyWorkspaceMounts(mgr, s.containerName, s.absWorkspace, &s.containerWorkspace, s.mountConfig, s.useShift, s.rawIdmapActive, false, layout, s.nestedGitScan)
 			}
 
 			// preRestart reconciles a REUSED persistent container's security devices
@@ -354,7 +370,10 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				} else if moved {
 					s.containerWorkspace = cwp
 				}
-				secErr := a.applySecurityMounts(secDevices, s.absWorkspace, s.containerWorkspace, s.containerName, s.useShift, layout)
+				if err := session.AttachMissingToolDataMounts(mgr, s.mountConfig, s.useShift, logFn); err != nil {
+					return err
+				}
+				secErr := a.applySecurityMounts(secDevices, s.absWorkspace, s.containerWorkspace, s.containerName, s.useShift, layout, s.nestedGitScan)
 				secDevices.Finish() // before the start: drop devices not requested this run
 				return secErr
 			}
@@ -460,7 +479,7 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 							Priority: limitsConfig.Disk.Priority,
 						},
 						Runtime: limits.RuntimeLimits{
-							MaxProcesses: limitsConfig.Runtime.MaxProcesses,
+							MaxProcesses: config.IntVal(limitsConfig.Runtime.MaxProcesses),
 						},
 						Project: a.cfg.Incus.Project,
 					}
@@ -854,7 +873,13 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 			}
 			incusArgs = append(incusArgs, "--", "bash", "-c", strings.Join(argv, " "))
 
-			fmt.Fprintf(os.Stderr, "Running headless prompt with %s (session %s)...\n", t.Name(), s.promptSessionID)
+			// A ToolWithHeadlessPrompt tool (opencode) creates its own session
+			// id, so coi's id would mislead there.
+			if _, ok := t.(tool.ToolWithHeadlessPrompt); ok {
+				fmt.Fprintf(os.Stderr, "Running headless prompt with %s...\n", t.Name())
+			} else {
+				fmt.Fprintf(os.Stderr, "Running headless prompt with %s (session %s)...\n", t.Name(), s.promptSessionID)
+			}
 			if err := container.IncusExecStreamedContext(ctx, incusArgs...); err != nil {
 				if exitErr, ok := err.(*container.ExitError); ok {
 					fmt.Fprintf(os.Stderr, "\nAgent exited with code %d\n", exitErr.ExitCode)

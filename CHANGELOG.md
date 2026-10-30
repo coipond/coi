@@ -2,25 +2,60 @@
 
 ## Unreleased
 
-### Features
-
-- [Feature] **`coi shell` prints the session's effective grants at startup** — one block, printed just before `Starting session...`, lists what the container can reach on the host: the workspace and every other host mount (read-only or read-write, including a worktree's git common dir and disks inherited from an Incus profile; storage-pool volumes are named as volumes, not host paths), protected and masked paths, the network mode and what it lets through (allowlist entries, port caps, pinned DNS, LAN and metadata access, `[[network.hosts]]`), published ports, forwarded sockets (including the SSH agent), environment variables by the source the agent's value comes from (the tool's own `[tool]` settings, `forward_env`, `env_commands`, `[defaults] environment`, and the container's `environment.*` such as a locked git identity or an Incus profile's; names only, never values, and when the tool is already running in tmux the report says it keeps the env it started with (or, for a background launch, that the tool starts in the existing pane, which keeps its env) and lists the names as reaching new panes), the tool's own config and login files copied from the host (e.g. `~/.claude/.credentials.json`), `[[credentials]]` files, root vs non-root, Docker (from the container's actual nesting setting, noting when config would change it on restart, when an Incus profile keeps it, or that a `--container` attach isn't reconciled; SANDBOX_CONTEXT.md tells the agent the same), and resource limits as the container runs with them (CPU count, allowance and priority, memory, swap, process cap, disk I/O, priority and size; soft memory enforcement is shown on the memory limit, defaults that cap nothing are left out, and a disk size the pool can't enforce is flagged); Docker also counts as unavailable under reduce_kernel_surface's syscall denies. It shows what was granted, not what was configured: mounts and protections are read back from the container's devices, so a reused container's leftover mounts are listed and a protection that failed to mount is not; sockets and files are the ones actually forwarded and copied, and on a reused or resumed container the files already in it from an earlier session are listed as such (checked inside an exec setup already makes, with each copied file recorded with its checksum and host path in a root-owned manifest in the container, by both `coi shell` and `coi run`: copies stay listed after config stops naming them, a file the image or tool put at the same path doesn't count, a copy changed since is labelled as such, a container from before the manifest (or whose manifest started later) lists matching unrecorded files as possibly not from the host, and the check is flagged when it couldn't run). On resume into a new container, the login file restored from the saved session is listed. In tmux mode the session is prepared before the report, so the env line says exactly whether this launch started the tool or reached one already running, before anything is visible. `coi attach` and `coi tmux` now target the tool's tmux session by exact name. Absent grants are stated as `none`.
-- [Feature] **Agent skill for writing profiles** — `skills/coi-profile/SKILL.md` teaches a coding agent to write a profile `config.toml`: read the format from `coi schema profile`, scaffold with `coi profile create`, check with `coi validate profile` and `coi profile info`.
-
-### Breaking
-
-- [Breaking] **`forward_env` and `[ssh] forward_agent = true` are ignored in project config** — both hand host secrets to the container (named host environment variables, the host SSH agent), so a cloned repo's `.coi/config.toml` or project profile can no longer turn them on; coi prints a warning and drops them. Set them in `~/.coi/config.toml`, a profile under `~/.coi/profiles/`, or the file named by `COI_CONFIG`. `forward_agent = false` in project config is still honored.
-
 ### Changed
 
-- [Change] **Faster container removal, and `coi build` shows progress** — `coi kill`, `coi shutdown`, `coi container delete` and `coi clean --pools` remove a stopped container up to 3 seconds sooner, and make fewer Incus calls for a running one. `coi build` now reports progress during base package install and while it publishes the image.
+- [Change] **Incus 7.5 is the recommended version** — `coi health` now notes that 7.5+ is recommended on Incus 6.1 to 7.4 (was 6.7). The note does not change the check's status or the exit code. The minimum stays 6.1.
+- [Change] **`coi image list` gives remote and custom image hints that work** — the remote image hint listed `debian:11` and `alpine:3.19`, which are past end of life, and suggested `[container] image = "ubuntu:24.04"`, which coi rejects because `[container] image` must name a local image alias. It now lists `images:debian/13, images:debian/12` and `images:alpine/3.24` and shows how to copy one under a local alias first (`incus image copy images:ubuntu/24.04 local: --alias my-ubuntu`, then `image = "my-ubuntu"`). The custom image hint pointed to the removed `coi build custom`; it now points to a profile's `[container.build]` section and `coi build --profile <name>`.
+- [Change] **Smaller sandbox context file** — `SANDBOX_CONTEXT.md` is about half its previous size, so it takes less of the agent's context window. It contains the same rules and environment facts: the repeated autonomy text is merged into one place, tables are now short lists, and the git identity steps are a short list instead of a shell script.
 
 ### Bug Fixes
 
-- [Bug Fix] **`refresh_interval_minutes = 0` disables allowlist re-resolution** — an explicit `0` was treated as unset and replaced with the 30-minute default, so allowlist domains kept being re-resolved. `0` now turns refresh off; leaving the key out still means 30.
-- [Bug Fix] **README profile example loads again (#890)** — the `[limits]` example set `cpu = "4"` and `memory = "8GiB"` directly, which fails to load; it now uses `[limits.cpu] count` and `[limits.memory] limit`. A test now checks that every TOML example in the README loads. Stale comments in the shipped config files are fixed too: the default config named a nonexistent `writable_agent_config` (the opt-out is `writable_paths`), the starter config's disk rate example `"10MiB/s"` failed validation, and the nftables-unavailable hint pointed at the workspace `.coi/config.toml`, which can't change the network mode.
-- [Bug Fix] **`coi audit` prints the security monitor's records** — dumping a container's audit log (or a file with `--file`) printed nothing, because the monitor's threat events and snapshots were silently dropped as unrecognized. They are now printed as written.
-- [Bug Fix] **`auto_pause_on_high` and `auto_kill_on_critical` apply to network threats** — the nftables network monitor always paused on HIGH and killed on CRITICAL, so setting either to `false` only affected the process monitor. Both settings now govern network threats too; both still default to `true`.
+- [Bug Fix] **Files a command writes to `/tmp` right away are no longer deleted by boot** — `coi run` and `coi shell` started the command as soon as the container accepted `incus exec`, before boot ended. Boot's `systemd-tmpfiles-setup` then emptied `/tmp`, so a file the command had just written there could disappear. The readiness wait now also waits until systemd reaches `sysinit.target`, which comes after that cleanup. Images without systemd are not affected.
+- [Bug Fix] **Parent dirs of protected paths can't be renamed** — a protected path's read-only mount moved with its parent dir when that dir was renamed in the container, so the container could create the dir again and write the protected path (`.git/hooks`, `.git/config`, a submodule's git dir). Each dir between the workspace root and a protected path, and between a worktree's git common dir and its protected paths, is now mounted over itself: it can't be renamed or removed in the container (`Device or resource busy`), and its contents stay writable. Such a dir is also a mount boundary, so `rename(2)` of a file between it and the rest of the workspace fails with `EXDEV` (`Invalid cross-device link`); `mv` falls back to copy and delete, a plain `os.rename` fails. A dir at or below a `secret_paths` mask is not pinned. A dir that another device already mounts (for example a `[[mounts]]` entry at `/workspace/.claude`) is not pinned either, because that mount already blocks the rename; each start logs `parent dir <path> not pinned`.
+- [Bug Fix] **Submodule and nested git dirs are protected too** — `protected_paths` covered only the workspace's own `.git`, so a container could write `.git/modules/<name>/config` and run a command on the host at the next `git status` in the superproject (`core.fsmonitor`). At launch coi now finds the git dirs of submodules (`.git/modules/**`, nested ones included) and of repositories nested up to 3 levels below the workspace root, and mounts their `hooks`, `config`, `config.worktree` and `info/attributes` read-only, plus the `.git` file of each submodule checkout. `writable_paths` and `disable_protection` apply to them; with `[git] writable_hooks = true` their `hooks` stay writable. A submodule or repository added during a session is protected from the next launch.
+- [Bug Fix] **The mouse wheel scrolls the `coi shell` scrollback (#930)** — the image's tmux had mouse mode off, so in many terminals the wheel stepped through bash history instead. `/etc/tmux.conf` now sets `mouse on`. Side effects: a plain drag now selects text in tmux copy mode, so use Shift+drag (Option+drag in some macOS terminals) for the terminal's own selection; and in a pager or full-screen program without mouse support (`less`, `man`, `git log`), the wheel no longer scrolls the program but opens tmux copy mode. `coi tmux send` and `coi shell --background` into an existing session now leave copy mode first, so a command sent after a wheel scroll still runs. The new tmux setting takes effect on the next `coi build`; a persistent container keeps mouse off until it is recreated from the new image.
+- [Bug Fix] **opencode2 keeps its plan files across ephemeral sessions** — OpenCode v2's Plan agent writes plans to `~/.opencode/plan`, which went away with an ephemeral container. That dir is now a per-workspace host directory, `~/.coi/tool-data/opencode2/<hash>/plan/`, mounted into the container like opencode's data dirs. A persistent container gets the mount on its next start; the plans it already holds are copied to that directory first (a plan of the same name already there is kept). A workspace's own `.opencode/plan` is not touched.
+- [Bug Fix] **Image builds no longer hang on a slow apt mirror** — with `COI_APT_MIRROR` set, a mirror that kept sending data very slowly never hit apt's timeout, so one package download could take an hour. Package list updates and downloads from the mirror now have a 5-minute limit (`COI_APT_MIRROR_TIMEOUT`, in seconds); past it, the build switches to the default Ubuntu archive.
+- [Bug Fix] **`max_processes = 0` lifts an earlier process limit** — `[limits.runtime] max_processes = 0` (unlimited) in a later layer was treated as unset, so a limit from an earlier layer stayed: `~/.coi/config.toml` with `500` and a project config with `0` still ran with `500`, and so did an applied profile or a child profile over a parent with `500`. An explicit `0` now overrides the earlier limit at every layer; a layer that does not set `max_processes` keeps the earlier value. `coi profile info` now also shows an explicit `max_processes = 0`.
+
+## 0.16.0 (2026-10-23)
+
+### Features
+
+- [Feature] **`coi shell` shows what the session can access (#901)** — at startup, one summary lists what the container can reach on the host: mounts, network, forwarded credentials and environment variables, Docker, and resource limits.
+- [Feature] **`coi run --prompt` works with opencode (#904)** — headless prompts now run with opencode as well as claude.
+- [Feature] **Agent skill for writing profiles (#900)** — `skills/coi-profile/SKILL.md` helps a coding agent write and check a coi profile.
+- [Feature] **OpenCode v2 support (#924)** — `[tool] name = "opencode2"` runs OpenCode v2, which can be installed next to v1.
+
+### Breaking
+
+- [Breaking] **The image ships OpenCode v2 instead of v1 by default (#924)** — to keep using v1, add `"opencode"` to `[container.build] agents`. Takes effect on the next `coi build`.
+- [Breaking] **The `default` and `hardened` profiles can't be deleted (#925)** — `coi profile delete` now refuses both names.
+- [Breaking] **`coi file push -r` no longer merges into an existing directory (#914)** — it follows the same destination rules as `coi file pull` and won't overwrite an existing target.
+- [Breaking] **Project config can't forward host secrets (#898)** — `forward_env` and `[ssh] forward_agent = true` in a repo's `.coi/` config are ignored. Set them in `~/.coi/config.toml` or a profile under `~/.coi/profiles/`.
+
+### Changed
+
+- [Change] **OpenCode v1 is kept on v1.x (#903)** — `coi build` no longer jumps to a new major version on its own.
+- [Change] **Faster container removal and build progress (#902)** — removing containers is quicker, and `coi build` shows progress while it runs.
+
+### Bug Fixes
+
+- [Bug Fix] **Resumed sessions use the right profile (#939)** — `coi shell --resume` applies a single profile in the documented order instead of mixing two.
+- [Bug Fix] **Resuming opencode reopens the same session (#905)**
+- [Bug Fix] **Correct exit codes when Incus is unavailable (#910)** — `coi shell`, `coi run` and `coi build` exit 3, matching the docs.
+- [Bug Fix] **`--slot` rejects negative numbers (#921)**
+- [Bug Fix] **opencode data no longer fills up the workspace (#933)** — it is stored outside the project, and existing data is moved automatically. Fixes #929.
+- [Bug Fix] **`coi audit --file --follow` stops on Ctrl+C (#934)**
+- [Bug Fix] **Resume opens the latest Claude conversation (#932)** — it no longer picks an old or empty one.
+- [Bug Fix] **`--profile default` works with config mounts (#928)**
+- [Bug Fix] **`coi run` keeps an alias's saved profile (#927)**
+- [Bug Fix] **`coi file push -r` respects the destination name (#914)**
+- [Bug Fix] **`refresh_interval_minutes = 0` turns off allowlist refresh (#895)**
+- [Bug Fix] **The README profile example works again (#890, #894)**
+- [Bug Fix] **`coi audit` shows security monitor events (#897)**
+- [Bug Fix] **Auto-pause and auto-kill settings apply to network threats (#896)**
+- [Bug Fix] **`coi tool spec --help` describes `env` correctly (#906)**
 
 ## 0.15.0 (2026-10-12)
 

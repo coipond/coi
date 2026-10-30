@@ -18,6 +18,7 @@ import (
 	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/session"
 	"github.com/coipond/coi/internal/timing"
+	"github.com/coipond/coi/internal/tool"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +56,8 @@ the container as a file (never on the command line), the agent's auth and
 context are seeded exactly as in an interactive session, and each fire is a
 fresh ephemeral session by default. --prompt-name looks the prompt up in the
 [prompts] config table (inline text or { file = "..." }, profile-inheritable).
-Prompt mode currently supports the claude tool with permission_mode = "bypass"
+Prompt mode currently supports the claude and opencode tools (opencode runs
+the prompt via "opencode run") with permission_mode = "bypass"
 (a headless run has no TTY to approve tool use).
 
 The container is ephemeral: it is cleaned up after the command completes (or
@@ -152,6 +154,10 @@ func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	s := &runState{absWorkspace: absWorkspace}
+	// Start the nested git walk now so it overlaps the container launch.
+	if !a.cfg.Security.DisableProtection {
+		s.nestedGitScan = session.StartNestedGitScan(absWorkspace)
+	}
 
 	// Prompt mode (#701): resolve the predefined prompt and validate its flags
 	// before any container work, against the fully merged/profile-applied config
@@ -253,9 +259,9 @@ func (a *App) resolvePromptMode(cmd *cobra.Command, s *runState, args []string) 
 	if err != nil {
 		return &ExitCodeError{Code: 2, Message: err.Error()}
 	}
-	if t.Name() != "claude" {
+	if !supportsHeadlessPrompt(t) {
 		return &ExitCodeError{Code: 2, Message: fmt.Sprintf(
-			"coi run headless prompt mode currently supports only the claude tool (configured: %q)", t.Name())}
+			"coi run headless prompt mode currently supports only the claude and opencode tools (configured: %q)", t.Name())}
 	}
 
 	sessionID, err := session.GenerateSessionID()
@@ -267,6 +273,17 @@ func (a *App) resolvePromptMode(cmd *cobra.Command, s *runState, args []string) 
 	s.promptSessionID = sessionID
 	s.promptTool = t
 	return nil
+}
+
+// supportsHeadlessPrompt reports whether t can run a prompt to completion
+// under `coi run --prompt`: claude via its print mode, or a tool with a
+// separate headless form (opencode run).
+func supportsHeadlessPrompt(t tool.Tool) bool {
+	if t.Name() == "claude" {
+		return true
+	}
+	_, ok := t.(tool.ToolWithHeadlessPrompt)
+	return ok
 }
 
 // launchOrReuseContainer restarts an existing persistent container, or
@@ -496,7 +513,8 @@ func validateAndPrepareAlias(aliasStr string) (string, error) {
 }
 
 // applyContainerAlias sets the user.coi.alias metadata on the container and
-// registers the alias in the global registry. No-op if alias is empty.
+// registers the alias in the global registry, keeping the profile `coi shell`
+// saved for it. No-op if alias is empty.
 func applyContainerAlias(effectiveAlias, containerName, absWorkspace string) error {
 	if effectiveAlias == "" {
 		return nil
@@ -512,7 +530,7 @@ func applyContainerAlias(effectiveAlias, containerName, absWorkspace string) err
 		fmt.Fprintf(os.Stderr, "Warning: Failed to load alias registry: %v\n", err)
 		return nil
 	}
-	if err := reg.Register(effectiveAlias, absWorkspace, ""); err != nil {
+	if err := reg.RegisterWorkspace(effectiveAlias, absWorkspace); err != nil {
 		return fmt.Errorf("alias conflict: %w", err)
 	}
 	if err := reg.Save(); err != nil {
@@ -576,7 +594,7 @@ func (a *App) resolveContainerWorkspacePath(absWorkspace string, forcePreserve b
 // applyWorkspaceMounts mounts the workspace and all configured additional directories
 // into the container, then applies security (read-only) mounts. For restarted persistent
 // containers it retrieves the existing workspace path from the container config instead.
-func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName, absWorkspace string, containerWorkspacePath *string, mountConfig *session.MountConfig, useShift, rawIdmapActive, wasRestarted bool, worktree *session.GitWorktreeLayout) error {
+func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName, absWorkspace string, containerWorkspacePath *string, mountConfig *session.MountConfig, useShift, rawIdmapActive, wasRestarted bool, worktree *session.GitWorktreeLayout, nestedScan session.NestedGitScan) error {
 	if wasRestarted {
 		fmt.Fprintf(os.Stderr, "Reusing existing workspace mount...\n")
 		*containerWorkspacePath = mgr.GetWorkspacePath()
@@ -616,7 +634,21 @@ func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName
 	// Called unconditionally: applySecurityMounts internally skips the read-only
 	// protected_paths when disable_protection is set (GetEffectiveProtectedPaths
 	// returns nil), but secret-path masking is a separate opt-in that still runs.
-	return a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree)
+	return a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree, nestedScan)
+}
+
+// runDataTool is the tool whose data dirs a `coi run` container mounts: the
+// --prompt tool, else the configured [tool] (so a later `coi container exec`
+// or tool-spec launch of it finds its history). nil when neither resolves.
+func (a *App) runDataTool(s *runState) tool.Tool {
+	if s.promptTool != nil {
+		return s.promptTool
+	}
+	t, err := getConfiguredTool(a.cfg)
+	if err != nil {
+		return nil
+	}
+	return t
 }
 
 // addMount adds a single configured directory mount to the container.
@@ -631,8 +663,10 @@ func addMount(mgr container.ContainerManager, mount session.MountEntry, useShift
 		}
 		fmt.Fprintf(os.Stderr, "Adding mount (read-only): %s -> %s\n", mount.HostPath, mount.ContainerPath)
 	} else {
-		if err := os.MkdirAll(mount.HostPath, 0o755); err != nil {
-			return fmt.Errorf("failed to create mount directory '%s': %w", mount.HostPath, err)
+		if err := session.PrepareMountSource(mount, func(msg string) {
+			fmt.Fprintln(os.Stderr, msg)
+		}); err != nil {
+			return err
 		}
 		fmt.Fprintf(os.Stderr, "Adding mount: %s -> %s\n", mount.HostPath, mount.ContainerPath)
 	}
@@ -646,7 +680,7 @@ func addMount(mgr container.ContainerManager, mount session.MountEntry, useShift
 }
 
 // applySecurityMounts sets up read-only protection mounts and optional host immutable flags.
-func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, containerWorkspacePath, containerName string, useShift bool, worktree *session.GitWorktreeLayout) error {
+func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, containerWorkspacePath, containerName string, useShift bool, worktree *session.GitWorktreeLayout, nestedScan session.NestedGitScan) error {
 	protectedPaths := filterWritableGitHooks(a.cfg.Security.GetEffectiveProtectedPaths(), a.cfg)
 	if worktree != nil {
 		// The workspace .git is a file; its .git/* defaults can't be protected here
@@ -659,7 +693,7 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 	// returns the effective list to drive logging + the immutable pass over the same
 	// set. The immutable pass runs even on a partial mount error, so it is gated on
 	// the returned list rather than the error.
-	effectivePaths, err := session.SetupSecurityMounts(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security)
+	effectivePaths, err := session.SetupSecurityMounts(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security, nestedScan, config.BoolVal(a.cfg.Git.WritableHooks))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to setup security mounts: %v\n", err)
 	} else if len(effectivePaths) > 0 {

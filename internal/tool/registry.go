@@ -8,11 +8,12 @@ import (
 
 // registry maps tool names to their factory functions
 var registry = map[string]func() Tool{
-	"claude":   NewClaude,
-	"opencode": NewOpencode,
-	"pi":       NewPi,
-	"codex":    NewCodex,
-	"omp":      NewOmp,
+	"claude":    NewClaude,
+	"opencode":  NewOpencode,
+	"opencode2": NewOpencode2,
+	"pi":        NewPi,
+	"codex":     NewCodex,
+	"omp":       NewOmp,
 }
 
 // Get returns a tool by name
@@ -32,9 +33,10 @@ func GetDefault() Tool {
 // DefaultBuildAgents returns the agents installed into the image when no
 // explicit selection is made — it must stay in sync with build.sh's
 // ${COI_AGENTS:-...} default (enforced by TestBuildScriptDispatchMatchesRegistry).
-// codex is supported but opt-in only (issue #698), so it is not in this set.
+// OpenCode v2 (opencode2) is the default; codex (issue #698), omp and OpenCode
+// v1 (opencode) are supported but opt-in only, so they are not in this set.
 func DefaultBuildAgents() []string {
-	return []string{"claude", "opencode", "pi"}
+	return []string{"claude", "opencode2", "pi"}
 }
 
 // ListSupported returns a sorted list of supported tool names

@@ -16,6 +16,8 @@ set -euo pipefail
 # Configuration
 CODE_USER="code"
 CODE_UID=1000
+OPENCODE_FALLBACK_VERSION="v1.19.3"
+OPENCODE2_FALLBACK_VERSION="2.1.0"
 
 log() {
     echo "[coi] $*"
@@ -135,14 +137,37 @@ restore_default_apt_sources() {
 # CI: the in-region mirror answering "502 Proxy Error" and timing out
 # connections for hours), switch back to the stock Ubuntu archive once,
 # refresh the index and retry, instead of failing the whole build.
+#
+# A mirror can also be slow without failing: it keeps sending a trickle of
+# bytes, so apt's own 30s timeout never fires (observed in CI: a ~10s package
+# download taking 61 minutes). So while the mirror is active, `update` and the
+# download half of `install` get a time limit (COI_APT_MIRROR_TIMEOUT seconds,
+# default 300), and running past it counts as a failure. Only the download is
+# limited: `install` first fetches with --download-only, which is safe to stop,
+# then installs from the local cache with no limit, so dpkg is never killed
+# mid-install.
 apt_get() {
-    if DEBIAN_FRONTEND=noninteractive apt-get "$@"; then
-        return 0
-    fi
     if [ "${APT_MIRROR_ACTIVE:-0}" != 1 ]; then
-        return 1
+        DEBIAN_FRONTEND=noninteractive apt-get "$@"
+        return
     fi
-    log "WARNING: apt-get $1 failed via mirror ${COI_APT_MIRROR}; falling back to the default Ubuntu archive"
+    local limit="${COI_APT_MIRROR_TIMEOUT:-300}"
+    local mirror_ok=1
+    case "$1" in
+        update)
+            timeout -k 30 "$limit" env DEBIAN_FRONTEND=noninteractive apt-get "$@" || mirror_ok=0
+            ;;
+        install)
+            timeout -k 30 "$limit" env DEBIAN_FRONTEND=noninteractive apt-get install --download-only "${@:2}" || mirror_ok=0
+            ;;
+    esac
+    if [ "$mirror_ok" = 1 ]; then
+        [ "$1" = update ] && return 0
+        if DEBIAN_FRONTEND=noninteractive apt-get "$@"; then
+            return 0
+        fi
+    fi
+    log "WARNING: apt-get $1 failed or took over ${limit}s via mirror ${COI_APT_MIRROR}; falling back to the default Ubuntu archive"
     restore_default_apt_sources
     DEBIAN_FRONTEND=noninteractive apt-get update -qq || return 1
     [ "$1" = update ] && return 0
@@ -331,6 +356,12 @@ create_code_user() {
     mkdir -p "/home/$CODE_USER/.codex"
     mkdir -p "/home/$CODE_USER/.ssh"
     chmod 700 "/home/$CODE_USER/.ssh"
+    # coi mounts tool data dirs (opencode's ~/.local/{share,state}/opencode,
+    # opencode2's ~/.opencode/plan) from the host (#929). Pre-create their
+    # parents, owned by the code user via the chown -R below, whichever agents
+    # the image installs, so a mount target never leaves a root-owned parent
+    # behind.
+    mkdir -p "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state" "/home/$CODE_USER/.opencode"
     # Pre-populate known_hosts. Try ssh-keyscan first (fresh keys); fall back to
     # embedded static keys for hosts where the SSH endpoint is unreachable (e.g.
     # bitbucket.org blocks automated scans, may be in maintenance windows).
@@ -552,7 +583,28 @@ opencode_asset_arch() {
 }
 
 #######################################
-# Install opencode
+# Print the newest stable OpenCode v1.x release tag (vMAJOR.MINOR.PATCH).
+# OpenCode v2 ships through npm, so following GitHub "latest" would switch
+# majors silently once upstream moves it. git ls-remote uses the git endpoint,
+# not api.github.com, so it is not subject to API rate limits. If the lookup
+# fails, prints OPENCODE_FALLBACK_VERSION.
+#######################################
+opencode_v1_release_tag() {
+    local tag
+    tag="$(timeout 30 env GIT_TERMINAL_PROMPT=0 git ls-remote --tags --refs \
+        https://github.com/anomalyco/opencode 'v1.*' 2>/dev/null |
+        sed -n 's|.*refs/tags/\(v1\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' |
+        sort -V | tail -n 1 || true)"
+    if [[ -z "$tag" ]]; then
+        log "WARNING: could not list opencode v1 tags, using $OPENCODE_FALLBACK_VERSION" >&2
+        tag="$OPENCODE_FALLBACK_VERSION"
+    fi
+    echo "$tag"
+}
+
+#######################################
+# Install opencode (OpenCode v1; opt-in: add "opencode" to
+# [container.build] agents)
 # See: https://opencode.ai
 #######################################
 install_opencode() {
@@ -565,30 +617,44 @@ install_opencode() {
         exit 1
     fi
 
-    # Download the binary directly from the /latest/download/ redirect URL.
-    # This does NOT hit the GitHub API and is not subject to rate limits
-    # (unlike the official installer which calls api.github.com).
+    # Download the binary from a release tag, not /latest/ (see
+    # opencode_v1_release_tag). The release download URL does NOT hit the
+    # GitHub API and is not subject to rate limits (unlike the official
+    # installer which calls api.github.com). A new tag can exist before its
+    # assets are uploaded, so a failed download falls back to the known tag.
+    local OPENCODE_VERSION
+    OPENCODE_VERSION="$(opencode_v1_release_tag)"
     local INSTALL_DIR="/home/$CODE_USER/.opencode/bin"
     local OPENCODE_PATH="$INSTALL_DIR/opencode"
-    local DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-${OPENCODE_ARCH}.tar.gz"
 
     mkdir -p "$INSTALL_DIR"
     chown "$CODE_USER:$CODE_USER" "$INSTALL_DIR"
 
-    local attempt
-    for attempt in 1 2 3; do
-        if curl -fsSL "$DOWNLOAD_URL" | tar xz -C "$INSTALL_DIR"; then
-            chmod +x "$OPENCODE_PATH"
-            chown "$CODE_USER:$CODE_USER" "$OPENCODE_PATH"
+    local version attempt installed=""
+    for version in "$OPENCODE_VERSION" "$OPENCODE_FALLBACK_VERSION"; do
+        local DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/download/${version}/opencode-linux-${OPENCODE_ARCH}.tar.gz"
+        for attempt in 1 2 3; do
+            if curl -fsSL "$DOWNLOAD_URL" | tar xz -C "$INSTALL_DIR"; then
+                chmod +x "$OPENCODE_PATH"
+                chown "$CODE_USER:$CODE_USER" "$OPENCODE_PATH"
+                installed=1
+                break 2
+            fi
+            if [ "$attempt" -lt 3 ]; then
+                log "opencode $version download failed (attempt $attempt/3), retrying in 10s..."
+                sleep 10
+            fi
+        done
+        if [ "$version" = "$OPENCODE_FALLBACK_VERSION" ]; then
             break
         fi
-        if [ "$attempt" -eq 3 ]; then
-            log "ERROR: opencode installation failed after 3 attempts."
-            exit 1
-        fi
-        log "opencode download failed (attempt $attempt/3), retrying in 10s..."
-        sleep 10
+        log "WARNING: opencode $version download failed, falling back to $OPENCODE_FALLBACK_VERSION"
     done
+
+    if [ -z "$installed" ]; then
+        log "ERROR: opencode installation failed after 3 attempts per tag."
+        exit 1
+    fi
 
     if [[ ! -x "$OPENCODE_PATH" ]]; then
         log "ERROR: opencode binary not found at $OPENCODE_PATH after installation."
@@ -598,6 +664,84 @@ install_opencode() {
     ln -sf "$OPENCODE_PATH" /usr/local/bin/opencode
 
     log "opencode $(opencode --version 2>/dev/null || echo 'installed')"
+}
+
+#######################################
+# Print the newest stable OpenCode v2.x version (MAJOR.MINOR.PATCH) of the
+# npm package @opencode/cli-linux-<arch>. v2 has no GitHub release assets:
+# it ships only through npm. The abbreviated registry document lists every
+# version. If the lookup fails, prints OPENCODE2_FALLBACK_VERSION.
+#######################################
+opencode2_npm_version() {
+    local arch="$1" version
+    version="$(curl -fsSL --max-time 60 \
+        -H 'Accept: application/vnd.npm.install-v1+json' \
+        "https://registry.npmjs.org/@opencode/cli-linux-${arch}" 2>/dev/null |
+        jq -r '.versions | keys[]' 2>/dev/null |
+        grep -E '^2\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+    if [[ -z "$version" ]]; then
+        log "WARNING: could not list opencode v2 versions, using $OPENCODE2_FALLBACK_VERSION" >&2
+        version="$OPENCODE2_FALLBACK_VERSION"
+    fi
+    echo "$version"
+}
+
+#######################################
+# Install OpenCode v2 as opencode2 (a default agent). It gets its own
+# directory: the v1 install and upstream's v2 installer both use
+# ~/.opencode/bin/opencode.
+#######################################
+install_opencode2() {
+    log "Installing opencode2..."
+
+    local OPENCODE_ARCH
+    if ! OPENCODE_ARCH="$(opencode_asset_arch)"; then
+        log "ERROR: unsupported CPU architecture '$(uname -m)' for opencode2."
+        exit 1
+    fi
+
+    local OPENCODE2_VERSION
+    OPENCODE2_VERSION="$(opencode2_npm_version "$OPENCODE_ARCH")"
+    local INSTALL_DIR="/home/$CODE_USER/.opencode2/bin"
+    local OPENCODE2_PATH="$INSTALL_DIR/opencode"
+
+    mkdir -p "$INSTALL_DIR"
+    chown "$CODE_USER:$CODE_USER" "$INSTALL_DIR"
+
+    local version attempt installed=""
+    for version in "$OPENCODE2_VERSION" "$OPENCODE2_FALLBACK_VERSION"; do
+        local TARBALL_URL="https://registry.npmjs.org/@opencode/cli-linux-${OPENCODE_ARCH}/-/cli-linux-${OPENCODE_ARCH}-${version}.tgz"
+        for attempt in 1 2 3; do
+            if curl -fsSL "$TARBALL_URL" | tar xz -C "$INSTALL_DIR" --strip-components=2 package/bin/opencode; then
+                chmod +x "$OPENCODE2_PATH"
+                chown "$CODE_USER:$CODE_USER" "$OPENCODE2_PATH"
+                installed=1
+                break 2
+            fi
+            if [ "$attempt" -lt 3 ]; then
+                log "opencode2 $version download failed (attempt $attempt/3), retrying in 10s..."
+                sleep 10
+            fi
+        done
+        if [ "$version" = "$OPENCODE2_FALLBACK_VERSION" ]; then
+            break
+        fi
+        log "WARNING: opencode2 $version download failed, falling back to $OPENCODE2_FALLBACK_VERSION"
+    done
+
+    if [ -z "$installed" ]; then
+        log "ERROR: opencode2 installation failed after 3 attempts per version."
+        exit 1
+    fi
+
+    if [[ ! -x "$OPENCODE2_PATH" ]]; then
+        log "ERROR: opencode2 binary not found at $OPENCODE2_PATH after installation."
+        exit 1
+    fi
+
+    ln -sf "$OPENCODE2_PATH" /usr/local/bin/opencode2
+
+    log "opencode2 $(opencode2 --version 2>/dev/null || echo 'installed')"
 }
 
 #######################################
@@ -873,7 +1017,7 @@ EOF
 }
 
 #######################################
-# Configure tmux scrollback history
+# Configure tmux scrollback history and mouse
 #
 # `coi shell` runs the interactive session inside a tmux session so
 # that an exit of the inner CLI (e.g. Ctrl-C out of opencode) does not
@@ -901,10 +1045,17 @@ set -g history-limit 50000
 # making Esc feel completely broken. 10ms is enough to distinguish Esc from
 # the start of an escape sequence without noticeable delay.
 set -g escape-time 10
+
+# Let tmux handle the mouse so the wheel scrolls the scrollback. With mouse
+# off, many terminals send the wheel as Up/Down keys and the shell steps
+# through its history instead. A plain drag now selects in tmux copy mode;
+# hold Shift (Option in some macOS terminals) for the terminal's own selection.
+# In a pager without mouse support (less, man), the wheel opens copy mode.
+set -g mouse on
 EOF
     chmod 644 /etc/tmux.conf
 
-    log "tmux configured: history-limit=50000, escape-time=10ms in /etc/tmux.conf"
+    log "tmux configured: history-limit=50000, escape-time=10ms, mouse=on in /etc/tmux.conf"
 }
 
 #######################################
@@ -938,11 +1089,12 @@ cleanup() {
 # warned and skipped (coi validates the list host-side before build, so this is
 # defense-in-depth).
 install_selected_agents() {
-    local agents="${COI_AGENTS:-claude opencode pi}"
+    local agents="${COI_AGENTS:-claude opencode2 pi}"
     for agent in ${agents//,/ }; do
         case "$agent" in
             claude) install_claude_cli ;;
             opencode) install_opencode ;;
+            opencode2) install_opencode2 ;;
             pi) install_pi ;;
             codex) install_codex ;;
             omp) install_omp ;;

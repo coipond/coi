@@ -51,6 +51,22 @@ func ClassifyIncusErr(err error, stderr string) error {
 	return err
 }
 
+// SentinelError is an error with its own message that matches a sentinel with
+// errors.Is, for failures coi detects itself (not from incus stderr): the user
+// sees msg alone, and the CLI still maps the sentinel to its exit code.
+func SentinelError(sentinel error, msg string) error {
+	return &sentinelError{sentinel: sentinel, msg: msg}
+}
+
+type sentinelError struct {
+	sentinel error
+	msg      string
+}
+
+func (e *sentinelError) Error() string { return e.msg }
+
+func (e *sentinelError) Unwrap() error { return e.sentinel }
+
 // wrap joins a sentinel to the underlying error so both errors.Is(result,
 // sentinel) and errors.As(result, &target) (e.g. *ExitError, preserving its
 // exit code) keep working.
