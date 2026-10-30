@@ -430,15 +430,8 @@ func (a *App) setupContainerPhase(s *shellState) session.Phase {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to save early metadata: %v\n", err)
 			}
 
-			if effectiveAlias := a.cfg.Container.Alias; effectiveAlias != "" {
-				if reg, err := alias.Load(); err == nil {
-					if err := reg.Register(effectiveAlias, s.absWorkspace, a.profile); err != nil {
-						return nil, fmt.Errorf("alias conflict: %w", err)
-					}
-					if err := reg.Save(); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: Failed to save alias registry: %v\n", err)
-					}
-				}
+			if err := a.registerShellAlias(s.absWorkspace); err != nil {
+				return nil, err
 			}
 
 			teardown := func() {
@@ -618,6 +611,31 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			return nil, runErr
 		},
 	}
+}
+
+// registerShellAlias saves the [container] alias, if any, into the alias
+// registry with the profile this launch chose by --profile, the alias or a
+// resume. A profile that came only from [defaults] profile is not saved, so the
+// entry keeps its earlier profile and a later change of the default applies.
+func (a *App) registerShellAlias(absWorkspace string) error {
+	effectiveAlias := a.cfg.Container.Alias
+	if effectiveAlias == "" {
+		return nil
+	}
+	if reg, err := alias.Load(); err == nil {
+		if a.profileFromDefault {
+			err = reg.RegisterWorkspace(effectiveAlias, absWorkspace)
+		} else {
+			err = reg.Register(effectiveAlias, absWorkspace, a.profile)
+		}
+		if err != nil {
+			return fmt.Errorf("alias conflict: %w", err)
+		}
+		if err := reg.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save alias registry: %v\n", err)
+		}
+	}
+	return nil
 }
 
 // resolveResumeAndProfile resolves the session to resume (empty for a new
