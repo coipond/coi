@@ -480,3 +480,18 @@ func TestCheckIncusStoragePools_UnknownPoolIsMissing(t *testing.T) {
 		t.Errorf("an unresolvable pool should be reported missing, message: %q", result.Message)
 	}
 }
+
+func TestEvaluateIncusVersion_BelowRecommendedStaysOK(t *testing.T) {
+	result := evaluateIncusVersion("Client version: 7.4\nServer version: 7.4")
+	if result.Status != StatusOK {
+		t.Fatalf("status = %s, want ok: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, "7.5+ is recommended") {
+		t.Errorf("message should recommend 7.5+, got %q", result.Message)
+	}
+
+	result = evaluateIncusVersion("Server version: 7.5.1")
+	if result.Status != StatusOK || strings.Contains(result.Message, "recommended") {
+		t.Errorf("7.5.1 should pass without a note, got %s: %s", result.Status, result.Message)
+	}
+}

@@ -18,9 +18,9 @@ const (
 	// backport late or never, so running far behind the current release
 	// means known-fixed issues stay live. Bump this occasionally alongside
 	// dependency updates.
-	RecommendedIncusVersionMajor = 6
+	RecommendedIncusVersionMajor = 7
 	// RecommendedIncusVersionMinor is the recommended Incus minor version.
-	RecommendedIncusVersionMinor = 7
+	RecommendedIncusVersionMinor = 5
 )
 
 // IncusVersion represents a parsed Incus version
