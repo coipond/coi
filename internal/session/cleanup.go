@@ -527,6 +527,15 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 		return fmt.Errorf("failed to pull %s directory: %w", configDirName, pullErr)
 	}
 
+	if te, ok := t.(tool.ToolWithSessionExcludes); ok {
+		for _, f := range te.SessionExcludedFiles() {
+			if err := os.RemoveAll(filepath.Join(stagingDir, f)); err != nil {
+				_ = os.RemoveAll(stagingDir)
+				return fmt.Errorf("failed to drop %s from saved session: %w", f, err)
+			}
+		}
+	}
+
 	// Swap the new copy in.
 	if _, err := os.Stat(localConfigDir); err == nil {
 		logger("Removing old session data before saving new state")

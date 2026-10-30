@@ -4,9 +4,10 @@ import "path/filepath"
 
 // Opencode2Tool implements Tool for OpenCode v2, installed next to v1 as
 // "opencode2". It launches like opencode (same --continue/--session/run
-// flags) and reuses its config bundle and container env; only the name,
-// binary, sessions dir, session lookup (opencode2 has none, so a resume uses
-// --continue) and data dirs (its own, plus a plan dir) differ.
+// flags, plus --standalone) and reuses its config bundle and container env;
+// only the name, binary, launch flags, sessions dir, session lookup
+// (opencode2 has none, so a resume uses --continue), data dirs (its own, plus
+// a plan dir) and files kept out of a saved session differ.
 type Opencode2Tool struct {
 	OpencodeTool
 }
@@ -21,6 +22,35 @@ func (c *Opencode2Tool) Name() string { return "opencode2" }
 
 // SessionsDirName returns "sessions-opencode2".
 func (c *Opencode2Tool) SessionsDirName() string { return "sessions-opencode2" }
+
+// BuildCommand builds the opencode2 launch command: opencode's, plus
+// --standalone. Without it the v2 TUI is a client of a detached
+// `opencode serve --service` that outlives it, keeps the DB open and writes
+// service.json (with its password); --standalone runs a private server that
+// exits with the TUI.
+func (c *Opencode2Tool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
+	return standalone(c.OpencodeTool.BuildCommand(sessionID, resume, resumeSessionID))
+}
+
+// BuildHeadlessCommand implements ToolWithHeadlessPrompt: opencode's
+// `run` command, plus --standalone (see BuildCommand).
+func (c *Opencode2Tool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
+	cmd, err := c.OpencodeTool.BuildHeadlessCommand(spec)
+	if err != nil {
+		return nil, err
+	}
+	return standalone(cmd), nil
+}
+
+// standalone inserts --standalone, a v2 global flag, after the binary.
+func standalone(cmd []string) []string {
+	return append([]string{cmd[0], "--standalone"}, cmd[1:]...)
+}
+
+// SessionExcludedFiles implements ToolWithSessionExcludes. service.json holds
+// the v2 background service's URL, PID and password; a saved session must not
+// keep it, even if opencode2 was started by hand without --standalone.
+func (c *Opencode2Tool) SessionExcludedFiles() []string { return []string{"service.json"} }
 
 // SessionDiscoveryCommand returns nil: OpenCode v2 keeps sessions in
 // session_v2, which the inherited v1 query does not read, so opencode2 resumes
