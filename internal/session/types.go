@@ -23,6 +23,11 @@ type MountEntry struct {
 	// first time the mount is added, it is moved to HostPath (see
 	// PrepareMountSource). Only set on coi-generated mounts.
 	MigrateFrom string
+
+	// CopyFromContainer, when set, copies what a reused container holds at
+	// ContainerPath to HostPath before the mount is first added (see
+	// AttachMissingToolDataMounts). Only set on coi-generated mounts.
+	CopyFromContainer bool
 }
 
 // MountConfig holds all mount configurations for a session
