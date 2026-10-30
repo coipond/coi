@@ -37,6 +37,9 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // are mounted in one batch. writableHooks ([git] writable_hooks) leaves their
 // hooks dirs writable, as it does the root one.
 //
+// The dirs between the workspace root and each protected path are pinned
+// (parentPinMounts), except at or below a sec.SecretPaths mask.
+//
 // Returns the effective (expanded) protected-path list, so the caller can drive
 // its logging and host-immutable passes over the same set that was mounted, and an
 // error if a mount failed. The list is returned even on error so a partial failure
@@ -48,11 +51,12 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 		return protectedPaths, nil
 	}
 
-	var warnings []string
+	var warnings, prepared []string
 	var batch []container.DiskMount
 	for _, relPath := range protectedPaths {
 		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift)
 		if err == nil {
+			prepared = append(prepared, filepath.Clean(relPath))
 			if isNestedGitPath(relPath) {
 				batch = append(batch, d)
 				continue
@@ -75,9 +79,19 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 			}
 		}
 	}
-	if err := mountDiskBatch(mgr, batch); err != nil {
+	var masked []string
+	if sec != nil && len(sec.SecretPaths) > 0 {
+		masks, _ := expandSecretPaths(workspacePath, sec.SecretPaths)
+		for _, m := range masks {
+			masked = append(masked, filepath.Clean(m.relPath))
+		}
+	}
+	pins := parentPinMounts(workspacePath, containerWorkspacePath, prepared, masked, useShift)
+	pinWarnings, err := mountNestedAndPins(mgr, batch, pins)
+	if err != nil {
 		return protectedPaths, fmt.Errorf("failed to protect nested git paths: %w", err)
 	}
+	warnings = append(warnings, pinWarnings...)
 
 	if len(warnings) > 0 {
 		return protectedPaths, errors.New(strings.Join(warnings, "; "))
@@ -113,11 +127,12 @@ const (
 	protectDevicePrefix = "protect-"
 	maskDevicePrefix    = "mask-"
 	gitcDevicePrefix    = "gitc-"
+	pinDevicePrefix     = "pin-"
 )
 
 // stripSecurityDevicePrefixes is the reuse-strip list; it MUST list exactly the
 // prefixes above (each family created is a family stripped on reuse).
-var stripSecurityDevicePrefixes = []string{protectDevicePrefix, maskDevicePrefix, gitcDevicePrefix}
+var stripSecurityDevicePrefixes = []string{protectDevicePrefix, maskDevicePrefix, gitcDevicePrefix, pinDevicePrefix}
 
 // StripSecurityDevices removes the creation-time security device families (see
 // stripSecurityDevicePrefixes) from a REUSED persistent container, so the caller
@@ -227,20 +242,93 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 	return effectivePaths, hasImmutable, nil
 }
 
-// mountDiskBatch adds mounts in one call when mgr supports it, else one by one.
-func mountDiskBatch(mgr container.ContainerDevices, mounts []container.DiskMount) error {
-	if len(mounts) == 0 {
-		return nil
+// parentPinMounts returns read-write disk devices that mount each directory
+// between root and a protected path over itself (pin-). A mount point cannot
+// be renamed or removed in the container, so a parent of a read-only mount
+// cannot be moved aside and recreated without it (mv .git .git.old; mkdir
+// .git). rels are relative to root, which is mounted at containerRoot. A
+// parent that is a protected path itself is already a mount point. The walk
+// stops at a symlink, a non-directory and at or below a masked path (rel to
+// root), which is a mount point over an empty read-only dir.
+func parentPinMounts(root, containerRoot string, rels, masked []string, useShift bool) []container.DiskMount {
+	protected := make(map[string]bool, len(rels))
+	for _, rel := range rels {
+		protected[rel] = true
 	}
-	if bm, ok := mgr.(diskBatchMounter); ok {
-		return bm.MountDisks(mounts)
-	}
-	for _, d := range mounts {
-		if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
-			return err
+	realDir := map[string]bool{}
+	var pins []container.DiskMount
+	for _, rel := range rels {
+		parts := strings.Split(rel, string(filepath.Separator))
+		for i := 1; i < len(parts); i++ {
+			parent := filepath.Join(parts[:i]...)
+			ok, checked := realDir[parent]
+			if !checked {
+				ok = isRealDir(filepath.Join(root, parent)) && !underAny(parent, masked)
+				realDir[parent] = ok
+				if ok && !protected[parent] {
+					containerPath := filepath.Join(containerRoot, parent)
+					pins = append(pins, container.DiskMount{Name: pinDeviceName(containerPath), Source: filepath.Join(root, parent), Path: containerPath, Shift: useShift})
+				}
+			}
+			if !ok {
+				break
+			}
 		}
 	}
-	return nil
+	return pins
+}
+
+// underAny reports whether rel is one of paths or below one.
+func underAny(rel string, paths []string) bool {
+	for _, p := range paths {
+		if rel == p || strings.HasPrefix(rel, p+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// pinDeviceName derives the device name of a parent pin from its container
+// path, so pins of the workspace and of a git common dir cannot collide.
+func pinDeviceName(containerPath string) string {
+	sum := sha256.Sum256([]byte(containerPath))
+	return pinDevicePrefix + hex.EncodeToString(sum[:])[:16]
+}
+
+// mountNestedAndPins mounts the nested git entries and then the parent pins.
+// A pin can share its path with a device added elsewhere (a user mount), so
+// a failed pin is a warning and never costs the nested git entries or the
+// other pins. A batch is retried as separate PATCHes, which merge the devices
+// map, so re-sending a device that an earlier chunk added is a no-op.
+func mountNestedAndPins(mgr container.ContainerDevices, nested, pins []container.DiskMount) (pinWarnings []string, err error) {
+	bm, ok := mgr.(diskBatchMounter)
+	if !ok {
+		for _, d := range nested {
+			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
+				return nil, err
+			}
+		}
+		for _, d := range pins {
+			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
+				pinWarnings = append(pinWarnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
+			}
+		}
+		return pinWarnings, nil
+	}
+	if len(nested)+len(pins) == 0 || bm.MountDisks(append(nested, pins...)) == nil {
+		return nil, nil
+	}
+	if len(nested) > 0 {
+		if err := bm.MountDisks(nested); err != nil {
+			return nil, err
+		}
+	}
+	for _, d := range pins {
+		if err := bm.MountDisks([]container.DiskMount{d}); err != nil {
+			pinWarnings = append(pinWarnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
+		}
+	}
+	return pinWarnings, nil
 }
 
 // prepareProtectedPath validates and materializes one protected path and

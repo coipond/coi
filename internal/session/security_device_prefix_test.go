@@ -16,6 +16,7 @@ func TestSecurityDeviceNamesAreStripped(t *testing.T) {
 		"protect": pathToDeviceName(".git/hooks"),
 		"mask":    maskDeviceName("secrets/.env"),
 		"gitc":    commonDirDeviceName("worktree-1"),
+		"pin":     pinDeviceName("/workspace/.git"),
 	}
 	for family, name := range cases {
 		stripped := false

@@ -153,7 +153,8 @@ func TestExpandNestedGit_OptOutsAndSymlinks(t *testing.T) {
 }
 
 // A real submodule checkout: its git dir under .git/modules and its .git file
-// are mounted read-only, with collision-free device names.
+// are mounted read-only, their parent dirs pinned, with collision-free device
+// names.
 func TestSetupSecurityMounts_ProtectsRealSubmodule(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -189,15 +190,15 @@ func TestSetupSecurityMounts_ProtectsRealSubmodule(t *testing.T) {
 
 	names := map[string]bool{}
 	for _, m := range rec.mounts {
-		if !m.readonly {
-			t.Errorf("mount %s must be read-only", m.path)
+		if m.readonly == strings.HasPrefix(m.name, pinDevicePrefix) {
+			t.Errorf("mount %s (%s): only parent pins are read-write", m.path, m.name)
 		}
 		if names[m.name] {
 			t.Errorf("duplicate device name %s", m.name)
 		}
 		names[m.name] = true
 	}
-	for _, w := range want {
+	for _, w := range append(want, ".git", ".git/modules", ".git/modules/lib", "lib") {
 		found := false
 		for _, m := range rec.mounts {
 			if m.path == filepath.Join("/workspace", w) {
@@ -238,7 +239,7 @@ func (b *batchDevices) MountDisks(mounts []container.DiskMount) error {
 }
 
 // The Incus call count must not grow with the number of submodules: the
-// nested entries go in one MountDisks batch.
+// nested entries and the parent pins go in one MountDisks batch.
 func TestSetupSecurityMounts_NestedGitInOneBatch(t *testing.T) {
 	for _, n := range []int{1, 10, 100} {
 		tmp := t.TempDir()
@@ -250,8 +251,10 @@ func TestSetupSecurityMounts_NestedGitInOneBatch(t *testing.T) {
 		if _, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", ".git/config"}, false, nil, NestedGitScan{}, false); err != nil {
 			t.Fatal(err)
 		}
-		if len(dev.mounts) != 2 || len(dev.batches) != 1 || len(dev.batches[0]) != 4*n {
-			t.Errorf("n=%d: want 2 single mounts and 1 batch of %d, got %d mounts, batches %d", n, 4*n, len(dev.mounts), len(dev.batches))
+		// Per submodule: 4 entries plus pins of its git dir and info/; plus
+		// pins of .git and .git/modules.
+		if len(dev.mounts) != 2 || len(dev.batches) != 1 || len(dev.batches[0]) != 6*n+2 {
+			t.Errorf("n=%d: want 2 single mounts and 1 batch of %d, got %d mounts, batches %d", n, 6*n+2, len(dev.mounts), len(dev.batches))
 		}
 	}
 }
