@@ -112,7 +112,8 @@ func TestRegisterShellAlias_ResumedDefaultProfileNotSaved(t *testing.T) {
 
 	a, cmd, sessionsDir := newResumeTestApp(t, "work")
 	launchAndRegister(t, a, cmd, sessionsDir, ws, "")
-	if err := session.SaveMetadataEarly(sessionsDir, "sess2", "coi-abcd1234-1", ws, false, a.profile, a.profileFromDefault); err != nil {
+	s := &shellState{sessionID: "sess2", sessionsDir: sessionsDir, absWorkspace: ws, result: &session.SetupResult{ContainerName: "coi-abcd1234-1"}}
+	if err := a.saveEarlyMetadata(s); err != nil {
 		t.Fatal(err)
 	}
 
@@ -147,5 +148,28 @@ func TestRegisterShellAlias_ResumedProfileSaved(t *testing.T) {
 	launchAndRegister(t, a, cmd, sessionsDir, ws, "")
 	if got := savedAliasProfile(t); got != "resumed" {
 		t.Errorf("saved alias profile = %q, want %q", got, "resumed")
+	}
+}
+
+// The session cleanup saves the final metadata; it must keep the mark of a
+// default-only profile so a later resume does not save it into the alias.
+func TestShellCleanupOptions_ProfileFromDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ws := t.TempDir()
+	s := &shellState{result: &session.SetupResult{}}
+
+	a, cmd, sessionsDir := newResumeTestApp(t, "work")
+	launchAndRegister(t, a, cmd, sessionsDir, ws, "")
+	if opts := a.shellCleanupOptions(s); opts.ProfileName != "work" || !opts.ProfileFromDefault {
+		t.Errorf("cleanup profile = %q, from default %v; want %q, true", opts.ProfileName, opts.ProfileFromDefault, "work")
+	}
+
+	a, cmd, sessionsDir = newResumeTestApp(t, "")
+	if err := cmd.Flags().Set("resume", "sess1"); err != nil {
+		t.Fatal(err)
+	}
+	launchAndRegister(t, a, cmd, sessionsDir, ws, "")
+	if opts := a.shellCleanupOptions(s); opts.ProfileName != "resumed" || opts.ProfileFromDefault {
+		t.Errorf("cleanup profile = %q, from default %v; want %q, false", opts.ProfileName, opts.ProfileFromDefault, "resumed")
 	}
 }

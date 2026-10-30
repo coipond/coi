@@ -426,7 +426,7 @@ func (a *App) setupContainerPhase(s *shellState) session.Phase {
 			}
 			s.result = result
 
-			if err := session.SaveMetadataEarly(s.sessionsDir, s.sessionID, result.ContainerName, s.absWorkspace, a.persistent, a.profile, a.profileFromDefault); err != nil {
+			if err := a.saveEarlyMetadata(s); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to save early metadata: %v\n", err)
 			}
 
@@ -439,28 +439,39 @@ func (a *App) setupContainerPhase(s *shellState) session.Phase {
 				if s.result.TimeoutMonitor != nil {
 					s.result.TimeoutMonitor.Stop()
 				}
-				cleanupOpts := session.CleanupOptions{
-					ContainerName:  s.result.ContainerName,
-					SessionID:      s.sessionID,
-					Persistent:     a.persistent,
-					ProfileName:    a.profile,
-					SessionsDir:    s.sessionsDir,
-					SaveSession:    true,
-					Workspace:      s.absWorkspace,
-					Tool:           s.toolInstance,
-					NetworkManager: s.result.NetworkManager,
-					SessionLogger:  s.result.Logger,
-					// Bound the wait for an in-flight `close`/poweroff by the
-					// same budget graceful shutdowns get everywhere else.
-					ShutdownTimeout:    a.cfg.Container.ShutdownTimeoutSeconds(),
-					ProfileFromDefault: a.profileFromDefault,
-				}
-				if err := session.Cleanup(cleanupOpts); err != nil {
+				if err := session.Cleanup(a.shellCleanupOptions(s)); err != nil {
 					fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
 				}
 			}
 			return teardown, nil
 		},
+	}
+}
+
+// saveEarlyMetadata saves the session metadata for coi list and --resume once
+// the container is set up.
+func (a *App) saveEarlyMetadata(s *shellState) error {
+	return session.SaveMetadataEarly(s.sessionsDir, s.sessionID, s.result.ContainerName, s.absWorkspace, a.persistent, a.profile, a.profileFromDefault)
+}
+
+// shellCleanupOptions returns the options for the session's cleanup, which
+// saves the session data and its final metadata.
+func (a *App) shellCleanupOptions(s *shellState) session.CleanupOptions {
+	return session.CleanupOptions{
+		ContainerName:  s.result.ContainerName,
+		SessionID:      s.sessionID,
+		Persistent:     a.persistent,
+		ProfileName:    a.profile,
+		SessionsDir:    s.sessionsDir,
+		SaveSession:    true,
+		Workspace:      s.absWorkspace,
+		Tool:           s.toolInstance,
+		NetworkManager: s.result.NetworkManager,
+		SessionLogger:  s.result.Logger,
+		// Bound the wait for an in-flight `close`/poweroff by the
+		// same budget graceful shutdowns get everywhere else.
+		ShutdownTimeout:    a.cfg.Container.ShutdownTimeoutSeconds(),
+		ProfileFromDefault: a.profileFromDefault,
 	}
 }
 

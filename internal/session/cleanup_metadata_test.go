@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/tool"
 )
 
 func TestSaveAndLoadMetadata_RoundTrip(t *testing.T) {
@@ -180,5 +183,31 @@ func TestSaveMetadataEarly_CreatesFileAndDirectory(t *testing.T) {
 	}
 	if !out.ProfileFromDefault {
 		t.Error("ProfileFromDefault: got false, want true")
+	}
+}
+
+// pullDirManager fakes a successful PullDirectory; other methods are unused.
+type pullDirManager struct {
+	container.ContainerManager
+}
+
+func (pullDirManager) PullDirectory(_, localPath string) error {
+	return os.MkdirAll(localPath, 0o755)
+}
+
+func TestSaveSessionData_SavesProfileFromDefault(t *testing.T) {
+	for _, fromDefault := range []bool{true, false} {
+		sessionsDir := t.TempDir()
+		err := saveSessionData(pullDirManager{}, "c-1", "s1", false, "work", fromDefault, "/ws", sessionsDir, tool.GetDefault(), func(string) {})
+		if err != nil {
+			t.Fatalf("saveSessionData: %v", err)
+		}
+		out, err := LoadSessionMetadata(filepath.Join(sessionsDir, "s1", "metadata.json"))
+		if err != nil {
+			t.Fatalf("LoadSessionMetadata: %v", err)
+		}
+		if out.ProfileName != "work" || out.ProfileFromDefault != fromDefault {
+			t.Errorf("metadata profile = %q, from default %v; want %q, %v", out.ProfileName, out.ProfileFromDefault, "work", fromDefault)
+		}
 	}
 }
