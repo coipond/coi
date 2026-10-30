@@ -144,6 +144,93 @@ func (m *Manager) MountDisk(name, source, path string, shift, readonly bool) err
 	return IncusExec(args...)
 }
 
+// DiskMount is one disk device for MountDisks.
+type DiskMount struct {
+	Name, Source, Path string
+	Shift, Readonly    bool
+}
+
+// maxDevicePatchBytes keeps one MountDisks PATCH body under the kernel's
+// per-argument limit (MAX_ARG_STRLEN, 128 KiB): Incus 6.x `query` takes the
+// body only as an argument.
+const maxDevicePatchBytes = 96 * 1024
+
+// MountDisks adds disk devices with one `incus query -X PATCH` per
+// maxDevicePatchBytes of devices instead of one `config device add` each.
+// PATCH merges the devices map into the existing devices, but it resets an
+// omitted description, so the current one is read first and sent back.
+func (m *Manager) MountDisks(mounts []DiskMount) error {
+	if len(mounts) == 0 {
+		return nil
+	}
+	instanceURL := fmt.Sprintf("/1.0/instances/%s?project=%s",
+		url.PathEscape(m.ContainerName), url.QueryEscape(IncusProject))
+	current, err := m.incusQuery("GET", instanceURL, "")
+	if err != nil {
+		return fmt.Errorf("failed to read instance %s: %w", m.ContainerName, err)
+	}
+	var inst struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(current), &inst); err != nil {
+		return fmt.Errorf("failed to parse instance %s: %w", m.ContainerName, err)
+	}
+
+	devices := map[string]map[string]string{}
+	size := 0
+	flush := func() error {
+		if len(devices) == 0 {
+			return nil
+		}
+		body, err := json.Marshal(map[string]any{"description": inst.Description, "devices": devices})
+		if err != nil {
+			return err
+		}
+		if _, err := m.incusQuery("PATCH", instanceURL, string(body)); err != nil {
+			return fmt.Errorf("failed to add disk devices: %w", err)
+		}
+		devices, size = map[string]map[string]string{}, 0
+		return nil
+	}
+	for _, d := range mounts {
+		dev := map[string]string{"type": "disk", "source": d.Source, "path": d.Path}
+		if d.Shift {
+			dev["shift"] = "true"
+		}
+		if d.Readonly {
+			dev["readonly"] = "true"
+		}
+		entry, err := json.Marshal(map[string]any{d.Name: dev})
+		if err != nil {
+			return err
+		}
+		if size+len(entry) > maxDevicePatchBytes {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		devices[d.Name] = dev
+		size += len(entry)
+	}
+	return flush()
+}
+
+// incusQuery runs `incus query -X method [--data body] url` and returns stdout.
+// `incus query` rejects --project, so the project goes in the URL.
+func (m *Manager) incusQuery(method, queryURL, body string) (string, error) {
+	args := []string{"query", "-X", method}
+	if body != "" {
+		args = append(args, "--data", body)
+	}
+	cmd := execIncusCommand(append(args, queryURL))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := runIncus(cmd); err != nil {
+		return "", ClassifyIncusErr(toExitError(err, strings.TrimSpace(stderr.String())), stderr.String())
+	}
+	return stdout.String(), nil
+}
+
 // AddProxyDevice adds a proxy device to the container for forwarding connections
 // (e.g., Unix sockets). The connect string is the host side, listen is the container side.
 func (m *Manager) AddProxyDevice(name, connect, listen string, uid, gid int) error {

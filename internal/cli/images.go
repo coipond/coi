@@ -306,19 +306,35 @@ func imageListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
-	fmt.Println("Remote Images:")
-	fmt.Println("  You can use any image from images.linuxcontainers.org:")
-	fmt.Println("  - ubuntu:22.04, ubuntu:24.04")
-	fmt.Println("  - debian:12, debian:11")
-	fmt.Println("  - alpine:3.19")
-	fmt.Println()
-	fmt.Println("  Example: set [container] image = \"ubuntu:24.04\" in config or a profile")
-	fmt.Println()
-	fmt.Println("Custom Images:")
-	fmt.Println("  Build your own: coi build custom --script setup.sh my-image")
-	fmt.Println()
+	fmt.Print(formatImageHints(container.IncusProject))
 
 	return nil
+}
+
+// formatImageHints returns the "Remote Images" and "Custom Images" hints.
+// [container] image must name a local alias in the given project, so a remote
+// image is copied under one first.
+func formatImageHints(project string) string {
+	copyCmd := "incus image copy images:ubuntu/24.04 local: --alias my-ubuntu"
+	if project != "default" {
+		copyCmd += " --target-project " + project
+	}
+
+	var b strings.Builder
+	b.WriteString("Remote Images:\n")
+	b.WriteString("  Copy an image from images.linuxcontainers.org under a local alias:\n")
+	b.WriteString("  - images:ubuntu/24.04, images:ubuntu/22.04\n")
+	b.WriteString("  - images:debian/13, images:debian/12\n")
+	b.WriteString("  - images:alpine/3.24\n")
+	b.WriteString("\n")
+	b.WriteString("  Example: " + copyCmd + "\n")
+	b.WriteString("           then set [container] image = \"my-ubuntu\" in config or a profile\n")
+	b.WriteString("\n")
+	b.WriteString("Custom Images:\n")
+	b.WriteString("  Build your own: add a [container.build] section to a profile, then\n")
+	b.WriteString("  coi build --profile <name>\n")
+	b.WriteString("\n")
+	return b.String()
 }
 
 // listAllImages lists all local Incus images

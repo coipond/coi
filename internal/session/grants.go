@@ -434,6 +434,8 @@ func classifyDisks(disks map[string]container.DiskDevice, workspace string) (ws 
 			ws = MountGrant{HostPath: d.Source, ContainerPath: d.Path, Readonly: d.Readonly}
 		case name == gitReadonlyDeviceName:
 			// coi's generated read-only gitconfig, not host data.
+		case isParentPin(name, d, disks["workspace"], workspace):
+			// A dir already granted, mounted over itself: no new host data.
 		// coi's protections and masks are always read-only; a writable disk
 		// that merely shares the name prefix (e.g. from an Incus profile) is
 		// a mount, and must be listed as one.
@@ -452,6 +454,20 @@ func classifyDisks(disks map[string]container.DiskDevice, workspace string) (ws 
 	sort.Strings(protected)
 	sort.Strings(masked)
 	return ws, mounts, protected, masked
+}
+
+// isParentPin reports whether d is a parent pin from parentPinMounts: named
+// after its path, and mounting a workspace dir (or a git common dir, mounted
+// at its host path) at the same place, so a writable look-alike is a mount.
+func isParentPin(name string, d, ws container.DiskDevice, workspace string) bool {
+	if name != pinDeviceName(d.Path) {
+		return false
+	}
+	if d.Source == d.Path {
+		return true
+	}
+	rel := displayPath(d.Path, workspace)
+	return ws.Source != "" && rel != d.Path && d.Source == filepath.Join(ws.Source, rel)
 }
 
 // displayPath shows a container path relative to the workspace when under it.

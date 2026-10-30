@@ -89,12 +89,12 @@ func TestSetupSecurityMounts_EmptyPaths(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Empty paths should return nil
-	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{}, false, nil)
+	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{}, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Errorf("Expected nil error for empty paths, got: %v", err)
 	}
 
-	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", nil, false, nil)
+	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", nil, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Errorf("Expected nil error for nil paths, got: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestSetupSecurityMounts_NonExistentPaths(t *testing.T) {
 	// skipped by the .git guard, so SetupSecurityMounts returns nil
 	// even with a nil manager (MountDisk is never reached).
 	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace",
-		[]string{".git/hooks", ".git/config"}, false, nil)
+		[]string{".git/hooks", ".git/config"}, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Errorf("Expected nil error when .git is missing, got: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestSetupSecurityMounts_SymlinkRejection(t *testing.T) {
 	}
 
 	// Should return error for symlinked paths
-	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{".vscode"}, false, nil)
+	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{".vscode"}, false, nil, NestedGitScan{}, false)
 	if err == nil {
 		t.Error("Expected error for symlinked path, got nil")
 	}
@@ -167,7 +167,7 @@ func TestSetupSecurityMounts_GitSymlinkWarns(t *testing.T) {
 		t.Fatalf("Failed to create .git symlink: %v", err)
 	}
 
-	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{".git/hooks"}, false, nil)
+	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{".git/hooks"}, false, nil, NestedGitScan{}, false)
 	if err == nil {
 		t.Fatal("Expected warning error when .git is symlink, got nil")
 	}
@@ -189,7 +189,7 @@ func TestSetupSecurityMounts_GitFileWarns(t *testing.T) {
 		t.Fatalf("Failed to create .git file: %v", err)
 	}
 
-	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{".git/hooks"}, false, nil)
+	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{".git/hooks"}, false, nil, NestedGitScan{}, false)
 	if err == nil {
 		t.Fatal("Expected warning error when .git is file, got nil")
 	}
@@ -214,7 +214,7 @@ func TestSetupSecurityMounts_GitFileWarningDoesNotSkipOtherPaths(t *testing.T) {
 	}
 
 	rec := &recordingDevices{}
-	_, err = SetupSecurityMounts(rec, tmpDir, "/workspace", []string{".git/hooks", ".vscode"}, false, nil)
+	_, err = SetupSecurityMounts(rec, tmpDir, "/workspace", []string{".git/hooks", ".vscode"}, false, nil, NestedGitScan{}, false)
 	if err == nil {
 		t.Fatal("Expected warning error when .git is file, got nil")
 	}
@@ -842,7 +842,7 @@ func TestSetupProtectedPath_RejectsAbsolutePath(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{"/etc/passwd"}, false, nil)
+	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{"/etc/passwd"}, false, nil, NestedGitScan{}, false)
 	if err == nil {
 		t.Fatal("Expected error for absolute protected path, got nil")
 	}
@@ -862,7 +862,7 @@ func TestSetupProtectedPath_RejectsTraversal(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{"../outside"}, false, nil)
+	_, err = SetupSecurityMounts(nil, tmpDir, "/workspace", []string{"../outside"}, false, nil, NestedGitScan{}, false)
 	if err == nil {
 		t.Fatal("Expected error for traversal protected path, got nil")
 	}
@@ -988,7 +988,7 @@ func TestSetupSecurityMounts_ExpandsWorktreeConfigsAtChokepoint(t *testing.T) {
 	}
 
 	rec := &recordingDevices{}
-	effective, err := SetupSecurityMounts(rec, tmp, "/workspace", nil, false, nil)
+	effective, err := SetupSecurityMounts(rec, tmp, "/workspace", nil, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1020,7 +1020,7 @@ func TestSetupSecurityMounts_ExpandsWorktreeConfigsAtChokepoint(t *testing.T) {
 
 	// disable_protection at the chokepoint: nothing is expanded or mounted.
 	rec2 := &recordingDevices{}
-	eff2, err := SetupSecurityMounts(rec2, tmp, "/workspace", nil, false, &config.SecurityConfig{DisableProtection: true})
+	eff2, err := SetupSecurityMounts(rec2, tmp, "/workspace", nil, false, &config.SecurityConfig{DisableProtection: true}, NestedGitScan{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

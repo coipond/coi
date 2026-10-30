@@ -154,6 +154,10 @@ func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	s := &runState{absWorkspace: absWorkspace}
+	// Start the nested git walk now so it overlaps the container launch.
+	if !a.cfg.Security.DisableProtection {
+		s.nestedGitScan = session.StartNestedGitScan(absWorkspace)
+	}
 
 	// Prompt mode (#701): resolve the predefined prompt and validate its flags
 	// before any container work, against the fully merged/profile-applied config
@@ -590,7 +594,7 @@ func (a *App) resolveContainerWorkspacePath(absWorkspace string, forcePreserve b
 // applyWorkspaceMounts mounts the workspace and all configured additional directories
 // into the container, then applies security (read-only) mounts. For restarted persistent
 // containers it retrieves the existing workspace path from the container config instead.
-func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName, absWorkspace string, containerWorkspacePath *string, mountConfig *session.MountConfig, useShift, rawIdmapActive, wasRestarted bool, worktree *session.GitWorktreeLayout) error {
+func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName, absWorkspace string, containerWorkspacePath *string, mountConfig *session.MountConfig, useShift, rawIdmapActive, wasRestarted bool, worktree *session.GitWorktreeLayout, nestedScan session.NestedGitScan) error {
 	if wasRestarted {
 		fmt.Fprintf(os.Stderr, "Reusing existing workspace mount...\n")
 		*containerWorkspacePath = mgr.GetWorkspacePath()
@@ -630,7 +634,7 @@ func (a *App) applyWorkspaceMounts(mgr container.ContainerManager, containerName
 	// Called unconditionally: applySecurityMounts internally skips the read-only
 	// protected_paths when disable_protection is set (GetEffectiveProtectedPaths
 	// returns nil), but secret-path masking is a separate opt-in that still runs.
-	return a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree)
+	return a.applySecurityMounts(mgr, absWorkspace, *containerWorkspacePath, containerName, useShift, worktree, nestedScan)
 }
 
 // runDataTool is the tool whose data dirs a `coi run` container mounts: the
@@ -676,7 +680,7 @@ func addMount(mgr container.ContainerManager, mount session.MountEntry, useShift
 }
 
 // applySecurityMounts sets up read-only protection mounts and optional host immutable flags.
-func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, containerWorkspacePath, containerName string, useShift bool, worktree *session.GitWorktreeLayout) error {
+func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, containerWorkspacePath, containerName string, useShift bool, worktree *session.GitWorktreeLayout, nestedScan session.NestedGitScan) error {
 	protectedPaths := filterWritableGitHooks(a.cfg.Security.GetEffectiveProtectedPaths(), a.cfg)
 	if worktree != nil {
 		// The workspace .git is a file; its .git/* defaults can't be protected here
@@ -689,7 +693,7 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 	// returns the effective list to drive logging + the immutable pass over the same
 	// set. The immutable pass runs even on a partial mount error, so it is gated on
 	// the returned list rather than the error.
-	effectivePaths, err := session.SetupSecurityMounts(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security)
+	effectivePaths, err := session.SetupSecurityMounts(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security, nestedScan, config.BoolVal(a.cfg.Git.WritableHooks))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to setup security mounts: %v\n", err)
 	} else if len(effectivePaths) > 0 {

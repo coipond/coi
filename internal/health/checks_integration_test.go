@@ -111,16 +111,16 @@ func TestEvaluateIncusVersion_OldVersion(t *testing.T) {
 			"recommended",
 		},
 		{
-			"6.20 passes",
-			"Client version: 6.20\nServer version: 6.20",
+			"7.4 stays StatusOK with the recommended-floor note",
+			"Client version: 7.4\nServer version: 7.4",
 			StatusOK,
-			"6.20",
+			"7.5+ is recommended",
 		},
 		{
-			"7.0 passes",
-			"Server version: 7.0",
+			"7.5.1 passes",
+			"Server version: 7.5.1",
 			StatusOK,
-			"7.0",
+			"7.5.1",
 		},
 		{
 			"single line fallback",

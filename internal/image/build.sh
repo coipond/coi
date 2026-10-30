@@ -1017,7 +1017,7 @@ EOF
 }
 
 #######################################
-# Configure tmux scrollback history
+# Configure tmux scrollback history and mouse
 #
 # `coi shell` runs the interactive session inside a tmux session so
 # that an exit of the inner CLI (e.g. Ctrl-C out of opencode) does not
@@ -1045,10 +1045,17 @@ set -g history-limit 50000
 # making Esc feel completely broken. 10ms is enough to distinguish Esc from
 # the start of an escape sequence without noticeable delay.
 set -g escape-time 10
+
+# Let tmux handle the mouse so the wheel scrolls the scrollback. With mouse
+# off, many terminals send the wheel as Up/Down keys and the shell steps
+# through its history instead. A plain drag now selects in tmux copy mode;
+# hold Shift (Option in some macOS terminals) for the terminal's own selection.
+# In a pager without mouse support (less, man), the wheel opens copy mode.
+set -g mouse on
 EOF
     chmod 644 /etc/tmux.conf
 
-    log "tmux configured: history-limit=50000, escape-time=10ms in /etc/tmux.conf"
+    log "tmux configured: history-limit=50000, escape-time=10ms, mouse=on in /etc/tmux.conf"
 }
 
 #######################################

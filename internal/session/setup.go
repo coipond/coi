@@ -135,6 +135,9 @@ type SetupResult struct {
 	// list is replaced by the effective one (which drops .git/* for a
 	// worktree); the grants report's fallback lists the same protections.
 	worktreeWritableHooks bool
+	// nestedGitScan is the nested git walk Setup started early, consumed by
+	// the security mounts.
+	nestedGitScan NestedGitScan
 }
 
 // TmuxSessionName is the tmux session coi runs the tool in.
@@ -148,6 +151,16 @@ func TmuxSessionTarget(containerName string) string { return "=" + TmuxSessionNa
 // TmuxPaneTarget is the exact-match target of the session's active pane (`-t`
 // for pane commands like send-keys and capture-pane).
 func TmuxPaneTarget(containerName string) string { return TmuxSessionTarget(containerName) + ":" }
+
+// startSetupNestedGitScan starts the nested git walk, which reads the whole
+// tree to a bounded depth, so it overlaps the Incus calls before the security
+// mounts. Nothing is started when protection is disabled (the zero value).
+func startSetupNestedGitScan(opts SetupOptions) NestedGitScan {
+	if opts.WorkspacePath == "" || (opts.Security.Config != nil && opts.Security.Config.DisableProtection) {
+		return NestedGitScan{}
+	}
+	return StartNestedGitScan(opts.WorkspacePath)
+}
 
 // Setup initializes a container for a Claude session.
 //
@@ -164,7 +177,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		}
 	}
 
-	st := &setupState{opts: opts, result: &SetupResult{}}
+	st := &setupState{opts: opts, result: &SetupResult{nestedGitScan: startSetupNestedGitScan(opts)}}
 
 	pipe := &Pipeline{}
 	if err := pipe.Run(ctx,
@@ -271,14 +284,25 @@ type startLogReader interface {
 	StartLogErrors(maxLines int) []string
 }
 
-// WaitForReady waits for the container to be ready: running AND able to
-// execute a command. It probes once per second for up to maxRetries seconds
-// and honors ctx cancellation between probes (a SIGINT-cancelled context
-// stops the wait immediately instead of sleeping out the window against a
-// container the signal handler already tore down). This is the single
-// readiness chokepoint for every wait-for-container path (shell, run, health
-// probes) — private copies of this loop drift, as coi run's no-sleep variant
-// proved.
+// readyProbeScript succeeds once the container can run a command AND, when
+// systemd is PID 1, boot has reached sysinit.target. systemd-tmpfiles-setup
+// (--remove --boot, `D /tmp`) runs before that target, so a command started
+// earlier can have its /tmp files deleted under it. Images without systemd
+// need only the exec; a manager that answers it is out of early boot
+// (emergency mode, shutdown) is ready too, so the wait cannot hang there.
+const readyProbeScript = `read -r pid1 </proc/1/comm 2>/dev/null; [ "$pid1" = systemd ] || exit 0
+command -v systemctl >/dev/null 2>&1 || exit 0
+systemctl is-active --quiet sysinit.target && exit 0
+systemctl is-system-running 2>/dev/null | grep -qxE 'running|degraded|maintenance|stopping'`
+
+// WaitForReady waits for the container to be ready: running, able to execute
+// a command and out of early boot (readyProbeScript). It probes once per
+// second for up to maxRetries seconds and honors ctx cancellation between
+// probes (a SIGINT-cancelled context stops the wait immediately instead of
+// sleeping out the window against a container the signal handler already
+// tore down). This is the single readiness chokepoint for every
+// wait-for-container path (shell, run, health probes) — private copies of
+// this loop drift, as coi run's no-sleep variant proved.
 func WaitForReady(ctx context.Context, mgr container.ContainerManager, maxRetries int, logger func(string)) error {
 	return waitForReady(ctx, mgr, time.Duration(maxRetries)*time.Second, readyPollInterval, logger)
 }
@@ -296,9 +320,9 @@ func waitForReady(ctx context.Context, mgr container.ContainerManager, timeout, 
 	nextNote := 5 * time.Second
 	notRunning := 0
 	for {
-		// A command that runs proves the container is running AND usable, so
+		// A probe that passes proves the container is running AND usable, so
 		// try it first: on an already-running container that is the only call.
-		if _, err := mgr.ExecCommand("echo ready", container.ExecCommandOptions{Capture: true}); err == nil {
+		if _, err := mgr.ExecCommand(readyProbeScript, container.ExecCommandOptions{Capture: true}); err == nil {
 			return nil
 		}
 		// Not usable yet. Surface a real status-query failure (incus down)
@@ -563,7 +587,7 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 			return err
 		}
 	}
-	reusePaths, reuseImmutable, reuseErr := applySessionSecurity(secDevices, *opts, reuseCWP, reuseUseShift, reuseLayout, reuseWritableHooks, containerName)
+	reusePaths, reuseImmutable, reuseErr := applySessionSecurity(secDevices, *opts, reuseCWP, reuseUseShift, reuseLayout, reuseWritableHooks, containerName, result.nestedGitScan)
 	secDevices.Finish()
 	opts.Security.ProtectedPaths = reusePaths
 	if reuseImmutable {
@@ -693,7 +717,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 	// secret paths — all via applySessionSecurity, the single implementation shared
 	// with the reuse/restart reconcile below (issue #610). Must be added after the
 	// workspace mount for the overlays to layer on top.
-	effectivePaths, hasImmutable, secErr := applySessionSecurity(result.Manager, *opts, containerWorkspacePath, useShift, worktreeLayout, worktreeWritableHooks, containerName)
+	effectivePaths, hasImmutable, secErr := applySessionSecurity(result.Manager, *opts, containerWorkspacePath, useShift, worktreeLayout, worktreeWritableHooks, containerName, result.nestedGitScan)
 	// Adopt the expanded list as the canonical protected set so downstream
 	// consumers (the SANDBOX_CONTEXT.md "Protected paths" listing built from
 	// opts.Security.ProtectedPaths below) reflect what was actually mounted, including the
