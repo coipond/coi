@@ -76,7 +76,7 @@ func TestOpencode2Tool_BuildHeadlessCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildHeadlessCommand() error: %v", err)
 	}
-	want := []string{"opencode2", "--standalone", "run", "</tmp/prompt.txt"}
+	want := []string{"opencode2", "run", "--standalone", "</tmp/prompt.txt"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildHeadlessCommand() = %v, want %v", got, want)
 	}
@@ -88,7 +88,7 @@ func TestOpencode2Tool_BuildHeadlessCommand_Resume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildHeadlessCommand() error: %v", err)
 	}
-	want := []string{"opencode2", "--standalone", "run", "--session", "ses_abc", "</dev/null"}
+	want := []string{"opencode2", "run", "--standalone", "--session", "ses_abc", "</dev/null"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildHeadlessCommand() = %v, want %v", got, want)
 	}

@@ -29,22 +29,23 @@ func (c *Opencode2Tool) SessionsDirName() string { return "sessions-opencode2" }
 // service.json (with its password); --standalone runs a private server that
 // exits with the TUI.
 func (c *Opencode2Tool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
-	return standalone(c.OpencodeTool.BuildCommand(sessionID, resume, resumeSessionID))
+	return standalone(c.OpencodeTool.BuildCommand(sessionID, resume, resumeSessionID), 1)
 }
 
 // BuildHeadlessCommand implements ToolWithHeadlessPrompt: opencode's
-// `run` command, plus --standalone (see BuildCommand).
+// `run` command, plus --standalone (see BuildCommand) after `run`: v2 before
+// 2.2.0 (2.1.0 is build.sh's fallback) rejects it before the subcommand.
 func (c *Opencode2Tool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
 	cmd, err := c.OpencodeTool.BuildHeadlessCommand(spec)
 	if err != nil {
 		return nil, err
 	}
-	return standalone(cmd), nil
+	return standalone(cmd, 2), nil
 }
 
-// standalone inserts --standalone, a v2 global flag, after the binary.
-func standalone(cmd []string) []string {
-	return append([]string{cmd[0], "--standalone"}, cmd[1:]...)
+// standalone inserts --standalone into cmd at index at.
+func standalone(cmd []string, at int) []string {
+	return append(append(append([]string{}, cmd[:at]...), "--standalone"), cmd[at:]...)
 }
 
 // SessionExcludedFiles implements ToolWithSessionExcludes. service.json holds
