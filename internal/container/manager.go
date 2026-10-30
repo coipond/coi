@@ -661,14 +661,24 @@ func (m *Manager) ExecCommand(command string, opts ExecCommandOptions) (string, 
 	return "", IncusExec(args...)
 }
 
-// PushFile pushes a file into the container
+// PushFile pushes a file into the container. The pushed file keeps the
+// source's UID, GID and mode: Incus 7.5+ makes it root-owned and applies the
+// umask unless they are passed explicitly.
 func (m *Manager) PushFile(source, destination string) error {
 	// Ensure destination starts with /
 	if destination[0] != '/' {
 		destination = "/" + destination
 	}
 	dest := m.ContainerName + destination
-	return IncusFilePush(source, dest)
+	info, err := os.Stat(source)
+	if err != nil {
+		return IncusFilePush(source, dest)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return IncusFilePush(source, dest)
+	}
+	return IncusFilePushWithOwner(source, dest, int(st.Uid), int(st.Gid), fmt.Sprintf("%04o", info.Mode().Perm()))
 }
 
 // PullDirectory pulls a directory from the container recursively
