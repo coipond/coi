@@ -46,8 +46,6 @@ func saveOpencodeSession(t *testing.T, toolName string) string {
 	return filepath.Join(sessions, "abc", tl.ConfigDirName())
 }
 
-// The v2 background service's service.json (URL, PID, password) never lands
-// in a saved opencode2 session; the rest of the config dir does.
 func TestSaveSessionData_Opencode2DropsServiceJSON(t *testing.T) {
 	saved := saveOpencodeSession(t, "opencode2")
 	if _, err := os.Stat(filepath.Join(saved, "service.json")); !os.IsNotExist(err) {
@@ -58,7 +56,6 @@ func TestSaveSessionData_Opencode2DropsServiceJSON(t *testing.T) {
 	}
 }
 
-// opencode (v1) saves its config dir as is.
 func TestSaveSessionData_OpencodeKeepsConfigDir(t *testing.T) {
 	saved := saveOpencodeSession(t, "opencode")
 	for _, f := range []string{"opencode.json", "service.json"} {
