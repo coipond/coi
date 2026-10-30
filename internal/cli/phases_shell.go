@@ -426,7 +426,7 @@ func (a *App) setupContainerPhase(s *shellState) session.Phase {
 			}
 			s.result = result
 
-			if err := session.SaveMetadataEarly(s.sessionsDir, s.sessionID, result.ContainerName, s.absWorkspace, a.persistent, a.profile); err != nil {
+			if err := session.SaveMetadataEarly(s.sessionsDir, s.sessionID, result.ContainerName, s.absWorkspace, a.persistent, a.profile, a.profileFromDefault); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to save early metadata: %v\n", err)
 			}
 
@@ -452,7 +452,8 @@ func (a *App) setupContainerPhase(s *shellState) session.Phase {
 					SessionLogger:  s.result.Logger,
 					// Bound the wait for an in-flight `close`/poweroff by the
 					// same budget graceful shutdowns get everywhere else.
-					ShutdownTimeout: a.cfg.Container.ShutdownTimeoutSeconds(),
+					ShutdownTimeout:    a.cfg.Container.ShutdownTimeoutSeconds(),
+					ProfileFromDefault: a.profileFromDefault,
 				}
 				if err := session.Cleanup(cleanupOpts); err != nil {
 					fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
@@ -686,6 +687,7 @@ func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorksp
 
 	if a.profile == "" && !cmd.Flags().Changed("profile") && metadata != nil && metadata.ProfileName != "" {
 		a.profile = metadata.ProfileName
+		a.profileFromDefault = metadata.ProfileFromDefault
 		if err := a.cfg.ApplyProfile(a.profile); err != nil {
 			return "", nil, fmt.Errorf("failed to apply saved profile '%s': %w", a.profile, err)
 		}

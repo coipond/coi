@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/coipond/coi/internal/alias"
+	"github.com/coipond/coi/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -100,5 +101,51 @@ func TestRegisterShellAlias_ExplicitProfileSaved(t *testing.T) {
 	launchAndRegister(t, a, cmd, sessionsDir, ws, "")
 	if got := savedAliasProfile(t); got != "work" {
 		t.Errorf("saved alias profile = %q, want %q", got, "work")
+	}
+}
+
+// A resume of a session whose profile came only from [defaults] profile does
+// not save that profile into the alias registry either.
+func TestRegisterShellAlias_ResumedDefaultProfileNotSaved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ws := t.TempDir()
+
+	a, cmd, sessionsDir := newResumeTestApp(t, "work")
+	launchAndRegister(t, a, cmd, sessionsDir, ws, "")
+	if err := session.SaveMetadataEarly(sessionsDir, "sess2", "coi-abcd1234-1", ws, false, a.profile, a.profileFromDefault); err != nil {
+		t.Fatal(err)
+	}
+
+	a, cmd, _ = newResumeTestApp(t, "work")
+	if err := cmd.Flags().Set("resume", "sess2"); err != nil {
+		t.Fatal(err)
+	}
+	launchAndRegister(t, a, cmd, sessionsDir, ws, "")
+	if a.profile != "work" {
+		t.Fatalf("a.profile = %q, want the resumed %q", a.profile, "work")
+	}
+	if got := savedAliasProfile(t); got != "" {
+		t.Errorf("saved alias profile = %q, want none", got)
+	}
+
+	a, cmd, _ = newResumeTestApp(t, "resumed")
+	launchAndRegister(t, a, cmd, sessionsDir, ws, "proj")
+	if a.profile != "resumed" {
+		t.Errorf("coi shell proj ran profile %q, want the new default %q", a.profile, "resumed")
+	}
+}
+
+// A resumed session's profile that the user chose is saved.
+func TestRegisterShellAlias_ResumedProfileSaved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ws := t.TempDir()
+
+	a, cmd, sessionsDir := newResumeTestApp(t, "work")
+	if err := cmd.Flags().Set("resume", "sess1"); err != nil {
+		t.Fatal(err)
+	}
+	launchAndRegister(t, a, cmd, sessionsDir, ws, "")
+	if got := savedAliasProfile(t); got != "resumed" {
+		t.Errorf("saved alias profile = %q, want %q", got, "resumed")
 	}
 }

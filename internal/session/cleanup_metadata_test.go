@@ -155,7 +155,7 @@ func TestSaveMetadataEarly_CreatesFileAndDirectory(t *testing.T) {
 	dir := t.TempDir()
 	sessionsDir := filepath.Join(dir, "sessions")
 
-	err := SaveMetadataEarly(sessionsDir, "early-sess", "claude-early-1", "/workspace", false, "default")
+	err := SaveMetadataEarly(sessionsDir, "early-sess", "claude-early-1", "/workspace", false, "default", true)
 	if err != nil {
 		t.Fatalf("SaveMetadataEarly: %v", err)
 	}
@@ -177,5 +177,8 @@ func TestSaveMetadataEarly_CreatesFileAndDirectory(t *testing.T) {
 	}
 	if out.ProfileName != "default" {
 		t.Errorf("ProfileName: got %q, want %q", out.ProfileName, "default")
+	}
+	if !out.ProfileFromDefault {
+		t.Error("ProfileFromDefault: got false, want true")
 	}
 }
