@@ -33,7 +33,10 @@ type App struct {
 	resume          string
 	continueSession string
 	profile         string
-	cfg             *config.Config
+	// profileFromDefault is set when profile came only from [defaults]
+	// profile; such a profile is not saved into the alias registry.
+	profileFromDefault bool
+	cfg                *config.Config
 }
 
 // sessionName returns the resolved [container] session_name — the identity-key
@@ -233,6 +236,7 @@ func (a *App) applyDefaultProfileFallback(cmd *cobra.Command) (bool, error) {
 		return false, err
 	}
 	a.profile = name
+	a.profileFromDefault = true
 	// The profile may change [incus] identity; mirror the reconfigure the
 	// explicit --profile and alias/resume paths do.
 	container.Configure(a.cfg.Incus.Project, a.cfg.Incus.CodeUser, a.cfg.Incus.CodeUID)
