@@ -498,6 +498,16 @@ type ToolWithDataDirs interface {
 	DataDirs() []DataDir
 }
 
+// ToolWithSessionExcludes is an optional interface for tools whose config dir
+// holds runtime files (e.g. a service password) that must not be saved with
+// a session on the host.
+type ToolWithSessionExcludes interface {
+	Tool
+	// SessionExcludedFiles returns paths, relative to the config dir, left
+	// out of a saved session.
+	SessionExcludedFiles() []string
+}
+
 // SetPermissionMode sets the permission mode for Claude Code.
 // Valid values: "bypass" (default, all permissions auto-granted) or "interactive" (human-in-the-loop).
 func (c *ClaudeTool) SetPermissionMode(mode string) {

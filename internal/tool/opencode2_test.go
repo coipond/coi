@@ -31,9 +31,9 @@ func TestOpencode2Tool_BuildCommand(t *testing.T) {
 		resumeSessionID string
 		want            []string
 	}{
-		{"new", false, "", []string{"opencode2"}},
-		{"continue", true, "", []string{"opencode2", "--continue"}},
-		{"session", true, "ses_abc", []string{"opencode2", "--session", "ses_abc"}},
+		{"new", false, "", []string{"opencode2", "--standalone"}},
+		{"continue", true, "", []string{"opencode2", "--standalone", "--continue"}},
+		{"session", true, "ses_abc", []string{"opencode2", "--standalone", "--session", "ses_abc"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,9 +76,48 @@ func TestOpencode2Tool_BuildHeadlessCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildHeadlessCommand() error: %v", err)
 	}
-	want := []string{"opencode2", "run", "</tmp/prompt.txt"}
+	want := []string{"opencode2", "run", "--standalone", "</tmp/prompt.txt"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildHeadlessCommand() = %v, want %v", got, want)
+	}
+}
+
+func TestOpencode2Tool_BuildHeadlessCommand_Resume(t *testing.T) {
+	oc := NewOpencode2().(ToolWithHeadlessPrompt)
+	got, err := oc.BuildHeadlessCommand(LaunchSpec{Resume: true, ResumeSessionID: "ses_abc"})
+	if err != nil {
+		t.Fatalf("BuildHeadlessCommand() error: %v", err)
+	}
+	want := []string{"opencode2", "run", "--standalone", "--session", "ses_abc", "</dev/null"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildHeadlessCommand() = %v, want %v", got, want)
+	}
+	if _, err := oc.BuildHeadlessCommand(LaunchSpec{SystemPromptFile: "/tmp/sys.md"}); err == nil {
+		t.Error("BuildHeadlessCommand() with a SystemPromptFile: want an error")
+	}
+}
+
+// OpenCode v1 has no --standalone flag: only opencode2 gets it.
+func TestOpencodeTool_NoStandalone(t *testing.T) {
+	if got := NewOpencode().BuildCommand("", true, ""); slices.Contains(got, "--standalone") {
+		t.Errorf("opencode BuildCommand() = %v, want no --standalone", got)
+	}
+	got, err := NewOpencode().(ToolWithHeadlessPrompt).BuildHeadlessCommand(LaunchSpec{})
+	if err != nil || slices.Contains(got, "--standalone") {
+		t.Errorf("opencode BuildHeadlessCommand() = %v, %v; want no --standalone", got, err)
+	}
+}
+
+func TestOpencode2Tool_SessionExcludedFiles(t *testing.T) {
+	te, ok := NewOpencode2().(ToolWithSessionExcludes)
+	if !ok {
+		t.Fatal("Opencode2Tool should implement ToolWithSessionExcludes")
+	}
+	if got, want := te.SessionExcludedFiles(), []string{"service.json"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionExcludedFiles() = %v, want %v", got, want)
+	}
+	if _, ok := NewOpencode().(ToolWithSessionExcludes); ok {
+		t.Error("opencode (v1) should not implement ToolWithSessionExcludes")
 	}
 }
 
@@ -95,8 +134,8 @@ func TestOpencode2Tool_SetBinary(t *testing.T) {
 	if oc.Binary() != "/opt/opencode/bin/opencode" {
 		t.Errorf("override: Binary() = %q, want %q", oc.Binary(), "/opt/opencode/bin/opencode")
 	}
-	if got := oc.BuildCommand("", false, ""); got[0] != "/opt/opencode/bin/opencode" {
-		t.Errorf("BuildCommand()[0] = %q, want the override", got[0])
+	if got := oc.BuildCommand("", false, ""); got[0] != "/opt/opencode/bin/opencode" || got[1] != "--standalone" {
+		t.Errorf("BuildCommand() = %v, want the override and --standalone", got)
 	}
 }
 
