@@ -157,3 +157,52 @@ func TestOpencode2Tool_Registered(t *testing.T) {
 		t.Errorf("opencode Binary() = %q, want %q", NewOpencode().Binary(), "opencode")
 	}
 }
+
+func TestOpencode2Tool_ConfigFiles(t *testing.T) {
+	tcf, ok := NewOpencode2().(ToolWithConfigDirFiles)
+	if !ok {
+		t.Fatal("Opencode2Tool should implement ToolWithConfigDirFiles")
+	}
+	if got, want := tcf.EssentialConfigFiles(), []string{"opencode.json", "cli.json"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("EssentialConfigFiles() = %v, want %v", got, want)
+	}
+	if got := tcf.SandboxSettingsFileName(); got != "opencode.json" {
+		t.Errorf("SandboxSettingsFileName() = %q, want %q", got, "opencode.json")
+	}
+	if got := tcf.StateConfigFileName(); got != "" {
+		t.Errorf("StateConfigFileName() = %q, want empty", got)
+	}
+	if !tcf.AlwaysSetupConfig() {
+		t.Error("AlwaysSetupConfig() = false, want true")
+	}
+}
+
+func TestOpencode2Tool_GetSandboxSettings(t *testing.T) {
+	tests := []struct {
+		mode   string
+		effect string
+	}{
+		{"", "allow"},
+		{"bypass", "allow"},
+		{"interactive", "ask"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			oc := NewOpencode2()
+			oc.(ToolWithPermissionMode).SetPermissionMode(tt.mode)
+			oc.(ToolWithAutoContextPath).SetAutoContextPath("/home/code/SANDBOX_CONTEXT.md")
+			settings := oc.GetSandboxSettings()
+
+			want := []map[string]string{{"action": "*", "resource": "*", "effect": tt.effect}}
+			if got := settings["permissions"]; !reflect.DeepEqual(got, want) {
+				t.Errorf("permissions = %v, want %v", got, want)
+			}
+			if got, want := settings["permission"], map[string]interface{}{"*": tt.effect}; !reflect.DeepEqual(got, want) {
+				t.Errorf("permission = %v, want %v", got, want)
+			}
+			if got, want := settings["instructions"], []string{"/home/code/SANDBOX_CONTEXT.md"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("instructions = %v, want %v", got, want)
+			}
+		})
+	}
+}

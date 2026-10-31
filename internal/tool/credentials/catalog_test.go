@@ -6,7 +6,7 @@ import (
 )
 
 func TestLookup_KnownBundles(t *testing.T) {
-	for _, name := range []string{"claude", "opencode", "pi", "codex", "ollama", "omp"} {
+	for _, name := range []string{"claude", "opencode", "opencode2", "pi", "codex", "ollama", "omp"} {
 		if _, ok := Lookup(name); !ok {
 			t.Errorf("Lookup(%q): expected bundle to exist", name)
 		}
@@ -21,8 +21,8 @@ func TestLookup_UnknownBundle(t *testing.T) {
 
 func TestNames_Sorted(t *testing.T) {
 	names := Names()
-	if !reflect.DeepEqual(names, []string{"claude", "codex", "ollama", "omp", "opencode", "pi"}) {
-		t.Errorf("Names() = %v, want sorted [claude codex ollama omp opencode pi]", names)
+	if !reflect.DeepEqual(names, []string{"claude", "codex", "ollama", "omp", "opencode", "opencode2", "pi"}) {
+		t.Errorf("Names() = %v, want sorted [claude codex ollama omp opencode opencode2 pi]", names)
 	}
 }
 

@@ -4,10 +4,11 @@ import "path/filepath"
 
 // Opencode2Tool implements Tool for OpenCode v2, installed next to v1 as
 // "opencode2". It launches like opencode (same --continue/--session/run
-// flags, plus --standalone) and reuses its config bundle and container env;
+// flags, plus --standalone) and reuses its config dir and container env;
 // only the name, binary, launch flags, sessions dir, session lookup
 // (opencode2 has none, so a resume uses --continue), data dirs (its own, plus
-// a plan dir) and files kept out of a saved session differ.
+// a plan dir), config files, sandbox settings and files kept out of a saved
+// session differ.
 type Opencode2Tool struct {
 	OpencodeTool
 }
@@ -70,3 +71,39 @@ func (c *Opencode2Tool) DataDirs() []DataDir {
 		{Name: "plan", HomeRelPath: filepath.Join(".opencode", "plan"), FromContainer: true},
 	}
 }
+
+// GetSandboxSettings returns opencode's settings plus a V2 `permissions`
+// rule with the same effect. v2 applies V1 `permission` rules before V2
+// `permissions` rules and the last matching rule wins, so a host V2 rule would
+// beat the V1 one. The merge replaces the host's `permissions` list, which
+// keeps coi's rule the last config rule.
+func (c *Opencode2Tool) GetSandboxSettings() map[string]interface{} {
+	settings := c.OpencodeTool.GetSandboxSettings()
+	effect := "allow"
+	if c.permissionMode == "interactive" {
+		effect = "ask"
+	}
+	settings["permissions"] = []map[string]string{
+		{"action": "*", "resource": "*", "effect": effect},
+	}
+	return settings
+}
+
+// ConfigDirName returns opencode2's config dir, shared with opencode.
+func (c *Opencode2Tool) ConfigDirName() string { return mustBundle("opencode2").ConfigDir }
+
+// EssentialConfigFiles implements ToolWithConfigDirFiles.
+func (c *Opencode2Tool) EssentialConfigFiles() []string {
+	return mustBundle("opencode2").Files
+}
+
+// SandboxSettingsFileName implements ToolWithConfigDirFiles.
+func (c *Opencode2Tool) SandboxSettingsFileName() string {
+	return mustBundle("opencode2").SandboxSettingsFile
+}
+
+// StateConfigFileName implements ToolWithConfigDirFiles.
+func (c *Opencode2Tool) StateConfigFileName() string { return mustBundle("opencode2").StateFile }
+
+// AlwaysSetupConfig implements ToolWithConfigDirFiles.
+func (c *Opencode2Tool) AlwaysSetupConfig() bool { return mustBundle("opencode2").AlwaysSetup }

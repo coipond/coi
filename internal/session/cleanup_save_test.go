@@ -40,7 +40,7 @@ func saveOpencodeSession(t *testing.T, toolName string) string {
 		"opencode.json": `{"permission":{"*":"allow"}}`,
 		"service.json":  `{"password":"secret"}`,
 	}}
-	if err := saveSessionData(mgr, "coi-test", "abc", false, "", "/w", sessions, tl, func(string) {}); err != nil {
+	if err := saveSessionData(mgr, "coi-test", "abc", false, "", false, "/w", sessions, tl, func(string) {}); err != nil {
 		t.Fatalf("saveSessionData: %v", err)
 	}
 	return filepath.Join(sessions, "abc", tl.ConfigDirName())
