@@ -31,9 +31,9 @@ func TestOpencode2Tool_BuildCommand(t *testing.T) {
 		resumeSessionID string
 		want            []string
 	}{
-		{"new", false, "", []string{"opencode2", "--standalone"}},
-		{"continue", true, "", []string{"opencode2", "--standalone", "--continue"}},
-		{"session", true, "ses_abc", []string{"opencode2", "--standalone", "--session", "ses_abc"}},
+		{"new", false, "", []string{"opencode2", "--standalone", "--auto"}},
+		{"continue", true, "", []string{"opencode2", "--standalone", "--auto", "--continue"}},
+		{"session", true, "ses_abc", []string{"opencode2", "--standalone", "--auto", "--session", "ses_abc"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,7 +76,7 @@ func TestOpencode2Tool_BuildHeadlessCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildHeadlessCommand() error: %v", err)
 	}
-	want := []string{"opencode2", "run", "--standalone", "</tmp/prompt.txt"}
+	want := []string{"opencode2", "run", "--standalone", "--auto", "</tmp/prompt.txt"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildHeadlessCommand() = %v, want %v", got, want)
 	}
@@ -88,7 +88,7 @@ func TestOpencode2Tool_BuildHeadlessCommand_Resume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildHeadlessCommand() error: %v", err)
 	}
-	want := []string{"opencode2", "run", "--standalone", "--session", "ses_abc", "</dev/null"}
+	want := []string{"opencode2", "run", "--standalone", "--auto", "--session", "ses_abc", "</dev/null"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildHeadlessCommand() = %v, want %v", got, want)
 	}
@@ -97,14 +97,29 @@ func TestOpencode2Tool_BuildHeadlessCommand_Resume(t *testing.T) {
 	}
 }
 
-// OpenCode v1 has no --standalone flag: only opencode2 gets it.
-func TestOpencodeTool_NoStandalone(t *testing.T) {
-	if got := NewOpencode().BuildCommand("", true, ""); slices.Contains(got, "--standalone") {
-		t.Errorf("opencode BuildCommand() = %v, want no --standalone", got)
+// OpenCode v1 has no --standalone or --auto flag: only opencode2 gets them.
+func TestOpencodeTool_NoV2Flags(t *testing.T) {
+	for _, flag := range []string{"--standalone", "--auto"} {
+		if got := NewOpencode().BuildCommand("", true, ""); slices.Contains(got, flag) {
+			t.Errorf("opencode BuildCommand() = %v, want no %s", got, flag)
+		}
+		got, err := NewOpencode().(ToolWithHeadlessPrompt).BuildHeadlessCommand(LaunchSpec{})
+		if err != nil || slices.Contains(got, flag) {
+			t.Errorf("opencode BuildHeadlessCommand() = %v, %v; want no %s", got, err, flag)
+		}
 	}
-	got, err := NewOpencode().(ToolWithHeadlessPrompt).BuildHeadlessCommand(LaunchSpec{})
-	if err != nil || slices.Contains(got, "--standalone") {
-		t.Errorf("opencode BuildHeadlessCommand() = %v, %v; want no --standalone", got, err)
+}
+
+// Interactive mode keeps v2's prompts: no --auto.
+func TestOpencode2Tool_InteractiveNoAuto(t *testing.T) {
+	oc := NewOpencode2()
+	oc.(ToolWithPermissionMode).SetPermissionMode("interactive")
+	if got, want := oc.BuildCommand("", true, ""), []string{"opencode2", "--standalone", "--continue"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildCommand() = %v, want %v", got, want)
+	}
+	got, err := oc.(ToolWithHeadlessPrompt).BuildHeadlessCommand(LaunchSpec{})
+	if want := []string{"opencode2", "run", "--standalone", "</dev/null"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildHeadlessCommand() = %v, %v; want %v", got, err, want)
 	}
 }
 
@@ -177,31 +192,24 @@ func TestOpencode2Tool_ConfigFiles(t *testing.T) {
 	}
 }
 
-func TestOpencode2Tool_GetSandboxSettings(t *testing.T) {
-	tests := []struct {
-		mode   string
-		effect string
-	}{
-		{"", "allow"},
-		{"bypass", "allow"},
-		{"interactive", "ask"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.mode, func(t *testing.T) {
-			oc := NewOpencode2()
-			oc.(ToolWithPermissionMode).SetPermissionMode(tt.mode)
-			oc.(ToolWithAutoContextPath).SetAutoContextPath("/home/code/SANDBOX_CONTEXT.md")
-			settings := oc.GetSandboxSettings()
-
-			want := []map[string]string{{"action": "*", "resource": "*", "effect": tt.effect}}
-			if got := settings["permissions"]; !reflect.DeepEqual(got, want) {
-				t.Errorf("permissions = %v, want %v", got, want)
+// opencode and opencode2 share ~/.config/opencode/opencode.json, and a
+// persistent container keeps the file of whichever tool seeded it, so both
+// must write the same sandbox settings: OpenCode v1 rejects V2 keys such as
+// `permissions`.
+func TestOpencode2Tool_GetSandboxSettings_SameAsOpencode(t *testing.T) {
+	for _, mode := range []string{"", "bypass", "interactive"} {
+		t.Run(mode, func(t *testing.T) {
+			v1, v2 := NewOpencode(), NewOpencode2()
+			for _, oc := range []Tool{v1, v2} {
+				oc.(ToolWithPermissionMode).SetPermissionMode(mode)
+				oc.(ToolWithAutoContextPath).SetAutoContextPath("/home/code/SANDBOX_CONTEXT.md")
 			}
-			if got, want := settings["permission"], map[string]interface{}{"*": tt.effect}; !reflect.DeepEqual(got, want) {
-				t.Errorf("permission = %v, want %v", got, want)
+			got := v2.GetSandboxSettings()
+			if want := v1.GetSandboxSettings(); !reflect.DeepEqual(got, want) {
+				t.Errorf("opencode2 GetSandboxSettings() = %v, want opencode's %v", got, want)
 			}
-			if got, want := settings["instructions"], []string{"/home/code/SANDBOX_CONTEXT.md"}; !reflect.DeepEqual(got, want) {
-				t.Errorf("instructions = %v, want %v", got, want)
+			if _, ok := got["permissions"]; ok {
+				t.Errorf("GetSandboxSettings() = %v, want no V2 `permissions` key", got)
 			}
 		})
 	}

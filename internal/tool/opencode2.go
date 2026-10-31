@@ -7,8 +7,7 @@ import "path/filepath"
 // flags, plus --standalone) and reuses its config dir and container env;
 // only the name, binary, launch flags, sessions dir, session lookup
 // (opencode2 has none, so a resume uses --continue), data dirs (its own, plus
-// a plan dir), config files, sandbox settings and files kept out of a saved
-// session differ.
+// a plan dir), config files and files kept out of a saved session differ.
 type Opencode2Tool struct {
 	OpencodeTool
 }
@@ -24,29 +23,44 @@ func (c *Opencode2Tool) Name() string { return "opencode2" }
 // SessionsDirName returns "sessions-opencode2".
 func (c *Opencode2Tool) SessionsDirName() string { return "sessions-opencode2" }
 
-// BuildCommand builds the opencode2 launch command: opencode's, plus
-// --standalone. Without it the v2 TUI is a client of a detached
-// `opencode serve --service` that outlives it, keeps the DB open and writes
-// service.json (with its password); --standalone runs a private server that
-// exits with the TUI.
+// BuildCommand builds the opencode2 launch command: opencode's, plus the v2
+// flags (see v2Flags).
 func (c *Opencode2Tool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
-	return standalone(c.OpencodeTool.BuildCommand(sessionID, resume, resumeSessionID), 1)
+	return insertFlags(c.OpencodeTool.BuildCommand(sessionID, resume, resumeSessionID), 1, c.v2Flags())
 }
 
 // BuildHeadlessCommand implements ToolWithHeadlessPrompt: opencode's
-// `run` command, plus --standalone (see BuildCommand) after `run`: v2 before
-// 2.2.0 (2.1.0 is build.sh's fallback) rejects it before the subcommand.
+// `run` command, plus the v2 flags (see v2Flags) after `run`: v2 before
+// 2.2.0 (2.1.0 is build.sh's fallback) rejects --standalone before the
+// subcommand.
 func (c *Opencode2Tool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
 	cmd, err := c.OpencodeTool.BuildHeadlessCommand(spec)
 	if err != nil {
 		return nil, err
 	}
-	return standalone(cmd, 2), nil
+	return insertFlags(cmd, 2, c.v2Flags()), nil
 }
 
-// standalone inserts --standalone into cmd at index at.
-func standalone(cmd []string, at int) []string {
-	return append(append(append([]string{}, cmd[:at]...), "--standalone"), cmd[at:]...)
+// v2Flags returns the flags opencode2 adds to opencode's command.
+// --standalone: without it the v2 TUI is a client of a detached
+// `opencode serve --service` that outlives it, keeps the DB open and writes
+// service.json (with its password); --standalone runs a private server that
+// exits with the TUI.
+// --auto (bypass mode only): v2 applies the V1 `permission` rules of
+// opencode.json before any V2 `permissions` rule, from the host or the
+// workspace, so a V2 `ask` rule would beat coi's bypass. --auto approves all
+// that is not explicitly denied. The V2 rule cannot go in opencode.json:
+// OpenCode v1 reads the same file and rejects the `permissions` key.
+func (c *Opencode2Tool) v2Flags() []string {
+	if c.permissionMode == "interactive" {
+		return []string{"--standalone"}
+	}
+	return []string{"--standalone", "--auto"}
+}
+
+// insertFlags inserts flags into cmd at index at.
+func insertFlags(cmd []string, at int, flags []string) []string {
+	return append(append(append([]string{}, cmd[:at]...), flags...), cmd[at:]...)
 }
 
 // SessionExcludedFiles implements ToolWithSessionExcludes. service.json holds
@@ -70,23 +84,6 @@ func (c *Opencode2Tool) DataDirs() []DataDir {
 		{Name: "state", HomeRelPath: filepath.Join(".local", "state", "opencode")},
 		{Name: "plan", HomeRelPath: filepath.Join(".opencode", "plan"), FromContainer: true},
 	}
-}
-
-// GetSandboxSettings returns opencode's settings plus a V2 `permissions`
-// rule with the same effect. v2 applies V1 `permission` rules before V2
-// `permissions` rules and the last matching rule wins, so a host V2 rule would
-// beat the V1 one. The merge replaces the host's `permissions` list, which
-// keeps coi's rule the last config rule.
-func (c *Opencode2Tool) GetSandboxSettings() map[string]interface{} {
-	settings := c.OpencodeTool.GetSandboxSettings()
-	effect := "allow"
-	if c.permissionMode == "interactive" {
-		effect = "ask"
-	}
-	settings["permissions"] = []map[string]string{
-		{"action": "*", "resource": "*", "effect": effect},
-	}
-	return settings
 }
 
 // ConfigDirName returns opencode2's config dir, shared with opencode.
