@@ -426,19 +426,12 @@ func (a *App) setupContainerPhase(s *shellState) session.Phase {
 			}
 			s.result = result
 
-			if err := session.SaveMetadataEarly(s.sessionsDir, s.sessionID, result.ContainerName, s.absWorkspace, a.persistent, a.profile); err != nil {
+			if err := a.saveEarlyMetadata(s); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to save early metadata: %v\n", err)
 			}
 
-			if effectiveAlias := a.cfg.Container.Alias; effectiveAlias != "" {
-				if reg, err := alias.Load(); err == nil {
-					if err := reg.Register(effectiveAlias, s.absWorkspace, a.profile); err != nil {
-						return nil, fmt.Errorf("alias conflict: %w", err)
-					}
-					if err := reg.Save(); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: Failed to save alias registry: %v\n", err)
-					}
-				}
+			if err := a.registerShellAlias(s.absWorkspace); err != nil {
+				return nil, err
 			}
 
 			teardown := func() {
@@ -446,27 +439,39 @@ func (a *App) setupContainerPhase(s *shellState) session.Phase {
 				if s.result.TimeoutMonitor != nil {
 					s.result.TimeoutMonitor.Stop()
 				}
-				cleanupOpts := session.CleanupOptions{
-					ContainerName:  s.result.ContainerName,
-					SessionID:      s.sessionID,
-					Persistent:     a.persistent,
-					ProfileName:    a.profile,
-					SessionsDir:    s.sessionsDir,
-					SaveSession:    true,
-					Workspace:      s.absWorkspace,
-					Tool:           s.toolInstance,
-					NetworkManager: s.result.NetworkManager,
-					SessionLogger:  s.result.Logger,
-					// Bound the wait for an in-flight `close`/poweroff by the
-					// same budget graceful shutdowns get everywhere else.
-					ShutdownTimeout: a.cfg.Container.ShutdownTimeoutSeconds(),
-				}
-				if err := session.Cleanup(cleanupOpts); err != nil {
+				if err := session.Cleanup(a.shellCleanupOptions(s)); err != nil {
 					fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
 				}
 			}
 			return teardown, nil
 		},
+	}
+}
+
+// saveEarlyMetadata saves the session metadata for coi list and --resume once
+// the container is set up.
+func (a *App) saveEarlyMetadata(s *shellState) error {
+	return session.SaveMetadataEarly(s.sessionsDir, s.sessionID, s.result.ContainerName, s.absWorkspace, a.persistent, a.profile, a.profileFromDefault)
+}
+
+// shellCleanupOptions returns the options for the session's cleanup, which
+// saves the session data and its final metadata.
+func (a *App) shellCleanupOptions(s *shellState) session.CleanupOptions {
+	return session.CleanupOptions{
+		ContainerName:  s.result.ContainerName,
+		SessionID:      s.sessionID,
+		Persistent:     a.persistent,
+		ProfileName:    a.profile,
+		SessionsDir:    s.sessionsDir,
+		SaveSession:    true,
+		Workspace:      s.absWorkspace,
+		Tool:           s.toolInstance,
+		NetworkManager: s.result.NetworkManager,
+		SessionLogger:  s.result.Logger,
+		// Bound the wait for an in-flight `close`/poweroff by the
+		// same budget graceful shutdowns get everywhere else.
+		ShutdownTimeout:    a.cfg.Container.ShutdownTimeoutSeconds(),
+		ProfileFromDefault: a.profileFromDefault,
 	}
 }
 
@@ -620,6 +625,31 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 	}
 }
 
+// registerShellAlias saves the [container] alias, if any, into the alias
+// registry with the profile this launch chose by --profile, the alias or a
+// resume. A profile that came only from [defaults] profile is not saved, so the
+// entry keeps its earlier profile and a later change of the default applies.
+func (a *App) registerShellAlias(absWorkspace string) error {
+	effectiveAlias := a.cfg.Container.Alias
+	if effectiveAlias == "" {
+		return nil
+	}
+	if reg, err := alias.Load(); err == nil {
+		if a.profileFromDefault {
+			err = reg.RegisterWorkspace(effectiveAlias, absWorkspace)
+		} else {
+			err = reg.Register(effectiveAlias, absWorkspace, a.profile)
+		}
+		if err != nil {
+			return fmt.Errorf("alias conflict: %w", err)
+		}
+		if err := reg.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save alias registry: %v\n", err)
+		}
+	}
+	return nil
+}
+
 // resolveResumeAndProfile resolves the session to resume (empty for a new
 // session) and its metadata (nil if none), and applies exactly one profile:
 // explicit --profile > alias-saved profile > the resumed session's profile >
@@ -668,6 +698,7 @@ func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorksp
 
 	if a.profile == "" && !cmd.Flags().Changed("profile") && metadata != nil && metadata.ProfileName != "" {
 		a.profile = metadata.ProfileName
+		a.profileFromDefault = metadata.ProfileFromDefault
 		if err := a.cfg.ApplyProfile(a.profile); err != nil {
 			return "", nil, fmt.Errorf("failed to apply saved profile '%s': %w", a.profile, err)
 		}
