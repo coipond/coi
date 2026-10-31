@@ -26,7 +26,7 @@ _RUN_INSTALL = r"""
 set -euo pipefail
 CODE_USER=code
 chown() { :; }
-source <(grep '^OPENCODE2_FALLBACK_VERSION=' "$BUILD_SH")
+source <(grep -E '^OPENCODE2_(FALLBACK|MIN)_VERSION=' "$BUILD_SH")
 for fn in log opencode_asset_arch opencode2_npm_version; do
     source <(sed -n "/^${fn}()/,/^}/p" "$BUILD_SH")
 done
@@ -36,12 +36,14 @@ install_opencode2
 """
 
 
+def _build_sh_var(name):
+    values = re.findall(rf'^{name}="([^"]+)"', BUILD_SH.read_text(), re.MULTILINE)
+    assert len(values) == 1, f"expected one {name}, got {values}"
+    return values[0]
+
+
 def _fallback_version():
-    versions = re.findall(
-        r'^OPENCODE2_FALLBACK_VERSION="([^"]+)"', BUILD_SH.read_text(), re.MULTILINE
-    )
-    assert len(versions) == 1, f"expected one OPENCODE2_FALLBACK_VERSION, got {versions}"
-    return versions[0]
+    return _build_sh_var("OPENCODE2_FALLBACK_VERSION")
 
 
 def _run_install(tmp_path, versions, downloadable):
@@ -100,6 +102,15 @@ def test_opencode2_fallback_version_is_v2():
     assert re.fullmatch(r"2\.\d+\.\d+", _fallback_version())
 
 
+def test_opencode2_fallback_version_meets_minimum():
+    """The fallback is at least OPENCODE2_MIN_VERSION (2.0.30, the first v2
+    that reads `instructions`, coi's sandbox context)."""
+    minimum = _build_sh_var("OPENCODE2_MIN_VERSION")
+    assert minimum == "2.0.30"
+    version = tuple(int(p) for p in _fallback_version().split("."))
+    assert version >= tuple(int(p) for p in minimum.split(".")), _fallback_version()
+
+
 def test_install_opencode2_picks_newest_stable_v2(tmp_path):
     """The newest stable 2.x wins: numeric order, no v1 or v3, no pre-releases.
     It lands in its own directory, linked as opencode2."""
@@ -123,6 +134,16 @@ def test_install_opencode2_falls_back_when_lookup_fails(tmp_path):
     assert result.returncode == 0, f"install_opencode2 failed: {result.stdout}{result.stderr}"
     assert requested == [fallback], requested
     assert "WARNING: could not list opencode v2 versions" in result.stderr
+
+
+def test_install_opencode2_falls_back_below_minimum(tmp_path):
+    """A newest v2 below OPENCODE2_MIN_VERSION is not installed: the fallback
+    is, and the fallback is logged."""
+    fallback = _fallback_version()
+    result, requested = _run_install(tmp_path, ["2.0.29", "2.0.3"], [fallback])
+    assert result.returncode == 0, f"install_opencode2 failed: {result.stdout}{result.stderr}"
+    assert requested == [fallback], requested
+    assert "WARNING: newest opencode v2 2.0.29 is below 2.0.30" in result.stderr
 
 
 def test_install_opencode2_falls_back_when_download_fails(tmp_path):

@@ -18,6 +18,9 @@ CODE_USER="code"
 CODE_UID=1000
 OPENCODE_FALLBACK_VERSION="v1.19.3"
 OPENCODE2_FALLBACK_VERSION="2.1.0"
+# coi's sandbox context reaches OpenCode v2 through `instructions`, which v2
+# reads from 2.0.30 on.
+OPENCODE2_MIN_VERSION="2.0.30"
 
 log() {
     echo "[coi] $*"
@@ -670,7 +673,8 @@ install_opencode() {
 # Print the newest stable OpenCode v2.x version (MAJOR.MINOR.PATCH) of the
 # npm package @opencode/cli-linux-<arch>. v2 has no GitHub release assets:
 # it ships only through npm. The abbreviated registry document lists every
-# version. If the lookup fails, prints OPENCODE2_FALLBACK_VERSION.
+# version. If the lookup fails or finds nothing from OPENCODE2_MIN_VERSION
+# on, prints OPENCODE2_FALLBACK_VERSION.
 #######################################
 opencode2_npm_version() {
     local arch="$1" version
@@ -681,6 +685,9 @@ opencode2_npm_version() {
         grep -E '^2\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
     if [[ -z "$version" ]]; then
         log "WARNING: could not list opencode v2 versions, using $OPENCODE2_FALLBACK_VERSION" >&2
+        version="$OPENCODE2_FALLBACK_VERSION"
+    elif [[ "$(printf '%s\n' "$OPENCODE2_MIN_VERSION" "$version" | sort -V | head -n 1)" != "$OPENCODE2_MIN_VERSION" ]]; then
+        log "WARNING: newest opencode v2 $version is below $OPENCODE2_MIN_VERSION, using $OPENCODE2_FALLBACK_VERSION" >&2
         version="$OPENCODE2_FALLBACK_VERSION"
     fi
     echo "$version"
