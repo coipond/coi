@@ -26,7 +26,7 @@ func newResumeTestApp(t *testing.T, defaultProfile string) (*App, *cobra.Command
 	cmd.Flags().IntVar(&a.slot, "slot", 0, "")
 
 	sessionsDir := t.TempDir()
-	if err := session.SaveMetadataEarly(sessionsDir, "sess1", "coi-abcd1234-1", "/ws", false, "resumed"); err != nil {
+	if err := session.SaveMetadataEarly(sessionsDir, "sess1", "coi-abcd1234-1", "/ws", false, "resumed", false); err != nil {
 		t.Fatal(err)
 	}
 	return a, cmd, sessionsDir
@@ -160,7 +160,7 @@ func TestResolveResumeAndProfile_AutoResumeUsesDefaultSessionName(t *testing.T) 
 	a.cfg.Profiles["named"] = named
 
 	name := session.GetContainerPrefix() + session.IdentityHash("/ws", "team") + "-1"
-	if err := session.SaveMetadataEarly(sessionsDir, "sess-team", name, "/ws", false, "resumed"); err != nil {
+	if err := session.SaveMetadataEarly(sessionsDir, "sess-team", name, "/ws", false, "resumed", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := cmd.Flags().Set("resume", "auto"); err != nil {

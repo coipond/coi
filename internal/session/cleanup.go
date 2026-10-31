@@ -37,6 +37,9 @@ type CleanupOptions struct {
 	// uses config.DefaultShutdownTimeoutSeconds (callers should pass
 	// cfg.Container.ShutdownTimeoutSeconds()).
 	ShutdownTimeout int
+	// ProfileFromDefault is set when ProfileName came only from [defaults]
+	// profile; it is saved in metadata for --resume.
+	ProfileFromDefault bool
 }
 
 // guestProber is the manager slice the shutdown-detection helpers need;
@@ -317,7 +320,7 @@ func Cleanup(opts CleanupOptions) error {
 	// direct file-access path (no SFTP) so the save succeeds in every exit scenario.
 	saveFailed := false
 	if opts.SaveSession && exists && opts.SessionID != "" && opts.SessionsDir != "" && opts.Tool != nil && opts.Tool.ConfigDirName() != "" {
-		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, opts.Persistent, opts.ProfileName, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger); err != nil {
+		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, opts.Persistent, opts.ProfileName, opts.ProfileFromDefault, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: Failed to save session data: %v", err))
 			saveFailed = true
 		}
@@ -442,7 +445,7 @@ func Cleanup(opts CleanupOptions) error {
 }
 
 // saveSessionData saves the tool config directory from the container
-func saveSessionData(mgr container.ContainerManager, containerName string, sessionID string, persistent bool, profileName string, workspace string, sessionsDir string, t tool.Tool, logger func(string)) error {
+func saveSessionData(mgr container.ContainerManager, containerName string, sessionID string, persistent bool, profileName string, profileFromDefault bool, workspace string, sessionsDir string, t tool.Tool, logger func(string)) error {
 	// Determine home directory
 	// For coi images, we always use /home/code
 	// For other images, we use /root
@@ -549,12 +552,13 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 
 	// Save metadata
 	metadata := SessionMetadata{
-		SessionID:     sessionID,
-		ContainerName: containerName,
-		Persistent:    persistent,
-		ProfileName:   profileName,
-		Workspace:     workspace,
-		SavedAt:       getCurrentTime(),
+		SessionID:          sessionID,
+		ContainerName:      containerName,
+		Persistent:         persistent,
+		ProfileName:        profileName,
+		Workspace:          workspace,
+		SavedAt:            getCurrentTime(),
+		ProfileFromDefault: profileFromDefault,
 	}
 
 	metadataPath := filepath.Join(localSessionDir, "metadata.json")
@@ -581,6 +585,9 @@ type SessionMetadata struct {
 	ProfileName   string `json:"profile_name"`
 	Workspace     string `json:"workspace"`
 	SavedAt       string `json:"saved_at"`
+	// ProfileFromDefault is set when ProfileName came only from [defaults]
+	// profile.
+	ProfileFromDefault bool `json:"profile_from_default,omitempty"`
 }
 
 // saveMetadata saves session metadata to a JSON file
@@ -598,7 +605,7 @@ func getCurrentTime() string {
 }
 
 // SaveMetadataEarly saves session metadata at session start so coi list can show correct status
-func SaveMetadataEarly(sessionsDir, sessionID, containerName, workspace string, persistent bool, profileName string) error {
+func SaveMetadataEarly(sessionsDir, sessionID, containerName, workspace string, persistent bool, profileName string, profileFromDefault bool) error {
 	// Create session directory if it doesn't exist
 	sessionDir := filepath.Join(sessionsDir, sessionID)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
@@ -606,12 +613,13 @@ func SaveMetadataEarly(sessionsDir, sessionID, containerName, workspace string, 
 	}
 
 	metadata := SessionMetadata{
-		SessionID:     sessionID,
-		ContainerName: containerName,
-		Persistent:    persistent,
-		ProfileName:   profileName,
-		Workspace:     workspace,
-		SavedAt:       getCurrentTime(),
+		SessionID:          sessionID,
+		ContainerName:      containerName,
+		Persistent:         persistent,
+		ProfileName:        profileName,
+		Workspace:          workspace,
+		SavedAt:            getCurrentTime(),
+		ProfileFromDefault: profileFromDefault,
 	}
 
 	metadataPath := filepath.Join(sessionDir, "metadata.json")
