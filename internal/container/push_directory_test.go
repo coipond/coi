@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,24 @@ func fakeIncusScript(t *testing.T, body string) string {
 	return log
 }
 
+// stubPushArchive fixes pushArchiveSupported for one test.
+func stubPushArchive(t *testing.T, ok bool) {
+	t.Helper()
+	orig := pushArchiveSupported
+	pushArchiveSupported = func() bool { return ok }
+	t.Cleanup(func() { pushArchiveSupported = orig })
+}
+
+// resetPushArchive gives one test a fresh, unprobed pushArchiveSupported.
+func resetPushArchive(t *testing.T) {
+	t.Helper()
+	orig := pushArchiveSupported
+	pushArchiveSupported = newPushArchiveCheck()
+	t.Cleanup(func() { pushArchiveSupported = orig })
+}
+
 func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
+	stubPushArchive(t, false)
 	log := fakeIncusScript(t, "exit 0")
 	src := filepath.Join(t.TempDir(), "src")
 	if err := os.Mkdir(src, 0o755); err != nil {
@@ -39,9 +57,74 @@ func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
 	}
 }
 
+// An Incus 7.5+ client makes a recursively pushed tree root-owned with
+// umask-masked modes unless the push passes --archive, which older clients
+// do not have. Every push form gets the flag; the client version is read once.
+func TestPushDirectory_ArchiveByClientVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		archive bool
+	}{
+		{"6.0", "6.0.3", false},
+		{"7.4", "7.4", false},
+		{"7.5", "7.5", true},
+		{"8.0", "8.0", true},
+		{"unparsable", "unknown", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetPushArchive(t)
+			log := fakeIncusScript(t, `case "$*" in *--version) echo `+tt.version+`;; esac`)
+			src := filepath.Join(t.TempDir(), "src")
+			if err := os.Mkdir(src, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			mgr := NewManager("c1")
+			for _, target := range []string{"/tmp/src", "/", "/tmp/renamed"} {
+				if err := mgr.PushDirectory(src, target); err != nil {
+					t.Fatalf("PushDirectory(%q) error = %v", target, err)
+				}
+			}
+			push := "--project " + IncusProject + " file push -r "
+			if tt.archive {
+				push += "--archive "
+			}
+			logged := calls(t, log)
+			want := []string{"--project " + IncusProject + " --version", push + src + " c1/tmp/", push + src + " c1/"}
+			if len(logged) != 4 || !slices.Equal(logged[:3], want) {
+				t.Fatalf("incus calls = %q, want %q + a staged push", logged, want)
+			}
+			if staged := logged[3]; !strings.HasPrefix(staged, push) || !strings.HasSuffix(staged, "/renamed c1/tmp/") {
+				t.Errorf("staged push = %q, want %q<stage>/renamed c1/tmp/", staged, push)
+			}
+		})
+	}
+}
+
+// A failed version probe keeps the push that works on every client.
+func TestPushDirectory_VersionProbeFailurePushesWithoutArchive(t *testing.T) {
+	resetPushArchive(t)
+	log := fakeIncusScript(t, `case "$*" in *--version) exit 1;; esac`)
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewManager("c1").PushDirectory(src, "/"); err != nil {
+		t.Fatalf("PushDirectory() error = %v", err)
+	}
+	want := "--project " + IncusProject + " file push -r " + src + " c1/"
+	if logged := calls(t, log); len(logged) != 2 || logged[1] != want {
+		t.Errorf("incus calls = %q, want [version probe, %q]", logged, want)
+	}
+}
+
 // A rename stages a copy on the host under the target name and only uses
 // `incus file push`, so it also works on a stopped container (no exec).
 func TestPushDirectory_RenameStagesOnHost(t *testing.T) {
+	stubPushArchive(t, false)
 	log := fakeIncusScript(t, `case "$*" in *"file push"*) ls -R "$6" > "$(dirname "$0")/staged.txt";; esac`)
 	src := filepath.Join(t.TempDir(), "src")
 	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {

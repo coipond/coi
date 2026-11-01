@@ -992,6 +992,8 @@ func copyFile(src, dst string) error {
 
 // PushDirectory pushes a directory to the container recursively, so that
 // containerPath is the pushed directory itself (not a directory inside it).
+// Every entry keeps its source UID, GID and mode: an Incus 7.5+ client makes
+// them root-owned and applies the umask unless the push passes --archive.
 func (m *Manager) PushDirectory(localPath, containerPath string) error {
 	// Check if source directory exists
 	if info, err := os.Stat(localPath); err != nil || !info.IsDir() {
@@ -1007,9 +1009,13 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 	// to container:/remote/ creates /remote/dir. When the target has another
 	// name, push a copy staged on the host under that name: exec (mktemp/mv
 	// in the container) would fail on a stopped container.
+	args := []string{"file", "push", "-r"}
+	if pushArchiveSupported() {
+		args = append(args, "--archive")
+	}
 	target := path.Clean("/" + containerPath)
 	if target == "/" {
-		return IncusExec("file", "push", "-r", localPath, m.ContainerName+"/")
+		return IncusExec(append(args, localPath, m.ContainerName+"/")...)
 	}
 	parent, name := path.Dir(target), path.Base(target)
 	if !strings.HasSuffix(parent, "/") {
@@ -1027,7 +1033,7 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 			return fmt.Errorf("failed to stage %s for the push: %w", localPath, err)
 		}
 	}
-	return IncusExec("file", "push", "-r", src, m.ContainerName+parent)
+	return IncusExec(append(args, src, m.ContainerName+parent)...)
 }
 
 // PathKind is what a container path is, as reported by Manager.PathKind.
