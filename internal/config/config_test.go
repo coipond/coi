@@ -946,9 +946,6 @@ func TestMergeBoolZeroValueBug(t *testing.T) {
 	if base.Limits.Runtime.StopGraceful == nil || !*base.Limits.Runtime.StopGraceful {
 		t.Fatal("Expected default StopGraceful to be true")
 	}
-	if base.Network.Logging.Enabled == nil || !*base.Network.Logging.Enabled {
-		t.Fatal("Expected default NetworkLogging.Enabled to be true")
-	}
 	if base.Monitoring.NFT.LogDNSQueries == nil || !*base.Monitoring.NFT.LogDNSQueries {
 		t.Fatal("Expected default NFT.LogDNSQueries to be true")
 	}
@@ -981,9 +978,6 @@ func TestMergeBoolZeroValueBug(t *testing.T) {
 	}
 	if base.Limits.Runtime.StopGraceful == nil || !*base.Limits.Runtime.StopGraceful {
 		t.Error("StopGraceful was silently reset to false by merge")
-	}
-	if base.Network.Logging.Enabled == nil || !*base.Network.Logging.Enabled {
-		t.Error("NetworkLogging.Enabled was silently reset to false by merge")
 	}
 	if base.Monitoring.NFT.LogDNSQueries == nil || !*base.Monitoring.NFT.LogDNSQueries {
 		t.Error("NFT.LogDNSQueries was silently reset to false by merge")

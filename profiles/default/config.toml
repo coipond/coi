@@ -60,10 +60,6 @@ allowed_domains = [
 allow_local_network_access = false
 refresh_interval_minutes = 30
 
-[network.logging]
-enabled = true
-path = "~/.coi/logs/network.log"
-
 [tool]
 name = "claude"
 auto_context = true

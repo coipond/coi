@@ -106,7 +106,6 @@ def test_schema_defs_present(profile_schema):
         "ClaudeToolConfig",
         "MountEntry",
         "NetworkConfig",
-        "NetworkLoggingConfig",
         "PathsConfig",
         "IncusConfig",
         "GitConfig",

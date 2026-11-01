@@ -42,7 +42,6 @@ func expandConfigPaths(cfg *Config) {
 	cfg.Paths.LogsDir = ExpandPath(cfg.Paths.LogsDir)
 	cfg.Tool.ContextFile = ExpandPath(cfg.Tool.ContextFile)
 	cfg.Tool.ContextJSONFile = ExpandPath(cfg.Tool.ContextJSONFile)
-	cfg.Network.Logging.Path = ExpandPath(cfg.Network.Logging.Path)
 	cfg.Detection.GTFOBinsDir = ExpandPath(cfg.Detection.GTFOBinsDir)
 	cfg.Detection.SigmaDir = ExpandPath(cfg.Detection.SigmaDir)
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/coipond/coi/internal/config"
 	coischema "github.com/coipond/coi/schema"
 	"github.com/spf13/cobra"
 )
@@ -65,6 +66,7 @@ Examples:
 				[]coischema.ValidationIssue{{Path: "", Message: fmt.Sprintf("failed to parse TOML: %s", err)}})
 			return &ExitCodeError{Code: 1}
 		}
+		config.DropRemovedProfileKeys(rawMap, path)
 
 		schemaErr := coischema.ValidateProfileMap(rawMap)
 		if schemaErr == nil {

@@ -609,8 +609,6 @@ func mergeNetworkInto(dst *NetworkConfig, src *NetworkConfig) {
 	mergeSlice(&dst.Hosts, src.Hosts)
 	mergeSlice(&dst.DNSServers, src.DNSServers)
 	mergeSlice(&dst.AllowedPorts, src.AllowedPorts)
-	mergeScalar(&dst.Logging.Path, src.Logging.Path)
-	mergePtr(&dst.Logging.Enabled, src.Logging.Enabled)
 }
 
 func mergeMonitoringInto(dst *MonitoringConfig, src *MonitoringConfig) {
