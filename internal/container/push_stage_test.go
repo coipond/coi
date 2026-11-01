@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func mode(t *testing.T, p string) fs.FileMode {
@@ -87,6 +88,70 @@ func TestCopyFileExact_IgnoresUmask(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(dst); string(b) != "data" {
 		t.Errorf("copy content = %q, want %q", b, "data")
+	}
+}
+
+// A rename push with --archive sends the staged entries' times, so staging
+// keeps the source's: on directories filled during staging (a read-only one
+// too) and on files copied across filesystems.
+func TestStagePushTree_KeepsModTimes(t *testing.T) {
+	old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	src := filepath.Join(t.TempDir(), "src")
+	ro := filepath.Join(src, "ro")
+	if err := os.MkdirAll(ro, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ro, "f.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ro, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+	for _, p := range []string{ro, src} {
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stage := t.TempDir()
+	t.Cleanup(func() { removeStage(stage) })
+	dst := filepath.Join(stage, "renamed")
+	if err := stagePushTree(src, dst); err != nil {
+		t.Fatalf("stagePushTree() error = %v", err)
+	}
+	for _, rel := range []string{".", "ro"} {
+		fi, err := os.Stat(filepath.Join(dst, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !fi.ModTime().Equal(old) {
+			t.Errorf("%s mtime = %v, want %v", rel, fi.ModTime(), old)
+		}
+	}
+}
+
+func TestCopyFileExact_KeepsModTime(t *testing.T) {
+	old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a")
+	if err := os.WriteFile(src, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(src, old, old); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Lstat(src)
+	dst := filepath.Join(dir, "b")
+	if err := copyFileExact(src, dst, info); err != nil {
+		t.Fatalf("copyFileExact() error = %v", err)
+	}
+	fi, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.ModTime().Equal(old) {
+		t.Errorf("copy mtime = %v, want %v", fi.ModTime(), old)
 	}
 }
 

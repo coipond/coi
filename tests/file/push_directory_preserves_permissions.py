@@ -1,11 +1,11 @@
 """
-Test for coi file push -r - pushed entries keep their host mode and owner.
+Test for coi file push -r - pushed entries keep their host mode, owner and mtime.
 
 Tests that:
 1. Launch a container
 2. Create a local tree with a 0700 dir, a 0664 file and a 0755 script
 3. Push it with -r, under its own name and under another name
-4. Verify each entry in the container has the host mode, UID and GID
+4. Verify each entry in the container has the host mode, UID, GID and mtime
 """
 
 import os
@@ -18,14 +18,14 @@ from support.helpers import calculate_container_name
 def test_push_directory_preserves_permissions(coi_binary, cleanup_containers, workspace_dir):
     """
     Test that every entry of a recursively pushed directory keeps the mode,
-    UID and GID it has on the host. The 0664 file shows the mode is not
-    masked by the umask.
+    UID, GID and modification time it has on the host. The 0664 file shows
+    the mode is not masked by the umask.
 
     Flow:
     1. Launch a container
     2. Create the local tree with explicit modes
     3. Push it to the same name and to a new name (staged on the host)
-    4. Verify mode/UID/GID of each entry with stat
+    4. Verify mode/UID/GID/mtime of each entry with stat
     5. Cleanup
     """
     container_name = calculate_container_name(workspace_dir, 1)
@@ -60,10 +60,15 @@ def test_push_directory_preserves_permissions(coi_binary, cleanup_containers, wo
     os.chmod(private, 0o700)
     os.chmod(tree, 0o755)
 
+    # Children before their parents, so a parent's mtime is not changed after.
+    old_mtime = 1577934245  # 2020-01-02
+    for rel in [*entries, "private", ""]:
+        os.utime(os.path.join(tree, rel), (old_mtime, old_mtime))
+
     expected = {}
     for rel in ["", "private", *entries]:
         st = os.stat(os.path.join(tree, rel))
-        expected[rel] = f"{st.st_mode & 0o777:o} {st.st_uid} {st.st_gid}"
+        expected[rel] = f"{st.st_mode & 0o777:o} {st.st_uid} {st.st_gid} {int(st.st_mtime)}"
 
     # === Phase 3: Push under the same name and under another name ===
 
@@ -90,7 +95,7 @@ def test_push_directory_preserves_permissions(coi_binary, cleanup_containers, wo
                     "--",
                     "stat",
                     "-c",
-                    "%a %u %g",
+                    "%a %u %g %Y",
                     remote,
                 ],
                 capture_output=True,
@@ -100,7 +105,7 @@ def test_push_directory_preserves_permissions(coi_binary, cleanup_containers, wo
             assert result.returncode == 0, f"stat {remote} should succeed. stderr: {result.stderr}"
             combined_output = result.stdout + result.stderr
             assert want in combined_output, (
-                f"{remote} should keep host mode/UID/GID '{want}', got:\n{combined_output}"
+                f"{remote} should keep host mode/UID/GID/mtime '{want}', got:\n{combined_output}"
             )
 
     # === Phase 5: Cleanup ===

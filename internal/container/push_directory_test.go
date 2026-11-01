@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -36,7 +35,7 @@ func stubPushArchive(t *testing.T, ok bool) {
 func resetPushArchive(t *testing.T) {
 	t.Helper()
 	orig := pushArchiveSupported
-	pushArchiveSupported = sync.OnceValue(detectPushArchive)
+	pushArchiveSupported = newPushArchiveCheck()
 	t.Cleanup(func() { pushArchiveSupported = orig })
 }
 
@@ -60,7 +59,7 @@ func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
 
 // An Incus 7.5+ client makes a recursively pushed tree root-owned with
 // umask-masked modes unless the push passes --archive, which older clients
-// do not have. The client version is read once.
+// do not have. Every push form gets the flag; the client version is read once.
 func TestPushDirectory_ArchiveByClientVersion(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -83,19 +82,22 @@ func TestPushDirectory_ArchiveByClientVersion(t *testing.T) {
 			}
 
 			mgr := NewManager("c1")
-			for range 2 {
-				if err := mgr.PushDirectory(src, "/tmp/src"); err != nil {
-					t.Fatalf("PushDirectory() error = %v", err)
+			for _, target := range []string{"/tmp/src", "/", "/tmp/renamed"} {
+				if err := mgr.PushDirectory(src, target); err != nil {
+					t.Fatalf("PushDirectory(%q) error = %v", target, err)
 				}
 			}
-			flags := " -r "
+			push := "--project " + IncusProject + " file push -r "
 			if tt.archive {
-				flags = " -r --archive "
+				push += "--archive "
 			}
-			push := "--project " + IncusProject + " file push" + flags + src + " c1/tmp/"
-			want := []string{"--project " + IncusProject + " --version", push, push}
-			if logged := calls(t, log); !slices.Equal(logged, want) {
-				t.Errorf("incus calls = %q, want %q", logged, want)
+			logged := calls(t, log)
+			want := []string{"--project " + IncusProject + " --version", push + src + " c1/tmp/", push + src + " c1/"}
+			if len(logged) != 4 || !slices.Equal(logged[:3], want) {
+				t.Fatalf("incus calls = %q, want %q + a staged push", logged, want)
+			}
+			if staged := logged[3]; !strings.HasPrefix(staged, push) || !strings.HasSuffix(staged, "/renamed c1/tmp/") {
+				t.Errorf("staged push = %q, want %q<stage>/renamed c1/tmp/", staged, push)
 			}
 		})
 	}

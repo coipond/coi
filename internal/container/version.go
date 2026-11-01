@@ -146,7 +146,11 @@ func FormatMinVersionError(v *IncusVersion) string {
 // pushArchiveSupported reports, once per process, whether the incus client
 // has `file push --archive` (7.5+). It is a client flag, so the client
 // version decides, not the server's.
-var pushArchiveSupported = sync.OnceValue(detectPushArchive)
+var pushArchiveSupported = newPushArchiveCheck()
+
+func newPushArchiveCheck() func() bool {
+	return sync.OnceValue(detectPushArchive)
+}
 
 func detectPushArchive() bool {
 	out, err := IncusOutput("--version")
