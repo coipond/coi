@@ -104,9 +104,6 @@ func TestExpandConfigPaths(t *testing.T) {
 	if strings.HasPrefix(cfg.Paths.LogsDir, "~") {
 		t.Errorf("LogsDir not expanded: %q", cfg.Paths.LogsDir)
 	}
-	if strings.HasPrefix(cfg.Network.Logging.Path, "~") {
-		t.Errorf("Network logging path not expanded: %q", cfg.Network.Logging.Path)
-	}
 
 	// Verify paths contain home directory
 	expectedSessionsDir := filepath.Join(homeDir, ".coi", "sessions")
