@@ -112,7 +112,7 @@ func TestLoadProfileDirectories_RemovedNetworkLogging(t *testing.T) {
 	}
 }
 
-// coi validate profile drops the section the same way before validating.
+// The schema rejects the section, so it must be dropped before validation.
 func TestDropRemovedProfileKeys_ProfilePassesSchema(t *testing.T) {
 	raw := map[string]any{
 		"network": map[string]any{
