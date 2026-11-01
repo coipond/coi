@@ -60,7 +60,6 @@ def test_push_directory_preserves_permissions(coi_binary, cleanup_containers, wo
     os.chmod(private, 0o700)
     os.chmod(tree, 0o755)
 
-    # Children before their parents, so a parent's mtime is not changed after.
     old_mtime = 1577934245  # 2020-01-02
     for rel in [*entries, "private", ""]:
         os.utime(os.path.join(tree, rel), (old_mtime, old_mtime))
@@ -81,7 +80,7 @@ def test_push_directory_preserves_permissions(coi_binary, cleanup_containers, wo
         )
         assert result.returncode == 0, f"Push to {target} should succeed. stderr: {result.stderr}"
 
-    # === Phase 4: Verify mode and owner of every entry ===
+    # === Phase 4: Verify mode, owner and mtime of every entry ===
 
     for target in ["/root/push-perm-dir", "/root/push-perm-renamed"]:
         for rel, want in expected.items():
