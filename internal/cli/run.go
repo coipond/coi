@@ -38,7 +38,7 @@ var (
 )
 
 var runCmd = &cobra.Command{
-	Use:   "run [command] [args...]",
+	Use:   "run [flags] [--] [command] [args...]",
 	Short: "Run a command, the workspace run script, or a headless agent prompt in a sandboxed container",
 	Long: `Execute a command in an isolated Incus container with the full sandbox
 (workspace mount, protected paths, secret masking, network isolation, limits,
@@ -60,6 +60,10 @@ Prompt mode currently supports the claude and opencode tools (opencode runs
 the prompt via "opencode run") with permission_mode = "bypass"
 (a headless run has no TTY to approve tool use).
 
+coi flags go before the command: everything after the command's name is
+passed to the command, flags included (coi run ls -la). --resume and
+--continue are not supported; use coi shell to resume a session.
+
 The container is ephemeral: it is cleaned up after the command completes (or
 stopped and kept, when [container] persistent = true is configured).
 
@@ -67,6 +71,7 @@ Examples:
   coi run                            # run ./` + runScriptName + ` in the sandbox
   coi run --profile scripts          # same, with a credential-limiting profile
   coi run -- npm test                # run an arbitrary command
+  coi run ls -la                     # same, -la goes to ls
   coi run --workspace ~/project -- make build
   coi run --prompt "update deps and open a PR"   # headless agent run
   coi run --prompt-file ./task.md --profile hardened
@@ -77,6 +82,8 @@ Examples:
 }
 
 func init() {
+	// Every flag after the command belongs to the command, not to coi.
+	runCmd.Flags().SetInterspersed(false)
 	runCmd.Flags().StringVar(&runPrompt, "prompt", "", "Run the AI agent headlessly with this prompt text, then exit (fire and forget)")
 	runCmd.Flags().StringVar(&runPromptFile, "prompt-file", "", "Run the AI agent headlessly with the prompt read from this host file")
 	runCmd.Flags().StringVar(&runPromptName, "prompt-name", "", "Run the AI agent headlessly with a named prompt from the [prompts] config table")
@@ -126,7 +133,22 @@ func detectRunScript(absWorkspace string) (found bool, err error) {
 	return true, nil
 }
 
+// rejectRunResumeFlags rejects the root --resume/--continue flags: coi run
+// always starts a new session and would otherwise ignore them silently.
+func rejectRunResumeFlags(cmd *cobra.Command) error {
+	for _, name := range []string{"resume", "continue"} {
+		if cmd.Flags().Changed(name) {
+			return &ExitCodeError{Code: ExitUsage, Message: fmt.Sprintf("coi run does not support --%s; use coi shell --%s to resume a session", name, name)}
+		}
+	}
+	return nil
+}
+
 func (a *App) runCommand(cmd *cobra.Command, args []string) error {
+	if err := rejectRunResumeFlags(cmd); err != nil {
+		return err
+	}
+
 	// Signal-aware context so phases can abort on Ctrl+C.
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
