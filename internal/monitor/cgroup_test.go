@@ -126,7 +126,7 @@ func TestWellKnownCgroupPaths_PayloadBeforeMonitor(t *testing.T) {
 		return -1
 	}
 
-	payloadIdx := indexOf(".payload/")
+	payloadIdx := indexOf(".payload")
 	monitorIdx := indexOf(".monitor/")
 	if payloadIdx == -1 {
 		t.Fatalf("expected a .payload candidate in %v", paths)
@@ -140,7 +140,7 @@ func TestWellKnownCgroupPaths_PayloadBeforeMonitor(t *testing.T) {
 	}
 	// Every candidate must be under the container's own name (no cross-container match).
 	for _, p := range paths {
-		if !strings.HasSuffix(p, "/coi-abc-1") {
+		if !strings.HasSuffix(p, "/coi-abc-1") && !strings.HasSuffix(p, ".payload.coi-abc-1") {
 			t.Errorf("candidate %q is not scoped to the container name", p)
 		}
 	}
@@ -170,5 +170,15 @@ func TestStripSystemdScopeSuffix(t *testing.T) {
 				t.Errorf("stripSystemdScopeSuffix(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// Incus 7.5 on cgroup2 names the payload cgroup lxc.payload.<name> (a dot, not
+// a directory). It must be probed, and before the slash forms, or every lookup
+// on such a host falls back to one incus info per container.
+func TestWellKnownCgroupPaths_DotPayloadFirst(t *testing.T) {
+	paths := wellKnownCgroupPaths("coi-abc-1")
+	if want := "/sys/fs/cgroup/lxc.payload.coi-abc-1"; len(paths) == 0 || paths[0] != want {
+		t.Fatalf("first candidate: want %q (all: %v)", want, paths)
 	}
 }

@@ -70,10 +70,14 @@ func getInitPIDViaIncus(ctx context.Context, containerName string) (int, error) 
 // container) and make GetContainerInitPID return the monitor's PID instead of
 // the container init. The .monitor paths stay in the list as a fallback for
 // layouts where the monitor cgroup is itself the combined instance root, but
-// after payload and the legacy single-hierarchy roots. Non-existent candidates
-// are Stat-probed and skipped, so listing extra forms is always safe.
+// after payload and the legacy single-hierarchy roots. The dot form
+// (lxc.payload.<name>) comes first: Incus 7.5 on cgroup2 names the payload
+// cgroup that way, and missing it sends every lookup to the incus info
+// fallback. Non-existent candidates are Stat-probed and skipped, so listing
+// extra forms is always safe.
 func wellKnownCgroupPaths(containerName string) []string {
 	return []string{
+		fmt.Sprintf("/sys/fs/cgroup/lxc.payload.%s", containerName),
 		fmt.Sprintf("/sys/fs/cgroup/incus.payload/%s", containerName),
 		fmt.Sprintf("/sys/fs/cgroup/lxc.payload/%s", containerName),
 		fmt.Sprintf("/sys/fs/cgroup/lxc/%s", containerName),
