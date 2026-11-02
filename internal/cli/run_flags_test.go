@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -74,6 +75,7 @@ func TestRunCommand_RejectsResumeFlags(t *testing.T) {
 			cfg := config.GetDefaultConfig()
 			cfg.Limits.Runtime.MaxDuration = "invalid"
 			a := &App{cfg: cfg, workspace: "."}
+			runCmd.SetContext(context.Background())
 			err := a.runCommand(runCmd, args)
 			if err == nil {
 				t.Fatalf("coi run %s: want a usage error", flag)
