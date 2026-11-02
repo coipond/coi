@@ -5,7 +5,7 @@
 # It installs all dependencies needed for CLI tool execution:
 # - Base development tools
 # - Node.js LTS (system, for Claude CLI)
-# - mise (polyglot runtime manager) with Python 3, pnpm, npm:typescript, npm:tsx
+# - mise (polyglot runtime manager) with Python 3, aqua:pnpm/pnpm, npm:typescript, npm:tsx
 # - Claude CLI
 # - Docker
 # - GitHub CLI
@@ -313,7 +313,7 @@ MISE_PROFILE_EOF
     # This sets ~/.config/mise/config.toml with global tool versions.
     local attempt
     for attempt in 1 2 3; do
-        if su - "$CODE_USER" -c 'mise use --global python@3 npm:pnpm@latest npm:typescript@latest npm:tsx@latest'; then
+        if su - "$CODE_USER" -c 'mise use --global python@3 aqua:pnpm/pnpm@latest npm:typescript@latest npm:tsx@latest'; then
             break
         fi
         if [ "$attempt" -eq 3 ]; then
@@ -331,6 +331,13 @@ MISE_PROFILE_EOF
             exit 1
         fi
     done
+
+    # `which` only proves the file exists; a pnpm whose install scripts did
+    # not run is a placeholder that fails when executed.
+    if ! su - "$CODE_USER" -c "pnpm -v" >/dev/null 2>&1; then
+        log "ERROR: 'pnpm -v' failed after installation."
+        exit 1
+    fi
 
     # Ensure the code user owns all mise state
     chown -R "$CODE_USER:$CODE_USER" "$CODE_HOME/.local/share/mise" 2>/dev/null || true
