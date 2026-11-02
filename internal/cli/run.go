@@ -82,7 +82,6 @@ Examples:
 }
 
 func init() {
-	// Every flag after the command belongs to the command, not to coi.
 	runCmd.Flags().SetInterspersed(false)
 	runCmd.Flags().StringVar(&runPrompt, "prompt", "", "Run the AI agent headlessly with this prompt text, then exit (fire and forget)")
 	runCmd.Flags().StringVar(&runPromptFile, "prompt-file", "", "Run the AI agent headlessly with the prompt read from this host file")
