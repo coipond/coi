@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/coipond/coi/internal/config"
 	"github.com/spf13/pflag"
 )
 
@@ -64,11 +65,16 @@ func TestRunFlags_DoubleDash(t *testing.T) {
 	}
 }
 
-func TestRejectRunResumeFlags(t *testing.T) {
+func TestRunCommand_RejectsResumeFlags(t *testing.T) {
 	for _, flag := range []string{"--resume", "--resume=abc", "--continue", "--continue=abc"} {
 		t.Run(flag, func(t *testing.T) {
-			parseRunFlags(t, []string{flag, "--", "true"})
-			err := rejectRunResumeFlags(runCmd)
+			args := parseRunFlags(t, []string{flag, "--", "true"})
+			// An invalid max_duration stops runCommand before any container
+			// work if the flags are not rejected first.
+			cfg := config.GetDefaultConfig()
+			cfg.Limits.Runtime.MaxDuration = "invalid"
+			a := &App{cfg: cfg, workspace: "."}
+			err := a.runCommand(runCmd, args)
 			if err == nil {
 				t.Fatalf("coi run %s: want a usage error", flag)
 			}
