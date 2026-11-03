@@ -1067,7 +1067,7 @@ set -g mouse on
 bind -n WheelUpPane {
     if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } {
         if -F '#{alternate_on}' { send -N 3 Up } {
-            if 'ps -o stat=,comm= -t #{pane_tty} | grep -qE "^[^ ]*[+] +(less|more|pager)$"' {
+            if 'ps -o stat=,comm= -t #{pane_tty} | grep -qE "^[^ ]*[+] +(less|pager)$"' {
                 send -N 3 Up
             } { copy-mode -e }
         }
@@ -1076,7 +1076,7 @@ bind -n WheelUpPane {
 bind -n WheelDownPane {
     if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } {
         if -F '#{alternate_on}' { send -N 3 Down } {
-            if 'ps -o stat=,comm= -t #{pane_tty} | grep -qE "^[^ ]*[+] +(less|more|pager)$"' {
+            if 'ps -o stat=,comm= -t #{pane_tty} | grep -qE "^[^ ]*[+] +(less|pager)$"' {
                 send -N 3 Down
             }
         }

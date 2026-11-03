@@ -15,7 +15,8 @@ Tests that:
    screen) scrolls the same way.
 4. A full-screen program that tracks the mouse gets the wheel events, not
    Up/Down keys.
-5. At a shell prompt, wheel-up still enters copy mode.
+5. At a shell prompt, wheel-up still enters copy mode, also with a pager
+   stopped in the background.
 """
 
 import subprocess
@@ -113,7 +114,9 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
     6. Start a program that turns on mouse tracking and records its input,
        send wheel events, check it got them as mouse events
     7. In a session with a shell, send wheel-up, check copy mode is on
-    8. Cleanup
+    8. Suspend `less -X` in a shell (Ctrl-Z), send wheel-up, check copy mode
+       is on
+    9. Cleanup
     """
     container_name = calculate_container_name(workspace_dir, 1)
 
@@ -254,7 +257,27 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
 
     child.close(force=True)
 
-    # === Phase 8: Cleanup ===
+    # === Phase 8: A pager stopped in the background is not in the foreground ===
+
+    stopped = f"coi-{container_name}-stopped"
+    _new_session(coi_binary, container_name, stopped, "bash")
+    _tmux(coi_binary, container_name, "send-keys", "-t", stopped, "seq 1 300 | less -X", "Enter")
+    time.sleep(1)
+    _tmux(coi_binary, container_name, "send-keys", "-t", stopped, "C-z")
+    time.sleep(1)
+
+    child = _attach(coi_binary, container_name, stopped)
+    time.sleep(2)
+    child.send(WHEEL_UP)
+    time.sleep(1)
+
+    assert _in_mode(coi_binary, container_name, stopped).strip() == "1", (
+        "Wheel-up at a shell prompt with a stopped pager must enter copy mode"
+    )
+
+    child.close(force=True)
+
+    # === Phase 9: Cleanup ===
 
     subprocess.run(
         [coi_binary, "container", "delete", container_name, "--force"],
