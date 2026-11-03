@@ -154,8 +154,12 @@ func loadConfigFileScoped(cfg *Config, path string, trusted bool) error {
 
 	// Parse TOML file
 	var fileCfg Config
-	if _, err := toml.DecodeFile(path, &fileCfg); err != nil {
+	md, err := toml.DecodeFile(path, &fileCfg)
+	if err != nil {
 		return err
+	}
+	if md.IsDefined("network", "logging") {
+		warnRemovedNetworkLogging(path)
 	}
 
 	// Detect pre-0.8.0 layouts and refuse to load with an actionable error.
@@ -760,6 +764,7 @@ func loadProfileDirectories(cfg *Config, configDir string, trusted bool) error {
 		if _, err := toml.Decode(string(data), &rawMap); err != nil {
 			return fmt.Errorf("failed to re-read profile %q for schema validation: %w", profileName, err)
 		}
+		DropRemovedProfileKeys(rawMap, profileConfigPath)
 		if schemaErr := coischema.ValidateProfileMap(rawMap); schemaErr != nil {
 			return fmt.Errorf("profile %q at %s failed schema validation: %w",
 				profileName, profileConfigPath, schemaErr)

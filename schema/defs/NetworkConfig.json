@@ -34,9 +34,6 @@
       "type": "boolean",
       "description": "Whether Coi may invoke sudo for network operations (nft/iptables). Defaults to true. Set false to decline passwordless sudo: restricted/allowlist modes then error out (no silent downgrade) and only \"open\" mode works."
     },
-    "logging": {
-      "$ref": "#/$defs/NetworkLoggingConfig"
-    },
     "hosts": {
       "type": "array",
       "items": { "$ref": "#/$defs/HostEntry" },

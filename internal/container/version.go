@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -140,4 +141,25 @@ func FormatMinVersionError(v *IncusVersion) string {
 		v.Raw, MinIncusVersionMajor, MinIncusVersionMinor,
 		MinIncusVersionMajor, MinIncusVersionMinor,
 	)
+}
+
+// pushArchiveSupported reports, once per process, whether the incus client
+// has `file push --archive` (7.5+). It is a client flag, so the client
+// version decides, not the server's.
+var pushArchiveSupported = newPushArchiveCheck()
+
+func newPushArchiveCheck() func() bool {
+	return sync.OnceValue(detectPushArchive)
+}
+
+func detectPushArchive() bool {
+	out, err := IncusOutput("--version")
+	if err != nil {
+		return false
+	}
+	v, err := ParseIncusVersion(out)
+	if err != nil {
+		return false
+	}
+	return v.Major > 7 || (v.Major == 7 && v.Minor >= 5)
 }

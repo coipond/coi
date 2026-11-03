@@ -559,8 +559,7 @@ type NetworkConfig struct {
 	// behaves as if passwordless sudo were unavailable, so `restricted`/`allowlist`
 	// modes error out (no silent downgrade) and `open` mode runs without privileged
 	// rules. For users who decline the installer's /etc/sudoers.d/coi-nft rule.
-	UseSudo *bool                `toml:"use_sudo"`
-	Logging NetworkLoggingConfig `toml:"logging"`
+	UseSudo *bool `toml:"use_sudo"`
 	// Hosts are static name→address entries written into the container's
 	// /etc/hosts, with firewall reachability applied to match the active mode
 	// (#605). Honored ONLY from trusted-scope config — a name→IP mapping is a
@@ -608,12 +607,6 @@ type HostEntry struct {
 	IP        string   `toml:"ip"`
 	Hostnames []string `toml:"hostnames"`
 	Ports     []int    `toml:"ports"`
-}
-
-// NetworkLoggingConfig contains network logging settings
-type NetworkLoggingConfig struct {
-	Enabled *bool  `toml:"enabled"`
-	Path    string `toml:"path"`
 }
 
 // ProfileConfig represents a named profile

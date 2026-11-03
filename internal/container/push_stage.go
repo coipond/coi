@@ -6,17 +6,20 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // stagePushTree recreates the tree at src under dst for `incus file push -r`,
-// keeping what the push sends for each entry: mode and owner. Files are hard
-// links when src and dst share a filesystem (same inode, no copy), else exact
-// copies. Directories are created writable and get their own mode only after
-// their contents, so a read-only directory can still be staged.
+// keeping what the push sends for each entry: mode, owner and (with
+// --archive) modification time. Files are hard links when src and dst share a
+// filesystem (same inode, no copy), else exact copies. Directories are
+// created writable and get their own mode and time only after their
+// contents, so a read-only directory can still be staged.
 func stagePushTree(src, dst string) error {
 	type dirMode struct {
-		path string
-		mode fs.FileMode
+		path  string
+		mode  fs.FileMode
+		mtime time.Time
 	}
 	var dirs []dirMode
 	// WalkDir does not descend into a symlinked root.
@@ -43,7 +46,7 @@ func stagePushTree(src, dst string) error {
 				return err
 			}
 			chownLike(target, info)
-			dirs = append(dirs, dirMode{target, info.Mode()})
+			dirs = append(dirs, dirMode{target, info.Mode(), info.ModTime()})
 		case d.Type()&fs.ModeSymlink != 0:
 			if err := copySymlink(p, target); err != nil {
 				return err
@@ -63,17 +66,21 @@ func stagePushTree(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	// Deepest first: a parent made read-only must not block its children.
+	// Deepest first: a parent made read-only must not block its children,
+	// and setting a child's times does not change its parent's.
 	for i := len(dirs) - 1; i >= 0; i-- {
 		if err := os.Chmod(dirs[i].path, chmodBits(dirs[i].mode)); err != nil {
+			return err
+		}
+		if err := os.Chtimes(dirs[i].path, time.Time{}, dirs[i].mtime); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// copyFileExact copies src to dst with src's mode (not masked by the umask)
-// and, when permitted, its owner.
+// copyFileExact copies src to dst with src's mode (not masked by the umask),
+// modification time and, when permitted, its owner.
 func copyFileExact(src, dst string, info fs.FileInfo) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -92,7 +99,10 @@ func copyFileExact(src, dst string, info fs.FileInfo) error {
 		return err
 	}
 	chownLike(dst, info)
-	return os.Chmod(dst, chmodBits(info.Mode()))
+	if err := os.Chmod(dst, chmodBits(info.Mode())); err != nil {
+		return err
+	}
+	return os.Chtimes(dst, time.Time{}, info.ModTime())
 }
 
 // chmodBits is the part of mode that os.Chmod sets: permissions plus the

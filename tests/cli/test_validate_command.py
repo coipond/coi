@@ -63,3 +63,21 @@ def test_validate_profile_missing_arg(coi_binary):
         timeout=30,
     )
     assert r.returncode != 0, "missing path argument must fail"
+
+
+def test_validate_profile_removed_network_logging(coi_binary, tmp_path):
+    """A profile that still sets the removed [network.logging] section is valid,
+    with one warning naming the file; --format json keeps stdout valid JSON."""
+    p = tmp_path / "config.toml"
+    p.write_text('[network]\nmode = "open"\n\n[network.logging]\nenabled = true\n')
+
+    r = _validate(coi_binary, str(p))
+    assert r.returncode == 0, f"profile with [network.logging] should exit 0.\n{r.stdout}{r.stderr}"
+    assert "Profile is valid." in r.stdout
+    assert r.stderr.count("[network.logging]") == 1, r.stderr
+    assert str(p) in r.stderr
+
+    r = _validate(coi_binary, str(p), "--format", "json")
+    assert r.returncode == 0, f"--format json should exit 0.\n{r.stdout}{r.stderr}"
+    assert json.loads(r.stdout).get("valid") is True
+    assert r.stderr.count("[network.logging]") == 1, r.stderr
