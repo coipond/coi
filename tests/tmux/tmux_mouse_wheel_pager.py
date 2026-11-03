@@ -47,7 +47,7 @@ def _exec(coi_binary, container_name, *args):
         timeout=60,
     )
     assert result.returncode == 0, f"{args[0]} should succeed. stderr: {result.stderr}"
-    return result.stdout
+    return result.stdout + result.stderr
 
 
 def _tmux(coi_binary, container_name, *args):

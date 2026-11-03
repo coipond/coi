@@ -41,7 +41,7 @@ def test_tmux_mouse_mode_default(coi_binary, cleanup_containers, workspace_dir):
 
     time.sleep(3)
 
-    # === Phase 2: /etc/tmux.conf declares mouse on ===
+    # === Phase 2: /etc/tmux.conf declares mouse on and the wheel bindings ===
 
     result = subprocess.run(
         [
