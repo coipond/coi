@@ -1060,11 +1060,28 @@ set -g escape-time 10
 set -g mouse on
 
 # The wheel goes to a pane in a mode or to a program that tracks the mouse,
-# as in tmux's default. A full-screen program without mouse support (less,
-# man, git log) gets Up/Down keys, 3 lines per notch, like a terminal's
-# alternate scroll. Elsewhere wheel-up enters copy mode.
-bind -n WheelUpPane if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } { if -F '#{alternate_on}' { send -N 3 Up } { copy-mode -e } }
-bind -n WheelDownPane if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } { if -F '#{alternate_on}' { send -N 3 Down } }
+# as in tmux's default. A full-screen program without mouse support gets
+# Up/Down keys, 3 lines per notch, like a terminal's alternate scroll. So does
+# a pager in the foreground that stays off the alternate screen (git log and
+# systemctl run less with -X). Elsewhere wheel-up enters copy mode.
+bind -n WheelUpPane {
+    if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } {
+        if -F '#{alternate_on}' { send -N 3 Up } {
+            if 'ps -o stat=,comm= -t #{pane_tty} | grep -qE "^[^ ]*[+] +(less|more|pager)$"' {
+                send -N 3 Up
+            } { copy-mode -e }
+        }
+    }
+}
+bind -n WheelDownPane {
+    if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } {
+        if -F '#{alternate_on}' { send -N 3 Down } {
+            if 'ps -o stat=,comm= -t #{pane_tty} | grep -qE "^[^ ]*[+] +(less|more|pager)$"' {
+                send -N 3 Down
+            }
+        }
+    }
+}
 EOF
     chmod 644 /etc/tmux.conf
 
