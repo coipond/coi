@@ -1062,14 +1062,37 @@ set -g escape-time 10
 
 # Let tmux handle the mouse so the wheel scrolls the scrollback. With mouse
 # off, many terminals send the wheel as Up/Down keys and the shell steps
-# through its history instead. A plain drag now selects in tmux copy mode;
-# hold Shift (Option in some macOS terminals) for the terminal's own selection.
-# In a pager without mouse support (less, man), the wheel opens copy mode.
+# through its history instead. A plain drag selects in tmux copy mode; hold
+# Shift (Option in some macOS terminals) for the terminal's own selection.
 set -g mouse on
+
+# The wheel goes to a pane in a mode or to a program that tracks the mouse,
+# as in tmux's default. A full-screen program without mouse support gets
+# Up/Down keys, 3 lines per notch, like a terminal's alternate scroll. So does
+# a pager in the foreground that stays off the alternate screen (git log and
+# systemctl run less with -X). Elsewhere wheel-up enters copy mode.
+bind -n WheelUpPane {
+    if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } {
+        if -F '#{alternate_on}' { send -N 3 Up } {
+            if 'ps -o stat=,comm= -t #{pane_tty} | grep -qE "^[^ ]*[+] +(less|pager)$"' {
+                send -N 3 Up
+            } { copy-mode -e }
+        }
+    }
+}
+bind -n WheelDownPane {
+    if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } {
+        if -F '#{alternate_on}' { send -N 3 Down } {
+            if 'ps -o stat=,comm= -t #{pane_tty} | grep -qE "^[^ ]*[+] +(less|pager)$"' {
+                send -N 3 Down
+            }
+        }
+    }
+}
 EOF
     chmod 644 /etc/tmux.conf
 
-    log "tmux configured: history-limit=50000, escape-time=10ms, mouse=on in /etc/tmux.conf"
+    log "tmux configured: history-limit=50000, escape-time=10ms, mouse=on, wheel bindings in /etc/tmux.conf"
 }
 
 #######################################
