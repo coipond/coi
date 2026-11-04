@@ -8,7 +8,9 @@ of the wheel scrolling the scrollback. The fix ships `/etc/tmux.conf` with
 `set -g mouse on` in the default image.
 
 Tests that:
-1. /etc/tmux.conf declares mouse on.
+1. /etc/tmux.conf declares mouse on and binds WheelUpPane and WheelDownPane
+   (a pager on the alternate screen gets Up/Down keys, see
+   tmux_mouse_wheel_pager.py).
 2. A freshly launched tmux session in the container, run as the code user,
    actually has mouse mode on.
 """
@@ -21,8 +23,9 @@ from support.helpers import calculate_container_name
 
 def test_tmux_mouse_mode_default(coi_binary, cleanup_containers, workspace_dir):
     """
-    The default image must ship /etc/tmux.conf with mouse on, and a new tmux
-    session inside the container must actually use that value.
+    The default image must ship /etc/tmux.conf with mouse on and the wheel
+    bindings, and a new tmux session inside the container must actually use
+    mouse on.
     """
     container_name = calculate_container_name(workspace_dir, 1)
 
@@ -38,7 +41,7 @@ def test_tmux_mouse_mode_default(coi_binary, cleanup_containers, workspace_dir):
 
     time.sleep(3)
 
-    # === Phase 2: /etc/tmux.conf declares mouse on ===
+    # === Phase 2: /etc/tmux.conf declares mouse on and the wheel bindings ===
 
     result = subprocess.run(
         [
@@ -61,6 +64,10 @@ def test_tmux_mouse_mode_default(coi_binary, cleanup_containers, workspace_dir):
     assert "set -g mouse on" in combined_cat, (
         f"/etc/tmux.conf must set mouse on. Got:\n{combined_cat}"
     )
+    for key in ("WheelUpPane", "WheelDownPane"):
+        assert f"bind -n {key} " in combined_cat, (
+            f"/etc/tmux.conf must bind {key} in the root table. Got:\n{combined_cat}"
+        )
 
     # === Phase 3: A fresh tmux session as the code user has mouse on ===
 
