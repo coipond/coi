@@ -1020,6 +1020,13 @@ EOF
     # Enable the timer (it is masked in some minimal Ubuntu images)
     systemctl enable systemd-tmpfiles-clean.timer 2>/dev/null || true
 
+    # Ubuntu 25.10+ enables systemd's tmp.mount, a RAM-backed /tmp of 50% RAM.
+    # It mounts over workspace paths under /tmp and over the sized tmp.mount
+    # coi installs for [limits.disk] tmpfs_size. Keep /tmp disk-backed;
+    # SetTmpfsSize replaces the mask with its own unit.
+    systemctl mask tmp.mount ||
+        { log "ERROR: could not mask tmp.mount"; exit 1; }
+
     log "/tmp cleanup configured (1h age threshold, 15min timer)"
 }
 

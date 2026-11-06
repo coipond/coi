@@ -4,6 +4,7 @@
 
 ### Breaking
 
+- [Breaking] **`coi build` starts from Ubuntu 26.04 LTS** — the default base image is now `ubuntu:26.04` (was `ubuntu:24.04`). `/tmp` stays disk-backed as on 24.04: the image masks the RAM-backed `tmp.mount` that 26.04 enables. Images built before keep their base; the next `coi build` uses 26.04. To keep 24.04, set `[container.build] base = "ubuntu:24.04"`.
 - [Breaking] **`coi run` passes flags after the command to the command** — `coi run` read flags after the command as its own: `coi run ls -la` failed with `unknown shorthand flag: 'l' in -la`, and `coi run grep -w dir pattern` used `dir` as coi's workspace and ran `grep pattern`. Now everything after the command's name goes to the command, a `--` included (`coi run npm test -- --watch`). A script that put coi flags after the command (`coi run make -w dir`) must move them before it (`coi run -w dir make`, or `coi run -w dir -- make`).
 
 ### Changed
