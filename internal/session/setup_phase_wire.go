@@ -34,7 +34,7 @@ func (st *setupState) phaseConfigureGit(ctx context.Context) (Teardown, error) {
 }
 
 // 6.6.2 Claude managed settings: auto-mode prompt suppression and
-// includeCoAuthoredBy handling. No-op for other tools.
+// commit/PR attribution handling. No-op for other tools.
 func (st *setupState) phaseClaudeSettings(_ context.Context) (Teardown, error) {
 	if st.opts.Tool != nil && st.opts.Tool.Name() == "claude" {
 		SetupClaudeManagedSettings(st.result.Manager,

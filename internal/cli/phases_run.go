@@ -564,7 +564,7 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 			// `-c user.*` override loses; no-op / unset when identity isn't locked.
 			session.ApplyGitIdentityContainerEnv(ctx, s.containerName, gitID, identityLock, logFn)
 			// Claude source-level layer for the same policy
-			// (includeCoAuthoredBy=false via managed settings) — it also covers
+			// (empty commit/PR attribution via managed settings) — it also covers
 			// the hook's two blind spots (local core.hooksPath repos, commits
 			// with --no-verify). Auto-mode suppression stays off here: the run
 			// pipeline never needed it (#764 concerns interactive sessions).

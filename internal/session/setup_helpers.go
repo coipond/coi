@@ -649,17 +649,22 @@ func shouldSuppressClaudeAutoMode(toolName, permissionMode string) bool {
 
 // renderClaudeManagedSettings composes the managed-settings policy from the
 // enabled parts: disableAutoMode (auto-mode prompt suppression, #764) and
-// includeCoAuthoredBy=false (AI-attribution stripping at the source for
+// empty commit/PR attribution (AI-attribution stripping at the source for
 // Claude, [git] strip_attribution — this also covers the two cases the
 // commit-msg hook cannot: repos with a local core.hooksPath and
-// `git commit --no-verify`). Returns "" when neither applies.
+// `git commit --no-verify`, plus PR descriptions, which no git hook sees).
+// `attribution` is the current setting; `includeCoAuthoredBy` is the older
+// one it replaced, kept for Claude Code versions that predate it.
+// Returns "" when neither applies.
 func renderClaudeManagedSettings(suppressAutoMode, stripAttribution bool) string {
 	parts := []string{}
 	if suppressAutoMode {
 		parts = append(parts, `"disableAutoMode": "disable"`)
 	}
 	if stripAttribution {
-		parts = append(parts, `"includeCoAuthoredBy": false`)
+		parts = append(parts,
+			`"includeCoAuthoredBy": false`,
+			`"attribution": {"commit": "", "pr": ""}`)
 	}
 	if len(parts) == 0 {
 		return ""
@@ -673,7 +678,7 @@ const claudeManagedSettingsPath = "/etc/claude-code/managed-settings.json"
 // SetupClaudeManagedSettings writes /etc/claude-code/managed-settings.json
 // inside the container — Claude Code's highest-precedence settings tier, which
 // no user/project setting can override. Used for disableAutoMode (the only
-// place it can be set) and includeCoAuthoredBy. A no-op when no policy part is
+// place it can be set) and commit/PR attribution. A no-op when no policy part is
 // enabled. Non-fatal: logs a warning on failure.
 // Accepts ContainerManager (not a sub-interface) because it uses both
 // ExecCommand (ContainerExecution) and CreateFileWithOwner (ContainerFiles).
