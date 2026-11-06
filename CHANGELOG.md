@@ -4,11 +4,11 @@
 
 ### Breaking
 
+- [Breaking] **`coi build` starts from Ubuntu 26.04 LTS** — the default base image is now `ubuntu:26.04` (was `ubuntu:24.04`). Images built before keep their base; the next `coi build` uses 26.04. To keep 24.04, set `[container.build] base = "ubuntu:24.04"`.
 - [Breaking] **`coi run` passes flags after the command to the command** — `coi run` read flags after the command as its own: `coi run ls -la` failed with `unknown shorthand flag: 'l' in -la`, and `coi run grep -w dir pattern` used `dir` as coi's workspace and ran `grep pattern`. Now everything after the command's name goes to the command, a `--` included (`coi run npm test -- --watch`). A script that put coi flags after the command (`coi run make -w dir`) must move them before it (`coi run -w dir make`, or `coi run -w dir -- make`).
 
 ### Changed
 
-- [Change] **`coi build` starts from Ubuntu 26.04 LTS** — the default base image is now `ubuntu:26.04` (was `ubuntu:24.04`). Images built before keep their base; the next `coi build` uses 26.04. To keep 24.04, set `[container.build] base = "ubuntu:24.04"`.
 - [Change] **`[network.logging]` removed** — the section never had an effect: nothing wrote `~/.coi/logs/network.log`, although the default was `enabled = true`. It is gone from the default config, the starter config and the profile schema. A config file or profile that still sets it loads as before and prints one warning naming the file; `coi validate profile` accepts it with the same warning. Network threat events are logged by `[monitoring.nft]` (`~/.coi/audit/<container>-nft.jsonl`).
 - [Change] **Incus 7.5 is the recommended version** — `coi health` now notes that 7.5+ is recommended on Incus 6.1 to 7.4 (was 6.7). The note does not change the check's status or the exit code. The minimum stays 6.1.
 - [Change] **`coi image list` gives remote and custom image hints that work** — the remote image hint listed `debian:11` and `alpine:3.19`, which are past end of life, and suggested `[container] image = "ubuntu:24.04"`, which coi rejects because `[container] image` must name a local image alias. It now lists `images:debian/13, images:debian/12` and `images:alpine/3.24` and shows how to copy one under a local alias first (`incus image copy images:ubuntu/24.04 local: --alias my-ubuntu`, then `image = "my-ubuntu"`). The custom image hint pointed to the removed `coi build custom`; it now points to a profile's `[container.build]` section and `coi build --profile <name>`.
