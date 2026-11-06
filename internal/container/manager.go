@@ -473,7 +473,10 @@ func (m *Manager) SetTmpfsSize(size string) error {
 	}
 	// base64 so the unit's newlines/spaces need no shell quoting.
 	b64 := base64.StdEncoding.EncodeToString([]byte(buildTmpMountUnit(sizeBytes)))
-	script := "set -e; echo '" + b64 + "' | base64 -d > /etc/systemd/system/tmp.mount; " +
+	// rm -f: the image masks tmp.mount (a /dev/null symlink), and the
+	// redirect would write through it.
+	script := "set -e; rm -f /etc/systemd/system/tmp.mount; " +
+		"echo '" + b64 + "' | base64 -d > /etc/systemd/system/tmp.mount; " +
 		"systemctl daemon-reload; systemctl enable --now tmp.mount"
 	if _, err := m.ExecCommand(script, ExecCommandOptions{Capture: true}); err != nil {
 		return fmt.Errorf("failed to configure sized /tmp tmpfs: %w", err)
