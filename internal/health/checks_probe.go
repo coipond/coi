@@ -39,6 +39,38 @@ var probeLaunch = container.LaunchContainerWithPreStartPolicy
 // /etc/subuid.
 var hostUIDInSubidRange = session.HostUIDSubordinateRange
 
+// hostUID is the UID coi runs as. Indirected so tests can simulate a large
+// (directory-service) UID without running as one.
+var hostUID = os.Getuid
+
+// isolatedIdmapSize is the number of IDs Incus gives a UID-isolated container
+// by default (security.idmap.size).
+const isolatedIdmapSize = 65536
+
+// largeUIDSkip returns a WARNING "skipped" result (and true) for the secret
+// masking probe when the host UID can't exist inside the probe container.
+// The probe idmaps (shift=true) a temp workspace into a UID-isolated container,
+// which only holds IDs 0..isolatedIdmapSize-1. A larger host UID - typical for
+// FreeIPA/LDAP/AD accounts, e.g. 916200003 - has no counterpart there, so the
+// mask's mount point can't be created and the probe reports a [FAIL] even
+// though real sessions mask fine: they map the host UID with raw.idmap instead
+// of shift. Complements subidSkip (#838), which covers a UID that sits INSIDE
+// a subordinate range rather than above the container's range.
+func largeUIDSkip(name string) (HealthCheck, bool) {
+	uid := hostUID()
+	if uid < isolatedIdmapSize {
+		return HealthCheck{}, false
+	}
+	return HealthCheck{
+		Name:   name,
+		Status: StatusWarning,
+		Message: fmt.Sprintf("Skipped — host UID %d is outside the %d-ID range of a UID-isolated "+
+			"container, so the probe workspace can't be idmapped; sessions use raw.idmap instead. "+
+			"Verify with a session on a test repo. (not a masking failure)",
+			uid, isolatedIdmapSize),
+	}, true
+}
+
 // subidSkip returns a WARNING "skipped" result (and true) for a probe that mounts
 // and idmaps a temp workspace when the host UID can't be mapped, so the probe
 // reports an honest, named skip instead of a cryptic mount/forkmount [FAIL]
@@ -444,6 +476,9 @@ func CheckSecretMasking(imageName string, policy container.HardeningPolicy) Heal
 	// The probe idmaps a temp workspace (shift=true); if the host UID can't be
 	// mapped, skip with a named cause instead of a cryptic forkmount [FAIL] (#838).
 	if skip, ok := subidSkip(name); ok {
+		return skip
+	}
+	if skip, ok := largeUIDSkip(name); ok {
 		return skip
 	}
 	if exists, err := container.ImageExists(imageName); err != nil || !exists {
