@@ -25,7 +25,8 @@ import (
 //   - `git commit --no-verify` skips commit-msg hooks entirely.
 //
 // For Claude Code both gaps are additionally covered at the source by
-// includeCoAuthoredBy=false in the managed-settings policy (setup_helpers.go).
+// empty attribution (and includeCoAuthoredBy=false) in the managed-settings
+// policy (setup_helpers.go).
 
 // GitHooksDir is the root-owned in-container directory core.hooksPath points at.
 const GitHooksDir = "/etc/coi/git-hooks"

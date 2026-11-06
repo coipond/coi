@@ -293,7 +293,7 @@ type GitConfig struct {
 	// from every commit message — `Co-Authored-By: <tool bot>` trailers and
 	// "Generated with …" footers — so commits carry only the configured author
 	// identity (#788). Strip-don't-reject: it never blocks a commit. For Claude
-	// it additionally enforces includeCoAuthoredBy=false via managed settings.
+	// it additionally enforces empty commit/PR attribution via managed settings.
 	// Default TRUE (clean history out of the box); set false to keep tool
 	// attribution. Trusted-scope only, like name/email — a cloned repo must not
 	// control how commits made in it are attributed.
