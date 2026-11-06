@@ -141,6 +141,20 @@ def write_workspace_container_config(workspace_dir, persistent=None, image=None)
     return config_path
 
 
+if HAS_PYTE:
+
+    class _Screen(pyte.Screen):
+        """pyte.Screen that ignores private DSR queries (CSI ? Ps n).
+
+        pyte 0.8.2 passes private=True to report_device_status, which does not
+        accept it, so a query such as tmux 3.6's CSI ? 996 n raises TypeError.
+        """
+
+        def report_device_status(self, mode, private=False):
+            if not private:
+                super().report_device_status(mode)
+
+
 class TerminalEmulator:
     """
     Terminal emulator using pyte that properly handles ANSI escape sequences.
@@ -158,7 +172,7 @@ class TerminalEmulator:
                 "pyte is required for terminal emulation. Install with: pip install pyte"
             )
 
-        self.screen = pyte.Screen(columns, lines)
+        self.screen = _Screen(columns, lines)
         self.stream = pyte.Stream(self.screen)
         self.raw_output = []
         self.verbose = verbose
