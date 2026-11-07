@@ -94,8 +94,6 @@ func runTmpfsScript(t *testing.T, dir, script string, inactive bool) (calls []st
 	return calls, strings.TrimSpace(string(b))
 }
 
-// A changed unit is remounted; an unchanged one skips daemon-reload and is
-// only started when not active.
 func TestTmpfsSizeScript(t *testing.T) {
 	dir := t.TempDir()
 	unit := filepath.Join(dir, "tmp.mount")

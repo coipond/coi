@@ -42,6 +42,10 @@ func TestDesiredLimits_CoversEveryLimitKey(t *testing.T) {
 		}
 	}
 
+	if got := DesiredLimits(ApplyOptions{Memory: MemoryLimits{Swap: "TRUE"}})["limits.memory.swap"]; got != "true" {
+		t.Errorf("swap TRUE = %q, want normalised true", got)
+	}
+
 	for k, v := range DesiredLimits(ApplyOptions{}) {
 		if v != "" {
 			t.Errorf("empty options: %s = %q, want unset", k, v)
