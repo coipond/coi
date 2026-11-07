@@ -70,6 +70,7 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 				// profile we neither manage nor should second-guess.
 				if st.opts.ContainerName == "" {
 					warnHardeningMismatch(st.result.ContainerName, hardeningPolicyFrom(&st.opts), st.opts.Logger)
+					warnLimitsDrift(st.result.ContainerName, st.opts.IncusProject, st.opts.LimitsConfig, st.opts.Logger)
 				}
 				// Strip the previous session's port devices NOW, before the
 				// port preflight below bind-probes: their live forkproxy
@@ -100,6 +101,7 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 					return nil, err
 				}
 				st.skipLaunch = true
+				st.restarted = st.opts.ContainerName == ""
 			} else {
 				// Delete the stopped leftover container
 				st.opts.Logger("Found stopped leftover container from previous session, deleting...")

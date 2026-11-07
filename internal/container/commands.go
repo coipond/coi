@@ -1171,6 +1171,12 @@ func DeviceSet(ctx context.Context, containerName, device, keyValue string) (str
 	return IncusOutputWithStderrContext(ctx, "config", "device", "set", containerName, device, keyValue)
 }
 
+// DeviceUnset removes a device-level configuration key from a container.
+// Returns the combined stdout+stderr output and any error.
+func DeviceUnset(ctx context.Context, containerName, device, key string) (string, error) {
+	return IncusOutputWithStderrContext(ctx, "config", "device", "unset", containerName, device, key)
+}
+
 // SnapshotCreate creates a snapshot of a container
 func SnapshotCreate(containerName, snapshotName string, stateful bool) error {
 	args := []string{"snapshot", "create", containerName, snapshotName}

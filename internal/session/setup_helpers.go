@@ -615,9 +615,10 @@ type tmpfsSizer interface {
 	SetTmpfsSize(size string) error
 }
 
-// ApplyTmpfsSizing sizes /tmp for a freshly launched, RUNNING container when
-// [limits.disk] tmpfs_size is set. It is the single source of truth for both
-// the shell (session.Setup) and run (coi run) launch paths, so an explicit
+// ApplyTmpfsSizing sizes /tmp for a freshly launched or restarted, RUNNING
+// container when [limits.disk] tmpfs_size is set. It is the single source of
+// truth for both the shell (session.Setup) and run (coi run) launch paths, so
+// an explicit
 // tmpfs_size from a profile applies uniformly regardless of how the container
 // was started (#728/#769). No default is applied: coi does NOT convert /tmp to
 // a RAM-backed tmpfs on its own — that would silently move /tmp off disk and
@@ -632,6 +633,30 @@ func ApplyTmpfsSizing(mgr tmpfsSizer, limitsCfg *config.LimitsConfig, logger fun
 		logger(fmt.Sprintf("Warning: Failed to set /tmp size: %v", err))
 	} else {
 		logger(fmt.Sprintf("Set /tmp size to %s", size))
+	}
+}
+
+// tmpfsRemover is implemented by a container that can undo SetTmpfsSize.
+type tmpfsRemover interface {
+	RemoveTmpfsSize() (bool, error)
+}
+
+// ReapplyTmpfsSizing is ApplyTmpfsSizing for a restarted persistent container:
+// it also removes the sized /tmp an earlier launch set up when tmpfs_size is
+// no longer set. Non-fatal: logs warnings.
+func ReapplyTmpfsSizing(mgr tmpfsSizer, limitsCfg *config.LimitsConfig, logger func(string)) {
+	if limitsCfg != nil && limitsCfg.Disk.TmpfsSize != "" {
+		ApplyTmpfsSizing(mgr, limitsCfg, logger)
+		return
+	}
+	r, ok := mgr.(tmpfsRemover)
+	if !ok {
+		return
+	}
+	if removed, err := r.RemoveTmpfsSize(); err != nil {
+		logger(fmt.Sprintf("Warning: Failed to remove the sized /tmp: %v", err))
+	} else if removed {
+		logger("Removed the sized /tmp (tmpfs_size is no longer set)")
 	}
 }
 
