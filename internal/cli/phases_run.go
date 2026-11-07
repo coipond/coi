@@ -329,6 +329,9 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 					// config set` hardening back to policy (mirrors setup.go).
 					logFn("Reconciled docker/kernel-hardening settings to the current config (any manual security.nesting/syscalls overrides were reset)")
 				}
+				if err := session.ReconcileLimits(s.containerName, a.cfg.Incus.Project, &a.cfg.Limits, logFn); err != nil {
+					return err
+				}
 				s.containerWorkspace = mgr.GetWorkspacePath()
 				layout, wtErr := session.ResolveGitWorktree(s.absWorkspace)
 				if wtErr != nil {
@@ -459,30 +462,7 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 				limitsConfig := &a.cfg.Limits
 				if limitsConfig.HasAny() {
 					fmt.Fprintf(os.Stderr, "Applying resource limits...\n")
-					applyOpts := limits.ApplyOptions{
-						ContainerName: s.containerName,
-						CPU: limits.CPULimits{
-							Count:     limitsConfig.CPU.Count,
-							Allowance: limitsConfig.CPU.Allowance,
-							Priority:  limitsConfig.CPU.Priority,
-						},
-						Memory: limits.MemoryLimits{
-							Limit:   limitsConfig.Memory.Limit,
-							Enforce: limitsConfig.Memory.Enforce,
-							Swap:    limitsConfig.Memory.Swap,
-						},
-						Disk: limits.DiskLimits{
-							Read:     limitsConfig.Disk.Read,
-							Write:    limitsConfig.Disk.Write,
-							Max:      limitsConfig.Disk.Max,
-							Size:     limitsConfig.Disk.Size,
-							Priority: limitsConfig.Disk.Priority,
-						},
-						Runtime: limits.RuntimeLimits{
-							MaxProcesses: config.IntVal(limitsConfig.Runtime.MaxProcesses),
-						},
-						Project: a.cfg.Incus.Project,
-					}
+					applyOpts := session.LimitsApplyOptions(s.containerName, a.cfg.Incus.Project, limitsConfig)
 					if err := limits.ApplyResourceLimits(applyOpts); err != nil {
 						return nil, fmt.Errorf("failed to apply resource limits: %w", err)
 					}
@@ -508,11 +488,12 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 					fmt.Fprintf(os.Stderr, "Warning: failed to configure Docker daemon: %v\n", err)
 				}
 			}
+			// Apply an explicit [limits.disk] tmpfs_size the same way the
+			// shell path does, so a profile's /tmp sizing applies to `coi run`
+			// too, and a restarted persistent container gets the current size
+			// — the container is running now (#728/#769).
+			session.ApplyTmpfsSizing(s.mgr, &a.cfg.Limits, logFn)
 			if !s.wasRestarted {
-				// Apply an explicit [limits.disk] tmpfs_size the same way the
-				// shell path does, so a profile's /tmp sizing applies to
-				// `coi run` too — the container is running now (#728/#769).
-				session.ApplyTmpfsSizing(s.mgr, &a.cfg.Limits, logFn)
 				if err := remapContainerUserIfNeeded(s.mgr, s.wasRestarted); err != nil {
 					return nil, err
 				}

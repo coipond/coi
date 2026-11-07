@@ -64,9 +64,9 @@ func (st *setupState) phaseConfigureDockerBridge(_ context.Context) (Teardown, e
 }
 
 // 6 (cont). Size /tmp to prevent space exhaustion in big builds (POST-start,
-// fresh launches only).
+// fresh launches and restarted persistent containers).
 func (st *setupState) phaseSizeTmpfs(_ context.Context) (Teardown, error) {
-	if !st.skipLaunch {
+	if !st.skipLaunch || st.restarted {
 		ApplyTmpfsSizing(st.result.Manager, st.opts.LimitsConfig, st.opts.Logger)
 	}
 	return nil, nil

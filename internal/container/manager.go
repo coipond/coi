@@ -355,7 +355,6 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 	st := AppliedState{
 		Disks:   diskDevicesFrom(c.devices),
 		Nesting: isTrue(c.config["security.nesting"]),
-		Limits:  map[string]string{},
 	}
 	_, st.NestingSet = c.config["security.nesting"]
 	denied := kernelSurfaceDenySyscallSet(c.config["security.syscalls.deny"])
@@ -372,16 +371,34 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 		}
 	}
 	sort.Strings(st.EnvNames)
+	st.Limits = limitsFrom(c)
+	return st, nil
+}
+
+// InstanceLimits returns the limits set in the instance's own config (not
+// its profiles'), keyed like AppliedState.Limits; unset keys are absent.
+// Works on stopped containers.
+func (m *Manager) InstanceLimits() (map[string]string, error) {
+	c, ok := loadInstanceConfig(context.Background(), m.ContainerName, false)
+	if !ok {
+		return nil, fmt.Errorf("could not read the config of %s", m.ContainerName)
+	}
+	return limitsFrom(c), nil
+}
+
+// limitsFrom picks the LimitKeys values out of an instance config.
+func limitsFrom(c *cachedInstanceConfig) map[string]string {
+	out := map[string]string{}
 	for _, k := range LimitKeys {
 		v := c.config[k]
 		if dk, ok := strings.CutPrefix(k, "root."); ok {
 			v = c.devices["root"][dk]
 		}
 		if v != "" {
-			st.Limits[k] = v
+			out[k] = v
 		}
 	}
-	return st, nil
+	return out
 }
 
 // NestingSetLocally reports whether the instance sets security.nesting in its

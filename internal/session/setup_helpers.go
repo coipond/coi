@@ -615,8 +615,8 @@ type tmpfsSizer interface {
 	SetTmpfsSize(size string) error
 }
 
-// ApplyTmpfsSizing sizes /tmp for a freshly launched, RUNNING container when
-// [limits.disk] tmpfs_size is set. It is the single source of truth for both
+// ApplyTmpfsSizing sizes /tmp for a freshly launched or restarted, RUNNING
+// container when [limits.disk] tmpfs_size is set. It is the single source of truth for both
 // the shell (session.Setup) and run (coi run) launch paths, so an explicit
 // tmpfs_size from a profile applies uniformly regardless of how the container
 // was started (#728/#769). No default is applied: coi does NOT convert /tmp to
