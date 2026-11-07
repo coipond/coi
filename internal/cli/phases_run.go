@@ -491,9 +491,12 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 			// Apply an explicit [limits.disk] tmpfs_size the same way the
 			// shell path does, so a profile's /tmp sizing applies to `coi run`
 			// too, and a restarted persistent container gets the current size
-			// — the container is running now (#728/#769).
-			session.ApplyTmpfsSizing(s.mgr, &a.cfg.Limits, logFn)
-			if !s.wasRestarted {
+			// or loses one no longer set — the container is running now
+			// (#728/#769).
+			if s.wasRestarted {
+				session.ReapplyTmpfsSizing(s.mgr, &a.cfg.Limits, logFn)
+			} else {
+				session.ApplyTmpfsSizing(s.mgr, &a.cfg.Limits, logFn)
 				if err := remapContainerUserIfNeeded(s.mgr, s.wasRestarted); err != nil {
 					return nil, err
 				}

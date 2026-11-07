@@ -635,6 +635,30 @@ func ApplyTmpfsSizing(mgr tmpfsSizer, limitsCfg *config.LimitsConfig, logger fun
 	}
 }
 
+// tmpfsRemover is implemented by a container that can undo SetTmpfsSize.
+type tmpfsRemover interface {
+	RemoveTmpfsSize() (bool, error)
+}
+
+// ReapplyTmpfsSizing is ApplyTmpfsSizing for a restarted persistent container:
+// it also removes the sized /tmp an earlier launch set up when tmpfs_size is
+// no longer set. Non-fatal: logs warnings.
+func ReapplyTmpfsSizing(mgr tmpfsSizer, limitsCfg *config.LimitsConfig, logger func(string)) {
+	if limitsCfg != nil && limitsCfg.Disk.TmpfsSize != "" {
+		ApplyTmpfsSizing(mgr, limitsCfg, logger)
+		return
+	}
+	r, ok := mgr.(tmpfsRemover)
+	if !ok {
+		return
+	}
+	if removed, err := r.RemoveTmpfsSize(); err != nil {
+		logger(fmt.Sprintf("Warning: Failed to remove the sized /tmp: %v", err))
+	} else if removed {
+		logger("Removed the sized /tmp (tmpfs_size is no longer set)")
+	}
+}
+
 // shouldSuppressClaudeAutoMode reports whether coi should write the Claude
 // managed-settings policy that disables auto mode. It is Claude-specific and,
 // per #764, deliberately skipped under interactive permission mode: managed

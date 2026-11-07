@@ -175,10 +175,12 @@ func TestWarnLimitsDrift_NoDriftIsSilent(t *testing.T) {
 	}
 }
 
-// tmpfsRecorder is a container that records SetTmpfsSize.
+// tmpfsRecorder is a container that records SetTmpfsSize and
+// RemoveTmpfsSize.
 type tmpfsRecorder struct {
 	container.ContainerManager
-	size string
+	size    string
+	removed bool
 }
 
 func (r *tmpfsRecorder) SetTmpfsSize(size string) error {
@@ -186,22 +188,32 @@ func (r *tmpfsRecorder) SetTmpfsSize(size string) error {
 	return nil
 }
 
-func TestPhaseSizeTmpfs_RestartedContainerIsResized(t *testing.T) {
-	cfg := &config.LimitsConfig{}
-	cfg.Disk.TmpfsSize = "1GiB"
+func (r *tmpfsRecorder) RemoveTmpfsSize() (bool, error) {
+	r.removed = true
+	return true, nil
+}
+
+func TestPhaseSizeTmpfs(t *testing.T) {
+	sized := &config.LimitsConfig{}
+	sized.Disk.TmpfsSize = "1GiB"
 	for _, tc := range []struct {
 		name                  string
+		cfg                   *config.LimitsConfig
 		skipLaunch, restarted bool
-		want                  string
+		wantSize              string
+		wantRemoved           bool
 	}{
-		{"fresh launch", false, false, "1GiB"},
-		{"restarted persistent container", true, true, "1GiB"},
-		{"running reuse or --container attach", true, false, ""},
+		{"fresh launch", sized, false, false, "1GiB", false},
+		{"fresh launch without tmpfs_size", &config.LimitsConfig{}, false, false, "", false},
+		{"restarted persistent container", sized, true, true, "1GiB", false},
+		{"restarted after tmpfs_size was removed", &config.LimitsConfig{}, true, true, "", true},
+		{"running reuse or --container attach", sized, true, false, "", false},
+		{"running reuse without tmpfs_size", &config.LimitsConfig{}, true, false, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mgr := &tmpfsRecorder{}
 			st := &setupState{
-				opts:       SetupOptions{LimitsConfig: cfg, Logger: func(string) {}},
+				opts:       SetupOptions{LimitsConfig: tc.cfg, Logger: func(string) {}},
 				result:     &SetupResult{Manager: mgr},
 				skipLaunch: tc.skipLaunch,
 				restarted:  tc.restarted,
@@ -209,8 +221,8 @@ func TestPhaseSizeTmpfs_RestartedContainerIsResized(t *testing.T) {
 			if _, err := st.phaseSizeTmpfs(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if mgr.size != tc.want {
-				t.Errorf("SetTmpfsSize(%q), want %q", mgr.size, tc.want)
+			if mgr.size != tc.wantSize || mgr.removed != tc.wantRemoved {
+				t.Errorf("SetTmpfsSize(%q) removed=%v, want %q removed=%v", mgr.size, mgr.removed, tc.wantSize, tc.wantRemoved)
 			}
 		})
 	}

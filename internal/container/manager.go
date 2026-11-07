@@ -456,7 +456,7 @@ func isTrue(v string) bool {
 // tmpfs of the given size in bytes. Kept pure so it is unit-testable.
 func buildTmpMountUnit(sizeBytes int64) string {
 	return fmt.Sprintf(`[Unit]
-Description=coi sized /tmp (tmpfs)
+`+tmpMountDescription+`
 DefaultDependencies=no
 Conflicts=umount.target
 Before=local-fs.target umount.target
@@ -478,8 +478,8 @@ WantedBy=local-fs.target
 // It uses a systemd tmp.mount unit — a normal in-namespace mount the
 // container's own init performs — because Incus silently ignores both a `disk
 // source=tmpfs` device and a raw.lxc `lxc.mount.entry` for unprivileged
-// containers, leaving /tmp at the default size (#733). `enable --now` mounts it
-// immediately and (for persistent containers) again at every subsequent boot.
+// containers, leaving /tmp at the default size (#733). The enabled unit mounts
+// /tmp now and (for persistent containers) again at every subsequent boot.
 func (m *Manager) SetTmpfsSize(size string) error {
 	sizeBytes, err := parseSizeBytes(size)
 	if err != nil {
@@ -494,17 +494,45 @@ func (m *Manager) SetTmpfsSize(size string) error {
 	return nil
 }
 
+// RemoveTmpfsSize removes the tmp.mount unit SetTmpfsSize installed and
+// unmounts its /tmp, inside a RUNNING container. Another tmp.mount is left
+// alone. Reports whether coi's unit was there.
+func (m *Manager) RemoveTmpfsSize() (bool, error) {
+	out, err := m.ExecCommand(tmpfsRemoveScript(tmpMountUnitPath), ExecCommandOptions{Capture: true})
+	if err != nil {
+		return false, fmt.Errorf("failed to remove sized /tmp tmpfs: %w", err)
+	}
+	return strings.TrimSpace(out) == "removed", nil
+}
+
 const tmpMountUnitPath = "/etc/systemd/system/tmp.mount"
 
-// tmpfsSizeScript installs the tmp.mount unit at unitPath and starts it. When
-// the unit there is already identical (a restarted persistent container with
-// an unchanged size) it does nothing: `systemctl daemon-reload` costs ~0.2 s.
+// tmpMountDescription marks the unit buildTmpMountUnit writes.
+const tmpMountDescription = "Description=coi sized /tmp (tmpfs)"
+
+// tmpfsSizeScript installs the tmp.mount unit at unitPath and mounts it. A
+// changed unit is remounted (`reload` of a mount unit remounts it with the new
+// options): at boot the enabled old unit already mounted /tmp, and `start` does
+// nothing on an active mount. An identical unit (a restarted persistent
+// container with an unchanged size) skips `systemctl daemon-reload` (~0.2 s)
+// and is only started if it is not active.
 func tmpfsSizeScript(unitPath string, sizeBytes int64) string {
 	// base64 so the unit's newlines/spaces need no shell quoting.
 	b64 := base64.StdEncoding.EncodeToString([]byte(buildTmpMountUnit(sizeBytes)))
 	return "set -e; u='" + unitPath + "'; echo '" + b64 + "' | base64 -d > \"$u.coi-new\"; " +
-		"if cmp -s \"$u.coi-new\" \"$u\"; then rm -f \"$u.coi-new\"; exit 0; fi; " +
-		"mv \"$u.coi-new\" \"$u\"; systemctl daemon-reload; systemctl enable --now tmp.mount"
+		"if cmp -s \"$u.coi-new\" \"$u\"; then rm -f \"$u.coi-new\"; " +
+		"systemctl is-active -q tmp.mount || systemctl start tmp.mount; exit 0; fi; " +
+		"mv \"$u.coi-new\" \"$u\"; systemctl daemon-reload; systemctl enable tmp.mount; " +
+		"systemctl reload-or-restart tmp.mount"
+}
+
+// tmpfsRemoveScript disables and deletes coi's unit at unitPath, then
+// unmounts /tmp, and prints "removed". It does nothing when there is no unit
+// or the unit is not coi's.
+func tmpfsRemoveScript(unitPath string) string {
+	return "u='" + unitPath + "'; grep -qx '" + tmpMountDescription + "' \"$u\" 2>/dev/null || exit 0; " +
+		"set -e; systemctl disable tmp.mount; rm -f \"$u\"; systemctl daemon-reload; " +
+		"systemctl stop tmp.mount || umount -l /tmp; echo removed"
 }
 
 // parseSizeBytes parses a size string into bytes. It accepts IEC suffixes
