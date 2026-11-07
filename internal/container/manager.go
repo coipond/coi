@@ -488,14 +488,23 @@ func (m *Manager) SetTmpfsSize(size string) error {
 	if sizeBytes <= 0 {
 		return fmt.Errorf("invalid tmpfs size %q: must be greater than 0", size)
 	}
-	// base64 so the unit's newlines/spaces need no shell quoting.
-	b64 := base64.StdEncoding.EncodeToString([]byte(buildTmpMountUnit(sizeBytes)))
-	script := "set -e; echo '" + b64 + "' | base64 -d > /etc/systemd/system/tmp.mount; " +
-		"systemctl daemon-reload; systemctl enable --now tmp.mount"
-	if _, err := m.ExecCommand(script, ExecCommandOptions{Capture: true}); err != nil {
+	if _, err := m.ExecCommand(tmpfsSizeScript(tmpMountUnitPath, sizeBytes), ExecCommandOptions{Capture: true}); err != nil {
 		return fmt.Errorf("failed to configure sized /tmp tmpfs: %w", err)
 	}
 	return nil
+}
+
+const tmpMountUnitPath = "/etc/systemd/system/tmp.mount"
+
+// tmpfsSizeScript installs the tmp.mount unit at unitPath and starts it. When
+// the unit there is already identical (a restarted persistent container with
+// an unchanged size) it does nothing: `systemctl daemon-reload` costs ~0.2 s.
+func tmpfsSizeScript(unitPath string, sizeBytes int64) string {
+	// base64 so the unit's newlines/spaces need no shell quoting.
+	b64 := base64.StdEncoding.EncodeToString([]byte(buildTmpMountUnit(sizeBytes)))
+	return "set -e; u='" + unitPath + "'; echo '" + b64 + "' | base64 -d > \"$u.coi-new\"; " +
+		"if cmp -s \"$u.coi-new\" \"$u\"; then rm -f \"$u.coi-new\"; exit 0; fi; " +
+		"mv \"$u.coi-new\" \"$u\"; systemctl daemon-reload; systemctl enable --now tmp.mount"
 }
 
 // parseSizeBytes parses a size string into bytes. It accepts IEC suffixes
