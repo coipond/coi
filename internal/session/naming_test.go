@@ -247,6 +247,7 @@ func TestAllocateSlotFrom(t *testing.T) {
 		{name: "start above max wraps to lowest free", used: []int{10}, start: 11, want: 1},
 		{name: "slot above max wraps to lowest free", used: []int{1, 12}, start: 13, want: 2},
 		{name: "start to max used wraps to lowest free", used: []int{8, 9, 10}, start: 9, want: 1},
+		{name: "wraps to slot 10 when it is the only free slot", used: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 12}, start: 13, want: 10},
 		{name: "all slots used", used: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, start: 9, wantErr: "all 10 slots are in use"},
 	}
 
