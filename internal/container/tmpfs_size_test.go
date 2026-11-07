@@ -1,6 +1,10 @@
 package container
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -58,5 +62,96 @@ func TestBuildTmpMountUnit(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("tmp.mount unit missing %q; got:\n%s", want, got)
 		}
+	}
+}
+
+// runTmpfsScript runs script with a fake systemctl that logs its calls and
+// reports tmp.mount as active unless inactive is set, and a fake umount.
+func runTmpfsScript(t *testing.T, dir, script string, inactive bool) (calls []string, out string) {
+	t.Helper()
+	logPath := filepath.Join(dir, "systemctl.log")
+	_ = os.Remove(logPath)
+	isActive := "0"
+	if inactive {
+		isActive = "3"
+	}
+	fake := "#!/bin/sh\necho \"$*\" >> " + logPath + "\n[ \"$1\" = is-active ] && exit " + isActive + "\nexit 0\n"
+	for _, name := range []string{"systemctl", "umount"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(fake), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, b)
+	}
+	log, _ := os.ReadFile(logPath)
+	if s := strings.TrimSpace(string(log)); s != "" {
+		calls = strings.Split(s, "\n")
+	}
+	return calls, strings.TrimSpace(string(b))
+}
+
+func TestTmpfsSizeScript(t *testing.T) {
+	dir := t.TempDir()
+	unit := filepath.Join(dir, "tmp.mount")
+	reload := []string{"daemon-reload", "enable tmp.mount", "reload-or-restart tmp.mount"}
+
+	if got, _ := runTmpfsScript(t, dir, tmpfsSizeScript(unit, 1<<30), false); !reflect.DeepEqual(got, reload) {
+		t.Errorf("first install: systemctl %q, want %q", got, reload)
+	}
+	if b, _ := os.ReadFile(unit); string(b) != buildTmpMountUnit(1<<30) {
+		t.Errorf("unit = %q", b)
+	}
+	if got, _ := runTmpfsScript(t, dir, tmpfsSizeScript(unit, 1<<30), false); !reflect.DeepEqual(got, []string{"is-active -q tmp.mount"}) {
+		t.Errorf("unchanged, active: systemctl %q, want only is-active", got)
+	}
+	if _, err := os.Stat(unit + ".coi-new"); !os.IsNotExist(err) {
+		t.Errorf("temp unit left behind: %v", err)
+	}
+	if got, _ := runTmpfsScript(t, dir, tmpfsSizeScript(unit, 1<<30), true); !reflect.DeepEqual(got, []string{"is-active -q tmp.mount", "start tmp.mount"}) {
+		t.Errorf("unchanged, inactive: systemctl %q, want is-active + start", got)
+	}
+	// A restart with a new size: boot mounted the old unit, so it must be
+	// remounted, not only started.
+	if got, _ := runTmpfsScript(t, dir, tmpfsSizeScript(unit, 2<<30), false); !reflect.DeepEqual(got, reload) {
+		t.Errorf("changed size: systemctl %q, want %q", got, reload)
+	}
+	if b, _ := os.ReadFile(unit); string(b) != buildTmpMountUnit(2<<30) {
+		t.Errorf("unit after resize = %q", b)
+	}
+}
+
+// The remove script deletes only coi's own unit and unmounts /tmp.
+func TestTmpfsRemoveScript(t *testing.T) {
+	dir := t.TempDir()
+	unit := filepath.Join(dir, "tmp.mount")
+
+	if got, out := runTmpfsScript(t, dir, tmpfsRemoveScript(unit), false); len(got) != 0 || out != "" {
+		t.Errorf("no unit: systemctl %q, output %q, want nothing", got, out)
+	}
+
+	other := "[Unit]\nDescription=Temporary Directory /tmp\n"
+	if err := os.WriteFile(unit, []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, out := runTmpfsScript(t, dir, tmpfsRemoveScript(unit), false); len(got) != 0 || out != "" {
+		t.Errorf("foreign unit: systemctl %q, output %q, want nothing", got, out)
+	}
+	if b, _ := os.ReadFile(unit); string(b) != other {
+		t.Errorf("foreign unit changed: %q", b)
+	}
+
+	if err := os.WriteFile(unit, []byte(buildTmpMountUnit(1<<30)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, out := runTmpfsScript(t, dir, tmpfsRemoveScript(unit), false)
+	if want := []string{"disable tmp.mount", "daemon-reload", "stop tmp.mount"}; !reflect.DeepEqual(got, want) || out != "removed" {
+		t.Errorf("coi unit: systemctl %q, output %q, want %q and removed", got, out, want)
+	}
+	if _, err := os.Stat(unit); !os.IsNotExist(err) {
+		t.Errorf("coi unit not deleted: %v", err)
 	}
 }

@@ -538,6 +538,9 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 			// set` hardening (e.g. a hand-added syscall deny) back to policy.
 			opts.Logger("Reconciled docker/kernel-hardening settings to the current config (any manual security.nesting/syscalls overrides were reset)")
 		}
+		if err := ReconcileLimits(result.ContainerName, opts.IncusProject, opts.LimitsConfig, opts.Logger); err != nil {
+			return err
+		}
 	}
 	// Decide the shift flag the same way a fresh launch does (issue
 	// #685). The old `!opts.DisableShift` ignored both cases that turn
@@ -733,30 +736,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 	// Apply resource limits before starting (if configured)
 	if opts.LimitsConfig.HasAny() {
 		opts.Logger("Applying resource limits...")
-		applyOpts := limits.ApplyOptions{
-			ContainerName: result.ContainerName,
-			CPU: limits.CPULimits{
-				Count:     opts.LimitsConfig.CPU.Count,
-				Allowance: opts.LimitsConfig.CPU.Allowance,
-				Priority:  opts.LimitsConfig.CPU.Priority,
-			},
-			Memory: limits.MemoryLimits{
-				Limit:   opts.LimitsConfig.Memory.Limit,
-				Enforce: opts.LimitsConfig.Memory.Enforce,
-				Swap:    opts.LimitsConfig.Memory.Swap,
-			},
-			Disk: limits.DiskLimits{
-				Read:     opts.LimitsConfig.Disk.Read,
-				Write:    opts.LimitsConfig.Disk.Write,
-				Max:      opts.LimitsConfig.Disk.Max,
-				Size:     opts.LimitsConfig.Disk.Size,
-				Priority: opts.LimitsConfig.Disk.Priority,
-			},
-			Runtime: limits.RuntimeLimits{
-				MaxProcesses: config.IntVal(opts.LimitsConfig.Runtime.MaxProcesses),
-			},
-			Project: opts.IncusProject,
-		}
+		applyOpts := LimitsApplyOptions(result.ContainerName, opts.IncusProject, opts.LimitsConfig)
 		if err := limits.ApplyResourceLimits(applyOpts); err != nil {
 			return fmt.Errorf("failed to apply resource limits: %w", err)
 		}
