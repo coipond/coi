@@ -70,34 +70,40 @@ func ReconcileResourceLimits(ctx context.Context, opts ApplyOptions) ([]string, 
 
 	rootReady := false
 	for _, k := range drift {
-		v := desired[k]
-		dk, isRoot := strings.CutPrefix(k, "root.")
-		switch {
-		case !isRoot && v != "":
-			err = container.ConfigSet(ctx, opts.ContainerName, k, v)
-		case !isRoot:
-			err = container.ConfigUnset(ctx, opts.ContainerName, k)
-		case v == "":
-			// Only an instance-level root device can hold the key.
-			if out, uerr := container.DeviceUnset(ctx, opts.ContainerName, "root", dk); uerr != nil {
-				err = fmt.Errorf("incus config device unset %s failed: %w (output: %s)", dk, uerr, out)
-			}
-		default:
-			if !rootReady {
-				if err = prepareRootDevice(ctx, opts.ContainerName, desired["root.size"] != current["root.size"] && desired["root.size"] != ""); err != nil {
-					break
-				}
-				rootReady = true
-			}
-			if out, serr := container.DeviceSet(ctx, opts.ContainerName, "root", dk+"="+v); serr != nil {
-				err = fmt.Errorf("incus config device set %s=%s failed: %w (output: %s)", dk, v, serr, out)
-			}
-		}
-		if err != nil {
+		if err := reconcileKey(ctx, opts.ContainerName, k, desired[k], current, desired, &rootReady); err != nil {
 			return nil, fmt.Errorf("failed to reconcile %s: %w", k, err)
 		}
 	}
 	return drift, nil
+}
+
+// reconcileKey sets key to v, or removes it when v is empty. A root disk key
+// first makes the root device settable, once (rootReady).
+func reconcileKey(ctx context.Context, name, key, v string, current, desired map[string]string, rootReady *bool) error {
+	dk, isRoot := strings.CutPrefix(key, "root.")
+	switch {
+	case !isRoot && v != "":
+		return container.ConfigSet(ctx, name, key, v)
+	case !isRoot:
+		return container.ConfigUnset(ctx, name, key)
+	case v == "":
+		// Only an instance-level root device can hold the key.
+		if out, err := container.DeviceUnset(ctx, name, "root", dk); err != nil {
+			return fmt.Errorf("incus config device unset %s failed: %w (output: %s)", dk, err, out)
+		}
+		return nil
+	}
+	if !*rootReady {
+		sizeChanged := desired["root.size"] != "" && desired["root.size"] != current["root.size"]
+		if err := prepareRootDevice(ctx, name, sizeChanged); err != nil {
+			return err
+		}
+		*rootReady = true
+	}
+	if out, err := container.DeviceSet(ctx, name, "root", dk+"="+v); err != nil {
+		return fmt.Errorf("incus config device set %s=%s failed: %w (output: %s)", dk, v, err, out)
+	}
+	return nil
 }
 
 // prepareRootDevice makes the root disk settable as on create: a size quota
