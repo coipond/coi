@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- [Feature] **goose is supported as an opt-in agent (#970)** — `[container.build] agents = [..., "goose"]` installs goose (https://goose-docs.ai) v1.57.0 from its release tarball after a sha256 check, and `[tool] name = "goose"` starts `goose session` with the host's goose config and credential files copied in. The image turns goose telemetry off and keeps its secrets in a file, not the system keyring.
+
 ### Breaking
 
 - [Breaking] **A restarted persistent container gets the current config's resource limits** — coi applied `[limits]` only when it created a container, so a persistent container kept the CPU, memory, disk and `max_processes` limits it was created with until it was recreated. Now, when `coi shell` or `coi run` starts a stopped persistent container again, coi sets each limit key it manages to the current config value before the start, and removes the Incus key when the config value is now empty or 0. A value set by hand with `incus config set` (or `incus config device set` on the root disk) on such a key was kept before and is now replaced or removed at the next start: to keep it, set it in `[limits]` in a config file or a profile. Keys coi does not manage are kept. After the start, a changed `[limits.disk] tmpfs_size` remounts `/tmp` with the new size, and a removed one removes coi's sized `/tmp`. A running container that a session reuses is not changed; coi prints a warning that names the limits that differ and says that a restart applies them.

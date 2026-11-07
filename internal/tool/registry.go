@@ -14,6 +14,7 @@ var registry = map[string]func() Tool{
 	"pi":        NewPi,
 	"codex":     NewCodex,
 	"omp":       NewOmp,
+	"goose":     NewGoose,
 }
 
 // Get returns a tool by name

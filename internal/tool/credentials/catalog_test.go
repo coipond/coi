@@ -6,7 +6,7 @@ import (
 )
 
 func TestLookup_KnownBundles(t *testing.T) {
-	for _, name := range []string{"claude", "opencode", "opencode2", "pi", "codex", "ollama", "omp"} {
+	for _, name := range []string{"claude", "opencode", "opencode2", "pi", "codex", "ollama", "omp", "goose"} {
 		if _, ok := Lookup(name); !ok {
 			t.Errorf("Lookup(%q): expected bundle to exist", name)
 		}
@@ -21,8 +21,8 @@ func TestLookup_UnknownBundle(t *testing.T) {
 
 func TestNames_Sorted(t *testing.T) {
 	names := Names()
-	if !reflect.DeepEqual(names, []string{"claude", "codex", "ollama", "omp", "opencode", "opencode2", "pi"}) {
-		t.Errorf("Names() = %v, want sorted [claude codex ollama omp opencode opencode2 pi]", names)
+	if !reflect.DeepEqual(names, []string{"claude", "codex", "goose", "ollama", "omp", "opencode", "opencode2", "pi"}) {
+		t.Errorf("Names() = %v, want sorted [claude codex goose ollama omp opencode opencode2 pi]", names)
 	}
 }
 
@@ -166,5 +166,33 @@ func TestOmpBundle_MatchesHardcodedValues(t *testing.T) {
 	}
 	if !b.AlwaysSetup {
 		t.Error("AlwaysSetup = false, want true")
+	}
+}
+
+func TestGooseBundle_MatchesHardcodedValues(t *testing.T) {
+	b, ok := Lookup("goose")
+	if !ok {
+		t.Fatal("goose bundle not found")
+	}
+	if b.ConfigDir != ".config/goose" {
+		t.Errorf("ConfigDir = %q, want %q", b.ConfigDir, ".config/goose")
+	}
+	want := []string{"config.yaml", "secrets.yaml", ".goosehints", "AGENTS.md",
+		"chatgpt_codex/tokens.json", "githubcopilot/info.json",
+		"gemini_oauth/tokens.json", "xai_oauth/tokens.json", "kimicode/token.json"}
+	if !reflect.DeepEqual(b.Files, want) {
+		t.Errorf("Files = %v, want %v", b.Files, want)
+	}
+	if b.SandboxSettingsFile != "" {
+		t.Errorf("SandboxSettingsFile = %q, want empty", b.SandboxSettingsFile)
+	}
+	if b.StateFile != "" {
+		t.Errorf("StateFile = %q, want empty", b.StateFile)
+	}
+	if b.AlwaysSetup {
+		t.Error("AlwaysSetup = true, want false")
+	}
+	if b.AutoContextFile != "" {
+		t.Errorf("AutoContextFile = %q, want empty", b.AutoContextFile)
 	}
 }

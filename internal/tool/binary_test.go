@@ -8,7 +8,7 @@ import (
 // [tool] binary replaces argv[0] for every tool, keeping the tool's own
 // arguments, and Binary() reports the effective executable.
 func TestSetBinary_ReplacesExecutable(t *testing.T) {
-	for _, tl := range []Tool{NewClaude(), NewCodex(), NewOpencode(), NewPi(), NewOmp()} {
+	for _, tl := range []Tool{NewClaude(), NewCodex(), NewOpencode(), NewPi(), NewOmp(), NewGoose()} {
 		def := tl.BuildCommand("sid", false, "")
 		twb, ok := tl.(ToolWithBinary)
 		if !ok {
@@ -30,7 +30,7 @@ func TestSetBinary_ReplacesExecutable(t *testing.T) {
 
 // Without an override every tool keeps its default executable.
 func TestBinary_DefaultsToToolName(t *testing.T) {
-	for _, tl := range []Tool{NewClaude(), NewCodex(), NewOpencode(), NewPi(), NewOmp()} {
+	for _, tl := range []Tool{NewClaude(), NewCodex(), NewOpencode(), NewPi(), NewOmp(), NewGoose()} {
 		if tl.Binary() != tl.Name() {
 			t.Errorf("%s: Binary() = %q, want %q", tl.Name(), tl.Binary(), tl.Name())
 		}
