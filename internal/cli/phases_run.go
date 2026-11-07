@@ -488,18 +488,8 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 					fmt.Fprintf(os.Stderr, "Warning: failed to configure Docker daemon: %v\n", err)
 				}
 			}
-			// Apply an explicit [limits.disk] tmpfs_size the same way the
-			// shell path does, so a profile's /tmp sizing applies to `coi run`
-			// too, and a restarted persistent container gets the current size
-			// or loses one no longer set — the container is running now
-			// (#728/#769).
-			if s.wasRestarted {
-				session.ReapplyTmpfsSizing(s.mgr, &a.cfg.Limits, logFn)
-			} else {
-				session.ApplyTmpfsSizing(s.mgr, &a.cfg.Limits, logFn)
-				if err := remapContainerUserIfNeeded(s.mgr, s.wasRestarted); err != nil {
-					return nil, err
-				}
+			if err := sizeTmpfsAndRemapUser(s.mgr, &a.cfg.Limits, s.wasRestarted, logFn); err != nil {
+				return nil, err
 			}
 
 			// Git commit identity + [[credentials]], applied the same way the
@@ -876,4 +866,18 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 			return nil, nil
 		},
 	}
+}
+
+// sizeTmpfsAndRemapUser applies an explicit [limits.disk] tmpfs_size the same
+// way the shell path does, so a profile's /tmp sizing applies to `coi run` too,
+// and a restarted persistent container gets the current size or loses one no
+// longer set — the container is running now (#728/#769). A fresh container
+// also gets its code user remapped.
+func sizeTmpfsAndRemapUser(mgr container.ContainerManager, limitsCfg *config.LimitsConfig, wasRestarted bool, logFn func(string)) error {
+	if wasRestarted {
+		session.ReapplyTmpfsSizing(mgr, limitsCfg, logFn)
+		return nil
+	}
+	session.ApplyTmpfsSizing(mgr, limitsCfg, logFn)
+	return remapContainerUserIfNeeded(mgr, wasRestarted)
 }
