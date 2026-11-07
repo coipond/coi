@@ -17,6 +17,13 @@ import (
 // container name, so the package's config cache never serves another test.
 func fakeLimitsIncus(t *testing.T, name, configYAML string) (logPath string) {
 	t.Helper()
+	return fakeLimitsIncusStatus(t, name, configYAML, "")
+}
+
+// fakeLimitsIncusStatus is fakeLimitsIncus whose `incus list` also reports
+// the container as existing with status (STOPPED, RUNNING) when set.
+func fakeLimitsIncusStatus(t *testing.T, name, configYAML, status string) (logPath string) {
+	t.Helper()
 	dir := t.TempDir()
 	logPath = filepath.Join(dir, "calls")
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
@@ -26,7 +33,10 @@ func fakeLimitsIncus(t *testing.T, name, configYAML string) (logPath string) {
 echo "$*" >> ` + logPath + `
 case "$*" in
   *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
+  *"list "*"--columns=ns"*) [ -n "` + status + `" ] && echo "` + name + `,` + status + `" ;;
+  *"list "*"--columns=n"*) [ -n "` + status + `" ] && echo "` + name + `" ;;
 esac
+exit 0
 `
 	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -225,5 +235,61 @@ func TestPhaseSizeTmpfs(t *testing.T) {
 				t.Errorf("SetTmpfsSize(%q) removed=%v, want %q removed=%v", mgr.size, mgr.removed, tc.wantSize, tc.wantRemoved)
 			}
 		})
+	}
+}
+
+// limitsWorkspaceYAML is a container config with the workspace mounted from
+// workspace and the given limits.* lines.
+func limitsWorkspaceYAML(workspace, limitLines string) string {
+	return "config:\n" + limitLines + "devices:\n  workspace:\n    path: /workspace\n    source: " + workspace + "\n    type: disk\n"
+}
+
+func TestPhaseReconcileExisting_RestartAppliesLimitsBeforeStart(t *testing.T) {
+	ws := t.TempDir()
+	logPath := fakeLimitsIncusStatus(t, "rl-restart", limitsWorkspaceYAML(ws, "  limits.cpu: \"2\"\n  limits.processes: \"500\"\n"), "STOPPED")
+	cfg := &config.LimitsConfig{}
+	cfg.CPU.Count = "4"
+	cfg.Runtime.MaxProcesses = intPtr(0)
+	st := &setupState{
+		opts:   SetupOptions{Persistent: true, WorkspacePath: ws, LimitsConfig: cfg, Logger: func(string) {}},
+		result: &SetupResult{Manager: container.NewManager("rl-restart"), ContainerName: "rl-restart"},
+	}
+	if _, err := st.phaseReconcileExisting(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !st.restarted {
+		t.Error("restarted not set for a restarted persistent container")
+	}
+	b, _ := os.ReadFile(logPath)
+	log := string(b)
+	set := strings.Index(log, "config set rl-restart limits.cpu=4")
+	unset := strings.Index(log, "config unset rl-restart limits.processes")
+	start := strings.Index(log, "start rl-restart")
+	if set < 0 || unset < 0 || start < 0 || set > start || unset > start {
+		t.Errorf("want limits.cpu set and limits.processes unset before the start; calls:\n%s", log)
+	}
+}
+
+func TestPhaseReconcileExisting_RunningReuseWarnsOnLimitDrift(t *testing.T) {
+	ws := t.TempDir()
+	logPath := fakeLimitsIncusStatus(t, "rl-reuse", limitsWorkspaceYAML(ws, "  limits.processes: \"500\"\n"), "RUNNING")
+	cfg := &config.LimitsConfig{}
+	cfg.Runtime.MaxProcesses = intPtr(0)
+	var logged []string
+	st := &setupState{
+		opts:   SetupOptions{Persistent: true, WorkspacePath: ws, LimitsConfig: cfg, Logger: func(s string) { logged = append(logged, s) }},
+		result: &SetupResult{Manager: container.NewManager("rl-reuse"), ContainerName: "rl-reuse"},
+	}
+	if _, err := st.phaseReconcileExisting(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st.restarted {
+		t.Error("restarted set for a running reuse")
+	}
+	if !strings.Contains(strings.Join(logged, "\n"), "different resource limits than the current config (limits.processes)") {
+		t.Errorf("no drift warning; log:\n%s", strings.Join(logged, "\n"))
+	}
+	if got := limitWrites(t, logPath); len(got) != 0 {
+		t.Errorf("writes = %q, want none on a running container", got)
 	}
 }
