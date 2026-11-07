@@ -28,8 +28,6 @@ func TestGooseTool_Basics(t *testing.T) {
 	}
 }
 
-// Bare `goose` with no config runs first-time setup; coi must launch the
-// `session` subcommand.
 func TestGooseTool_BuildCommand_New(t *testing.T) {
 	goose := NewGoose()
 	want := []string{"goose", "session"}
