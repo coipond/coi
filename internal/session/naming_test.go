@@ -232,12 +232,50 @@ func TestAllocateSlotLogic(t *testing.T) {
 	// TODO: Add integration test
 }
 
-// TestAllocateSlotFrom is an integration test that would need container mocking
-// Skipping for now as it requires Incus interaction
-func TestAllocateSlotFromLogic(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
+func TestAllocateSlotFrom(t *testing.T) {
+	const workspace = "/workspace/project"
+
+	tests := []struct {
+		name    string
+		used    []int
+		start   int
+		want    int
+		wantErr string
+	}{
+		{name: "free slot above start", used: []int{8}, start: 9, want: 9},
+		{name: "skips used slots above start", used: []int{8, 9}, start: 9, want: 10},
+		{name: "start above max wraps to lowest free", used: []int{10}, start: 11, want: 1},
+		{name: "slot above max wraps to lowest free", used: []int{1, 12}, start: 13, want: 2},
+		{name: "start to max used wraps to lowest free", used: []int{8, 9, 10}, start: 9, want: 1},
+		{name: "wraps to slot 10 when it is the only free slot", used: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 12}, start: 13, want: 10},
+		{name: "all slots used", used: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, start: 9, wantErr: "all 10 slots are in use"},
 	}
-	// This would test AllocateSlotFrom but requires mocking Incus commands
-	// TODO: Add integration test
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := listSlotInstances
+			t.Cleanup(func() { listSlotInstances = orig })
+			listSlotInstances = func() ([]slotInstance, error) {
+				out := []slotInstance{{Name: ContainerName("/other", "", 1), Status: "RUNNING"}}
+				for _, n := range tt.used {
+					out = append(out, slotInstance{Name: ContainerName(workspace, "", n), Status: "RUNNING"})
+				}
+				return out, nil
+			}
+
+			got, err := AllocateSlotFrom(workspace, "", tt.start, MaxSlots)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("AllocateSlotFrom() = %d, %v; want error %q", got, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("AllocateSlotFrom() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("AllocateSlotFrom() = %d, want %d", got, tt.want)
+			}
+		})
+	}
 }
