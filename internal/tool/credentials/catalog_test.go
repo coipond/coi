@@ -177,9 +177,11 @@ func TestGooseBundle_MatchesHardcodedValues(t *testing.T) {
 	if b.ConfigDir != ".config/goose" {
 		t.Errorf("ConfigDir = %q, want %q", b.ConfigDir, ".config/goose")
 	}
-	want := []string{"config.yaml", "secrets.yaml", ".goosehints", "AGENTS.md",
+	want := []string{
+		"config.yaml", "secrets.yaml", ".goosehints", "AGENTS.md",
 		"chatgpt_codex/tokens.json", "githubcopilot/info.json",
-		"gemini_oauth/tokens.json", "xai_oauth/tokens.json", "kimicode/token.json"}
+		"gemini_oauth/tokens.json", "xai_oauth/tokens.json", "kimicode/token.json",
+	}
 	if !reflect.DeepEqual(b.Files, want) {
 		t.Errorf("Files = %v, want %v", b.Files, want)
 	}
