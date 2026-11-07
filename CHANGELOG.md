@@ -4,7 +4,7 @@
 
 ### Features
 
-- [Feature] **goose is supported as an opt-in agent (#970)** — `[container.build] agents = [..., "goose"]` installs goose (https://goose-docs.ai) v1.57.0 from its release tarball after a sha256 check, and `[tool] name = "goose"` starts `goose session` with the host's goose config and credential files copied in. The image turns goose telemetry off and keeps its secrets in a file, not the system keyring.
+- [Feature] **goose is supported as an opt-in agent (#970)** — `[container.build] agents = [..., "goose"]` installs goose (https://goose-docs.ai) v1.57.0 from its release tarball after a sha256 check, and `[tool] name = "goose"` starts `goose session` with the host's goose config and credential files copied in. The image config turns goose telemetry off and keeps secrets in a file, not the system keyring, unless the copied host `config.yaml` sets these keys.
 
 ### Breaking
 
