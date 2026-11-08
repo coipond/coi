@@ -334,3 +334,33 @@ func TestResolveAliasForRunning_RegisteredStoppedAliasNotSplit(t *testing.T) {
 		t.Errorf("error = %q, want it to name alias \"app-2\"", err)
 	}
 }
+
+func TestResolveAliasForRunning_SlotZeroNotSplit(t *testing.T) {
+	withTempHome(t)
+	fakeIncus(t, `[
+ {"name":"coi-bbbbbbbb-1","status":"Running","config":{"user.coi.alias":"app"}}
+]`)
+
+	got, err := ResolveAliasForRunning("app-0")
+	if err == nil {
+		t.Fatalf("ResolveAliasForRunning(\"app-0\") = %q, want error", got)
+	}
+}
+
+func TestResolveAliasForRunning_UnreadableRegistryNotSplit(t *testing.T) {
+	tmpHome := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpHome, ".coi", "aliases.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fakeIncus(t, `[
+ {"name":"coi-bbbbbbbb-2","status":"Running","config":{"user.coi.alias":"app"}}
+]`)
+
+	got, err := ResolveAliasForRunning("app-2")
+	if err == nil {
+		t.Fatalf("ResolveAliasForRunning(\"app-2\") = %q, want error", got)
+	}
+}

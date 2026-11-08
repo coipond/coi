@@ -40,9 +40,9 @@ func ResolveAliasForRunning(arg string) (string, error) {
 		return arg, nil
 	}
 
-	// 2. Try the whole argument as an alias. Split a slot suffix (alias-N)
-	// only when no running container has that alias and no registered alias
-	// has that name.
+	// 2. Try the whole argument as an alias. Split a slot suffix (alias-N,
+	// N > 0) only when no running container has that alias and no
+	// registered alias has that name.
 	running, err := runningAliases()
 	if err != nil {
 		return "", fmt.Errorf("failed to find containers by alias: %w", err)
@@ -50,8 +50,8 @@ func ResolveAliasForRunning(arg string) (string, error) {
 
 	alias, slotNum := arg, 0
 	containers := running.withAlias(alias)
-	if len(containers) == 0 && !isRegisteredAlias(arg) {
-		if a, s := splitAliasSlot(arg); a != arg {
+	if len(containers) == 0 && !mayBeRegisteredAlias(arg) {
+		if a, s := splitAliasSlot(arg); s > 0 {
 			alias, slotNum = a, s
 			containers = running.withAlias(alias)
 		}
@@ -99,8 +99,10 @@ func ResolveAliasForLaunch(arg string) (*ResolvedAlias, error) {
 	alias, slotNum := arg, 0
 	entry := reg.Lookup(alias)
 	if entry == nil && projectAlias != arg {
-		alias, slotNum = splitAliasSlot(arg)
-		entry = reg.Lookup(alias)
+		if a, s := splitAliasSlot(arg); s > 0 {
+			alias, slotNum = a, s
+			entry = reg.Lookup(alias)
+		}
 	}
 
 	if entry == nil {
@@ -211,11 +213,12 @@ func runningAliases() (aliasedContainers, error) {
 	return running, nil
 }
 
-// isRegisteredAlias reports whether the alias registry has an entry named
-// alias. An unreadable registry counts as no entry.
-func isRegisteredAlias(alias string) bool {
+// mayBeRegisteredAlias reports whether the alias registry has an entry named
+// alias. An unreadable registry counts as an entry, so a load error never
+// lets the slot split pick another workspace's container.
+func mayBeRegisteredAlias(alias string) bool {
 	reg, err := Load()
-	return err == nil && reg.Lookup(alias) != nil
+	return err != nil || reg.Lookup(alias) != nil
 }
 
 // splitAliasSlot splits "myproject-2" into ("myproject", 2).
