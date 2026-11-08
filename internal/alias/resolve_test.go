@@ -202,10 +202,6 @@ func TestResolveAliasForLaunch_CWDFallback_SlotSuffix(t *testing.T) {
 	}
 }
 
-// An alias whose name ends in -<digits> (valid per ValidateAlias) must
-// resolve as the whole name first; the -N slot split applies only when no
-// alias has that whole name.
-
 func TestResolveAliasForLaunch_WholeNameWinsOverSlotSuffix(t *testing.T) {
 	tmpHome := withTempHome(t)
 	t.Chdir(t.TempDir()) // CWD without .coi/config.toml: no fallback
@@ -228,11 +224,11 @@ func TestResolveAliasForLaunch_WholeNameWinsOverSlotSuffix(t *testing.T) {
 		workspace string
 		slot      int
 	}{
-		{"app-2", "/ws/a", 0},     // whole name is an alias: no split (master: /ws/b, slot 2)
-		{"app-2-3", "/ws/a", 3},   // no alias "app-2-3": split to alias app-2, slot 3
-		{"site-2025", "/ws/s", 0}, // master: error, alias "site" not found
-		{"app-3", "/ws/b", 3},     // no alias "app-3": split to alias app, slot 3
-		{"web-2", "/ws/w", 2},     // plain alias-N keeps working
+		{"app-2", "/ws/a", 0},   // whole name is an alias: no split
+		{"app-2-3", "/ws/a", 3}, // no alias "app-2-3": split to alias app-2, slot 3
+		{"site-2025", "/ws/s", 0},
+		{"app-3", "/ws/b", 3}, // no alias "app-3": split to alias app, slot 3
+		{"web-2", "/ws/w", 2}, // plain alias-N keeps working
 	}
 	for _, tt := range tests {
 		t.Run(tt.arg, func(t *testing.T) {
@@ -259,7 +255,7 @@ func TestResolveAliasForLaunch_CWDFallback_WholeNameWithDigits(t *testing.T) {
 	}
 	t.Chdir(workspace)
 
-	got, err := ResolveAliasForLaunch("app-2") // master: alias "app" not found
+	got, err := ResolveAliasForLaunch("app-2")
 	if err != nil {
 		t.Fatalf("ResolveAliasForLaunch(\"app-2\") error: %v", err)
 	}
@@ -292,8 +288,8 @@ func TestResolveAliasForRunning_WholeNameWinsOverSlotSuffix(t *testing.T) {
  {"name":"coi-cccccccc-1","status":"Running","config":{"user.coi.alias":"site-2025"}}
 ]`)
 	tests := map[string]string{
-		"app-2":     "coi-aaaaaaaa-1", // master: coi-bbbbbbbb-2 (other workspace)
-		"site-2025": "coi-cccccccc-1", // master: error, alias "site" not found
+		"app-2":     "coi-aaaaaaaa-1",
+		"site-2025": "coi-cccccccc-1",
 		"app-1":     "coi-bbbbbbbb-1", // no alias "app-1": split still works
 	}
 	for arg, want := range tests {

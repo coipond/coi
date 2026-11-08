@@ -18,7 +18,7 @@ import (
 type ResolvedAlias struct {
 	Workspace string
 	Profile   string
-	Slot      int // >0 if alias had a slot suffix (e.g. "myproject-2")
+	Slot      int // >0 if the argument was split into alias + slot (e.g. "myproject-2")
 }
 
 // containerNamePattern matches the deterministic container name format: <prefix><hex8>-<digits>
@@ -147,16 +147,6 @@ func loadProjectAlias(dir string) string {
 		return ""
 	}
 	return cfg.Container.Alias
-}
-
-// FindContainersByAlias queries Incus for Coi containers whose user.coi.alias
-// config key matches the given alias.
-func FindContainersByAlias(alias string) ([]string, error) {
-	running, err := runningAliases()
-	if err != nil {
-		return nil, err
-	}
-	return running.withAlias(alias), nil
 }
 
 // aliasedContainer is a running Coi container and its user.coi.alias value.
