@@ -364,3 +364,31 @@ func TestResolveAliasForRunning_UnreadableRegistryNotSplit(t *testing.T) {
 		t.Fatalf("ResolveAliasForRunning(\"app-2\") = %q, want error", got)
 	}
 }
+
+func TestResolveAliasForLaunch_SlotZeroNotSplit(t *testing.T) {
+	tmpHome := withTempHome(t)
+	t.Chdir(t.TempDir()) // CWD without .coi/config.toml: no fallback
+
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register("app", "/ws/b", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := ResolveAliasForLaunch("app-0"); err == nil {
+		t.Errorf("ResolveAliasForLaunch(\"app-0\") = {%s, slot %d}, want error", got.Workspace, got.Slot)
+	}
+
+	got, err := ResolveAliasForLaunch("app-1")
+	if err != nil {
+		t.Fatalf("ResolveAliasForLaunch(\"app-1\") error: %v", err)
+	}
+	if got.Workspace != "/ws/b" || got.Slot != 1 {
+		t.Errorf("ResolveAliasForLaunch(\"app-1\") = {%s, slot %d}, want {/ws/b, slot 1}", got.Workspace, got.Slot)
+	}
+}
