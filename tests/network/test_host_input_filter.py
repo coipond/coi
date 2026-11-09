@@ -6,10 +6,10 @@ host address) is delivered through the host's input path, not the forward chain.
 
 Tests that:
 1. restricted and allowlist mode refuse a listener on the gateway address
-2. restricted mode still resolves names and renews its DHCP lease
+2. restricted mode still resolves names; both modes still renew the DHCP lease
 3. an allowed_domains entry naming a host address opens only its port
 4. open mode and allow_host_access still reach the host
-5. the container's input rules are removed when it stops
+5. the container's input rules are removed when it stops or is killed
 
 Each test starts its own HTTP listener on the gateway address.
 """
@@ -128,19 +128,7 @@ def _input_chain():
     ).stdout
 
 
-def test_restricted_refuses_host_listener(coi_binary, workspace_dir, cleanup_containers):
-    """restricted mode: the gateway listener is refused; DNS and DHCP still work."""
-    name = _launch(coi_binary, workspace_dir, '[network]\nmode = "restricted"\n')
-    gw = _gateway(coi_binary, name)
-    port = _free_port(gw)
-    with _listener(gw, port):
-        assert not _reaches(coi_binary, name, gw, port), (
-            f"restricted container must not reach host listener {gw}:{port}"
-        )
-
-    r = _exec(coi_binary, name, "getent", "hosts", "github.com")
-    assert r.returncode == 0, f"restricted mode must still resolve names. Got: {r.stderr}"
-
+def _assert_dhcp_renews(coi_binary, name):
     def lease_left():
         r = _exec(coi_binary, name, "ip", "-4", "-o", "addr", "show", "eth0")
         m = re.search(r"valid_lft (\d+)sec", r.stdout + r.stderr)
@@ -155,8 +143,24 @@ def test_restricted_refuses_host_listener(coi_binary, workspace_dir, cleanup_con
     assert lease_left() > before, "DHCP renewal must reach the gateway and extend the lease"
 
 
+def test_restricted_refuses_host_listener(coi_binary, workspace_dir, cleanup_containers):
+    """restricted mode: the gateway listener is refused; DNS and DHCP still work."""
+    name = _launch(coi_binary, workspace_dir, '[network]\nmode = "restricted"\n')
+    gw = _gateway(coi_binary, name)
+    port = _free_port(gw)
+    with _listener(gw, port):
+        assert not _reaches(coi_binary, name, gw, port), (
+            f"restricted container must not reach host listener {gw}:{port}"
+        )
+
+    r = _exec(coi_binary, name, "getent", "hosts", "github.com")
+    assert r.returncode == 0, f"restricted mode must still resolve names. Got: {r.stderr}"
+
+    _assert_dhcp_renews(coi_binary, name)
+
+
 def test_allowlist_refuses_host_listener(coi_binary, workspace_dir, cleanup_containers):
-    """allowlist mode: the gateway listener is refused."""
+    """allowlist mode: the gateway listener is refused; DHCP still renews."""
     name = _launch(
         coi_binary,
         workspace_dir,
@@ -168,6 +172,8 @@ def test_allowlist_refuses_host_listener(coi_binary, workspace_dir, cleanup_cont
         assert not _reaches(coi_binary, name, gw, port), (
             f"allowlist container must not reach host listener {gw}:{port}"
         )
+
+    _assert_dhcp_renews(coi_binary, name)
 
 
 def _host_gateway():
@@ -240,3 +246,18 @@ def test_input_rules_removed_on_stop(coi_binary, workspace_dir, cleanup_containe
     )
     assert r.returncode == 0, f"stop failed: {r.stderr}"
     assert comment not in _input_chain(), f"input rules for {ip} should be removed on stop"
+
+
+def test_input_rules_removed_on_kill(coi_binary, workspace_dir, cleanup_containers):
+    """`coi kill` (the kill and orphan cleanup path) removes the input rules too."""
+    name = _launch(coi_binary, workspace_dir, '[network]\nmode = "restricted"\n')
+    ip = _container_ip(name)
+    assert ip, f"Should find the IP of {name}"
+    comment = f'comment "coi-{ip}"'
+    assert comment in _input_chain(), f"input rules for {ip} should be installed"
+
+    r = subprocess.run(
+        [coi_binary, "kill", "--force", name], capture_output=True, text=True, timeout=120
+    )
+    assert r.returncode == 0, f"kill failed: {r.stderr}"
+    assert comment not in _input_chain(), f"input rules for {ip} should be removed on kill"

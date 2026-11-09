@@ -76,6 +76,9 @@ func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 // entries only at hosts you trust not to resolve for the container.
 func checkHostPortsEnforceable(mode config.NetworkMode, allowLocalNetworkAccess bool, entry config.HostEntry, allowedPorts []int) error {
 	class := classifyHostIP(entry.IP)
+	if ok, err := checkHostAddressPorts(mode, entry, allowedPorts); ok {
+		return err
+	}
 	if mode == config.NetworkModeAllowlist && class == hostPrivate && !allowLocalNetworkAccess {
 		scope := entry.Ports
 		if len(scope) == 0 {
@@ -116,6 +119,34 @@ func checkHostPortsEnforceable(mode config.NetworkMode, allowLocalNetworkAccess 
 		return fmt.Errorf("network.hosts: %s ports=%v cannot be enforced for this address in %s mode",
 			entry.IP, entry.Ports, mode)
 	}
+}
+
+// checkHostAddressPorts handles an entry that names an address of the host
+// itself, in restricted and allowlist mode: the input chain opens it on the
+// entry's ports (else allowed_ports), so a port scope is enforceable whatever
+// the address class. Allowlist mode refuses 53 and 853 there, as for a LAN
+// host. ok is false when the entry is not a host address, or has no port scope
+// (then the class rules below apply, and the host stays closed).
+func checkHostAddressPorts(mode config.NetworkMode, entry config.HostEntry, allowedPorts []int) (ok bool, err error) {
+	if mode != config.NetworkModeRestricted && mode != config.NetworkModeAllowlist {
+		return false, nil
+	}
+	scope := entry.Ports
+	if len(scope) == 0 {
+		scope = allowedPorts
+	}
+	if len(scope) == 0 || !hostIPv4Addrs()[entry.IP] {
+		return false, nil
+	}
+	if mode == config.NetworkModeAllowlist {
+		for _, p := range scope {
+			if p == 53 || p == 853 {
+				return true, fmt.Errorf("network.hosts: %s may not be opened on port %d in allowlist mode, which blocks "+
+					"all DNS by design (names resolve on the host into /etc/hosts) — drop %d from its ports", entry.IP, p, p)
+			}
+		}
+	}
+	return true, nil
 }
 
 // ApplyUserHosts writes the static host entries ([[network.hosts]] / `coi hosts`,

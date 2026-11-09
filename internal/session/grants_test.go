@@ -659,10 +659,15 @@ func TestGrantsRender_Network(t *testing.T) {
 			notWant: []string{"DNS pinned"},
 		},
 		{
+			name: "restricted with allow_host_access says the host is open",
+			n:    NetworkGrants{Mode: "restricted", LANBlocked: true, HostAccess: true},
+			want: []string{"restricted: internet (LAN blocked, metadata endpoint not blocked)", "host services allowed (allow_host_access)"},
+		},
+		{
 			name:    "open lists hosts entries but no unenforced caps",
 			n:       NetworkGrants{Mode: "open", Hosts: hosts, AllowedPorts: []int{443}, DNSServers: []string{"1.1.1.1"}},
 			want:    []string{"open (no egress filtering)", "host 10.0.0.5 (db)\n"},
-			notWant: []string{"ports 443", "DNS pinned", "on ports", "LAN"},
+			notWant: []string{"ports 443", "DNS pinned", "on ports", "LAN", "host services"},
 		},
 	}
 	for _, tc := range cases {

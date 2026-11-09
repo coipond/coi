@@ -157,17 +157,26 @@ func allowlistHostAccepts(tuples []staticTuple, globalPorts []portRange, hostAdd
 	return accepts
 }
 
-// addHostInputRules queues the container's input-chain rules for mode
-// (restricted or allowlist) in the current batch. A no-op with
-// allow_host_access.
+// addHostInputRules adds the container's input-chain rules for mode
+// (restricted or allowlist), to the current batch if there is one. A no-op
+// with allow_host_access.
 func (f *NftManager) addHostInputRules(cfg *config.NetworkConfig, mode config.NetworkMode, accepts []hostPortAccept) error {
 	if f.containerIP == "" || config.BoolVal(cfg.AllowHostAccess) {
 		return nil
 	}
-	if f.batch == nil {
-		return fmt.Errorf("host input rules must be added in a batch")
+	cmds := hostInputRuleCmds(f.containerIP, f.gatewayIP, mode, accepts)
+	if f.batch != nil {
+		f.batch = append(f.batch, cmds...)
+		return nil
 	}
-	f.batch = append(f.batch, hostInputRuleCmds(f.containerIP, f.gatewayIP, mode, accepts)...)
+	if err := ensureCOIInputChain(); err != nil {
+		return err
+	}
+	for _, c := range cmds {
+		if _, err := runNFTCommand(c...); err != nil {
+			return fmt.Errorf("nft host input rule add failed: %w", err)
+		}
+	}
 	return nil
 }
 

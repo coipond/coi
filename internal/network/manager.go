@@ -58,6 +58,10 @@ type Manager struct {
 	// Refresher lifecycle (for allowlist mode)
 	refreshCtx    context.Context
 	refreshCancel context.CancelFunc
+
+	// hostAddrWarned holds resolved allowlist addresses that are host
+	// addresses, already warned about (see warnResolvedHostAddrs).
+	hostAddrWarned map[string]bool
 }
 
 // NewManager creates a new network manager with the specified configuration
@@ -599,6 +603,8 @@ func (m *Manager) syncResolved(domainIPs map[string][]string) error {
 		m.logger.Printf("  %s -> %v", domain, ips)
 	}
 
+	m.warnResolvedHostAddrs(domainIPs)
+
 	if m.containerName == "" {
 		return nil // no container to write to (unit tests)
 	}
@@ -606,6 +612,29 @@ func (m *Manager) syncResolved(domainIPs map[string][]string) error {
 		return fmt.Errorf("failed to write the container's hosts entries: %w", err)
 	}
 	return nil
+}
+
+// warnResolvedHostAddrs warns, once per address, when an allowlisted name
+// resolves to an address of the host itself. The input chain opens only
+// literal allowed_domains entries on the host, so such a name stays closed.
+func (m *Manager) warnResolvedHostAddrs(domainIPs map[string][]string) {
+	if config.BoolVal(m.config.AllowHostAccess) {
+		return
+	}
+	host := hostIPv4Addrs()
+	for domain, ips := range domainIPs {
+		for _, ip := range ips {
+			if !host[ip] || m.hostAddrWarned[ip] {
+				continue
+			}
+			if m.hostAddrWarned == nil {
+				m.hostAddrWarned = make(map[string]bool)
+			}
+			m.hostAddrWarned[ip] = true
+			m.logger.Errorf("Warning: allowed_domains name %s resolves to %s, an address of this host, which stays closed; "+
+				"list the address itself with ports (e.g. %s:443), or set network.allow_host_access", domain, ip, ip)
+		}
+	}
 }
 
 // nftSetAllower exposes the nft manager's set writer. Falls back to a no-op when

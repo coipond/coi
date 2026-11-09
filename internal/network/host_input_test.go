@@ -116,8 +116,13 @@ func TestAddHostInputRules(t *testing.T) {
 	}
 	f.abortBatch()
 
-	if err := f.addHostInputRules(&config.NetworkConfig{}, config.NetworkModeRestricted, nil); err == nil {
-		t.Error("adding outside a batch must fail")
+	// Outside a batch every rule is its own nft call.
+	logPath := fakeNftSudo(t, "")
+	if err := f.addHostInputRules(&config.NetworkConfig{}, config.NetworkModeRestricted, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(readCalls(t, logPath), "add rule ip coi input"); n != 5 {
+		t.Errorf("want 5 input rule adds, got %d", n)
 	}
 }
 
