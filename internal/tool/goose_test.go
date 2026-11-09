@@ -123,7 +123,6 @@ func TestGooseTool_BuildCommand_Resume(t *testing.T) {
 	if got := goose.BuildCommand("", true, "20261107_3"); !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildCommand(resume, id) = %v, want %v", got, want)
 	}
-	// Bare --resume would take goose's newest session of any directory.
 	want = []string{"goose", "session"}
 	if got := goose.BuildCommand("", true, ""); !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildCommand(resume, no id) = %v, want %v", got, want)
