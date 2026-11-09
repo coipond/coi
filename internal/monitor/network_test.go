@@ -188,12 +188,14 @@ func TestCheckSuspicious_LISTEN_NotFlagged(t *testing.T) {
 	}
 }
 
-// Loopback never leaves the container, so it is not an allowlist violation.
+// Loopback (incl. IPv4-mapped) and unspecified addresses (an unconnected UDP6
+// socket reads as :::0) never leave the container, so they are not allowlist
+// violations.
 func TestCheckSuspicious_Loopback_NotFlagged(t *testing.T) {
-	for _, remote := range []string{"127.0.0.1:8080", "127.0.0.53:53", "::1:53", "0.0.0.0:80"} {
+	for _, remote := range []string{"127.0.0.1:8080", "127.0.0.53:53", "::1:53", "0.0.0.0:80", ":::0", "::ffff:127.0.0.1:53"} {
 		conn := Connection{Protocol: "udp", LocalAddr: "127.0.0.1:39386", RemoteAddr: remote, State: "ESTABLISHED"}
 		if reason := checkSuspicious(conn, []string{"1.1.1.1/32"}, nil); reason != "" {
-			t.Errorf("loopback %s should not be flagged, got %q", remote, reason)
+			t.Errorf("%s should not be flagged, got %q", remote, reason)
 		}
 	}
 }
