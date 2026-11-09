@@ -47,13 +47,17 @@ file_read_rate_mb_per_sec = 1000
     rfc_script = Path(test_workspace) / "rfc1918_allowlist.py"
     rfc_script.write_text(
         """#!/usr/bin/env python3
-import subprocess, time
-subprocess.Popen(
-    ["timeout", "5", "nc", "-w", "2", "10.0.0.1", "80"],
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
-)
-time.sleep(60)
+import socket, time
+# A blocked TCP connect is refused at once, before a 1 s poll can see it; a
+# connected UDP socket stays in /proc/net/udp with its remote address.
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(("10.0.0.1", 80))
+for _ in range(60):
+    try:
+        s.send(b"x")
+    except OSError:
+        pass
+    time.sleep(1)
 """
     )
     rfc_script.chmod(0o755)
