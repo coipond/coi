@@ -513,8 +513,13 @@ func bootBlockComment(containerName string) string {
 // defence-in-depth only — the enforced IPv6 egress boundary is the host-side
 // drop installed by ApplyIPv6BlockForContainer, which the container cannot touch.
 func DisableIPv6ForContainer(containerName string) error {
+	return execInContainer(containerName, disableIPv6Cmd)
+}
+
+const disableIPv6Cmd = "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
+
+func execInContainer(containerName, cmd string) error {
 	mgr := container.NewManager(containerName)
-	cmd := "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
 	_, err := mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true})
 	return err
 }

@@ -88,6 +88,26 @@ func (f *NftManager) blockDNS() error {
 	return nil
 }
 
+// stopResolverCmd stops systemd-resolved in the container until its next boot
+// (a runtime mask, so socket activation cannot start it again).
+//
+// With DNS blocked, resolved still retries the blocked bridge resolver for every
+// name not in /etc/hosts, over UDP and TCP. Each rejected UDP query costs an ICMP
+// error from the host, and the kernel rate-limits those per destination
+// (net.ipv4.icmp_ratelimit): the retries use up the container's budget, and a
+// blocked lookup then gets no reply and waits out its timeout. Stopped, resolved
+// sends nothing, and a lookup through its stub fails at once on the container's
+// loopback. /etc/hosts keeps answering through nss-files.
+const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>&1; then " +
+	"systemctl mask --runtime systemd-resolved.service && " +
+	"systemctl stop systemd-resolved.service 'systemd-resolved-*.socket'; fi"
+
+// DisableIPv6AndResolverForContainer runs DisableIPv6ForContainer and
+// stopResolverCmd in one exec.
+func DisableIPv6AndResolverForContainer(containerName string) error {
+	return execInContainer(containerName, disableIPv6Cmd+"\n"+stopResolverCmd)
+}
+
 // removeInputRulesForIP drops the container's rules from the coi input chain.
 func removeInputRulesForIP(containerIP string) error {
 	if containerIP == "" {
