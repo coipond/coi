@@ -197,10 +197,58 @@ func deleteInputRuleCmds(comment string) ([][]string, error) {
 		}
 		return nil, err
 	}
-	rules := parseForwardRules(string(output), comment)
+	return deleteChainRuleCmds("input", parseForwardRules(string(output), comment)), nil
+}
+
+// deleteChainRuleCmds turns rules of an ip coi chain into `delete rule`
+// commands.
+func deleteChainRuleCmds(chain string, rules []forwardRule) [][]string {
 	cmds := make([][]string, 0, len(rules))
 	for _, r := range rules {
-		cmds = append(cmds, []string{"delete", "rule", "ip", "coi", "input", "handle", r.handle})
+		cmds = append(cmds, []string{"delete", "rule", "ip", "coi", chain, "handle", r.handle})
 	}
-	return cmds, nil
+	return cmds
+}
+
+// coiChainRules lists the ip coi table in one nft call and returns, per
+// chain, the rules carrying comment, plus the chains the table has. A missing
+// table holds nothing.
+func coiChainRules(comment string) (rules map[string][]forwardRule, chains map[string]bool, err error) {
+	output, err := runNFTCommand("-a", "list", "table", "ip", "coi")
+	if err != nil {
+		if strings.Contains(err.Error(), "No such file or directory") {
+			return map[string][]forwardRule{}, map[string]bool{}, nil
+		}
+		return nil, nil, err
+	}
+	rules, chains = parseCOIChainRules(string(output), comment)
+	return rules, chains, nil
+}
+
+// parseCOIChainRules splits an `nft -a list table` listing by chain. Pure, for
+// testing.
+func parseCOIChainRules(listing, comment string) (rules map[string][]forwardRule, chains map[string]bool) {
+	rules = make(map[string][]forwardRule)
+	chains = make(map[string]bool)
+	sections := make(map[string]*strings.Builder)
+	current := ""
+	for _, line := range strings.Split(listing, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "chain "):
+			current = strings.Fields(trimmed)[1]
+			chains[current] = true
+			sections[current] = &strings.Builder{}
+		case strings.HasPrefix(trimmed, "set ") || strings.HasPrefix(trimmed, "map ") || trimmed == "}":
+			current = ""
+		case current != "":
+			sections[current].WriteString(line + "\n")
+		}
+	}
+	for chain, b := range sections {
+		if r := parseForwardRules(b.String(), comment); len(r) > 0 {
+			rules[chain] = r
+		}
+	}
+	return rules, chains
 }

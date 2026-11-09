@@ -234,11 +234,7 @@ func parseForwardRules(listing, comment string) []forwardRule {
 
 // deleteForwardRuleCmds turns rules into `delete rule` commands.
 func deleteForwardRuleCmds(rules []forwardRule) [][]string {
-	cmds := make([][]string, 0, len(rules))
-	for _, r := range rules {
-		cmds = append(cmds, []string{"delete", "rule", "ip", "coi", "forward", "handle", r.handle})
-	}
-	return cmds
+	return deleteChainRuleCmds("forward", rules)
 }
 
 // openModeRuleText is how nft lists EnsureOpenModeRules' accept rule.
@@ -277,7 +273,8 @@ func (m *Manager) applyOpenRules(ip string) {
 }
 
 // applyRestrictedReplacing applies restricted mode for ip with the deletes of
-// the IP's existing forward and input rules in the same transaction (see setupRestricted).
+// the IP's existing forward and input rules in the same transaction (see
+// setupRestricted).
 // If the rules can't be listed, or the combined transaction fails (e.g. a rule
 // vanished meanwhile), it falls back to the original purge-then-apply.
 func (m *Manager) applyRestrictedReplacing(ip string) error {
@@ -286,21 +283,23 @@ func (m *Manager) applyRestrictedReplacing(ip string) error {
 		m.purgeStaleRulesForIP(ip)
 		return m.nft.ApplyRestricted(m.config)
 	}
-	rules, err := forwardRulesWithComment("coi-" + ip)
-	var inputDeletes [][]string
-	if err == nil {
-		inputDeletes, err = deleteInputRuleCmds("coi-" + ip)
-	}
-	if err == nil {
+	// One listing of the table gives the IP's forward and input rules and
+	// whether the input chain exists.
+	if rules, chains, err := coiChainRules("coi-" + ip); err == nil {
 		// The input-chain rules are replaced in the same transaction, so only
 		// the allowlist sets remain to purge afterwards.
-		prefix := append(deleteForwardRuleCmds(rules), inputDeletes...)
-		if err := nft.applyRestricted(m.config, prefix); err == nil {
+		prefix := deleteForwardRuleCmds(rules["forward"])
+		prefix = append(prefix, deleteChainRuleCmds("input", rules["input"])...)
+		replacing := len(prefix) > 0
+		if !chains["input"] && !config.BoolVal(m.config.AllowHostAccess) {
+			prefix = append(prefix, addInputChainCmd())
+		}
+		if err := nft.applyRestricted(m.config, prefix, true); err == nil {
 			if err := removeAllowlistSetsForIP(ip); err != nil {
 				m.logger.Errorf("Warning: failed to purge stale nft sets for %s: %v", ip, err)
 			}
 			return nil
-		} else if len(prefix) == 0 {
+		} else if !replacing {
 			return err // nothing was being replaced: a real rule error
 		}
 	}

@@ -74,12 +74,13 @@ func NewNftManager(containerIP, gatewayIP string) *NftManager {
 //   - dns_servers: pin the resolvers reachable on port 53 (see pinDNSForward).
 //   - allowed_ports: cap the otherwise-open internet egress to specific dports.
 func (f *NftManager) ApplyRestricted(cfg *config.NetworkConfig) error {
-	return f.applyRestricted(cfg, nil)
+	return f.applyRestricted(cfg, nil, false)
 }
 
 // applyRestricted is ApplyRestricted with prefix commands (stale-rule deletes)
-// applied in the same transaction as the new rules.
-func (f *NftManager) applyRestricted(cfg *config.NetworkConfig, prefix [][]string) error {
+// applied in the same transaction as the new rules. inputChainReady means the
+// prefix already provides the coi input chain.
+func (f *NftManager) applyRestricted(cfg *config.NetworkConfig, prefix [][]string, inputChainReady bool) error {
 	// Validate the optional egress controls up front. Setup is fail-closed, so a
 	// bad dns_servers/allowed_ports value aborts here with the boot block still in
 	// place rather than installing a half-applied policy.
@@ -96,7 +97,7 @@ func (f *NftManager) applyRestricted(cfg *config.NetworkConfig, prefix [][]strin
 		logWarnf("Warning: failed to ensure base rules: %v", err)
 	}
 
-	if !config.BoolVal(cfg.AllowHostAccess) {
+	if !inputChainReady && !config.BoolVal(cfg.AllowHostAccess) {
 		if err := ensureCOIInputChain(); err != nil {
 			return err
 		}
@@ -854,6 +855,14 @@ func ListCOIFilterRuleIPs() (map[string][]string, error) {
 func DeleteCOIFilterRulesForIP(ip string) error {
 	if ip == "" {
 		return nil
+	}
+	// Fast path: one listing and one transaction for the rules of both
+	// chains. On any failure, the per-chain deletes below (which retry).
+	if rules, _, err := coiChainRules("coi-" + ip); err == nil {
+		cmds := append(deleteForwardRuleCmds(rules["forward"]), deleteChainRuleCmds("input", rules["input"])...)
+		if runNFTScript(cmds) == nil {
+			return removeAllowlistSetsForIP(ip)
+		}
 	}
 	if err := deleteNFTRulesByComment("coi-" + ip); err != nil {
 		return err
