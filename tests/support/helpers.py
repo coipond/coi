@@ -3,6 +3,7 @@ Helper utilities for pexpect-based CLI tests.
 """
 
 import contextlib
+import json
 import os
 import re
 import subprocess
@@ -1230,6 +1231,23 @@ def wait_for_pattern_in_monitor(monitor, pattern, timeout=30, poll_interval=0.5)
             return match
         time.sleep(poll_interval)
 
+    return None
+
+
+def container_ipv4(container_name):
+    """Return the container's eth0 IPv4 address from `incus list`, or None."""
+    r = subprocess.run(
+        ["incus", "list", container_name, "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    for c in json.loads(r.stdout):
+        for a in c.get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
+            if a.get("family") == "inet":
+                return a["address"]
     return None
 
 

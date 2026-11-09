@@ -856,10 +856,11 @@ func DeleteCOIFilterRulesForIP(ip string) error {
 	if ip == "" {
 		return nil
 	}
-	// Fast path: one listing and one transaction for the rules of both
-	// chains. On any failure, the per-chain deletes below (which retry).
+	// The transaction fails as a whole when a rule it names is already gone
+	// (another cleanup raced this one) or nft is briefly locked; the
+	// per-chain deletes below re-list and retry.
 	if rules, _, err := coiChainRules("coi-" + ip); err == nil {
-		cmds := append(deleteForwardRuleCmds(rules["forward"]), deleteChainRuleCmds("input", rules["input"])...)
+		cmds := append(deleteChainRuleCmds("forward", rules["forward"]), deleteChainRuleCmds("input", rules["input"])...)
 		if runNFTScript(cmds) == nil {
 			return removeAllowlistSetsForIP(ip)
 		}

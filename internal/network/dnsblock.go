@@ -94,7 +94,8 @@ func removeInputRulesForIP(containerIP string) error {
 	return deleteNFTRulesInChain("coi", "input", "coi-"+containerIP)
 }
 
-// addInputChainCmd creates the coi input chain (see ensureCOIInputChain).
+// addInputChainCmd returns the nft command that creates the coi input chain
+// (see ensureCOIInputChain).
 func addInputChainCmd() []string {
 	return []string{
 		"add", "chain", "ip", "coi", "input",

@@ -15,7 +15,6 @@ Each test starts its own HTTP listener on the gateway address.
 """
 
 import contextlib
-import json
 import pathlib
 import re
 import socket
@@ -24,6 +23,7 @@ import sys
 import time
 
 from support.helpers import (
+    container_ipv4,
     extract_container_name,
     wait_for_firewall_rules,
     write_trusted_coi_config,
@@ -106,17 +106,6 @@ def _reaches(coi_binary, name, addr, port):
         f"http://{addr}:{port}/",
     )
     return r.returncode == 0
-
-
-def _container_ip(name):
-    out = subprocess.run(
-        ["incus", "list", name, "--format=json"], capture_output=True, text=True, timeout=30
-    ).stdout
-    for c in json.loads(out or "[]"):
-        for a in c.get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
-            if a.get("family") == "inet":
-                return a["address"]
-    return None
 
 
 def _input_chain():
@@ -245,7 +234,7 @@ def test_allow_host_access_reaches_host_listener(coi_binary, workspace_dir, clea
 def test_input_rules_removed_on_stop(coi_binary, workspace_dir, cleanup_containers):
     """The container's input rules exist while it runs and are gone after stop."""
     name = _launch(coi_binary, workspace_dir, '[network]\nmode = "restricted"\n')
-    ip = _container_ip(name)
+    ip = container_ipv4(name)
     assert ip, f"Should find the IP of {name}"
     comment = f'comment "coi-{ip}"'
     assert comment in _input_chain(), f"input rules for {ip} should be installed"
@@ -260,7 +249,7 @@ def test_input_rules_removed_on_stop(coi_binary, workspace_dir, cleanup_containe
 def test_input_rules_removed_on_kill(coi_binary, workspace_dir, cleanup_containers):
     """`coi kill` (the kill and orphan cleanup path) removes the input rules too."""
     name = _launch(coi_binary, workspace_dir, '[network]\nmode = "restricted"\n')
-    ip = _container_ip(name)
+    ip = container_ipv4(name)
     assert ip, f"Should find the IP of {name}"
     comment = f'comment "coi-{ip}"'
     assert comment in _input_chain(), f"input rules for {ip} should be installed"

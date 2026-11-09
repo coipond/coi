@@ -556,10 +556,11 @@ type NetworkConfig struct {
 	AllowLocalNetworkAccess *bool    `toml:"allow_local_network_access"` // Allow established connections from entire local network (not just gateway)
 	// AllowHostAccess lets a restricted or allowlist container reach every
 	// service on the host itself (the bridge gateway and the host's other
-	// addresses). Off by default: the host takes only DHCP and, in restricted
-	// mode, DNS from the container, plus the ports of [[network.hosts]] and
-	// allowed_domains entries that name a host address. Honored ONLY from
-	// trusted-scope config.
+	// addresses). Off by default: the host takes only DHCP, ping to the
+	// gateway (rate-limited) and, in restricted mode, DNS from the container,
+	// replies on connections the host opened, and the ports of
+	// [[network.hosts]] and allowed_domains entries that name a host address.
+	// Honored ONLY from trusted-scope config.
 	AllowHostAccess *bool `toml:"allow_host_access"`
 	// UseSudo controls whether Coi may invoke `sudo` for network operations (nft,
 	// iptables). Defaults to true. When false, Coi never shells out to sudo: it

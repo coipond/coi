@@ -196,13 +196,14 @@ func (m *Manager) purgeStaleRulesForIP(containerIP string) {
 	}
 }
 
-// forwardRule is one rule of `nft -a list chain ip coi forward`: its handle
-// and its text without the trailing "# handle N".
-type forwardRule struct{ handle, text string }
+// chainRule is one rule of an `nft -a list` listing of the ip coi table or
+// one of its chains: its handle and its text without the trailing
+// "# handle N".
+type chainRule struct{ handle, text string }
 
 // forwardRulesWithComment lists the forward-chain rules carrying comment, in
 // one nft call. A missing chain holds no rules.
-func forwardRulesWithComment(comment string) ([]forwardRule, error) {
+func forwardRulesWithComment(comment string) ([]chainRule, error) {
 	output, err := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
 	if err != nil {
 		msg := err.Error()
@@ -211,13 +212,13 @@ func forwardRulesWithComment(comment string) ([]forwardRule, error) {
 		}
 		return nil, err
 	}
-	return parseForwardRules(string(output), comment), nil
+	return parseChainRules(string(output), comment), nil
 }
 
-// parseForwardRules picks the rules carrying comment out of an
-// `nft -a list chain` listing.
-func parseForwardRules(listing, comment string) []forwardRule {
-	var rules []forwardRule
+// parseChainRules picks the rules carrying comment out of an `nft -a list`
+// listing of one chain.
+func parseChainRules(listing, comment string) []chainRule {
+	var rules []chainRule
 	want := fmt.Sprintf(`comment "%s"`, comment)
 	for _, line := range strings.Split(listing, "\n") {
 		if !strings.Contains(line, want) {
@@ -231,14 +232,9 @@ func parseForwardRules(listing, comment string) []forwardRule {
 		if i := strings.LastIndex(text, " # handle "); i >= 0 {
 			text = text[:i]
 		}
-		rules = append(rules, forwardRule{handle: h, text: strings.TrimSpace(text)})
+		rules = append(rules, chainRule{handle: h, text: strings.TrimSpace(text)})
 	}
 	return rules
-}
-
-// deleteForwardRuleCmds turns rules into `delete rule` commands.
-func deleteForwardRuleCmds(rules []forwardRule) [][]string {
-	return deleteChainRuleCmds("forward", rules)
 }
 
 // openModeRuleText is how nft lists EnsureOpenModeRules' accept rule.
@@ -259,7 +255,7 @@ func (m *Manager) applyOpenRules(ip string) {
 		return // already in place (a reused container): nothing to do
 	}
 	if err == nil {
-		cmds := deleteForwardRuleCmds(rules)
+		cmds := deleteChainRuleCmds("forward", rules)
 		cmds = append(cmds, []string{
 			"add", "rule", "ip", "coi", "forward",
 			"ip", "saddr", ip, "accept", "comment", fmt.Sprintf(`"coi-%s"`, ip),
@@ -287,12 +283,10 @@ func (m *Manager) applyRestrictedReplacing(ip string) error {
 		m.purgeStaleRulesForIP(ip)
 		return m.nft.ApplyRestricted(m.config)
 	}
-	// One listing of the table gives the IP's forward and input rules and
-	// whether the input chain exists.
 	if rules, chains, err := coiChainRules("coi-" + ip); err == nil {
 		// The input-chain rules are replaced in the same transaction, so only
 		// the allowlist sets remain to purge afterwards.
-		prefix := deleteForwardRuleCmds(rules["forward"])
+		prefix := deleteChainRuleCmds("forward", rules["forward"])
 		prefix = append(prefix, deleteChainRuleCmds("input", rules["input"])...)
 		replacing := len(prefix) > 0
 		if !chains["input"] && !config.BoolVal(m.config.AllowHostAccess) {
@@ -338,10 +332,10 @@ func (m *Manager) teardownRulesAtomically(containerName string) bool {
 	if err != nil {
 		return false
 	}
-	cmds := deleteForwardRuleCmds(parseForwardRules(string(v4), "coi-"+ip))
-	cmds = append(cmds, deleteForwardRuleCmds(parseForwardRules(string(v4), bootBlockComment(containerName)))...)
+	cmds := deleteChainRuleCmds("forward", parseChainRules(string(v4), "coi-"+ip))
+	cmds = append(cmds, deleteChainRuleCmds("forward", parseChainRules(string(v4), bootBlockComment(containerName)))...)
 	if v6, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward"); err == nil {
-		for _, r := range parseForwardRules(string(v6), ipv6BlockComment(containerName)) {
+		for _, r := range parseChainRules(string(v6), ipv6BlockComment(containerName)) {
 			cmds = append(cmds, []string{"delete", "rule", "ip6", "coi", "forward", "handle", r.handle})
 		}
 	} else if !strings.Contains(err.Error(), "No such file or directory") {

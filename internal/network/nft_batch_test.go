@@ -26,11 +26,11 @@ func TestParseForwardRules(t *testing.T) {
 		iifname "veth1" drop comment "coi-boot-c1" # handle 9
 	}
 }`
-	rules := parseForwardRules(listing, "coi-10.0.0.2")
+	rules := parseChainRules(listing, "coi-10.0.0.2")
 	if len(rules) != 1 || rules[0].handle != "5" || rules[0].text != openModeRuleText("10.0.0.2") {
 		t.Errorf("got %+v", rules)
 	}
-	if cmds := deleteForwardRuleCmds(rules); len(cmds) != 1 || strings.Join(cmds[0], " ") != "delete rule ip coi forward handle 5" {
+	if cmds := deleteChainRuleCmds("forward", rules); len(cmds) != 1 || strings.Join(cmds[0], " ") != "delete rule ip coi forward handle 5" {
 		t.Errorf("delete cmds = %v", cmds)
 	}
 }

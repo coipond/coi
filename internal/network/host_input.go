@@ -12,9 +12,9 @@ import (
 // other address the host owns — is delivered through the input hook and never
 // traverses the forward chain, so the forward rules of restricted and allowlist
 // mode do not apply to it. The rules built here filter that path in the coi
-// input chain. They carry the container's `coi-<ip>` comment, so every path that
-// removes its forward rules (teardown, kill, stale and orphan purge) removes them
-// too (see removeInputRulesForIP).
+// input chain. They carry the container's `coi-<ip>` comment, so every path
+// that removes its forward rules (teardown, kill, stale and orphan purge)
+// removes them too (see removeInputRulesForIP).
 
 // hostIPv4Addrs returns the IPv4 addresses of the host's interfaces. A package
 // var so tests can stub it.
@@ -42,8 +42,9 @@ type hostPortAccept struct {
 
 // hostInputRuleCmds builds the container's input-chain rules, in order:
 // replies to connections the container already has, DHCP and ping to the
-// gateway, DNS to the gateway (restricted mode only; allowlist mode rejects it in blockDNS,
-// ahead of these rules), the accepts, then a reject for everything else.
+// gateway, DNS to the gateway (restricted mode only; allowlist mode rejects
+// it in blockDNS, ahead of these rules), the accepts, then a reject for
+// everything else.
 //
 // Without a known gateway (restricted mode tolerates that) DHCP and DNS are
 // accepted to any host address, so the lease and the bridge resolver keep
@@ -206,12 +207,12 @@ func deleteInputRuleCmds(comment string) ([][]string, error) {
 		}
 		return nil, err
 	}
-	return deleteChainRuleCmds("input", parseForwardRules(string(output), comment)), nil
+	return deleteChainRuleCmds("input", parseChainRules(string(output), comment)), nil
 }
 
 // deleteChainRuleCmds turns rules of an ip coi chain into `delete rule`
 // commands.
-func deleteChainRuleCmds(chain string, rules []forwardRule) [][]string {
+func deleteChainRuleCmds(chain string, rules []chainRule) [][]string {
 	cmds := make([][]string, 0, len(rules))
 	for _, r := range rules {
 		cmds = append(cmds, []string{"delete", "rule", "ip", "coi", chain, "handle", r.handle})
@@ -222,11 +223,11 @@ func deleteChainRuleCmds(chain string, rules []forwardRule) [][]string {
 // coiChainRules lists the ip coi table in one nft call and returns, per
 // chain, the rules carrying comment, plus the chains the table has. A missing
 // table holds nothing.
-func coiChainRules(comment string) (rules map[string][]forwardRule, chains map[string]bool, err error) {
+func coiChainRules(comment string) (rules map[string][]chainRule, chains map[string]bool, err error) {
 	output, err := runNFTCommand("-a", "list", "table", "ip", "coi")
 	if err != nil {
 		if strings.Contains(err.Error(), "No such file or directory") {
-			return map[string][]forwardRule{}, map[string]bool{}, nil
+			return map[string][]chainRule{}, map[string]bool{}, nil
 		}
 		return nil, nil, err
 	}
@@ -236,8 +237,8 @@ func coiChainRules(comment string) (rules map[string][]forwardRule, chains map[s
 
 // parseCOIChainRules splits an `nft -a list table` listing by chain. Pure, for
 // testing.
-func parseCOIChainRules(listing, comment string) (rules map[string][]forwardRule, chains map[string]bool) {
-	rules = make(map[string][]forwardRule)
+func parseCOIChainRules(listing, comment string) (rules map[string][]chainRule, chains map[string]bool) {
+	rules = make(map[string][]chainRule)
 	chains = make(map[string]bool)
 	sections := make(map[string]*strings.Builder)
 	current := ""
@@ -255,7 +256,7 @@ func parseCOIChainRules(listing, comment string) (rules map[string][]forwardRule
 		}
 	}
 	for chain, b := range sections {
-		if r := parseForwardRules(b.String(), comment); len(r) > 0 {
+		if r := parseChainRules(b.String(), comment); len(r) > 0 {
 			rules[chain] = r
 		}
 	}

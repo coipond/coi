@@ -65,6 +65,9 @@ func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 // GLOBAL allowed_ports), so a per-host cap would do nothing. It fails closed with
 // a message that says why and what to do instead.
 //
+// An address of the host itself is the exception, in every class: the input
+// chain opens it only on its port scope (see checkHostAddressPorts).
+//
 // A private host in allowlist mode without allow_local_network_access gets a
 // targeted accept ahead of the RFC1918 block, which must be port-scoped (the
 // entry's ports, else the global allowed_ports) and must not include the DNS
@@ -126,7 +129,8 @@ func checkHostPortsEnforceable(mode config.NetworkMode, allowLocalNetworkAccess 
 // entry's ports (else allowed_ports), so a port scope is enforceable whatever
 // the address class. Allowlist mode refuses 53 and 853 there, as for a LAN
 // host. ok is false when the entry is not a host address, or has no port scope
-// (then the class rules below apply, and the host stays closed).
+// (then checkHostPortsEnforceable applies its class rules, and the host stays
+// closed).
 func checkHostAddressPorts(mode config.NetworkMode, entry config.HostEntry, allowedPorts []int) (ok bool, err error) {
 	if mode != config.NetworkModeRestricted && mode != config.NetworkModeAllowlist {
 		return false, nil

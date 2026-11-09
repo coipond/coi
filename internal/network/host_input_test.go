@@ -135,7 +135,7 @@ func TestParseInputRulesForDelete(t *testing.T) {
 		ip saddr 10.0.0.20 reject comment "coi-10.0.0.20" # handle 9
 	}
 }`
-	rules := parseForwardRules(listing, "coi-10.0.0.2")
+	rules := parseChainRules(listing, "coi-10.0.0.2")
 	if len(rules) != 2 || rules[0].handle != "7" || rules[1].handle != "8" {
 		t.Errorf("got %+v", rules)
 	}
