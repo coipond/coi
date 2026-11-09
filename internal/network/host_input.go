@@ -41,8 +41,8 @@ type hostPortAccept struct {
 }
 
 // hostInputRuleCmds builds the container's input-chain rules, in order:
-// replies to connections the container already has, DHCP to the gateway, DNS
-// to the gateway (restricted mode only; allowlist mode rejects it in blockDNS,
+// replies to connections the container already has, DHCP and ping to the
+// gateway, DNS to the gateway (restricted mode only; allowlist mode rejects it in blockDNS,
 // ahead of these rules), the accepts, then a reject for everything else.
 //
 // Without a known gateway (restricted mode tolerates that) DHCP and DNS are
@@ -69,6 +69,11 @@ func hostInputRuleCmds(containerIP, gatewayIP string, mode config.NetworkMode, a
 		dhcp = append([]string{"ip", "daddr", "{", gatewayIP + ",", "255.255.255.255", "}"}, dhcp...)
 	}
 	cmds = append(cmds, rule(dhcp...))
+	if gatewayIP != "" {
+		// Ping to the gateway stays a working connectivity check, rate-limited as
+		// in the forward chain.
+		cmds = append(cmds, rule("ip", "daddr", gatewayIP, "icmp", "type", "echo-request", "limit", "rate", "10/second", "accept"))
+	}
 	if mode == config.NetworkModeRestricted {
 		cmds = append(cmds, rule(toGateway("meta", "l4proto", "{", "tcp,", "udp", "}", "th", "dport", "53", "accept")...))
 	}

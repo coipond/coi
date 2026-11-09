@@ -22,6 +22,7 @@ func TestHostInputRuleCmds_Restricted(t *testing.T) {
 	want := []string{
 		`add rule ip coi input ip saddr 10.0.0.2 ct state established,related accept comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 ip daddr { 10.0.0.1, 255.255.255.255 } udp dport 67 accept comment "coi-10.0.0.2"`,
+		`add rule ip coi input ip saddr 10.0.0.2 ip daddr 10.0.0.1 icmp type echo-request limit rate 10/second accept comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 ip daddr 10.0.0.1 meta l4proto { tcp, udp } th dport 53 accept comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 ip daddr 192.168.1.5 meta l4proto { tcp, udp } th dport { 8080, 9000-9100 } accept comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 reject comment "coi-10.0.0.2"`,
@@ -34,16 +35,16 @@ func TestHostInputRuleCmds_Restricted(t *testing.T) {
 // Allowlist mode adds no DNS accept: blockDNS rejects port 53 ahead of these rules.
 func TestHostInputRuleCmds_AllowlistHasNoDNSAccept(t *testing.T) {
 	got := joinCmds(hostInputRuleCmds("10.0.0.2", "10.0.0.1", config.NetworkModeAllowlist, nil))
-	if len(got) != 3 {
-		t.Fatalf("want established, DHCP and reject, got %v", got)
+	if len(got) != 4 {
+		t.Fatalf("want established, DHCP, ping and reject, got %v", got)
 	}
 	for _, r := range got {
 		if strings.Contains(r, "dport 53") {
 			t.Errorf("allowlist mode must not accept DNS to the host: %s", r)
 		}
 	}
-	if !strings.HasSuffix(got[2], `reject comment "coi-10.0.0.2"`) {
-		t.Errorf("last rule must be the reject, got %s", got[2])
+	if !strings.HasSuffix(got[3], `reject comment "coi-10.0.0.2"`) {
+		t.Errorf("last rule must be the reject, got %s", got[3])
 	}
 }
 
@@ -101,7 +102,7 @@ func TestAddHostInputRules(t *testing.T) {
 	if err := f.addHostInputRules(&config.NetworkConfig{}, config.NetworkModeRestricted, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.batch) != 4 || f.batch[0][4] != "input" {
+	if len(f.batch) != 5 || f.batch[0][4] != "input" {
 		t.Errorf("batch = %v", f.batch)
 	}
 
