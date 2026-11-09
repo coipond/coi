@@ -72,6 +72,7 @@ func (f *NftManager) blockDNS() error {
 	if err := ensureCOIInputChain(); err != nil {
 		return err
 	}
+	var cmds [][]string
 	for _, verdict := range [][]string{tcpReset, {"reject"}} {
 		args := []string{
 			"add", "rule", "ip", "coi", "input",
@@ -80,10 +81,10 @@ func (f *NftManager) blockDNS() error {
 			"th", "dport", "53",
 		}
 		args = append(args, verdict...)
-		args = append(args, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
-		if _, err := runNFTCommand(args...); err != nil {
-			return fmt.Errorf("failed to add DNS block rule (input): %w", err)
-		}
+		cmds = append(cmds, append(args, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP)))
+	}
+	if err := runNFTScript(cmds); err != nil {
+		return fmt.Errorf("failed to add DNS block rule (input): %w", err)
 	}
 	return nil
 }
