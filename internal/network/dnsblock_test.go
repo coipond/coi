@@ -35,21 +35,15 @@ func fakeIncus(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "incus.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o700); err != nil { //nolint:gosec // test fake must be executable
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return logPath
-}
-
-func incusCalls(t *testing.T, logPath string) string {
-	t.Helper()
-	b, err := os.ReadFile(logPath)
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	return string(b)
 }
 
 // Allowlist mode stops the resolver; restricted and open modes give it back.
@@ -82,7 +76,7 @@ func TestPrepareContainer(t *testing.T) {
 	logPath := fakeIncus(t)
 	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeAllowlist}, logger.NewDiscard())
 	m.prepareContainer("c1")
-	calls := incusCalls(t, logPath)
+	calls := readCalls(t, logPath)
 	if n := strings.Count(calls, "exec"); n != 1 {
 		t.Errorf("want one incus exec, got %d:\n%s", n, calls)
 	}
@@ -108,37 +102,17 @@ func TestApplyOpenRules_RestoresResolverOnReuse(t *testing.T) {
 			"\t\tip saddr 10.0.0.2 reject comment \"coi-10.0.0.2\" # handle 6\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fakeForwardListing(t, tc.listing)
+			fakeNftSudo(t, "table ip coi {\n\tchain forward { # handle 1\n"+tc.listing+"\t}\n}\n")
 			logPath := fakeIncus(t)
 			m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen}, logger.NewDiscard())
 			m.containerName = "c1"
 			m.applyOpenRules("10.0.0.2")
-			calls := incusCalls(t, logPath)
+			calls := readCalls(t, logPath)
 			if got := strings.Contains(calls, "unmask --runtime systemd-resolved.service"); got != tc.exec {
 				t.Errorf("resolver restore = %v, want %v; incus calls:\n%s", got, tc.exec, calls)
 			}
 		})
 	}
-}
-
-// fakeForwardListing puts a sudo on PATH whose `nft -a list chain ip coi
-// forward` prints rules in a forward chain; every other nft call succeeds.
-func fakeForwardListing(t *testing.T, rules string) {
-	t.Helper()
-	dir := t.TempDir()
-	list := filepath.Join(dir, "forward.txt")
-	body := "table ip coi {\n\tchain forward { # handle 1\n" + rules + "\t}\n}\n"
-	if err := os.WriteFile(list, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\nshift 2\ncase \"$*\" in\n\"-a list chain ip coi forward\") cat " + list + " ;;\n\"-f -\") cat >/dev/null ;;\nesac\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "sudo"), []byte(script), 0o700); err != nil { //nolint:gosec // test fake must be executable
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	prev := SudoEnabled()
-	SetSudoAllowed(true)
-	t.Cleanup(func() { SetSudoAllowed(prev) })
 }
 
 func TestAllSteps(t *testing.T) {

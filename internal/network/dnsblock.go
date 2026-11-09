@@ -95,26 +95,21 @@ func (f *NftManager) blockDNS() error {
 // (a runtime mask, so socket activation cannot start it again).
 //
 // With DNS blocked, resolved still retries the blocked bridge resolver for every
-// name not in /etc/hosts, over UDP and TCP. Each rejected UDP query costs an ICMP
-// error from the host, and the kernel rate-limits those per destination
-// (net.ipv4.icmp_ratelimit): the retries use up the container's budget, and a
-// blocked lookup then gets no reply and waits out its timeout. Stopped, resolved
-// sends nothing, and a lookup through its stub fails at once on the container's
-// loopback. /etc/hosts keeps answering through nss-files.
+// name not in /etc/hosts, and each rejected UDP query uses up the ICMP budget
+// (see tcpReset). Stopped, resolved sends nothing, and a lookup through its stub
+// fails at once on the container's loopback. /etc/hosts keeps answering through
+// nss-files.
 const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>&1; then " +
 	"systemctl mask --runtime systemd-resolved.service && " +
 	"systemctl stop systemd-resolved.service 'systemd-resolved-*.socket'; fi"
 
 // restoreResolverCmd undoes stopResolverCmd, for a container that is still
-// running from an allowlist session and is now set up in another mode. It only
-// tests a path when there is nothing to undo.
+// running from an allowlist session and is now set up in another mode.
 const restoreResolverCmd = "if [ -L /run/systemd/system/systemd-resolved.service ]; then " +
 	"systemctl unmask --runtime systemd-resolved.service && systemctl start systemd-resolved.service; fi"
 
 // containerNetCmd is the in-container part of a mode's network setup, as one
-// exec. Restricted and allowlist modes disable IPv6 (see
-// disableIPv6Cmd); allowlist mode stops the resolver, the other modes
-// give it back.
+// exec.
 func containerNetCmd(mode config.NetworkMode) string {
 	switch mode {
 	case config.NetworkModeAllowlist:
