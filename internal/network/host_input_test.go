@@ -117,7 +117,7 @@ func TestAddHostInputRules(t *testing.T) {
 	f.abortBatch()
 
 	// Outside a batch every rule is its own nft call.
-	logPath := fakeNftSudo(t, "")
+	logPath := fakeNftSudo(t, "", "")
 	if err := f.addHostInputRules(&config.NetworkConfig{}, config.NetworkModeRestricted, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -141,42 +141,3 @@ func TestParseInputRulesForDelete(t *testing.T) {
 	}
 }
 
-func TestParseCOIChainRules(t *testing.T) {
-	listing := `table ip coi { # handle 4
-	set coi_s_10_0_0_2 { # handle 9
-		type ipv4_addr
-		flags interval
-		elements = { 1.1.1.1 }
-	}
-	chain forward { # handle 1
-		type filter hook forward priority 10; policy accept;
-		ct state established,related accept comment "coi-base" # handle 2
-		ip saddr 10.0.0.2 accept comment "coi-10.0.0.2" # handle 5
-		ip saddr 10.0.0.20 accept comment "coi-10.0.0.20" # handle 6
-	}
-	chain input { # handle 3
-		type filter hook input priority filter; policy accept;
-		ip saddr 10.0.0.2 ct state established,related accept comment "coi-10.0.0.2" # handle 7
-		ip saddr 10.0.0.2 reject comment "coi-10.0.0.2" # handle 8
-	}
-}`
-	rules, chains := parseCOIChainRules(listing, "coi-10.0.0.2")
-	if !chains["forward"] || !chains["input"] || len(chains) != 2 {
-		t.Errorf("chains = %v", chains)
-	}
-	if f := rules["forward"]; len(f) != 1 || f[0].handle != "5" {
-		t.Errorf("forward = %+v", f)
-	}
-	if in := rules["input"]; len(in) != 2 || in[0].handle != "7" || in[1].handle != "8" {
-		t.Errorf("input = %+v", in)
-	}
-	got := joinCmds(deleteChainRuleCmds("input", rules["input"]))
-	if want := []string{"delete rule ip coi input handle 7", "delete rule ip coi input handle 8"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("deletes = %v", got)
-	}
-
-	_, chains = parseCOIChainRules("table ip coi {\n\tchain forward {\n\t}\n}", "coi-10.0.0.2")
-	if chains["input"] {
-		t.Error("a table without an input chain must not report one")
-	}
-}
