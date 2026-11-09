@@ -284,9 +284,7 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 		return ""
 	}
 
-	// Loopback (all of 127.0.0.0/8, e.g. systemd-resolved's stub at 127.0.0.53,
-	// and IPv4-mapped loopback) and unspecified addresses never leave the
-	// container.
+	// Loopback and unspecified addresses never leave the container.
 	remoteIP := extractIP(conn.RemoteAddr)
 	if ip := net.ParseIP(remoteIP); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
 		return ""
