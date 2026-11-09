@@ -27,7 +27,7 @@ shift 2
 echo "$*" >> %q
 case "$*" in
 "-f -") cat >> %q ;;
-"-a list table ip coi") cat %q ;;
+"-a list table ip coi"|"-a list chain ip coi forward") cat %q ;;
 esac
 exit 0
 `, logPath, logPath, listPath)

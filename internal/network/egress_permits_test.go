@@ -46,8 +46,8 @@ func dport(proto, right string) string {
 
 // A realistic allowlist chain: targeted LAN host accept (inserted first), DHCP
 // (udp only) to the gateway, pinned DNS, port-scoped set lookup, ICMP set accept
-// (unknown accept, skipped), RFC1918 rejects, default reject (each after its TCP reset) — plus another
-// container's rule that must be ignored.
+// (unknown accept, skipped), RFC1918 rejects, default reject (each after its
+// TCP reset) — plus another container's rule that must be ignored.
 var allowlistChain = chainJSON(
 	rule("coi-10.1.2.3", saddrMatch, daddr(`"192.168.1.20"`), l4TCPUDP,
 		dport("th", `{"set": [443, {"range": [8000, 8010]}]}`), `{"accept": null}`),
