@@ -332,8 +332,8 @@ MISE_PROFILE_EOF
         fi
     done
 
-    # `which` only proves the file exists; a pnpm whose install scripts did
-    # not run is a placeholder that fails when executed.
+    # `which` only proves the file exists; run pnpm so a broken install (such
+    # as npm:pnpm with its install scripts skipped) fails the build.
     if ! su - "$CODE_USER" -c "pnpm -v" >/dev/null 2>&1; then
         log "ERROR: 'pnpm -v' failed after installation."
         exit 1
