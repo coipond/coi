@@ -12,6 +12,8 @@ const (
 	saddrMatch   = `{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "10.1.2.3"}}`
 	l4TCPUDP     = `{"match": {"op": "==", "left": {"meta": {"key": "l4proto"}}, "right": {"set": ["tcp", "udp"]}}}`
 	rejectVerdct = `{"reject": {"type": "icmp", "expr": "port-unreachable"}}`
+	// nft lists `meta l4proto tcp reject with tcp reset` without the l4proto match.
+	tcpResetVerdct = `{"reject": {"type": "tcp reset"}}`
 )
 
 func chainJSON(rules ...string) []byte {
@@ -44,13 +46,14 @@ func dport(proto, right string) string {
 
 // A realistic allowlist chain: targeted LAN host accept (inserted first), DHCP
 // (udp only) to the gateway, pinned DNS, port-scoped set lookup, ICMP set accept
-// (unknown accept, skipped), RFC1918 rejects, default reject — plus another
+// (unknown accept, skipped), RFC1918 rejects, default reject (each after its TCP reset) — plus another
 // container's rule that must be ignored.
 var allowlistChain = chainJSON(
 	rule("coi-10.1.2.3", saddrMatch, daddr(`"192.168.1.20"`), l4TCPUDP,
 		dport("th", `{"set": [443, {"range": [8000, 8010]}]}`), `{"accept": null}`),
 	rule("coi-10.1.2.3", saddrMatch, daddr(`"10.1.2.1"`), dport("udp", `{"set": [67, 68]}`), `{"accept": null}`),
 	rule("coi-10.1.2.3", saddrMatch, daddr(`"10.50.0.53"`), l4TCPUDP, dport("th", `53`), `{"accept": null}`),
+	rule("coi-10.1.2.3", saddrMatch, l4TCPUDP, dport("th", `53`), tcpResetVerdct),
 	rule("coi-10.1.2.3", saddrMatch, l4TCPUDP, dport("th", `53`), rejectVerdct),
 	rule("coi-10.1.2.3", saddrMatch, l4TCPUDP,
 		`{"match": {"op": "==", "left": {"concat": [{"payload": {"protocol": "ip", "field": "daddr"}}, {"payload": {"protocol": "th", "field": "dport"}}]}, "right": "@coi_sp_10_1_2_3"}}`,
@@ -58,8 +61,11 @@ var allowlistChain = chainJSON(
 	rule("coi-10.1.2.3", saddrMatch, daddr(`"@coi_s_10_1_2_3"`),
 		`{"match": {"op": "==", "left": {"payload": {"protocol": "icmp", "field": "type"}}, "right": "echo-request"}}`,
 		`{"limit": {"rate": 10, "per": "second"}}`, `{"accept": null}`),
+	rule("coi-10.1.2.3", saddrMatch, daddr(`{"prefix": {"addr": "192.168.0.0", "len": 16}}`), tcpResetVerdct),
 	rule("coi-10.1.2.3", saddrMatch, daddr(`{"prefix": {"addr": "192.168.0.0", "len": 16}}`), rejectVerdct),
+	rule("coi-10.1.2.3", saddrMatch, daddr(`{"prefix": {"addr": "10.0.0.0", "len": 8}}`), tcpResetVerdct),
 	rule("coi-10.1.2.3", saddrMatch, daddr(`{"prefix": {"addr": "10.0.0.0", "len": 8}}`), rejectVerdct),
+	rule("coi-10.1.2.3", saddrMatch, tcpResetVerdct),
 	rule("coi-10.1.2.3", saddrMatch, rejectVerdct),
 	rule("coi-10.1.2.30", `{"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "10.1.2.30"}}`,
 		daddr(`{"prefix": {"addr": "192.168.0.0", "len": 16}}`), `{"accept": null}`),
@@ -91,8 +97,8 @@ func TestParseContainerEgressRules_FirstMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 8 { // ICMP set rule skipped, other container ignored
-		t.Fatalf("want 8 rules, got %d", len(rules))
+	if len(rules) != 12 { // ICMP set rule skipped, other container ignored
+		t.Fatalf("want 12 rules, got %d", len(rules))
 	}
 	tuples, err := parseNftTupleSet([]byte(sampleTupleSet))
 	if err != nil {
@@ -101,7 +107,7 @@ func TestParseContainerEgressRules_FirstMatch(t *testing.T) {
 	if len(tuples) != 3 {
 		t.Fatalf("want 3 tuples, got %d", len(tuples))
 	}
-	rules[4].tuples = tuples
+	rules[5].tuples = tuples
 	checkPermits(t, rules, []permitCase{
 		{"tcp", "192.168.1.20", 443, true},
 		{"udp", "192.168.1.20", 8005, true},

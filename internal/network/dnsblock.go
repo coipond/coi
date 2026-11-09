@@ -25,6 +25,14 @@ import (
 //     an input rule can stop it. This is the one that is easy to forget, and the
 //     one that would silently make everything above pointless.
 
+// tcpReset is the match and verdict of the rule that goes before each reject.
+//
+// The kernel rate-limits ICMP errors per destination (net.ipv4.icmp_ratelimit),
+// and a plain reject answers TCP with ICMP port-unreachable too. A container
+// whose blocked TCP retries use up that budget gets no reply for a blocked DNS
+// query and waits out the resolver timeout. A TCP reset is not rate-limited.
+var tcpReset = []string{"meta", "l4proto", "tcp", "reject", "with", "tcp", "reset"}
+
 // ensureCOIInputChain creates the input chain in the ip coi table.
 //
 // A drop in any base chain is terminal, so this chain does not need to outrank
@@ -64,15 +72,18 @@ func (f *NftManager) blockDNS() error {
 	if err := ensureCOIInputChain(); err != nil {
 		return err
 	}
-	if _, err := runNFTCommand(
-		"add", "rule", "ip", "coi", "input",
-		"ip", "saddr", f.containerIP,
-		"meta", "l4proto", "{", "tcp,", "udp", "}",
-		"th", "dport", "53",
-		"reject",
-		"comment", fmt.Sprintf(`"coi-%s"`, f.containerIP),
-	); err != nil {
-		return fmt.Errorf("failed to add DNS block rule (input): %w", err)
+	for _, verdict := range [][]string{tcpReset, {"reject"}} {
+		args := []string{
+			"add", "rule", "ip", "coi", "input",
+			"ip", "saddr", f.containerIP,
+			"meta", "l4proto", "{", "tcp,", "udp", "}",
+			"th", "dport", "53",
+		}
+		args = append(args, verdict...)
+		args = append(args, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
+		if _, err := runNFTCommand(args...); err != nil {
+			return fmt.Errorf("failed to add DNS block rule (input): %w", err)
+		}
 	}
 	return nil
 }

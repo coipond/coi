@@ -683,7 +683,19 @@ func (f *NftManager) addRule(source, destination, action string) error {
 // addRuleWithMatch is addRule with an optional extra match clause inserted
 // between the daddr match and the action (e.g. an L4 protocol / ICMP-type
 // constraint). match is a slice of nft tokens; nil/empty behaves like addRule.
+//
+// A reject also adds the tcpReset rule ahead of it.
 func (f *NftManager) addRuleWithMatch(source, destination string, match []string, action string) error {
+	if action == "reject" {
+		if err := f.addForwardRule(source, destination, match, tcpReset); err != nil {
+			return err
+		}
+	}
+	return f.addForwardRule(source, destination, match, []string{action})
+}
+
+// addForwardRule adds one rule to the coi forward chain (or the open batch).
+func (f *NftManager) addForwardRule(source, destination string, match, verdict []string) error {
 	args := []string{
 		"add", "rule", "ip", "coi", "forward",
 		"ip", "saddr", source,
@@ -693,7 +705,8 @@ func (f *NftManager) addRuleWithMatch(source, destination string, match []string
 		args = append(args, "ip", "daddr", destination)
 	}
 	args = append(args, match...)
-	args = append(args, action, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
+	args = append(args, verdict...)
+	args = append(args, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
 	if f.batch != nil {
 		f.batch = append(f.batch, args)
 		return nil
