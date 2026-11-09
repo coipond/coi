@@ -373,7 +373,7 @@ create_code_user() {
             if _err="$(ssh-keyscan -T 10 -t ed25519,rsa,ecdsa "$_host" 2>&1 >> "/home/$CODE_USER/.ssh/known_hosts")"; then
                 break
             fi
-            log "ssh-keyscan $_host failed (attempt $_attempt): $_err"
+            log "ssh-keyscan $_host failed (attempt $_attempt/3): $_err"
             sleep 2
         done
     done
@@ -383,9 +383,9 @@ create_code_user() {
     # https://docs.gitlab.com/user/gitlab_com/ and
     # https://www.atlassian.com/blog/bitbucket/ssh-host-key-changes
     for _host in github.com gitlab.com bitbucket.org; do
-        if ! awk -v h="$_host" '$1 == h { found = 1 } END { exit !found }' "/home/$CODE_USER/.ssh/known_hosts" 2>/dev/null; then
+        if ! grep -q "^$_host " "/home/$CODE_USER/.ssh/known_hosts" 2>/dev/null; then
             log "WARNING: ssh-keyscan got no keys for $_host, using its published keys"
-            awk -v h="$_host" '$1 == h' >> "/home/$CODE_USER/.ssh/known_hosts" <<'KEYS'
+            grep "^$_host " >> "/home/$CODE_USER/.ssh/known_hosts" <<'KEYS'
 github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
 github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
 github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=

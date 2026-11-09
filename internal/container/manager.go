@@ -494,8 +494,8 @@ func (m *Manager) SetTmpfsSize(size string) error {
 	return nil
 }
 
-// RemoveTmpfsSize removes the tmp.mount unit SetTmpfsSize installed and
-// unmounts its /tmp, inside a RUNNING container. Another tmp.mount is left
+// RemoveTmpfsSize replaces the tmp.mount unit SetTmpfsSize installed with a
+// mask and unmounts its /tmp, inside a RUNNING container. Another tmp.mount is left
 // alone. Reports whether coi's unit was there.
 func (m *Manager) RemoveTmpfsSize() (bool, error) {
 	out, err := m.ExecCommand(tmpfsRemoveScript(tmpMountUnitPath), ExecCommandOptions{Capture: true})
