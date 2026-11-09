@@ -374,9 +374,10 @@ func (m *Manager) setupRestricted(ctx context.Context, containerName string) err
 	}
 
 	// Disable IPv6 inside the container (defence-in-depth; reversible by
-	// in-container root, so the host-side drop below is the enforced boundary).
-	if err := DisableIPv6ForContainer(containerName); err != nil {
-		m.logger.Errorf("Warning: failed to disable IPv6 in container: %v", err)
+	// in-container root, so the host-side drop below is the enforced boundary),
+	// and give back the resolver an allowlist session on this boot stopped.
+	if err := execInContainer(containerName, allSteps(disableIPv6Cmd, restoreResolverCmd)); err != nil {
+		m.logger.Errorf("Warning: failed to disable IPv6 or restore the resolver in container: %v", err)
 	}
 
 	// Enforce the IPv6 egress boundary on the host: drop all forwarded IPv6 from

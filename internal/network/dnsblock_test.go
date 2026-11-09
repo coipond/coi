@@ -2,6 +2,7 @@ package network
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,6 +48,23 @@ func TestDisableIPv6AndResolverForContainer(t *testing.T) {
 	for _, want := range []string{"disable_ipv6=1", "systemctl mask --runtime systemd-resolved.service", "systemctl stop systemd-resolved.service"} {
 		if !strings.Contains(calls, want) {
 			t.Errorf("exec must contain %q, got:\n%s", want, calls)
+		}
+	}
+}
+
+func TestAllSteps(t *testing.T) {
+	for _, tc := range []struct {
+		steps []string
+		ok    bool
+	}{
+		{[]string{"true", "true"}, true},
+		{[]string{"false", "true"}, false},
+		{[]string{"true", "if false; then :; fi"}, true},
+		{[]string{"true", "if true; then false; fi"}, false},
+	} {
+		err := exec.Command("sh", "-c", allSteps(tc.steps...)).Run()
+		if (err == nil) != tc.ok {
+			t.Errorf("%v: err = %v, want ok=%v", tc.steps, err, tc.ok)
 		}
 	}
 }

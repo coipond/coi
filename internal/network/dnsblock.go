@@ -103,10 +103,16 @@ const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>
 	"systemctl mask --runtime systemd-resolved.service && " +
 	"systemctl stop systemd-resolved.service 'systemd-resolved-*.socket'; fi"
 
+// restoreResolverCmd undoes stopResolverCmd, for a container that is still
+// running from an allowlist session and is now set up in another mode. It only
+// tests a path when there is nothing to undo.
+const restoreResolverCmd = "if [ -L /run/systemd/system/systemd-resolved.service ]; then " +
+	"systemctl unmask --runtime systemd-resolved.service && systemctl start systemd-resolved.service; fi"
+
 // DisableIPv6AndResolverForContainer runs DisableIPv6ForContainer and
 // stopResolverCmd in one exec.
 func DisableIPv6AndResolverForContainer(containerName string) error {
-	return execInContainer(containerName, disableIPv6Cmd+"\n"+stopResolverCmd)
+	return execInContainer(containerName, allSteps(disableIPv6Cmd, stopResolverCmd))
 }
 
 // removeInputRulesForIP drops the container's rules from the coi input chain.

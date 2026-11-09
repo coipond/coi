@@ -518,6 +518,18 @@ func DisableIPv6ForContainer(containerName string) error {
 
 const disableIPv6Cmd = "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
 
+// allSteps joins shell steps into one script that runs every step and fails
+// when any of them failed.
+func allSteps(steps ...string) string {
+	var b strings.Builder
+	b.WriteString("rc=0\n")
+	for _, s := range steps {
+		b.WriteString(s + " || rc=1\n")
+	}
+	b.WriteString("exit $rc")
+	return b.String()
+}
+
 func execInContainer(containerName, cmd string) error {
 	mgr := container.NewManager(containerName)
 	_, err := mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true})
