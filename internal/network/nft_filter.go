@@ -505,17 +505,13 @@ func bootBlockComment(containerName string) string {
 	return "coi-boot-" + containerName
 }
 
-// DisableIPv6ForContainer disables IPv6 in the container to prevent firewall bypass.
+// disableIPv6Cmd disables IPv6 in the container to prevent firewall bypass.
 // All Coi IPv4 nft rules are IPv4-only; IPv6 would circumvent them entirely.
 //
 // NOTE: this runs an in-container sysctl, which in-container root can simply set
 // back to 0 (it owns CAP_NET_ADMIN over its own netns). It is therefore
 // defence-in-depth only — the enforced IPv6 egress boundary is the host-side
 // drop installed by ApplyIPv6BlockForContainer, which the container cannot touch.
-func DisableIPv6ForContainer(containerName string) error {
-	return execInContainer(containerName, disableIPv6Cmd)
-}
-
 const disableIPv6Cmd = "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
 
 // allSteps joins shell steps into one script that runs every step and fails

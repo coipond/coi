@@ -3,6 +3,8 @@ package network
 import (
 	"fmt"
 	"strings"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // In allowlist mode the container has no DNS at all. Its only way to turn a name
@@ -109,10 +111,27 @@ const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>
 const restoreResolverCmd = "if [ -L /run/systemd/system/systemd-resolved.service ]; then " +
 	"systemctl unmask --runtime systemd-resolved.service && systemctl start systemd-resolved.service; fi"
 
-// DisableIPv6AndResolverForContainer runs DisableIPv6ForContainer and
-// stopResolverCmd in one exec.
-func DisableIPv6AndResolverForContainer(containerName string) error {
-	return execInContainer(containerName, allSteps(disableIPv6Cmd, stopResolverCmd))
+// containerNetCmd is the in-container part of a mode's network setup, as one
+// exec. Restricted and allowlist modes disable IPv6 (see
+// disableIPv6Cmd); allowlist mode stops the resolver, the other modes
+// give it back.
+func containerNetCmd(mode config.NetworkMode) string {
+	switch mode {
+	case config.NetworkModeAllowlist:
+		return allSteps(disableIPv6Cmd, stopResolverCmd)
+	case config.NetworkModeRestricted:
+		return allSteps(disableIPv6Cmd, restoreResolverCmd)
+	default:
+		return restoreResolverCmd
+	}
+}
+
+// prepareContainer runs containerNetCmd for the manager's mode. Best effort:
+// the firewall is the enforced boundary.
+func (m *Manager) prepareContainer(containerName string) {
+	if err := execInContainer(containerName, containerNetCmd(m.config.Mode)); err != nil {
+		m.logger.Errorf("Warning: failed to prepare the container's network (IPv6, resolver): %v", err)
+	}
 }
 
 // removeInputRulesForIP drops the container's rules from the coi input chain.
