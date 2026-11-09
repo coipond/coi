@@ -115,7 +115,7 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 	}
 
 	// 3. Claude managed settings: auto-mode suppression (skipped under
-	// interactive mode — #764) + includeCoAuthoredBy=false when attribution
+	// interactive mode — #764) + empty commit/PR attribution when attribution
 	// stripping is on (#788). No-op for other tools / nothing enabled.
 	if opts.ToolName == "claude" {
 		SetupClaudeManagedSettings(mgr,

@@ -136,12 +136,16 @@ func usedSlots(workspacePath, sessionName string) (map[int]bool, error) {
 	return used, nil
 }
 
+// MaxSlots is the number of parallel session slots (1..MaxSlots) that slot
+// allocation hands out.
+const MaxSlots = 10
+
 // AllocateSlot finds the next available slot for a session identity
 // (workspace path, or session_name when set)
 // Returns the slot number (1, 2, 3, ...) or 0 if no slots available
 func AllocateSlot(workspacePath, sessionName string, maxSlots int) (int, error) {
 	if maxSlots == 0 {
-		maxSlots = 10 // Default max 10 parallel sessions
+		maxSlots = MaxSlots
 	}
 	used, err := usedSlots(workspacePath, sessionName)
 	if err != nil {
@@ -165,7 +169,7 @@ func AllocateSlot(workspacePath, sessionName string, maxSlots int) (int, error) 
 // Returns (0, false) when no stopped container exists or listing fails.
 func FindReusablePersistentSlot(workspacePath, sessionName string, maxSlots int) (int, bool) {
 	if maxSlots == 0 {
-		maxSlots = 10
+		maxSlots = MaxSlots
 	}
 	instances, err := listSlotInstances()
 	if err != nil {
@@ -186,11 +190,12 @@ func FindReusablePersistentSlot(workspacePath, sessionName string, maxSlots int)
 	return best, best != 0
 }
 
-// AllocateSlotFrom finds the next available slot starting from a specific slot number
+// AllocateSlotFrom finds the next available slot from startSlot up to
+// maxSlots, else the lowest available slot from 1 (as AllocateSlot does).
 // Returns the slot number or error if no slots available
 func AllocateSlotFrom(workspacePath, sessionName string, startSlot, maxSlots int) (int, error) {
 	if maxSlots == 0 {
-		maxSlots = 10 // Default max 10 parallel sessions
+		maxSlots = MaxSlots
 	}
 	used, err := usedSlots(workspacePath, sessionName)
 	if err != nil {
@@ -201,7 +206,12 @@ func AllocateSlotFrom(workspacePath, sessionName string, startSlot, maxSlots int
 			return slot, nil
 		}
 	}
-	return 0, fmt.Errorf("no available slots from %d to %d", startSlot, maxSlots)
+	for slot := 1; slot <= maxSlots; slot++ {
+		if !used[slot] {
+			return slot, nil
+		}
+	}
+	return 0, fmt.Errorf("all %d slots are in use", maxSlots)
 }
 
 // IsSlotAvailable checks if a specific slot is available

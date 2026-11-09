@@ -247,13 +247,13 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				// would otherwise fork it on every plain `coi shell`), and it
 				// mirrors what the run pipeline has done since #610.
 				if a.persistent {
-					if reuse, ok := session.FindReusablePersistentSlot(s.absWorkspace, a.sessionName(), 10); ok {
+					if reuse, ok := session.FindReusablePersistentSlot(s.absWorkspace, a.sessionName(), session.MaxSlots); ok {
 						slotNum = reuse
 						fmt.Fprintf(os.Stderr, "Reusing stopped persistent container on slot %d\n", slotNum)
 					}
 				}
 				if slotNum == 0 {
-					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), 10)
+					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), session.MaxSlots)
 					if err != nil {
 						return nil, fmt.Errorf("failed to allocate slot: %w", err)
 					}
@@ -267,7 +267,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				}
 				if !available {
 					orig := slotNum
-					slotNum, err = session.AllocateSlotFrom(s.absWorkspace, a.sessionName(), slotNum+1, 10)
+					slotNum, err = session.AllocateSlotFrom(s.absWorkspace, a.sessionName(), slotNum+1, session.MaxSlots)
 					if err != nil {
 						return nil, fmt.Errorf("slot %d is occupied and failed to find next available slot: %w", orig, err)
 					}

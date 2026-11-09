@@ -615,9 +615,10 @@ type tmpfsSizer interface {
 	SetTmpfsSize(size string) error
 }
 
-// ApplyTmpfsSizing sizes /tmp for a freshly launched, RUNNING container when
-// [limits.disk] tmpfs_size is set. It is the single source of truth for both
-// the shell (session.Setup) and run (coi run) launch paths, so an explicit
+// ApplyTmpfsSizing sizes /tmp for a freshly launched or restarted, RUNNING
+// container when [limits.disk] tmpfs_size is set. It is the single source of
+// truth for both the shell (session.Setup) and run (coi run) launch paths, so
+// an explicit
 // tmpfs_size from a profile applies uniformly regardless of how the container
 // was started (#728/#769). No default is applied: coi does NOT convert /tmp to
 // a RAM-backed tmpfs on its own — that would silently move /tmp off disk and
@@ -635,6 +636,30 @@ func ApplyTmpfsSizing(mgr tmpfsSizer, limitsCfg *config.LimitsConfig, logger fun
 	}
 }
 
+// tmpfsRemover is implemented by a container that can undo SetTmpfsSize.
+type tmpfsRemover interface {
+	RemoveTmpfsSize() (bool, error)
+}
+
+// ReapplyTmpfsSizing is ApplyTmpfsSizing for a restarted persistent container:
+// it also removes the sized /tmp an earlier launch set up when tmpfs_size is
+// no longer set. Non-fatal: logs warnings.
+func ReapplyTmpfsSizing(mgr tmpfsSizer, limitsCfg *config.LimitsConfig, logger func(string)) {
+	if limitsCfg != nil && limitsCfg.Disk.TmpfsSize != "" {
+		ApplyTmpfsSizing(mgr, limitsCfg, logger)
+		return
+	}
+	r, ok := mgr.(tmpfsRemover)
+	if !ok {
+		return
+	}
+	if removed, err := r.RemoveTmpfsSize(); err != nil {
+		logger(fmt.Sprintf("Warning: Failed to remove the sized /tmp: %v", err))
+	} else if removed {
+		logger("Removed the sized /tmp (tmpfs_size is no longer set)")
+	}
+}
+
 // shouldSuppressClaudeAutoMode reports whether coi should write the Claude
 // managed-settings policy that disables auto mode. It is Claude-specific and,
 // per #764, deliberately skipped under interactive permission mode: managed
@@ -649,17 +674,22 @@ func shouldSuppressClaudeAutoMode(toolName, permissionMode string) bool {
 
 // renderClaudeManagedSettings composes the managed-settings policy from the
 // enabled parts: disableAutoMode (auto-mode prompt suppression, #764) and
-// includeCoAuthoredBy=false (AI-attribution stripping at the source for
+// empty commit/PR attribution (AI-attribution stripping at the source for
 // Claude, [git] strip_attribution — this also covers the two cases the
 // commit-msg hook cannot: repos with a local core.hooksPath and
-// `git commit --no-verify`). Returns "" when neither applies.
+// `git commit --no-verify`, plus PR descriptions, which no git hook sees).
+// `attribution` is the current setting; `includeCoAuthoredBy` is the older
+// one it replaced, kept for Claude Code versions that predate it.
+// Returns "" when neither applies.
 func renderClaudeManagedSettings(suppressAutoMode, stripAttribution bool) string {
 	parts := []string{}
 	if suppressAutoMode {
 		parts = append(parts, `"disableAutoMode": "disable"`)
 	}
 	if stripAttribution {
-		parts = append(parts, `"includeCoAuthoredBy": false`)
+		parts = append(parts,
+			`"includeCoAuthoredBy": false`,
+			`"attribution": {"commit": "", "pr": ""}`)
 	}
 	if len(parts) == 0 {
 		return ""
@@ -673,7 +703,7 @@ const claudeManagedSettingsPath = "/etc/claude-code/managed-settings.json"
 // SetupClaudeManagedSettings writes /etc/claude-code/managed-settings.json
 // inside the container — Claude Code's highest-precedence settings tier, which
 // no user/project setting can override. Used for disableAutoMode (the only
-// place it can be set) and includeCoAuthoredBy. A no-op when no policy part is
+// place it can be set) and commit/PR attribution. A no-op when no policy part is
 // enabled. Non-fatal: logs a warning on failure.
 // Accepts ContainerManager (not a sub-interface) because it uses both
 // ExecCommand (ContainerExecution) and CreateFileWithOwner (ContainerFiles).

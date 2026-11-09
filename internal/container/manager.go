@@ -355,7 +355,6 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 	st := AppliedState{
 		Disks:   diskDevicesFrom(c.devices),
 		Nesting: isTrue(c.config["security.nesting"]),
-		Limits:  map[string]string{},
 	}
 	_, st.NestingSet = c.config["security.nesting"]
 	denied := kernelSurfaceDenySyscallSet(c.config["security.syscalls.deny"])
@@ -372,16 +371,34 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 		}
 	}
 	sort.Strings(st.EnvNames)
+	st.Limits = limitsFrom(c)
+	return st, nil
+}
+
+// InstanceLimits returns the limits set in the instance's own config (not
+// its profiles'), keyed like AppliedState.Limits; unset keys are absent.
+// Works on stopped containers.
+func (m *Manager) InstanceLimits() (map[string]string, error) {
+	c, ok := loadInstanceConfig(context.Background(), m.ContainerName, false)
+	if !ok {
+		return nil, fmt.Errorf("could not read the config of %s", m.ContainerName)
+	}
+	return limitsFrom(c), nil
+}
+
+// limitsFrom picks the LimitKeys values out of an instance config.
+func limitsFrom(c *cachedInstanceConfig) map[string]string {
+	out := map[string]string{}
 	for _, k := range LimitKeys {
 		v := c.config[k]
 		if dk, ok := strings.CutPrefix(k, "root."); ok {
 			v = c.devices["root"][dk]
 		}
 		if v != "" {
-			st.Limits[k] = v
+			out[k] = v
 		}
 	}
-	return st, nil
+	return out
 }
 
 // NestingSetLocally reports whether the instance sets security.nesting in its
@@ -439,7 +456,7 @@ func isTrue(v string) bool {
 // tmpfs of the given size in bytes. Kept pure so it is unit-testable.
 func buildTmpMountUnit(sizeBytes int64) string {
 	return fmt.Sprintf(`[Unit]
-Description=coi sized /tmp (tmpfs)
+`+tmpMountDescription+`
 DefaultDependencies=no
 Conflicts=umount.target
 Before=local-fs.target umount.target
@@ -461,8 +478,8 @@ WantedBy=local-fs.target
 // It uses a systemd tmp.mount unit — a normal in-namespace mount the
 // container's own init performs — because Incus silently ignores both a `disk
 // source=tmpfs` device and a raw.lxc `lxc.mount.entry` for unprivileged
-// containers, leaving /tmp at the default size (#733). `enable --now` mounts it
-// immediately and (for persistent containers) again at every subsequent boot.
+// containers, leaving /tmp at the default size (#733). The enabled unit mounts
+// /tmp now and (for persistent containers) again at every subsequent boot.
 func (m *Manager) SetTmpfsSize(size string) error {
 	sizeBytes, err := parseSizeBytes(size)
 	if err != nil {
@@ -471,17 +488,53 @@ func (m *Manager) SetTmpfsSize(size string) error {
 	if sizeBytes <= 0 {
 		return fmt.Errorf("invalid tmpfs size %q: must be greater than 0", size)
 	}
-	// base64 so the unit's newlines/spaces need no shell quoting.
-	b64 := base64.StdEncoding.EncodeToString([]byte(buildTmpMountUnit(sizeBytes)))
-	// rm -f: the image masks tmp.mount (a /dev/null symlink), and the
-	// redirect would write through it.
-	script := "set -e; rm -f /etc/systemd/system/tmp.mount; " +
-		"echo '" + b64 + "' | base64 -d > /etc/systemd/system/tmp.mount; " +
-		"systemctl daemon-reload; systemctl enable --now tmp.mount"
-	if _, err := m.ExecCommand(script, ExecCommandOptions{Capture: true}); err != nil {
+	if _, err := m.ExecCommand(tmpfsSizeScript(tmpMountUnitPath, sizeBytes), ExecCommandOptions{Capture: true}); err != nil {
 		return fmt.Errorf("failed to configure sized /tmp tmpfs: %w", err)
 	}
 	return nil
+}
+
+// RemoveTmpfsSize removes the tmp.mount unit SetTmpfsSize installed and
+// unmounts its /tmp, inside a RUNNING container. Another tmp.mount is left
+// alone. Reports whether coi's unit was there.
+func (m *Manager) RemoveTmpfsSize() (bool, error) {
+	out, err := m.ExecCommand(tmpfsRemoveScript(tmpMountUnitPath), ExecCommandOptions{Capture: true})
+	if err != nil {
+		return false, fmt.Errorf("failed to remove sized /tmp tmpfs: %w", err)
+	}
+	return strings.TrimSpace(out) == "removed", nil
+}
+
+const tmpMountUnitPath = "/etc/systemd/system/tmp.mount"
+
+// tmpMountDescription marks the unit buildTmpMountUnit writes.
+const tmpMountDescription = "Description=coi sized /tmp (tmpfs)"
+
+// tmpfsSizeScript installs the tmp.mount unit at unitPath and mounts it. A
+// changed unit is remounted (`reload` of a mount unit remounts it with the new
+// options): at boot the enabled old unit already mounted /tmp, and `start` does
+// nothing on an active mount. An identical unit (a restarted persistent
+// container with an unchanged size) skips `systemctl daemon-reload` (~0.2 s)
+// and is only started if it is not active.
+func tmpfsSizeScript(unitPath string, sizeBytes int64) string {
+	// base64 so the unit's newlines/spaces need no shell quoting.
+	b64 := base64.StdEncoding.EncodeToString([]byte(buildTmpMountUnit(sizeBytes)))
+	return "set -e; u='" + unitPath + "'; echo '" + b64 + "' | base64 -d > \"$u.coi-new\"; " +
+		"if cmp -s \"$u.coi-new\" \"$u\"; then rm -f \"$u.coi-new\"; " +
+		"systemctl is-active -q tmp.mount || systemctl start tmp.mount; exit 0; fi; " +
+		"mv \"$u.coi-new\" \"$u\"; systemctl daemon-reload; systemctl enable tmp.mount; " +
+		"systemctl reload-or-restart tmp.mount"
+}
+
+// tmpfsRemoveScript disables coi's unit at unitPath and masks tmp.mount in
+// its place, then unmounts /tmp, and prints "removed". It does nothing when
+// there is no unit or the unit is not coi's. Masked, not deleted: the image
+// masks the RAM-backed tmp.mount Ubuntu 25.10+ enables, and a deleted unit
+// would let it mount /tmp at the next boot.
+func tmpfsRemoveScript(unitPath string) string {
+	return "u='" + unitPath + "'; grep -qx '" + tmpMountDescription + "' \"$u\" 2>/dev/null || exit 0; " +
+		"set -e; systemctl disable tmp.mount; ln -sf /dev/null \"$u\"; systemctl daemon-reload; " +
+		"systemctl stop tmp.mount || umount -l /tmp; echo removed"
 }
 
 // parseSizeBytes parses a size string into bytes. It accepts IEC suffixes
