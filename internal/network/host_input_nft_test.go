@@ -184,3 +184,17 @@ func TestWarnResolvedHostAddrs(t *testing.T) {
 		t.Errorf("allow_host_access must not warn, got %v", m.hostAddrWarned)
 	}
 }
+
+// syncResolved (install and every refresh) is what calls the warning.
+func TestSyncResolved_WarnsOnHostAddress(t *testing.T) {
+	stubHostAddrs(t, "10.0.0.1")
+	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeAllowlist}, logger.NewDiscard())
+	m.nft = &stubNft{}
+	m.resolver = NewResolver(&IPCache{Domains: map[string][]string{}, TTLs: map[string]uint32{}})
+	if err := m.syncResolved(map[string][]string{"svc.test": {"10.0.0.1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !m.hostAddrWarned["10.0.0.1"] {
+		t.Errorf("syncResolved must warn about a host address, warned = %v", m.hostAddrWarned)
+	}
+}

@@ -116,6 +116,7 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 			Network: NetworkOptions{Config: &config.NetworkConfig{
 				Mode:                    config.NetworkModeRestricted,
 				AllowLocalNetworkAccess: boolPtr(true),
+				AllowHostAccess:         boolPtr(true),
 				BlockMetadataEndpoint:   boolPtr(true),
 			}},
 		},
@@ -148,7 +149,7 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 		t.Errorf("Env is the caller's to fill (WithEnv), got %+v", g.Env)
 	}
 	n := g.Network
-	if n.Mode != "restricted" || !n.LANAccess || n.LANBlocked || !n.MetadataBlock {
+	if n.Mode != "restricted" || !n.LANAccess || !n.HostAccess || n.LANBlocked || !n.MetadataBlock {
 		t.Errorf("network = %+v", n)
 	}
 }

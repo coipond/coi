@@ -129,6 +129,9 @@ def _input_chain():
 
 
 def _assert_dhcp_renews(coi_binary, name):
+    """The renewal resets the lease. Without it the lease only counts down, so
+    compare with what is left when no renewal happens (before - elapsed)."""
+
     def lease_left():
         r = _exec(coi_binary, name, "ip", "-4", "-o", "addr", "show", "eth0")
         m = re.search(r"valid_lft (\d+)sec", r.stdout + r.stderr)
@@ -136,11 +139,17 @@ def _assert_dhcp_renews(coi_binary, name):
         return int(m.group(1))
 
     before = lease_left()
-    time.sleep(3)
+    start = time.monotonic()
+    time.sleep(8)
     r = _exec(coi_binary, name, "networkctl", "renew", "eth0")
     assert r.returncode == 0, f"networkctl renew failed: {r.stderr}"
     time.sleep(3)
-    assert lease_left() > before, "DHCP renewal must reach the gateway and extend the lease"
+    after = lease_left()
+    without_renewal = before - int(time.monotonic() - start)
+    assert after >= without_renewal + 3, (
+        f"DHCP renewal must reach the gateway and reset the lease: {after}s left, "
+        f"{without_renewal}s expected without a renewal (was {before}s)"
+    )
 
 
 def test_restricted_refuses_host_listener(coi_binary, workspace_dir, cleanup_containers):
