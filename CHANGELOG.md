@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- [Feature] **goose is supported as an opt-in agent (#970)** — `[container.build] agents = [..., "goose"]` installs goose (https://goose-docs.ai) v1.57.0 from its release tarball after a sha256 check, and `[tool] name = "goose"` starts `goose session` with the host's goose config and credential files copied in. The image config turns goose telemetry off and keeps secrets in a file, not the system keyring, unless the copied host `config.yaml` sets these keys.
+
 ### Breaking
 
 - [Breaking] **An alias that ends in `-<N>` resolves to itself** — coi split `-<N>` off as a slot before it tried the whole name, so an alias like `app-2` or `site-2025` was never found, and when an alias `app` also existed, `coi kill app-2` and `coi attach app-2` acted on slot 2 of the other workspace's container (`coi kill` deleted it), and `coi shell app-2` started a session in that workspace. Now the whole name wins. For `coi kill`, `coi attach` and the other commands that act on a running container, `-<N>` is a slot only when no running container has the whole name as its alias and `~/.coi/aliases.json` has no such alias; a registered alias with no running container, or an unreadable `aliases.json`, gives a not-found error instead of a split. For `coi shell`, `-<N>` is a slot only when neither `~/.coi/aliases.json` nor the current workspace's `[container] alias` has the whole name. `-0` is never a slot: `app-0` no longer means `app`. To reach slot 2 of `app` while an alias `app-2` exists, use `coi shell app --slot 2` or the container name.
