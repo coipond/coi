@@ -81,7 +81,7 @@ func hostInputRuleCmds(containerIP, gatewayIP string, mode config.NetworkMode, a
 	for _, a := range accepts {
 		cmds = append(cmds, rule(hostAcceptMatch(a)...))
 	}
-	return append(cmds, rule("reject"))
+	return append(cmds, rule(tcpReset...), rule("reject"))
 }
 
 // hostAcceptMatch is the match and verdict of a hostPortAccept rule.
