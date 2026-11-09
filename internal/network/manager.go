@@ -477,9 +477,10 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 	m.logger.Printf("Gateway IP: %s", gatewayIP)
 
 	// Disable IPv6 inside the container (defence-in-depth; reversible by
-	// in-container root, so the host-side drop below is the enforced boundary).
-	if err := DisableIPv6ForContainer(containerName); err != nil {
-		m.logger.Errorf("Warning: failed to disable IPv6 in container: %v", err)
+	// in-container root, so the host-side drop below is the enforced boundary),
+	// and stop its resolver, which has no reachable upstream (see stopResolverCmd).
+	if err := DisableIPv6AndResolverForContainer(containerName); err != nil {
+		m.logger.Errorf("Warning: failed to disable IPv6 or stop the resolver in container: %v", err)
 	}
 
 	// Enforce the IPv6 egress boundary on the host: drop all forwarded IPv6 from
