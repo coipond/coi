@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -263,6 +264,13 @@ func TestRenderClaudeManagedSettings(t *testing.T) {
 		}
 		if strings.Contains(got, `"includeCoAuthoredBy": false`) != c.wantCoAuthor {
 			t.Errorf("suppress=%v strip=%v: includeCoAuthoredBy presence wrong: %q", c.suppress, c.strip, got)
+		}
+		if strings.Contains(got, `"attribution": {"commit": "", "pr": ""}`) != c.wantCoAuthor {
+			t.Errorf("suppress=%v strip=%v: attribution presence wrong: %q", c.suppress, c.strip, got)
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Errorf("suppress=%v strip=%v: invalid JSON %q: %v", c.suppress, c.strip, got, err)
 		}
 	}
 }

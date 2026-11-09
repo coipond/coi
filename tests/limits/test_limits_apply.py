@@ -427,6 +427,65 @@ limit = "2GiB"
     assert "limits.memory: 2GiB" in config, "Memory limit should persist"
 
 
+def test_limits_follow_config_on_persistent_restart(coi_binary, workspace_dir, cleanup_containers):
+    """Test that a restarted persistent container gets the current config's limits.
+
+    A raised limit is set and a removed one is unset on the next start.
+    """
+    container_name = calculate_container_name(workspace_dir, 1)
+
+    config_dir = Path(workspace_dir) / ".coi"
+    config_dir.mkdir(exist_ok=True)
+    config_file = config_dir / "config.toml"
+
+    def run_and_show_config():
+        result = subprocess.run(
+            [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=workspace_dir,
+        )
+        assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+        result = subprocess.run(
+            ["incus", "config", "show", container_name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, "Should be able to read container config"
+        return result.stdout
+
+    config_file.write_text(
+        """
+[container]
+persistent = true
+
+[limits.cpu]
+count = "1"
+
+[limits.runtime]
+max_processes = 500
+"""
+    )
+    config = run_and_show_config()
+    assert 'limits.cpu: "1"' in config, "CPU limit should be set"
+    assert 'limits.processes: "500"' in config, "Process limit should be set"
+
+    config_file.write_text(
+        """
+[container]
+persistent = true
+
+[limits.cpu]
+count = "2"
+"""
+    )
+    config = run_and_show_config()
+    assert 'limits.cpu: "2"' in config, "Raised CPU limit should apply on restart"
+    assert "limits.processes" not in config, "Removed process limit should be unset"
+
+
 def _default_root_pool_driver():
     """Resolve the storage driver backing the default profile's root disk.
 

@@ -17,8 +17,11 @@ type setupState struct {
 	opts   SetupOptions
 	result *SetupResult
 
-	image         string
-	skipLaunch    bool
+	image      string
+	skipLaunch bool
+	// restarted is set when a stopped persistent container was started again
+	// (not for a running reuse or an explicit --container attach).
+	restarted     bool
 	hasCodeUser   bool
 	resolvedPorts []PublishedPort
 
