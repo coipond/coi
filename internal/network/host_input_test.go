@@ -140,4 +140,3 @@ func TestParseInputRulesForDelete(t *testing.T) {
 		t.Errorf("got %+v", rules)
 	}
 }
-
