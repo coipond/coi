@@ -580,6 +580,10 @@ func sanitizeUntrustedNetwork(n *NetworkConfig, path string) {
 		refuse("network.allow_local_network_access=true")
 		n.AllowLocalNetworkAccess = nil
 	}
+	if n.AllowHostAccess != nil && *n.AllowHostAccess {
+		refuse("network.allow_host_access=true")
+		n.AllowHostAccess = nil
+	}
 	if n.Mode == NetworkModeOpen {
 		refuse("network.mode=open")
 		n.Mode = ""

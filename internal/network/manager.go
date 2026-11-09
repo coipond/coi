@@ -58,6 +58,10 @@ type Manager struct {
 	// Refresher lifecycle (for allowlist mode)
 	refreshCtx    context.Context
 	refreshCancel context.CancelFunc
+
+	// hostAddrWarned holds resolved allowlist addresses that are host
+	// addresses, already warned about (see warnResolvedHostAddrs).
+	hostAddrWarned map[string]bool
 }
 
 // NewManager creates a new network manager with the specified configuration
@@ -192,13 +196,14 @@ func (m *Manager) purgeStaleRulesForIP(containerIP string) {
 	}
 }
 
-// forwardRule is one rule of `nft -a list chain ip coi forward`: its handle
-// and its text without the trailing "# handle N".
-type forwardRule struct{ handle, text string }
+// chainRule is one rule of an `nft -a list` listing of the ip coi table or
+// one of its chains: its handle and its text without the trailing
+// "# handle N".
+type chainRule struct{ handle, text string }
 
 // forwardRulesWithComment lists the forward-chain rules carrying comment, in
 // one nft call. A missing chain holds no rules.
-func forwardRulesWithComment(comment string) ([]forwardRule, error) {
+func forwardRulesWithComment(comment string) ([]chainRule, error) {
 	output, err := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
 	if err != nil {
 		msg := err.Error()
@@ -207,13 +212,13 @@ func forwardRulesWithComment(comment string) ([]forwardRule, error) {
 		}
 		return nil, err
 	}
-	return parseForwardRules(string(output), comment), nil
+	return parseChainRules(string(output), comment), nil
 }
 
-// parseForwardRules picks the rules carrying comment out of an
-// `nft -a list chain` listing.
-func parseForwardRules(listing, comment string) []forwardRule {
-	var rules []forwardRule
+// parseChainRules picks the rules carrying comment out of an `nft -a list`
+// listing of one chain.
+func parseChainRules(listing, comment string) []chainRule {
+	var rules []chainRule
 	want := fmt.Sprintf(`comment "%s"`, comment)
 	for _, line := range strings.Split(listing, "\n") {
 		if !strings.Contains(line, want) {
@@ -227,18 +232,9 @@ func parseForwardRules(listing, comment string) []forwardRule {
 		if i := strings.LastIndex(text, " # handle "); i >= 0 {
 			text = text[:i]
 		}
-		rules = append(rules, forwardRule{handle: h, text: strings.TrimSpace(text)})
+		rules = append(rules, chainRule{handle: h, text: strings.TrimSpace(text)})
 	}
 	return rules
-}
-
-// deleteForwardRuleCmds turns rules into `delete rule` commands.
-func deleteForwardRuleCmds(rules []forwardRule) [][]string {
-	cmds := make([][]string, 0, len(rules))
-	for _, r := range rules {
-		cmds = append(cmds, []string{"delete", "rule", "ip", "coi", "forward", "handle", r.handle})
-	}
-	return cmds
 }
 
 // openModeRuleText is how nft lists EnsureOpenModeRules' accept rule.
@@ -259,7 +255,7 @@ func (m *Manager) applyOpenRules(ip string) {
 		return // already in place (a reused container): nothing to do
 	}
 	if err == nil {
-		cmds := deleteForwardRuleCmds(rules)
+		cmds := deleteChainRuleCmds("forward", rules)
 		cmds = append(cmds, []string{
 			"add", "rule", "ip", "coi", "forward",
 			"ip", "saddr", ip, "accept", "comment", fmt.Sprintf(`"coi-%s"`, ip),
@@ -277,7 +273,8 @@ func (m *Manager) applyOpenRules(ip string) {
 }
 
 // applyRestrictedReplacing applies restricted mode for ip with the deletes of
-// the IP's existing forward rules in the same transaction (see setupRestricted).
+// the IP's existing forward and input rules in the same transaction (see
+// setupRestricted).
 // If the rules can't be listed, or the combined transaction fails (e.g. a rule
 // vanished meanwhile), it falls back to the original purge-then-apply.
 func (m *Manager) applyRestrictedReplacing(ip string) error {
@@ -286,11 +283,21 @@ func (m *Manager) applyRestrictedReplacing(ip string) error {
 		m.purgeStaleRulesForIP(ip)
 		return m.nft.ApplyRestricted(m.config)
 	}
-	if rules, err := forwardRulesWithComment("coi-" + ip); err == nil {
-		if err := nft.applyRestricted(m.config, deleteForwardRuleCmds(rules)); err == nil {
-			m.purgeStaleSideStateForIP(ip)
+	if rules, chains, err := coiChainRules("coi-" + ip); err == nil {
+		// The input-chain rules are replaced in the same transaction, so only
+		// the allowlist sets remain to purge afterwards.
+		prefix := deleteChainRuleCmds("forward", rules["forward"])
+		prefix = append(prefix, deleteChainRuleCmds("input", rules["input"])...)
+		replacing := len(prefix) > 0
+		if !chains["input"] && !config.BoolVal(m.config.AllowHostAccess) {
+			prefix = append(prefix, addInputChainCmd())
+		}
+		if err := nft.applyRestricted(m.config, prefix, true); err == nil {
+			if err := removeAllowlistSetsForIP(ip); err != nil {
+				m.logger.Errorf("Warning: failed to purge stale nft sets for %s: %v", ip, err)
+			}
 			return nil
-		} else if len(rules) == 0 {
+		} else if !replacing {
 			return err // nothing was being replaced: a real rule error
 		}
 	}
@@ -325,10 +332,10 @@ func (m *Manager) teardownRulesAtomically(containerName string) bool {
 	if err != nil {
 		return false
 	}
-	cmds := deleteForwardRuleCmds(parseForwardRules(string(v4), "coi-"+ip))
-	cmds = append(cmds, deleteForwardRuleCmds(parseForwardRules(string(v4), bootBlockComment(containerName)))...)
+	cmds := deleteChainRuleCmds("forward", parseChainRules(string(v4), "coi-"+ip))
+	cmds = append(cmds, deleteChainRuleCmds("forward", parseChainRules(string(v4), bootBlockComment(containerName)))...)
 	if v6, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward"); err == nil {
-		for _, r := range parseForwardRules(string(v6), ipv6BlockComment(containerName)) {
+		for _, r := range parseChainRules(string(v6), ipv6BlockComment(containerName)) {
 			cmds = append(cmds, []string{"delete", "rule", "ip6", "coi", "forward", "handle", r.handle})
 		}
 	} else if !strings.Contains(err.Error(), "No such file or directory") {
@@ -590,6 +597,8 @@ func (m *Manager) syncResolved(domainIPs map[string][]string) error {
 		m.logger.Printf("  %s -> %v", domain, ips)
 	}
 
+	m.warnResolvedHostAddrs(domainIPs)
+
 	if m.containerName == "" {
 		return nil // no container to write to (unit tests)
 	}
@@ -597,6 +606,29 @@ func (m *Manager) syncResolved(domainIPs map[string][]string) error {
 		return fmt.Errorf("failed to write the container's hosts entries: %w", err)
 	}
 	return nil
+}
+
+// warnResolvedHostAddrs warns, once per address, when an allowlisted name
+// resolves to an address of the host itself. The input chain opens only
+// literal allowed_domains entries on the host, so such a name stays closed.
+func (m *Manager) warnResolvedHostAddrs(domainIPs map[string][]string) {
+	if config.BoolVal(m.config.AllowHostAccess) {
+		return
+	}
+	host := hostIPv4Addrs()
+	for domain, ips := range domainIPs {
+		for _, ip := range ips {
+			if !host[ip] || m.hostAddrWarned[ip] {
+				continue
+			}
+			if m.hostAddrWarned == nil {
+				m.hostAddrWarned = make(map[string]bool)
+			}
+			m.hostAddrWarned[ip] = true
+			m.logger.Errorf("Warning: allowed_domains name %s resolves to %s, an address of this host, which stays closed; "+
+				"list the address itself with ports (e.g. %s:443), or set network.allow_host_access", domain, ip, ip)
+		}
+	}
 }
 
 // nftSetAllower exposes the nft manager's set writer. Falls back to a no-op when
