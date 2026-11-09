@@ -386,6 +386,70 @@ refresh_interval_minutes = 30
 
         assert container_name, f"Could not find container name in output: {output}"
 
+        # TEMP DIAG (remove before merge): why nslookup hangs on 26.04.
+        import time
+
+        from support.helpers import container_ipv4
+
+        def sh(cmd, t=40):
+            try:
+                r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t)
+                return f"$ {cmd}\n{r.stdout}{r.stderr}[rc={r.returncode}]\n"
+            except subprocess.TimeoutExpired as e:
+                return f"$ {cmd}\nTIMEOUT {e.stdout!r} {e.stderr!r}\n"
+
+        ip = container_ipv4(container_name)
+        sh(
+            "command -v tcpdump || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y tcpdump",
+            90,
+        )
+        cx = f"{coi_binary} container exec {container_name} --"
+        nst = "nstat -az IcmpOutRateLimitHost IcmpOutRateLimitGlobal IcmpOutDestUnreachs IcmpMsgOutType3"
+        d = [
+            f"ip={ip}\n",
+            sh(
+                "uname -r; sysctl net.ipv4.icmp_ratelimit net.ipv4.icmp_ratemask net.ipv4.icmp_msgs_per_sec net.ipv4.icmp_msgs_burst"
+            ),
+        ]
+        d.append(
+            sh(
+                f"sudo timeout 5 tcpdump -lni any -c 300 src {ip} 2>&1 | awk '{{print $2, $7, $8}}' | sort | uniq -c | sort -rn | head -40"
+            )
+        )
+        for label in ("at-start", "after-30s"):
+            if label == "after-30s":
+                time.sleep(30)
+                d.append(
+                    sh(
+                        f"sudo timeout 5 tcpdump -lni any -c 300 src {ip} 2>&1 | awk '{{print $2, $7, $8}}' | sort | uniq -c | sort -rn | head -40"
+                    )
+                )
+            d.append(f"--- {label}\n")
+            d.append(sh(nst))
+            cap = subprocess.Popen(
+                f"sudo timeout 22 tcpdump -lni any -tt 'host {ip} and (port 53 or icmp)' 2>&1",
+                shell=True,
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            time.sleep(1)
+            t0 = time.monotonic()
+            d.append(sh(f"{cx} timeout 20 nslookup -debug example.com 8.8.8.8", 30))
+            d.append(f"nslookup took {time.monotonic() - t0:.2f}s\n")
+            d.append(sh(nst))
+            d.append(cap.communicate()[0])
+        d.append(
+            sh(f"{cx} systemctl list-units --type=service --state=running --no-legend --plain")
+        )
+        d.append(sh(f"{cx} ss -tuanp"))
+        d.append(sh(f"{cx} cat /etc/os-release /etc/resolv.conf"))
+        d.append(
+            sh(
+                f"sudo nft list chain ip coi input; sudo nft list ruleset | grep -n -i -B2 -A2 '{ip}' | head -80"
+            )
+        )
+        raise AssertionError("TEMP DIAG\n" + "".join(d))
+
         # Test: nslookup query to Google DNS (allowed)
         result = subprocess.run(
             [
