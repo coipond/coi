@@ -346,6 +346,17 @@ func applyHostFirewall(mode config.NetworkMode, allowLocalNetworkAccess bool, co
 		// "allowed_ports:" wording misdirect.
 		return fmt.Errorf("network.hosts %s: invalid ports: %w", entry.IP, err)
 	}
+	if hostIPv4Addrs()[entry.IP] {
+		// An address of the host itself is reached through the input chain,
+		// which opens it only on the entry's ports (else allowed_ports).
+		if ports := hostAcceptPorts(mode, intsToPortRanges(hostPorts)); len(ports) > 0 {
+			if err := insertHostAccept(containerIP, hostPortAccept{IP: entry.IP, Ports: ports}); err != nil {
+				return fmt.Errorf("failed to allow host address %s in %s mode: %w", entry.IP, mode, err)
+			}
+		} else {
+			logWarnf("Warning: network.hosts %s is an address of this host; give it ports (or set allowed_ports) to reach it, or set network.allow_host_access", entry.IP)
+		}
+	}
 	switch {
 	case mode == config.NetworkModeAllowlist && class == hostPublic:
 		// Allowlist mode keeps addresses in two parallel sets: the address-only set

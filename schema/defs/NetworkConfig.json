@@ -30,6 +30,10 @@
       "type": "boolean",
       "description": "Allow established connections from the entire local network, not just the gateway"
     },
+    "allow_host_access": {
+      "type": "boolean",
+      "description": "Let a restricted or allowlist container reach every service on the host itself (the bridge gateway and the host's other addresses). Default false: the host accepts only DHCP and, in restricted mode, DNS from the container, plus the ports of network.hosts and allowed_domains entries that name a host address. Honored only from trusted-scope config."
+    },
     "use_sudo": {
       "type": "boolean",
       "description": "Whether Coi may invoke sudo for network operations (nft/iptables). Defaults to true. Set false to decline passwordless sudo: restricted/allowlist modes then error out (no silent downgrade) and only \"open\" mode works."

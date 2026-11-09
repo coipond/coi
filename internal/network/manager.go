@@ -277,7 +277,7 @@ func (m *Manager) applyOpenRules(ip string) {
 }
 
 // applyRestrictedReplacing applies restricted mode for ip with the deletes of
-// the IP's existing forward rules in the same transaction (see setupRestricted).
+// the IP's existing forward and input rules in the same transaction (see setupRestricted).
 // If the rules can't be listed, or the combined transaction fails (e.g. a rule
 // vanished meanwhile), it falls back to the original purge-then-apply.
 func (m *Manager) applyRestrictedReplacing(ip string) error {
@@ -286,11 +286,21 @@ func (m *Manager) applyRestrictedReplacing(ip string) error {
 		m.purgeStaleRulesForIP(ip)
 		return m.nft.ApplyRestricted(m.config)
 	}
-	if rules, err := forwardRulesWithComment("coi-" + ip); err == nil {
-		if err := nft.applyRestricted(m.config, deleteForwardRuleCmds(rules)); err == nil {
-			m.purgeStaleSideStateForIP(ip)
+	rules, err := forwardRulesWithComment("coi-" + ip)
+	var inputDeletes [][]string
+	if err == nil {
+		inputDeletes, err = deleteInputRuleCmds("coi-" + ip)
+	}
+	if err == nil {
+		// The input-chain rules are replaced in the same transaction, so only
+		// the allowlist sets remain to purge afterwards.
+		prefix := append(deleteForwardRuleCmds(rules), inputDeletes...)
+		if err := nft.applyRestricted(m.config, prefix); err == nil {
+			if err := removeAllowlistSetsForIP(ip); err != nil {
+				m.logger.Errorf("Warning: failed to purge stale nft sets for %s: %v", ip, err)
+			}
 			return nil
-		} else if len(rules) == 0 {
+		} else if len(prefix) == 0 {
 			return err // nothing was being replaced: a real rule error
 		}
 	}

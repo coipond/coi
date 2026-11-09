@@ -96,6 +96,12 @@ func (f *NftManager) applyRestricted(cfg *config.NetworkConfig, prefix [][]strin
 		logWarnf("Warning: failed to ensure base rules: %v", err)
 	}
 
+	if !config.BoolVal(cfg.AllowHostAccess) {
+		if err := ensureCOIInputChain(); err != nil {
+			return err
+		}
+	}
+
 	// Every rule below is collected and applied as one transaction (together
 	// with the prefix deletes): all of the policy or none of it.
 	f.beginBatch(prefix)
@@ -164,7 +170,7 @@ func (f *NftManager) addRestrictedRules(cfg *config.NetworkConfig, dnsServers []
 		return fmt.Errorf("failed to add default allow rule: %w", err)
 	}
 
-	return nil
+	return f.addHostInputRules(cfg, config.NetworkModeRestricted, nil)
 }
 
 // ApplyAllowlist applies allowlist mode rules: block all DNS, accept traffic to
@@ -243,6 +249,14 @@ func (f *NftManager) ApplyAllowlist(cfg *config.NetworkConfig, _ []string) error
 	// of them apply, or none do and the boot block keeps the container dark.
 	f.beginBatch(nil)
 	if err := f.addAllowlistRules(cfg, allowedPorts); err != nil {
+		f.abortBatch()
+		return err
+	}
+	var hostAccepts []hostPortAccept
+	if !config.BoolVal(cfg.AllowHostAccess) {
+		hostAccepts = allowlistHostAccepts(policy.staticTuples(), intsToPortRanges(allowedPorts), hostIPv4Addrs())
+	}
+	if err := f.addHostInputRules(cfg, config.NetworkModeAllowlist, hostAccepts); err != nil {
 		f.abortBatch()
 		return err
 	}
@@ -328,7 +342,7 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 }
 
 // RemoveRules removes every host-side artefact Coi installed for this container:
-// forward rules, allowlist sets and the input-chain DNS block. See
+// forward rules, allowlist sets and the input-chain rules. See
 // DeleteCOIFilterRulesForIP, which is the shared implementation and the same path
 // kill and orphan cleanup take.
 func (f *NftManager) RemoveRules() error {
@@ -825,18 +839,18 @@ func ListCOIFilterRuleIPs() (map[string][]string, error) {
 }
 
 // DeleteCOIFilterRulesForIP removes every host-side artefact Coi installed for a
-// container IP: its forward rules, then its input-chain DNS block, then its
-// allowlist sets.
+// container IP: its forward rules, then its input-chain rules (host filter and
+// DNS block), then its allowlist sets.
 //
 // This is the single teardown entry point used by kill, orphan cleanup and
-// setup's stale-rule purge, so it must account for everything allowlist mode
-// creates: forward rules, the input-chain DNS block, and the two allowlist sets.
+// setup's stale-rule purge, so it must account for everything the modes
+// create: forward rules, input-chain rules, and the two allowlist sets.
 //
 // Rules go first, in both chains — the kernel refuses to drop a set that a rule
 // still references.
 //
-// It is safe for containers that never had sets or a DNS block (open and
-// restricted mode): removing something that was never created is a no-op.
+// It is safe for containers that never had sets or input rules (open mode):
+// removing something that was never created is a no-op.
 func DeleteCOIFilterRulesForIP(ip string) error {
 	if ip == "" {
 		return nil
