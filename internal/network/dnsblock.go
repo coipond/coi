@@ -38,8 +38,7 @@ func ensureCOIInputChain() error {
 	if _, err := runNFTCommand("list", "chain", "ip", "coi", "input"); err == nil {
 		return nil
 	}
-	if _, err := runNFTCommand("add", "chain", "ip", "coi", "input",
-		"{", "type", "filter", "hook", "input", "priority", "filter", ";", "policy", "accept", ";", "}"); err != nil {
+	if _, err := runNFTCommand(addInputChainCmd()...); err != nil {
 		return fmt.Errorf("failed to create nft chain ip coi input: %w", err)
 	}
 	return nil
@@ -83,7 +82,25 @@ func removeInputRulesForIP(containerIP string) error {
 	if containerIP == "" {
 		return nil
 	}
+	cmds, err := deleteInputRuleCmds("coi-" + containerIP)
+	if err != nil || len(cmds) == 0 {
+		return nil // chain unreadable or no rules — nothing to remove
+	}
+	// One transaction for all of the container's rules. If it fails (a rule
+	// vanished meanwhile), delete them one by one.
+	if runNFTScript(cmds) == nil {
+		return nil
+	}
 	return deleteNFTRulesInChain("coi", "input", "coi-"+containerIP)
+}
+
+// addInputChainCmd returns the nft command that creates the coi input chain
+// (see ensureCOIInputChain).
+func addInputChainCmd() []string {
+	return []string{
+		"add", "chain", "ip", "coi", "input",
+		"{", "type", "filter", "hook", "input", "priority", "filter", ";", "policy", "accept", ";", "}",
+	}
 }
 
 // deleteNFTRulesInChain removes every rule carrying comment from the given

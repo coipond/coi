@@ -201,3 +201,190 @@ func TestResolveAliasForLaunch_CWDFallback_SlotSuffix(t *testing.T) {
 		t.Errorf("Slot = %d, want 3", resolved.Slot)
 	}
 }
+
+func TestResolveAliasForLaunch_WholeNameWinsOverSlotSuffix(t *testing.T) {
+	tmpHome := withTempHome(t)
+	t.Chdir(t.TempDir()) // CWD without .coi/config.toml: no fallback
+
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for a, ws := range map[string]string{"app-2": "/ws/a", "app": "/ws/b", "site-2025": "/ws/s", "web": "/ws/w"} {
+		if err := reg.Register(a, ws, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		arg       string
+		workspace string
+		slot      int
+	}{
+		{"app-2", "/ws/a", 0},   // whole name is an alias: no split
+		{"app-2-3", "/ws/a", 3}, // no alias "app-2-3": split to alias app-2, slot 3
+		{"site-2025", "/ws/s", 0},
+		{"app-3", "/ws/b", 3}, // no alias "app-3": split to alias app, slot 3
+		{"web-2", "/ws/w", 2}, // plain alias-N keeps working
+	}
+	for _, tt := range tests {
+		t.Run(tt.arg, func(t *testing.T) {
+			got, err := ResolveAliasForLaunch(tt.arg)
+			if err != nil {
+				t.Fatalf("ResolveAliasForLaunch(%q) error: %v", tt.arg, err)
+			}
+			if got.Workspace != tt.workspace || got.Slot != tt.slot {
+				t.Errorf("ResolveAliasForLaunch(%q) = {%s, slot %d}, want {%s, slot %d}",
+					tt.arg, got.Workspace, got.Slot, tt.workspace, tt.slot)
+			}
+		})
+	}
+}
+
+func TestResolveAliasForLaunch_CWDFallback_WholeNameWithDigits(t *testing.T) {
+	withTempHome(t)
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".coi", "config.toml"), []byte("[container]\nalias = \"app-2\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+
+	got, err := ResolveAliasForLaunch("app-2")
+	if err != nil {
+		t.Fatalf("ResolveAliasForLaunch(\"app-2\") error: %v", err)
+	}
+	abs, _ := filepath.Abs(workspace)
+	if got.Workspace != abs || got.Slot != 0 {
+		t.Errorf("got {%s, slot %d}, want {%s, slot 0}", got.Workspace, got.Slot, abs)
+	}
+}
+
+// fakeIncus puts an `incus` on PATH that answers `list` with listJSON.
+func fakeIncus(t *testing.T, listJSON string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "list.json"), []byte(listJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncat " + filepath.Join(dir, "list.json") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestResolveAliasForRunning_WholeNameWinsOverSlotSuffix(t *testing.T) {
+	withTempHome(t)
+	fakeIncus(t, `[
+ {"name":"coi-aaaaaaaa-1","status":"Running","config":{"user.coi.alias":"app-2"}},
+ {"name":"coi-bbbbbbbb-1","status":"Running","config":{"user.coi.alias":"app"}},
+ {"name":"coi-bbbbbbbb-2","status":"Running","config":{"user.coi.alias":"app"}},
+ {"name":"coi-cccccccc-1","status":"Running","config":{"user.coi.alias":"site-2025"}}
+]`)
+	tests := map[string]string{
+		"app-2":     "coi-aaaaaaaa-1",
+		"site-2025": "coi-cccccccc-1",
+		"app-1":     "coi-bbbbbbbb-1", // no alias "app-1": split still works
+	}
+	for arg, want := range tests {
+		t.Run(arg, func(t *testing.T) {
+			got, err := ResolveAliasForRunning(arg)
+			if err != nil {
+				t.Fatalf("ResolveAliasForRunning(%q) error: %v", arg, err)
+			}
+			if got != want {
+				t.Errorf("ResolveAliasForRunning(%q) = %q, want %q", arg, got, want)
+			}
+		})
+	}
+}
+
+func TestResolveAliasForRunning_RegisteredStoppedAliasNotSplit(t *testing.T) {
+	tmpHome := withTempHome(t)
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register("app-2", "/ws/a", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	fakeIncus(t, `[
+ {"name":"coi-aaaaaaaa-1","status":"Stopped","config":{"user.coi.alias":"app-2"}},
+ {"name":"coi-bbbbbbbb-2","status":"Running","config":{"user.coi.alias":"app"}}
+]`)
+
+	got, err := ResolveAliasForRunning("app-2")
+	if err == nil {
+		t.Fatalf("ResolveAliasForRunning(\"app-2\") = %q, want error", got)
+	}
+	if !strings.Contains(err.Error(), `"app-2" not found`) {
+		t.Errorf("error = %q, want it to name alias \"app-2\"", err)
+	}
+}
+
+func TestResolveAliasForRunning_SlotZeroNotSplit(t *testing.T) {
+	withTempHome(t)
+	fakeIncus(t, `[
+ {"name":"coi-bbbbbbbb-1","status":"Running","config":{"user.coi.alias":"app"}}
+]`)
+
+	got, err := ResolveAliasForRunning("app-0")
+	if err == nil {
+		t.Fatalf("ResolveAliasForRunning(\"app-0\") = %q, want error", got)
+	}
+}
+
+func TestResolveAliasForRunning_UnreadableRegistryNotSplit(t *testing.T) {
+	tmpHome := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpHome, ".coi", "aliases.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fakeIncus(t, `[
+ {"name":"coi-bbbbbbbb-2","status":"Running","config":{"user.coi.alias":"app"}}
+]`)
+
+	got, err := ResolveAliasForRunning("app-2")
+	if err == nil {
+		t.Fatalf("ResolveAliasForRunning(\"app-2\") = %q, want error", got)
+	}
+}
+
+func TestResolveAliasForLaunch_SlotZeroNotSplit(t *testing.T) {
+	tmpHome := withTempHome(t)
+	t.Chdir(t.TempDir()) // CWD without .coi/config.toml: no fallback
+
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register("app", "/ws/b", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := ResolveAliasForLaunch("app-0"); err == nil {
+		t.Errorf("ResolveAliasForLaunch(\"app-0\") = {%s, slot %d}, want error", got.Workspace, got.Slot)
+	}
+
+	got, err := ResolveAliasForLaunch("app-1")
+	if err != nil {
+		t.Fatalf("ResolveAliasForLaunch(\"app-1\") error: %v", err)
+	}
+	if got.Workspace != "/ws/b" || got.Slot != 1 {
+		t.Errorf("ResolveAliasForLaunch(\"app-1\") = {%s, slot %d}, want {/ws/b, slot 1}", got.Workspace, got.Slot)
+	}
+}

@@ -18,7 +18,7 @@ import (
 type ResolvedAlias struct {
 	Workspace string
 	Profile   string
-	Slot      int // >0 if alias had a slot suffix (e.g. "myproject-2")
+	Slot      int // >0 if the argument was split into alias + slot (e.g. "myproject-2")
 }
 
 // containerNamePattern matches the deterministic container name format: <prefix><hex8>-<digits>
@@ -40,12 +40,21 @@ func ResolveAliasForRunning(arg string) (string, error) {
 		return arg, nil
 	}
 
-	// 2. Try alias with optional slot suffix
-	alias, slotNum := splitAliasSlot(arg)
-
-	containers, err := FindContainersByAlias(alias)
+	// 2. Try the whole argument as an alias. Split a slot suffix (alias-N,
+	// N > 0) only when no running container has that alias and no
+	// registered alias has that name.
+	running, err := runningAliases()
 	if err != nil {
 		return "", fmt.Errorf("failed to find containers by alias: %w", err)
+	}
+
+	alias, slotNum := arg, 0
+	containers := running.withAlias(alias)
+	if len(containers) == 0 && !mayBeRegisteredAlias(arg) {
+		if a, s := splitAliasSlot(arg); s > 0 {
+			alias, slotNum = a, s
+			containers = running.withAlias(alias)
+		}
 	}
 
 	if len(containers) == 0 {
@@ -74,21 +83,34 @@ func ResolveAliasForRunning(arg string) (string, error) {
 // ResolveAliasForLaunch looks up the alias registry to find the workspace and profile.
 // Returns an error if the alias is not found in the registry.
 func ResolveAliasForLaunch(arg string) (*ResolvedAlias, error) {
-	alias, slotNum := splitAliasSlot(arg)
-
 	reg, err := Load()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load alias registry: %w", err)
 	}
 
+	cwd, cwdErr := os.Getwd()
+	projectAlias := ""
+	if cwdErr == nil {
+		projectAlias = loadProjectAlias(cwd)
+	}
+
+	// The whole argument wins; split a slot suffix (alias-N) only when no
+	// alias has that name.
+	alias, slotNum := arg, 0
 	entry := reg.Lookup(alias)
+	if entry == nil && projectAlias != arg {
+		if a, s := splitAliasSlot(arg); s > 0 {
+			alias, slotNum = a, s
+			entry = reg.Lookup(alias)
+		}
+	}
+
 	if entry == nil {
 		// Fallback: check CWD project config for matching alias.
 		// This handles the chicken-and-egg case where the user runs
 		// `coi shell <alias> --profile X` before the alias has been registered.
-		cwd, cwdErr := os.Getwd()
 		if cwdErr == nil {
-			if projectAlias := loadProjectAlias(cwd); projectAlias == alias {
+			if projectAlias == alias {
 				absWorkspace, err := filepath.Abs(cwd)
 				if err != nil {
 					return nil, fmt.Errorf("failed to resolve workspace path for alias %q: %w", alias, err)
@@ -127,9 +149,28 @@ func loadProjectAlias(dir string) string {
 	return cfg.Container.Alias
 }
 
-// FindContainersByAlias queries Incus for Coi containers whose user.coi.alias
-// config key matches the given alias.
-func FindContainersByAlias(alias string) ([]string, error) {
+// aliasedContainer is a running Coi container and its user.coi.alias value.
+type aliasedContainer struct {
+	name  string
+	alias string
+}
+
+type aliasedContainers []aliasedContainer
+
+// withAlias returns the names of the containers whose alias is alias.
+func (cs aliasedContainers) withAlias(alias string) []string {
+	var matches []string
+	for _, c := range cs {
+		if c.alias == alias {
+			matches = append(matches, c.name)
+		}
+	}
+	return matches
+}
+
+// runningAliases lists running Coi containers with their aliases in one
+// Incus call.
+func runningAliases() (aliasedContainers, error) {
 	prefix := session.GetContainerPrefix()
 	pattern := fmt.Sprintf("^%s", prefix)
 
@@ -143,7 +184,7 @@ func FindContainersByAlias(alias string) ([]string, error) {
 		return nil, fmt.Errorf("failed to parse container list: %w", err)
 	}
 
-	var matches []string
+	var running aliasedContainers
 	for _, c := range containers {
 		name, _ := c["name"].(string)
 		status, _ := c["status"].(string)
@@ -156,12 +197,18 @@ func FindContainersByAlias(alias string) ([]string, error) {
 		cfg, _ := c["config"].(map[string]interface{})
 		containerAlias, _ := cfg["user.coi.alias"].(string)
 
-		if containerAlias == alias {
-			matches = append(matches, name)
-		}
+		running = append(running, aliasedContainer{name: name, alias: containerAlias})
 	}
 
-	return matches, nil
+	return running, nil
+}
+
+// mayBeRegisteredAlias reports whether the alias registry has an entry named
+// alias. An unreadable registry counts as an entry, so a load error never
+// lets the slot split pick another workspace's container.
+func mayBeRegisteredAlias(alias string) bool {
+	reg, err := Load()
+	return err != nil || reg.Lookup(alias) != nil
 }
 
 // splitAliasSlot splits "myproject-2" into ("myproject", 2).

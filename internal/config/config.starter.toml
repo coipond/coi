@@ -58,6 +58,7 @@
 # block_private_networks = true  # block RFC1918 / link-local from the container
 # block_metadata_endpoint = true # block 169.254.169.254 (cloud metadata/IAM)
 # allow_local_network_access = false
+# allow_host_access = false     # let the container reach services on the host itself
 # refresh_interval_minutes = 30  # re-resolve allowlist domains (allowlist mode)
 # allowlist mode only — domains/IPs the container may reach:
 # allowed_domains = ["registry.npmjs.org", "api.anthropic.com"]

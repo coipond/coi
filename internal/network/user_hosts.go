@@ -65,6 +65,9 @@ func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 // GLOBAL allowed_ports), so a per-host cap would do nothing. It fails closed with
 // a message that says why and what to do instead.
 //
+// An address of the host itself is the exception, in every class: the input
+// chain opens it only on its port scope (see checkHostAddressPorts).
+//
 // A private host in allowlist mode without allow_local_network_access gets a
 // targeted accept ahead of the RFC1918 block, which must be port-scoped (the
 // entry's ports, else the global allowed_ports) and must not include the DNS
@@ -76,6 +79,9 @@ func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 // entries only at hosts you trust not to resolve for the container.
 func checkHostPortsEnforceable(mode config.NetworkMode, allowLocalNetworkAccess bool, entry config.HostEntry, allowedPorts []int) error {
 	class := classifyHostIP(entry.IP)
+	if ok, err := checkHostAddressPorts(mode, entry, allowedPorts); ok {
+		return err
+	}
 	if mode == config.NetworkModeAllowlist && class == hostPrivate && !allowLocalNetworkAccess {
 		scope := entry.Ports
 		if len(scope) == 0 {
@@ -116,6 +122,35 @@ func checkHostPortsEnforceable(mode config.NetworkMode, allowLocalNetworkAccess 
 		return fmt.Errorf("network.hosts: %s ports=%v cannot be enforced for this address in %s mode",
 			entry.IP, entry.Ports, mode)
 	}
+}
+
+// checkHostAddressPorts handles an entry that names an address of the host
+// itself, in restricted and allowlist mode: the input chain opens it on the
+// entry's ports (else allowed_ports), so a port scope is enforceable whatever
+// the address class. Allowlist mode refuses 53 and 853 there, as for a LAN
+// host. ok is false when the entry is not a host address, or has no port scope
+// (then checkHostPortsEnforceable applies its class rules, and the host stays
+// closed).
+func checkHostAddressPorts(mode config.NetworkMode, entry config.HostEntry, allowedPorts []int) (ok bool, err error) {
+	if mode != config.NetworkModeRestricted && mode != config.NetworkModeAllowlist {
+		return false, nil
+	}
+	scope := entry.Ports
+	if len(scope) == 0 {
+		scope = allowedPorts
+	}
+	if len(scope) == 0 || !hostIPv4Addrs()[entry.IP] {
+		return false, nil
+	}
+	if mode == config.NetworkModeAllowlist {
+		for _, p := range scope {
+			if p == 53 || p == 853 {
+				return true, fmt.Errorf("network.hosts: %s may not be opened on port %d in allowlist mode, which blocks "+
+					"all DNS by design (names resolve on the host into /etc/hosts) — drop %d from its ports", entry.IP, p, p)
+			}
+		}
+	}
+	return true, nil
 }
 
 // ApplyUserHosts writes the static host entries ([[network.hosts]] / `coi hosts`,
@@ -345,6 +380,17 @@ func applyHostFirewall(mode config.NetworkMode, allowLocalNetworkAccess bool, co
 		// but attribute it to the host entry rather than let validateAllowedPorts'
 		// "allowed_ports:" wording misdirect.
 		return fmt.Errorf("network.hosts %s: invalid ports: %w", entry.IP, err)
+	}
+	if hostIPv4Addrs()[entry.IP] {
+		// An address of the host itself is reached through the input chain,
+		// which opens it only on the entry's ports (else allowed_ports).
+		if ports := hostAcceptPorts(mode, intsToPortRanges(hostPorts)); len(ports) > 0 {
+			if err := insertHostAccept(containerIP, hostPortAccept{IP: entry.IP, Ports: ports}); err != nil {
+				return fmt.Errorf("failed to allow host address %s in %s mode: %w", entry.IP, mode, err)
+			}
+		} else {
+			logWarnf("Warning: network.hosts %s is an address of this host; give it ports (or set allowed_ports) to reach it, or set network.allow_host_access", entry.IP)
+		}
 	}
 	switch {
 	case mode == config.NetworkModeAllowlist && class == hostPublic:

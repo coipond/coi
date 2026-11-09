@@ -75,6 +75,7 @@ func TestSanitizeUntrustedConfig_DropsDowngrades(t *testing.T) {
 	cfg.Network.BlockPrivateNetworks = &no
 	cfg.Network.BlockMetadataEndpoint = &no
 	cfg.Network.AllowLocalNetworkAccess = &yes
+	cfg.Network.AllowHostAccess = &yes
 	cfg.Network.Mode = NetworkModeOpen
 
 	sanitizeUntrustedConfig(cfg, "/ws/.coi/config.toml")
@@ -87,6 +88,9 @@ func TestSanitizeUntrustedConfig_DropsDowngrades(t *testing.T) {
 	}
 	if cfg.Network.AllowLocalNetworkAccess != nil {
 		t.Error("allow_local_network_access=true should be dropped")
+	}
+	if cfg.Network.AllowHostAccess != nil {
+		t.Error("allow_host_access=true should be dropped")
 	}
 	if cfg.Network.Mode == NetworkModeOpen {
 		t.Error("mode=open should be dropped")

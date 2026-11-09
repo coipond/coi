@@ -603,6 +603,7 @@ func mergeNetworkInto(dst *NetworkConfig, src *NetworkConfig) {
 	mergePtr(&dst.BlockPrivateNetworks, src.BlockPrivateNetworks)
 	mergePtr(&dst.BlockMetadataEndpoint, src.BlockMetadataEndpoint)
 	mergePtr(&dst.AllowLocalNetworkAccess, src.AllowLocalNetworkAccess)
+	mergePtr(&dst.AllowHostAccess, src.AllowHostAccess)
 	mergePtr(&dst.UseSudo, src.UseSudo)
 	mergeSlice(&dst.AllowedDomains, src.AllowedDomains)
 	mergePtr(&dst.RefreshIntervalMinutes, src.RefreshIntervalMinutes)
