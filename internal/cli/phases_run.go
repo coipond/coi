@@ -845,7 +845,7 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 			if err != nil {
 				return nil, err
 			}
-			incusArgs = append(incusArgs, "--", "bash", "-c", strings.Join(argv, " "))
+			incusArgs = append(incusArgs, "--", "bash", "-c", guardToolInstalled(t.Name(), strings.Join(argv, " ")))
 
 			// A ToolWithHeadlessPrompt tool (opencode) creates its own session
 			// id, so coi's id would mislead there.

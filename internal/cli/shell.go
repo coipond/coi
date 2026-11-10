@@ -286,6 +286,30 @@ func buildCLICommand(sessionID string, useResumeFlag, restoreOnly bool, sessions
 	return strings.Join(cmd, " ")
 }
 
+// toolMissingExitCode is the status a launch exits with when the tool binary
+// is not in the container: bash's own "command not found" status.
+const toolMissingExitCode = 127
+
+// guardToolInstalled wraps cmd so that, when its binary (the first word) is
+// not in the container, the launch prints coi's hint instead of bash's
+// "command not found", with the same status. The check runs in the launch
+// shell after the pre-launch steps, so a tool they install still passes.
+// command -v also checks an absolute [tool] binary for the exec bit.
+// The result goes inside the tmux wrapper's single quotes: no quotes or $.
+func guardToolInstalled(toolName, cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return cmd
+	}
+	binary := fields[0]
+	return fmt.Sprintf(
+		"if command -v %[1]s >/dev/null 2>&1; then %[2]s; else echo coi: %[1]s not found in this container. "+
+			"If %[3]s is missing from the image, add it to \\[container.build\\] agents, "+
+			"run coi build --force, then recreate a persistent container. >&2; (exit %[4]d); fi",
+		binary, cmd, toolName, toolMissingExitCode,
+	)
+}
+
 // buildContainerEnv constructs the environment variables map and user pointer for container execution.
 // It sets HOME, TERM (sanitized), IS_SANDBOX, merges config environment, resolves forward_env, and
 // runs env_commands (host commands whose trimmed stdout is injected). A failing env_command is fatal.
@@ -491,7 +515,7 @@ func (a *App) prepareDirect(result *session.SetupResult, containerEnv map[string
 		Cwd:  workspacePath,
 		Env:  containerEnv,
 	})
-	cmdToRun := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
+	cmdToRun := guardToolInstalled(t.Name(), buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t))
 
 	// Run pre-launch commands (e.g., symlink creation) before the tool starts
 	if err := runPreLaunch(result.Manager, t, container.ExecCommandOptions{
@@ -599,7 +623,7 @@ func (a *App) prepareTmux(result *session.SetupResult, containerEnv map[string]s
 		Cwd:  l.workspacePath,
 		Env:  containerEnv,
 	})
-	cliCmd := buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t)
+	cliCmd := guardToolInstalled(t.Name(), buildCLICommand(sessionID, useResumeFlag, restoreOnly, sessionsDir, resumeID, t))
 
 	// Run pre-launch commands (e.g., symlink creation) before the tool starts
 	if err := runPreLaunch(result.Manager, t, container.ExecCommandOptions{
