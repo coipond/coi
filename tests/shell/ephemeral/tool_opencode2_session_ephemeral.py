@@ -105,11 +105,9 @@ def _processes(container_name):
 
 
 def _opencode2_lines(container_name):
-    return [
-        line
-        for line in _processes(container_name)
-        if "opencode2" in line and "--standalone" in line.split()
-    ]
+    """argv lines of the opencode2 process itself. The tmux server and the
+    pane's `bash -c` also carry the launch command in their argv."""
+    return [line for line in _processes(container_name) if line.split()[:1] == ["opencode2"]]
 
 
 def _wait_for_opencode2(container_name, timeout=90):
@@ -133,7 +131,7 @@ def _stop_opencode2(child, container_name, timeout=20):
         if not _opencode2_lines(container_name):
             return
         time.sleep(1)
-    _exec(container_name, "pkill", "-TERM", "-f", "--", "opencode2 --standalone")
+    _exec(container_name, "pkill", "-TERM", "-f", "^opencode2 ")
     time.sleep(3)
 
 
