@@ -21,14 +21,13 @@ import subprocess
 import time
 from pathlib import Path
 
-from pexpect import EOF, TIMEOUT
-
 from support.helpers import (
     calculate_container_name,
+    exec_as_code_user,
     make_workspace_writable,
+    poweroff_and_wait,
     spawn_coi,
     wait_for_container_ready,
-    wait_for_specific_container_deletion,
     write_trusted_coi_config,
 )
 
@@ -45,8 +44,7 @@ WORKSPACE_ASK_RULE = {"permissions": [{"action": "shell", "resource": "*", "effe
 
 SHELL_MARKER = ".opencode2-shell-ran"
 
-# Starts the fake model in the container, then the real opencode2 with coi's
-# arguments. The server log stays out of /tmp (systemd-tmpfiles empties it).
+# The server log stays out of /tmp (systemd-tmpfiles empties it).
 WRAPPER = f"""#!/bin/sh
 printf '%s\\n' "$@" > /workspace/.opencode2-args
 python3 /workspace/.fake-openai.py 18080 'touch /workspace/{SHELL_MARKER}' \\
@@ -78,30 +76,8 @@ def _fake_home(tmp_path):
     return home
 
 
-def _exec(container_name, *cmd, timeout=30):
-    result = subprocess.run(
-        [
-            "incus",
-            "exec",
-            container_name,
-            "--user",
-            "1000",
-            "--group",
-            "1000",
-            "--env",
-            "HOME=/home/code",
-            "--",
-            *cmd,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    return result.stdout + result.stderr
-
-
 def _processes(container_name):
-    return _exec(container_name, "ps", "-eo", "args").splitlines()
+    return exec_as_code_user(container_name, "ps", "-eo", "args").stdout.splitlines()
 
 
 def _opencode2_lines(container_name):
@@ -131,28 +107,8 @@ def _stop_opencode2(child, container_name, timeout=20):
         if not _opencode2_lines(container_name):
             return
         time.sleep(1)
-    _exec(container_name, "pkill", "-TERM", "-f", "^opencode2 ")
+    exec_as_code_user(container_name, "pkill", "-TERM", "-f", "^opencode2 ")
     time.sleep(3)
-
-
-def _poweroff(child, coi_binary, container_name):
-    child.send("sudo poweroff")
-    time.sleep(0.3)
-    child.send("\x0d")
-    try:
-        child.expect(EOF, timeout=90)
-    except TIMEOUT:
-        pass
-    try:
-        child.close(force=False)
-    except Exception:
-        child.close(force=True)
-    if not wait_for_specific_container_deletion(container_name, timeout=60):
-        subprocess.run(
-            [coi_binary, "container", "delete", container_name, "--force"],
-            capture_output=True,
-            timeout=30,
-        )
 
 
 def test_opencode2_bypass_session(coi_binary, cleanup_containers, workspace_dir, tmp_path):
@@ -179,14 +135,14 @@ def test_opencode2_bypass_session(coi_binary, cleanup_containers, workspace_dir,
     wait_for_container_ready(child, timeout=90)
     argv = _wait_for_opencode2(container_name)
 
-    cli = _exec(container_name, "cat", f"{CONTAINER_CFG}/cli.json")
-    opencode = _exec(container_name, "cat", f"{CONTAINER_CFG}/opencode.json")
-    listing = _exec(container_name, "ls", "-a", CONTAINER_CFG).split()
+    cli = exec_as_code_user(container_name, "cat", f"{CONTAINER_CFG}/cli.json").stdout
+    opencode = exec_as_code_user(container_name, "cat", f"{CONTAINER_CFG}/opencode.json").stdout
+    listing = exec_as_code_user(container_name, "ls", "-a", CONTAINER_CFG).stdout.split()
 
     # === Phase 2: exit the TUI ===
     _stop_opencode2(child, container_name)
     after_exit = _processes(container_name)
-    _exec(
+    exec_as_code_user(
         container_name,
         "sh",
         "-c",
@@ -194,7 +150,7 @@ def test_opencode2_bypass_session(coi_binary, cleanup_containers, workspace_dir,
     )
 
     # === Phase 3: poweroff saves the session ===
-    _poweroff(child, coi_binary, container_name)
+    poweroff_and_wait(child, coi_binary, container_name, timeout=90)
 
     assert argv, "coi shell should launch the real opencode2 TUI"
     flags = argv.split()[1:]
