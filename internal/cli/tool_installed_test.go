@@ -44,7 +44,6 @@ func runGuarded(t *testing.T, dir, script string) (string, string, int) {
 func TestGuardToolInstalled_Missing(t *testing.T) {
 	dir := t.TempDir()
 	stdout, stderr, code := runGuarded(t, dir, guardToolInstalled("codex", "coi-no-such-agent --flag"))
-	// 127 is bash's "command not found" status, what callers saw before.
 	if code != 127 {
 		t.Errorf("exit code = %d, want 127", code)
 	}
@@ -131,6 +130,15 @@ func TestBuildPromptRunScript_Guarded(t *testing.T) {
 	stdout, _, code = runGuarded(t, dir, script)
 	if code != 0 || !strings.HasPrefix(stdout, "ran ") || !strings.Contains(stdout, "do it") {
 		t.Errorf("present tool: stdout=%q exit=%d, want the agent run with the prompt", stdout, code)
+	}
+}
+
+// A tool that cannot take the prompt in argv is a usage error (exit 2).
+func TestBuildPromptRunScript_OutOfBandRejected(t *testing.T) {
+	_, err := buildPromptRunScript(tool.NewPi(), "sid", "/tmp/p.prompt")
+	var exitErr *ExitCodeError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 || !strings.Contains(exitErr.Message, "cannot run a prompt headlessly") {
+		t.Errorf("err = %v, want an exit 2 usage error", err)
 	}
 }
 
