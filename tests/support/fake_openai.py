@@ -1,5 +1,9 @@
 """Minimal OpenAI-compatible chat completions server: always streams a short
-text reply. Lets opencode run a full agent step with no real model/token."""
+text reply. Lets opencode run a full agent step with no real model/token.
+
+Usage: fake_openai.py [port] [shell command]. With a shell command, a request
+that offers tools and has no tool result yet gets a `shell` tool call running
+that command instead."""
 
 import json
 import sys
@@ -29,6 +33,13 @@ class H(BaseHTTPRequestHandler):
             "created": int(time.time()),
             "model": "fake",
         }
+        if (
+            SHELL_COMMAND
+            and req.get("tools")
+            and not any(m.get("role") == "tool" for m in req.get("messages", []))
+        ):
+            self._stream_shell_call(base)
+            return
         if not req.get("stream"):
             body = json.dumps(
                 {
@@ -76,6 +87,40 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
+    def _stream_shell_call(self, base):
+        call = {
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {
+                "name": "shell",
+                "arguments": json.dumps({"command": SHELL_COMMAND, "description": "coi test"}),
+            },
+        }
+        chunks = [
+            {
+                **base,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "tool_calls": [call]},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        ]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        for c in chunks:
+            self.wfile.write(f"data: {json.dumps(c)}\n\n".encode())
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+
+
+SHELL_COMMAND = sys.argv[2] if len(sys.argv) > 2 else None
 
 if __name__ == "__main__":
     ThreadingHTTPServer(
