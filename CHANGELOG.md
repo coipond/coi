@@ -6,10 +6,6 @@
 
 - [Feature] **goose is supported as an opt-in agent (#970)** — `[container.build] agents = [..., "goose"]` installs goose (https://goose-docs.ai) v1.57.0 from its release tarball after a sha256 check, and `[tool] name = "goose"` starts `goose session` with the host's goose config and credential files copied in. The image config turns goose telemetry off and keeps secrets in a file, not the system keyring, unless the copied host `config.yaml` sets these keys.
 
-### Enhancements
-
-- [Enhancement] **Faster firewall rule updates on hosts with large allowlists** — to find a container's rules when it starts in `restricted` or `allowlist` mode and when its rules are removed, coi now lists the forward and input chains of its nft table, one call each, instead of the whole table, which also holds every allowlist set element on the host.
-
 ### Breaking
 
 - [Breaking] **An alias that ends in `-<N>` resolves to itself** — coi split `-<N>` off as a slot before it tried the whole name, so an alias like `app-2` or `site-2025` was never found, and when an alias `app` also existed, `coi kill app-2` and `coi attach app-2` acted on slot 2 of the other workspace's container (`coi kill` deleted it), and `coi shell app-2` started a session in that workspace. Now the whole name wins. For `coi kill`, `coi attach` and the other commands that act on a running container, `-<N>` is a slot only when no running container has the whole name as its alias and `~/.coi/aliases.json` has no such alias; a registered alias with no running container, or an unreadable `aliases.json`, gives a not-found error instead of a split. For `coi shell`, `-<N>` is a slot only when neither `~/.coi/aliases.json` nor the current workspace's `[container] alias` has the whole name. `-0` is never a slot: `app-0` no longer means `app`. To reach slot 2 of `app` while an alias `app-2` exists, use `coi shell app --slot 2` or the container name.
@@ -18,6 +14,7 @@
 
 ### Changed
 
+- [Change] **Faster firewall rule updates on hosts with large allowlists** — to find a container's rules when it starts in `restricted` or `allowlist` mode and when its rules are removed, coi now lists the forward and input chains of its nft table, one call each, instead of the whole table, which also holds every allowlist set element on the host.
 - [Change] **Filter container traffic to the host's own addresses in restricted and allowlist modes** — a container in `restricted` or `allowlist` mode reaches the host itself (the bridge gateway and the host's other addresses) only for DHCP, a rate-limited ping to the gateway and, in `restricted` mode, DNS, plus replies on connections the host opened. Other services on the host are now refused. To reach one, add a `[[network.hosts]]` entry or an `allowed_domains` entry with the host address and its ports (with no ports, the global `allowed_ports`), or set the new `[network] allow_host_access = true` in trusted config to allow all of the host. An `allowed_domains` name that resolves to a host address stays closed, and coi prints a warning: list the address itself. `open` mode is not changed.
 - [Change] **`[network.logging]` removed** — the section never had an effect: nothing wrote `~/.coi/logs/network.log`. A config file or profile that still sets it loads as before and prints one warning naming the file; `coi validate profile` accepts it with the same warning. Network threat events are logged by `[monitoring.nft]` (`~/.coi/audit/<container>-nft.jsonl`).
 - [Change] **Incus 7.5 is the recommended version** — `coi health` now notes that 7.5+ is recommended on Incus 6.1 to 7.4 (was 6.7). The note does not change the check's status or the exit code. The minimum stays 6.1.

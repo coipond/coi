@@ -212,8 +212,7 @@ func TestSyncResolved_WarnsOnHostAddress(t *testing.T) {
 	}
 }
 
-// The rules come from one `list chain` call per chain, never `list table`,
-// which also prints every allowlist set element.
+// The rules come from one `list chain` call per chain, never `list table`.
 func TestCOIChainRules_ListsEachChain(t *testing.T) {
 	logPath := fakeNftSudo(t, staleForwardListing, staleInputListing)
 	rules, chains, err := coiChainRules("coi-10.0.0.2")
