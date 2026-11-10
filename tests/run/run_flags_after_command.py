@@ -56,7 +56,7 @@ def test_run_flags_after_command_go_to_command(
     )
 
     with open(os.path.join(workspace_dir, "words.txt"), "w") as f:
-        f.write(f"path {other_dir} end\n{other_dir}-suffix\n")
+        f.write(f"path {other_dir} end\n{other_dir}suffix\n")
 
     result = subprocess.run(
         [coi_binary, "run", "grep", "-w", other_dir, "words.txt"],
@@ -75,7 +75,7 @@ def test_run_flags_after_command_go_to_command(
     assert f"path {other_dir} end" in combined_output, (
         f"grep should print the whole-word match. Got:\n{combined_output}"
     )
-    assert f"{other_dir}-suffix" not in combined_output, (
+    assert f"{other_dir}suffix" not in combined_output, (
         f"grep should get -w and skip the partial-word line. Got:\n{combined_output}"
     )
 
