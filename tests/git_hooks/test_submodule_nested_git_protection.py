@@ -21,9 +21,13 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from support.helpers import make_workspace_writable, run_coi_in_workspace, write_trusted_coi_config
-
-GIT = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
+from support.helpers import (
+    GIT,
+    init_repo_with_submodule,
+    make_workspace_writable,
+    run_coi_in_workspace,
+    write_trusted_coi_config,
+)
 
 SUBMODULE_GIT_DIR = ".git/modules/lib"
 SUBMODULE_GIT_FILE = "lib/.git"
@@ -36,22 +40,7 @@ GIT_DIR_ENTRIES = ("hooks", "config", "config.worktree", "info/attributes")
 
 def _git_workspace(workspace_dir, tmp_path):
     """A repo with submodule lib and nested repos at depth 1, 3 and 4."""
-    lib = tmp_path / "lib"
-    lib.mkdir()
-    for repo in (lib, Path(workspace_dir)):
-        subprocess.run([*GIT, "init", "-q"], cwd=repo, check=True, capture_output=True)
-        subprocess.run(
-            [*GIT, "commit", "-q", "--allow-empty", "-m", "init"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-    subprocess.run(
-        [*GIT, "submodule", "add", "-q", str(lib), "lib"],
-        cwd=workspace_dir,
-        check=True,
-        capture_output=True,
-    )
+    init_repo_with_submodule(workspace_dir, tmp_path)
     ws = Path(workspace_dir)
     for git_dir in (DEPTH1_GIT_DIR, DEPTH3_GIT_DIR, DEPTH4_GIT_DIR):
         repo = ws / git_dir[: -len("/.git")]
