@@ -6,7 +6,8 @@ Tests that:
    ~/.coi/aliases.json without a profile
 2. After a change of [defaults] profile, `coi shell <alias>` runs the new default
 3. `coi shell --profile <name>` saves the profile, and `coi shell <alias>` runs
-   that saved profile and keeps it, while [defaults] profile names another one
+   that saved profile and keeps it, while [defaults] profile names another one;
+   a later default-only `coi shell` keeps the saved profile too
 4. `coi shell --resume` of a session whose profile came only from [defaults]
    profile (`profile_from_default` in its metadata) does not save the profile
 
@@ -155,13 +156,15 @@ def test_explicit_and_alias_profile_saved(
 ):
     """
     --profile is saved into the alias, and the alias's own profile wins over
-    [defaults] profile and stays saved.
+    [defaults] profile and stays saved, also across a default-only launch.
 
     Flow:
     1. [defaults] profile = "pa"; coi shell --background --profile pb
     2. The alias entry has profile 'pb'
     3. coi shell --background <alias> from another dir
     4. The session ran 'pb', not from the default; the entry still has 'pb'
+    5. coi shell --background in the workspace (no --profile, no alias)
+    6. The session ran 'pa' from the default; the entry still has 'pb'
     """
     fake_home, env = _setup_home(tmp_path)
     _write_workspace_config(workspace_dir, dummy_image)
@@ -194,6 +197,20 @@ def test_explicit_and_alias_profile_saved(
     )
     assert _alias_entry(fake_home) == expected, (
         f"coi shell {ALIAS} should keep the saved profile: {_alias_entry(fake_home)}"
+    )
+
+    # === Phase 3: a default-only launch keeps the saved profile ===
+
+    before = _sessions(fake_home)
+    _shell(coi_binary, workspace_dir, env)
+    _kill_workspace_containers(coi_binary, workspace_dir, env)
+
+    _, metadata = _new_session(fake_home, before)
+    assert metadata["profile_name"] == "pa" and metadata.get("profile_from_default") is True, (
+        f"a bare coi shell should run the default 'pa': {metadata}"
+    )
+    assert _alias_entry(fake_home) == expected, (
+        f"a default-only launch must keep the saved profile: {_alias_entry(fake_home)}"
     )
 
 
