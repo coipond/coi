@@ -32,7 +32,7 @@ func TestAllocateHostPort(t *testing.T) {
 		t.Error("indices must be consecutive within a block")
 	}
 	// Range bounds
-	for slot := 1; slot <= 10; slot++ {
+	for slot := 1; slot <= MaxSlots; slot++ {
 		p := AllocateHostPort(ws, "", slot, slotStride-1)
 		if p < autoPortBase || p >= autoPortBase+neighborhoods*neighborhoodSize {
 			t.Errorf("port %d out of range for slot %d", p, slot)
@@ -124,15 +124,23 @@ func TestResolvePortsCapacity(t *testing.T) {
 	}
 }
 
+func TestPortLayoutIsStable(t *testing.T) {
+	// neighborhoodSize derives from MaxSlots; changing either moves every
+	// auto-allocated host port of existing workspaces.
+	if neighborhoodSize != 100 || slotStride != 10 {
+		t.Errorf("port layout changed: neighborhoodSize=%d slotStride=%d, want 100 and 10", neighborhoodSize, slotStride)
+	}
+}
+
 func TestResolvePortsSlotBounds(t *testing.T) {
 	withPortProbe(t, allFree)
-	for _, slot := range []int{0, -1, 11} {
+	for _, slot := range []int{0, -1, MaxSlots + 1} {
 		if _, err := ResolvePorts(&PortConfig{Pool: 1}, "/ws", "", slot); err == nil {
 			t.Errorf("slot %d must be rejected: it would allocate inside another workspace's block", slot)
 		}
 	}
 	// Boundary slots are fine
-	for _, slot := range []int{1, 10} {
+	for _, slot := range []int{1, MaxSlots} {
 		if _, err := ResolvePorts(&PortConfig{Pool: 1}, "/ws", "", slot); err != nil {
 			t.Errorf("slot %d must be accepted: %v", slot, err)
 		}
