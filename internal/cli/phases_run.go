@@ -120,13 +120,13 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 				// its slot and would silently launch a FRESH container on
 				// the next slot (state never persists, slots exhaust).
 				if a.persistent {
-					if reuse, ok := session.FindReusablePersistentSlot(s.absWorkspace, a.sessionName(), 10); ok {
+					if reuse, ok := session.FindReusablePersistentSlot(s.absWorkspace, a.sessionName(), session.MaxSlots); ok {
 						slotNum = reuse
 						fmt.Fprintf(os.Stderr, "Reusing persistent container on slot %d\n", slotNum)
 					}
 				}
 				if slotNum == 0 {
-					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), 10)
+					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), session.MaxSlots)
 					if err != nil {
 						return nil, fmt.Errorf("failed to allocate slot: %w", err)
 					}
