@@ -14,7 +14,6 @@ Tests that:
    in copy mode
 """
 
-import json
 import subprocess
 import time
 from pathlib import Path
@@ -22,6 +21,9 @@ from pathlib import Path
 from support.helpers import (
     calculate_container_name,
     make_workspace_writable,
+    session_for_container,
+    tmux_as_code_user,
+    tmux_pane_in_mode,
     write_trusted_coi_config,
 )
 
@@ -44,34 +46,9 @@ def _shell(coi_binary, workspace_dir, env, *args):
     )
 
 
-def _tmux(coi_binary, container_name, *args):
-    result = subprocess.run(
-        [
-            coi_binary,
-            "container",
-            "exec",
-            container_name,
-            "--user",
-            "1000",
-            "--",
-            "tmux",
-            *args,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"tmux {args[0]} should succeed. stderr: {result.stderr}"
-    return result.stdout + result.stderr
-
-
-def _in_mode(coi_binary, container_name, target):
-    return _tmux(coi_binary, container_name, "display", "-p", "-t", target, "#{pane_in_mode}")
-
-
 def _enter_copy_mode(coi_binary, container_name, target):
-    _tmux(coi_binary, container_name, "copy-mode", "-t", target)
-    assert _in_mode(coi_binary, container_name, target).strip() == "1", (
+    tmux_as_code_user(coi_binary, container_name, "copy-mode", "-t", target)
+    assert tmux_pane_in_mode(coi_binary, container_name, target) == "1", (
         "the pane should be in copy mode"
     )
 
@@ -86,13 +63,6 @@ def _wait_for(predicate, timeout=60):
 def _agent_runs(workspace_dir):
     marker = Path(workspace_dir) / AGENT_MARKER
     return len(marker.read_text().splitlines()) if marker.exists() else 0
-
-
-def _session_for_container(sessions_dir, container_name):
-    for metadata in sessions_dir.glob("*/metadata.json"):
-        if json.loads(metadata.read_text()).get("container_name") == container_name:
-            return metadata.parent.name
-    return None
 
 
 def test_tmux_send_leaves_copy_mode(coi_binary, cleanup_containers, workspace_dir, tmp_path):
@@ -146,13 +116,13 @@ def test_tmux_send_leaves_copy_mode(coi_binary, cleanup_containers, workspace_di
     assert _wait_for(lambda: (Path(workspace_dir) / SEND_MARKER).exists(), timeout=15), (
         "coi tmux send to a pane in copy mode must run the command"
     )
-    assert _in_mode(coi_binary, container_name, pane).strip() == "0", (
+    assert tmux_pane_in_mode(coi_binary, container_name, pane) == "0", (
         "coi tmux send must leave copy mode"
     )
 
     # === Phase 3: coi shell --background into the running session ===
 
-    session_id = _session_for_container(sessions_dir, container_name)
+    session_id = session_for_container(sessions_dir, container_name)
     assert session_id, f"no saved session for {container_name} in {sessions_dir}"
 
     _enter_copy_mode(coi_binary, container_name, pane)
@@ -166,7 +136,7 @@ def test_tmux_send_leaves_copy_mode(coi_binary, cleanup_containers, workspace_di
     assert _wait_for(lambda: _agent_runs(workspace_dir) == 2, timeout=15), (
         "coi shell --background into a pane in copy mode must start the tool"
     )
-    assert _in_mode(coi_binary, container_name, pane).strip() == "0", (
+    assert tmux_pane_in_mode(coi_binary, container_name, pane) == "0", (
         "coi shell --background into the running session must leave copy mode"
     )
 
