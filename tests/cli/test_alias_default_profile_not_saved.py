@@ -19,7 +19,7 @@ import json
 import os
 import subprocess
 
-from support.helpers import calculate_container_name, get_container_list
+from support.helpers import kill_workspace_containers, write_workspace_container_config
 
 ALIAS = "defprofalias"
 
@@ -40,13 +40,6 @@ def _set_default_profile(fake_home, name):
     (fake_home / ".coi" / "config.toml").write_text(f'[defaults]\nprofile = "{name}"\n')
 
 
-def _write_workspace_config(workspace_dir, image):
-    config_dir = os.path.join(workspace_dir, ".coi")
-    os.makedirs(config_dir, exist_ok=True)
-    with open(os.path.join(config_dir, "config.toml"), "w") as f:
-        f.write(f'[container]\nalias = "{ALIAS}"\nimage = "{image}"\n')
-
-
 def _shell(coi_binary, cwd, env, *args):
     result = subprocess.run(
         [coi_binary, "shell", "--background", *args],
@@ -60,21 +53,6 @@ def _shell(coi_binary, cwd, env, *args):
         f"coi shell --background {' '.join(args)} failed:\n{result.stdout}\n{result.stderr}"
     )
     return result
-
-
-def _kill_workspace_containers(coi_binary, workspace_dir, env):
-    names = {calculate_container_name(workspace_dir, slot) for slot in range(1, 11)}
-    running = names & set(get_container_list())
-    assert running, "the session started no container for the workspace"
-    for name in running:
-        result = subprocess.run(
-            [coi_binary, "kill", "--force", name],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=env,
-        )
-        assert result.returncode == 0, f"coi kill {name} failed:\n{result.stderr}"
 
 
 def _alias_entry(fake_home):
@@ -116,7 +94,7 @@ def test_default_profile_not_saved_into_alias(
     4. The session ran 'pb'; the alias entry still has no profile
     """
     fake_home, env = _setup_home(tmp_path)
-    _write_workspace_config(workspace_dir, dummy_image)
+    write_workspace_container_config(workspace_dir, image=dummy_image, alias=ALIAS)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
 
@@ -124,7 +102,7 @@ def test_default_profile_not_saved_into_alias(
 
     _set_default_profile(fake_home, "pa")
     _shell(coi_binary, workspace_dir, env)
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     assert _alias_entry(fake_home) == {"workspace": workspace_dir}, (
         f"[defaults] profile must not be saved into the alias: {_alias_entry(fake_home)}"
@@ -140,7 +118,7 @@ def test_default_profile_not_saved_into_alias(
     _set_default_profile(fake_home, "pb")
     before = _sessions(fake_home)
     _shell(coi_binary, str(elsewhere), env, ALIAS)
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     _, metadata = _new_session(fake_home, before)
     assert metadata["profile_name"] == "pb", (
@@ -167,7 +145,7 @@ def test_explicit_and_alias_profile_saved(
     6. The session ran 'pa' from the default; the entry still has 'pb'
     """
     fake_home, env = _setup_home(tmp_path)
-    _write_workspace_config(workspace_dir, dummy_image)
+    write_workspace_container_config(workspace_dir, image=dummy_image, alias=ALIAS)
     _set_default_profile(fake_home, "pa")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -175,7 +153,7 @@ def test_explicit_and_alias_profile_saved(
     # === Phase 1: --profile is saved ===
 
     _shell(coi_binary, workspace_dir, env, "--profile", "pb")
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     expected = {"workspace": workspace_dir, "profile": "pb"}
     assert _alias_entry(fake_home) == expected, (
@@ -186,7 +164,7 @@ def test_explicit_and_alias_profile_saved(
 
     before = _sessions(fake_home)
     _shell(coi_binary, str(elsewhere), env, ALIAS)
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     _, metadata = _new_session(fake_home, before)
     assert metadata["profile_name"] == "pb", (
@@ -203,7 +181,7 @@ def test_explicit_and_alias_profile_saved(
 
     before = _sessions(fake_home)
     _shell(coi_binary, workspace_dir, env)
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     _, metadata = _new_session(fake_home, before)
     assert metadata["profile_name"] == "pa" and metadata.get("profile_from_default") is True, (
@@ -228,13 +206,13 @@ def test_resume_of_default_profile_session_not_saved(
     4. The alias entry has no profile
     """
     fake_home, env = _setup_home(tmp_path)
-    _write_workspace_config(workspace_dir, dummy_image)
+    write_workspace_container_config(workspace_dir, image=dummy_image, alias=ALIAS)
 
     # === Phase 1: save a default-only session ===
 
     _set_default_profile(fake_home, "pa")
     _shell(coi_binary, workspace_dir, env)
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
     session_id, metadata = _new_session(fake_home, {})
     assert metadata.get("profile_from_default") is True, (
         f"the session should mark 'pa' as from [defaults] profile: {metadata}"
@@ -244,7 +222,7 @@ def test_resume_of_default_profile_session_not_saved(
 
     _set_default_profile(fake_home, "pb")
     result = _shell(coi_binary, workspace_dir, env, f"--resume={session_id}")
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     assert "Inherited profile 'pa' from session" in result.stderr, (
         f"the resume should inherit the session's profile 'pa':\n{result.stderr}"
