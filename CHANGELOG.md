@@ -4,7 +4,7 @@
 
 ### Features
 
-- [Feature] **goose is supported as an opt-in agent (#970)** — `[container.build] agents = [..., "goose"]` installs goose (https://goose-docs.ai) v1.57.0 from its release tarball after a sha256 check, and `[tool] name = "goose"` starts `goose session` with the host's goose config and credential files copied in. The image config turns goose telemetry off and keeps secrets in a file, not the system keyring, unless the copied host `config.yaml` sets these keys.
+- [Feature] **goose is supported as an opt-in agent (#970)** — `[container.build] agents = [..., "goose"]` installs goose (https://goose-docs.ai) v1.57.0 from its release tarball after a sha256 check, and `[tool] name = "goose"` starts `goose session` with the host's goose config and credential files copied in. The image config turns goose telemetry off and keeps secrets in a file, not the system keyring, unless the copied host `config.yaml` sets these keys. goose sessions persist per workspace in `~/.coi/tool-data/goose/<hash>/` (goose's data and state dirs are mounted from there), and `coi shell --resume` resumes the workspace's latest goose session by its id (`goose session --resume --session-id <id>`), or starts a new one when there is none. A saved session leaves out the `goose serve` keys (`tls`, `roaming_node_key`). On a resume, coi also copies a host token file in a subdir of the config dir (`chatgpt_codex/tokens.json`) that the saved session does not have yet.
 
 ### Breaking
 
