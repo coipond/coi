@@ -6,7 +6,6 @@ Tests the domain allowlisting feature with DNS resolution and IP-based filtering
 Network isolation is implemented using nft rules.
 """
 
-import json
 import os
 import pathlib
 import subprocess
@@ -534,19 +533,8 @@ refresh_interval_minutes = 30
         # Give server time to start
         time.sleep(2)
 
-        # Get container's IP address using incus list (more reliable than hostname -I)
-        result = subprocess.run(
-            ["incus", "list", container_name, "--format=json"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        assert result.returncode == 0, f"Failed to get container info: {result.stderr}"
-
-        container_info = json.loads(result.stdout)[0]
-        # Get IPv4 address from eth0 interface
-        container_ip = container_info["state"]["network"]["eth0"]["addresses"][0]["address"]
+        container_ip = container_ipv4(container_name)
+        assert container_ip, f"No IPv4 address found for container {container_name}"
 
         # Test: Host should be able to access the HTTP server
         # This verifies established connection tracking works
@@ -625,19 +613,8 @@ def test_restricted_allows_host_to_access_container_services(
     # Give server time to start
     time.sleep(2)
 
-    # Get container's IP address using incus list (more reliable than hostname -I)
-    result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-
-    assert result.returncode == 0, f"Failed to get container info: {result.stderr}"
-
-    container_info = json.loads(result.stdout)[0]
-    # Get IPv4 address from eth0 interface
-    container_ip = container_info["state"]["network"]["eth0"]["addresses"][0]["address"]
+    container_ip = container_ipv4(container_name)
+    assert container_ip, f"No IPv4 address found for container {container_name}"
 
     # Test: Host should be able to access the HTTP server
     result = subprocess.run(
