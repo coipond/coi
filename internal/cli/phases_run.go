@@ -812,22 +812,9 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 				return nil, fmt.Errorf("failed to stage prompt file in container: %w", err)
 			}
 
-			// Build the headless (print-mode) launch command. A fresh session per
-			// fire (Resume:false) is the right cron default — deterministic, no
-			// accumulating conversation state.
-			argv, outOfBand, err := buildToolLaunchArgv(t, tool.LaunchSpec{
-				SessionID:  s.promptSessionID,
-				PromptFile: promptPath,
-				Print:      true,
-			})
+			script, err := buildPromptRunScript(t, s.promptSessionID, promptPath)
 			if err != nil {
 				return nil, err
-			}
-			if outOfBand != "" {
-				// Tool can't embed the prompt in argv and coi run has no
-				// orchestrator to deliver it out-of-band.
-				return nil, &ExitCodeError{Code: 2, Message: fmt.Sprintf(
-					"tool %q cannot run a prompt headlessly via coi run", t.Name())}
 			}
 
 			// incus exec as the run user; route through a non-login shell so the
@@ -845,7 +832,7 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 			if err != nil {
 				return nil, err
 			}
-			incusArgs = append(incusArgs, "--", "bash", "-c", strings.Join(argv, " "))
+			incusArgs = append(incusArgs, "--", "bash", "-c", script)
 
 			// A ToolWithHeadlessPrompt tool (opencode) creates its own session
 			// id, so coi's id would mislead there.
@@ -880,4 +867,26 @@ func sizeTmpfsAndRemapUser(mgr container.ContainerManager, limitsCfg *config.Lim
 	}
 	session.ApplyTmpfsSizing(mgr, limitsCfg, logFn)
 	return remapContainerUserIfNeeded(mgr, wasRestarted)
+}
+
+// buildPromptRunScript builds the headless (print-mode) launch command for
+// coi run --prompt, guarded so a tool missing from the image says so. A fresh
+// session per fire (Resume:false) is the right cron default — deterministic,
+// no accumulating conversation state.
+func buildPromptRunScript(t tool.Tool, sessionID, promptPath string) (string, error) {
+	argv, outOfBand, err := buildToolLaunchArgv(t, tool.LaunchSpec{
+		SessionID:  sessionID,
+		PromptFile: promptPath,
+		Print:      true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if outOfBand != "" {
+		// Tool can't embed the prompt in argv and coi run has no
+		// orchestrator to deliver it out-of-band.
+		return "", &ExitCodeError{Code: 2, Message: fmt.Sprintf(
+			"tool %q cannot run a prompt headlessly via coi run", t.Name())}
+	}
+	return guardToolInstalled(t.Name(), strings.Join(argv, " ")), nil
 }
