@@ -15,30 +15,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from support.helpers import wait_for_firewall_rules
-
-
-def get_container_ip(container_name):
-    """The container's IPv4 address, or None.
-
-    Allowlist rules and nft set names are keyed on this address.
-    """
-    result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    for entry in json.loads(result.stdout):
-        if entry.get("name") != container_name:
-            continue
-        for addr in entry.get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
-            if addr.get("family") == "inet":
-                return addr.get("address")
-    return None
+from support.helpers import container_ipv4, wait_for_firewall_rules
 
 
 def test_allowlist_mode_allows_specified_domains(coi_binary, workspace_dir, cleanup_containers):
@@ -722,7 +699,7 @@ refresh_interval_minutes = 30
         # reference those sets by name rather than naming each address. So the L4
         # scoping is asserted on the rules that admit the sets — and the address
         # itself is asserted to be in a set, which is what those rules admit.
-        ip = get_container_ip(container_name)
+        ip = container_ipv4(container_name)
         assert ip, f"could not determine the IP of {container_name}"
         ident = ip.replace(".", "_")
 
