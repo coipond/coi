@@ -207,7 +207,7 @@ type ResourceStats struct {
 	IOWriteMB      float64 `json:"io_write_mb"`
 }
 
-// DaemonConfig configures the monitoring daemon
+// DaemonConfig configures the security monitor
 type DaemonConfig struct {
 	ContainerName  string
 	WorkspacePath  string
