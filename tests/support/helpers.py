@@ -1247,6 +1247,9 @@ def container_ipv4(container_name):
     if r.returncode != 0 or not r.stdout.strip():
         return None
     for c in json.loads(r.stdout):
+        # `incus list <name>` also lists containers whose name starts with <name>.
+        if c.get("name") != container_name:
+            continue
         for a in c.get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
             if a.get("family") == "inet":
                 return a["address"]
@@ -1266,28 +1269,7 @@ def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):
         timeout: Maximum seconds to wait (default 30).
         poll_interval: Seconds between polls (default 0.5).
     """
-    # Resolve the container's IPv4 address once.
-    ip_result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if ip_result.returncode != 0:
-        return False
-
-    import json as _json
-
-    info = _json.loads(ip_result.stdout)
-    if not info:
-        return False
-
-    container_ip = None
-    for addr in info[0].get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
-        if addr.get("family") == "inet":
-            container_ip = addr["address"]
-            break
-
+    container_ip = container_ipv4(container_name)
     if not container_ip:
         return False
 

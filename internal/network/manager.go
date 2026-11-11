@@ -196,9 +196,8 @@ func (m *Manager) purgeStaleRulesForIP(containerIP string) {
 	}
 }
 
-// chainRule is one rule of an `nft -a list` listing of the ip coi table or
-// one of its chains: its handle and its text without the trailing
-// "# handle N".
+// chainRule is one rule of an `nft -a list chain` listing of an ip coi
+// chain: its handle and its text without the trailing "# handle N".
 type chainRule struct{ handle, text string }
 
 // forwardRulesWithComment lists the forward-chain rules carrying comment, in

@@ -89,6 +89,14 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 		}
 		if _, err := os.Stat(f.HostPath); err == nil {
 			logger(fmt.Sprintf("  - Refreshing %s", filepath.Base(f.ContainerPath)))
+			// A file in a subdir (goose's chatgpt_codex/tokens.json) may be new
+			// to the saved session, and PushFile does not create its parent.
+			if dir := filepath.Dir(f.ContainerPath); dir != stateDir {
+				if err := mgr.ExecArgs([]string{"mkdir", "-p", dir}, container.ExecCommandOptions{}); err != nil {
+					logger(fmt.Sprintf("  - Warning: Failed to create %s: %v", dir, err))
+					continue
+				}
+			}
 			if err := mgr.PushFile(f.HostPath, f.ContainerPath); err != nil {
 				logger(fmt.Sprintf("  - Warning: Failed to copy %s: %v", filepath.Base(f.ContainerPath), err))
 			} else {

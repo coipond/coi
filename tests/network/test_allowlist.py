@@ -6,7 +6,6 @@ Tests the domain allowlisting feature with DNS resolution and IP-based filtering
 Network isolation is implemented using nft rules.
 """
 
-import json
 import os
 import pathlib
 import subprocess
@@ -15,30 +14,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from support.helpers import wait_for_firewall_rules
-
-
-def get_container_ip(container_name):
-    """The container's IPv4 address, or None.
-
-    Allowlist rules and nft set names are keyed on this address.
-    """
-    result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    for entry in json.loads(result.stdout):
-        if entry.get("name") != container_name:
-            continue
-        for addr in entry.get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
-            if addr.get("family") == "inet":
-                return addr.get("address")
-    return None
+from support.helpers import container_ipv4, wait_for_firewall_rules
 
 
 def test_allowlist_mode_allows_specified_domains(coi_binary, workspace_dir, cleanup_containers):
@@ -557,19 +533,8 @@ refresh_interval_minutes = 30
         # Give server time to start
         time.sleep(2)
 
-        # Get container's IP address using incus list (more reliable than hostname -I)
-        result = subprocess.run(
-            ["incus", "list", container_name, "--format=json"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        assert result.returncode == 0, f"Failed to get container info: {result.stderr}"
-
-        container_info = json.loads(result.stdout)[0]
-        # Get IPv4 address from eth0 interface
-        container_ip = container_info["state"]["network"]["eth0"]["addresses"][0]["address"]
+        container_ip = container_ipv4(container_name)
+        assert container_ip, f"No IPv4 address found for container {container_name}"
 
         # Test: Host should be able to access the HTTP server
         # This verifies established connection tracking works
@@ -648,19 +613,8 @@ def test_restricted_allows_host_to_access_container_services(
     # Give server time to start
     time.sleep(2)
 
-    # Get container's IP address using incus list (more reliable than hostname -I)
-    result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-
-    assert result.returncode == 0, f"Failed to get container info: {result.stderr}"
-
-    container_info = json.loads(result.stdout)[0]
-    # Get IPv4 address from eth0 interface
-    container_ip = container_info["state"]["network"]["eth0"]["addresses"][0]["address"]
+    container_ip = container_ipv4(container_name)
+    assert container_ip, f"No IPv4 address found for container {container_name}"
 
     # Test: Host should be able to access the HTTP server
     result = subprocess.run(
@@ -722,7 +676,7 @@ refresh_interval_minutes = 30
         # reference those sets by name rather than naming each address. So the L4
         # scoping is asserted on the rules that admit the sets — and the address
         # itself is asserted to be in a set, which is what those rules admit.
-        ip = get_container_ip(container_name)
+        ip = container_ipv4(container_name)
         assert ip, f"could not determine the IP of {container_name}"
         ident = ip.replace(".", "_")
 
