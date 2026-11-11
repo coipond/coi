@@ -17,7 +17,7 @@ import subprocess
 
 import pytest
 
-from support.helpers import extract_container_name, write_trusted_coi_config
+from support.helpers import exec_in, extract_container_name, write_trusted_coi_config
 
 RUNTIME_MASK = "/run/systemd/system/systemd-resolved.service"
 
@@ -39,20 +39,14 @@ def test_resolver_restored_on_reuse(coi_binary, workspace_dir, cleanup_container
     container_name = extract_container_name(first)
     assert container_name, f"Could not find container name: {first.stdout}{first.stderr}"
 
-    def exec_in(*cmd):
-        result = subprocess.run(
-            [coi_binary, "container", "exec", container_name, "--", *cmd],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return (result.stdout + result.stderr).strip()
+    def output(cmd):
+        return exec_in(coi_binary, container_name, cmd)[1].strip().splitlines()[0]
 
     def resolver_state():
-        return exec_in("systemctl", "is-active", "systemd-resolved").splitlines()[0]
+        return output("systemctl is-active systemd-resolved")
 
     def mask_present():
-        return exec_in("sh", "-c", f"test -L {RUNTIME_MASK} && echo yes || echo no").splitlines()[0]
+        return output(f"test -L {RUNTIME_MASK} && echo yes || echo no")
 
     assert resolver_state() == "inactive", "allowlist mode must stop systemd-resolved"
     assert mask_present() == "yes", f"allowlist mode must leave the runtime mask {RUNTIME_MASK}"

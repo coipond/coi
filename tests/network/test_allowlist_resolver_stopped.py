@@ -15,7 +15,7 @@ Tests that:
 import subprocess
 import time
 
-from support.helpers import extract_container_name, write_trusted_coi_config
+from support.helpers import exec_in, extract_container_name, write_trusted_coi_config
 
 
 def test_allowlist_resolver_stopped(coi_binary, workspace_dir, cleanup_containers):
@@ -34,21 +34,13 @@ def test_allowlist_resolver_stopped(coi_binary, workspace_dir, cleanup_container
     container_name = extract_container_name(result)
     assert container_name, f"Could not find container name: {result.stdout}{result.stderr}"
 
-    def exec_in(*cmd, timeout=30):
-        return subprocess.run(
-            [coi_binary, "container", "exec", container_name, "--", *cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-    state = exec_in("systemctl", "is-active", "systemd-resolved")
-    assert (state.stdout + state.stderr).strip().splitlines()[0] == "inactive", (
-        f"systemd-resolved must be stopped in allowlist mode: {state.stdout}{state.stderr}"
+    _, state = exec_in(coi_binary, container_name, "systemctl is-active systemd-resolved")
+    assert state.strip().splitlines()[0] == "inactive", (
+        f"systemd-resolved must be stopped in allowlist mode: {state}"
     )
 
     start = time.monotonic()
-    lookup = exec_in("getent", "hosts", "example.org", timeout=15)
+    rc, lookup = exec_in(coi_binary, container_name, "getent hosts example.org", timeout=15)
     elapsed = time.monotonic() - start
-    assert lookup.returncode != 0, f"example.org is not allowlisted: {lookup.stdout}"
+    assert rc != 0, f"example.org is not allowlisted: {lookup}"
     assert elapsed < 5, f"a blocked lookup must fail at once, took {elapsed:.1f}s"
