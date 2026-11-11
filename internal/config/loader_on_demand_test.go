@@ -63,24 +63,30 @@ func TestLoadWithoutProfiles_ListsNoProfile(t *testing.T) {
 // LoadWithoutProfiles rejects a profile name in two locations like
 // LoadOnDemand does, and accepts what LoadOnDemand accepts.
 func TestLoadWithoutProfiles_DuplicateNames(t *testing.T) {
+	// project is what ./.coi/profiles/dup is: "config" (a profile), "dir" (no
+	// config.toml), "symlink" (to a profile), "home" (cwd is HOME) or "" (none).
+	// coiConfig is what the COI_CONFIG dir holds: "" (COI_CONFIG unset),
+	// "empty" (no profiles) or "dup" (a dup profile).
 	tests := map[string]struct {
-		projectHasConfig bool
-		sameDir          bool
-		symlink          bool
-		wantErr          bool
+		project   string
+		coiConfig string
+		wantErr   bool
 	}{
-		"duplicate":                  {projectHasConfig: true, wantErr: true},
-		"project dir without config": {},
-		"project dir is home":        {sameDir: true},
-		"project dir is a symlink":   {symlink: true},
+		"duplicate":                                  {project: "config", wantErr: true},
+		"project dir without config":                 {project: "dir"},
+		"project dir is home":                        {project: "home"},
+		"project dir is a symlink":                   {project: "symlink"},
+		"duplicate, COI_CONFIG dir without profiles": {project: "config", coiConfig: "empty", wantErr: true},
+		"duplicate in COI_CONFIG dir, no project":    {coiConfig: "dup", wantErr: true},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			coiDir := onDemandHome(t)
 			writeTestProfile(t, coiDir, "dup", "[container]\nimage = \"a\"\n")
-			if tt.sameDir {
+			switch tt.project {
+			case "home":
 				t.Chdir(filepath.Dir(coiDir))
-			} else if tt.symlink {
+			case "symlink":
 				target := filepath.Dir(writeTestProfile(t, t.TempDir(), "dup", "[container]\nimage = \"b\"\n"))
 				if err := os.MkdirAll(filepath.Join(".coi", "profiles"), 0o755); err != nil {
 					t.Fatal(err)
@@ -88,10 +94,19 @@ func TestLoadWithoutProfiles_DuplicateNames(t *testing.T) {
 				if err := os.Symlink(target, filepath.Join(".coi", "profiles", "dup")); err != nil {
 					t.Fatal(err)
 				}
-			} else if tt.projectHasConfig {
+			case "config":
 				writeTestProfile(t, ".coi", "dup", "[container]\nimage = \"b\"\n")
-			} else if err := os.MkdirAll(filepath.Join(".coi", "profiles", "dup"), 0o755); err != nil {
-				t.Fatal(err)
+			case "dir":
+				if err := os.MkdirAll(filepath.Join(".coi", "profiles", "dup"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.coiConfig != "" {
+				dir := t.TempDir()
+				t.Setenv("COI_CONFIG", filepath.Join(dir, "config.toml"))
+				if tt.coiConfig == "dup" {
+					writeTestProfile(t, dir, "dup", "[container]\nimage = \"c\"\n")
+				}
 			}
 			_, onDemandErr := LoadOnDemand()
 			_, err := LoadWithoutProfiles()
