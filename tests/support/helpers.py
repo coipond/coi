@@ -1272,6 +1272,20 @@ def container_ipv4(container_name):
     return None
 
 
+def has_immutable_capability(coi_binary):
+    """Check if the coi binary has CAP_LINUX_IMMUTABLE via getcap."""
+    try:
+        result = subprocess.run(
+            ["getcap", coi_binary],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return "cap_linux_immutable" in result.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
 def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
     """Run cmd with bash -c in the container; return (returncode, combined output).
 

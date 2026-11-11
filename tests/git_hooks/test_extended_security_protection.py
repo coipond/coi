@@ -19,10 +19,11 @@ from pathlib import Path
 import pytest
 
 from support.helpers import (
-    make_workspace_writable as _make_workspace_writable,
+    has_immutable_capability,
+    write_trusted_coi_config,
 )
 from support.helpers import (
-    write_trusted_coi_config,
+    make_workspace_writable as _make_workspace_writable,
 )
 
 
@@ -749,20 +750,6 @@ class TestImmutableProtection:
     the tests are skipped.
     """
 
-    @staticmethod
-    def _has_immutable_capability(coi_binary):
-        """Check if the coi binary has CAP_LINUX_IMMUTABLE via getcap."""
-        try:
-            result = subprocess.run(
-                ["getcap", coi_binary],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return "cap_linux_immutable" in result.stdout
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
-
     def test_unshare_umount_bypass_blocked(self, coi_binary, workspace_dir, cleanup_containers):
         """Test that unshare+umount cannot bypass protected path protection.
 
@@ -775,7 +762,7 @@ class TestImmutableProtection:
         With immutable protection, step 3 fails because FS_IMMUTABLE_FL is
         enforced at the inode level, independent of mount namespace.
         """
-        if not self._has_immutable_capability(coi_binary):
+        if not has_immutable_capability(coi_binary):
             pytest.skip(
                 "coi binary lacks CAP_LINUX_IMMUTABLE "
                 "(grant with: sudo setcap cap_linux_immutable=ep <coi-binary>)"
@@ -825,7 +812,7 @@ class TestImmutableProtection:
         self, coi_binary, workspace_dir, cleanup_containers
     ):
         """Test that creating new files via unshare+umount is blocked."""
-        if not self._has_immutable_capability(coi_binary):
+        if not has_immutable_capability(coi_binary):
             pytest.skip(
                 "coi binary lacks CAP_LINUX_IMMUTABLE "
                 "(grant with: sudo setcap cap_linux_immutable=ep <coi-binary>)"
@@ -870,7 +857,7 @@ class TestImmutableProtection:
         on the host. This ensures immutable doesn't interfere with normal
         developer workflow between sessions.
         """
-        if not self._has_immutable_capability(coi_binary):
+        if not has_immutable_capability(coi_binary):
             pytest.skip(
                 "coi binary lacks CAP_LINUX_IMMUTABLE "
                 "(grant with: sudo setcap cap_linux_immutable=ep <coi-binary>)"
@@ -911,7 +898,7 @@ class TestImmutableProtection:
         modify it can set core.hooksPath to a directory they control,
         bypassing hooks protection entirely (see FLAWS.md Finding 1).
         """
-        if not self._has_immutable_capability(coi_binary):
+        if not has_immutable_capability(coi_binary):
             pytest.skip(
                 "coi binary lacks CAP_LINUX_IMMUTABLE "
                 "(grant with: sudo setcap cap_linux_immutable=ep <coi-binary>)"
@@ -963,7 +950,7 @@ class TestImmutableProtection:
         automatically on git operations, so an attacker who can write here
         gains host-side code execution (see FLAWS.md Finding 1).
         """
-        if not self._has_immutable_capability(coi_binary):
+        if not has_immutable_capability(coi_binary):
             pytest.skip(
                 "coi binary lacks CAP_LINUX_IMMUTABLE "
                 "(grant with: sudo setcap cap_linux_immutable=ep <coi-binary>)"
@@ -1014,7 +1001,7 @@ class TestImmutableProtection:
         so an attacker who can write here gains host-side code execution
         (see FLAWS.md Finding 1).
         """
-        if not self._has_immutable_capability(coi_binary):
+        if not has_immutable_capability(coi_binary):
             pytest.skip(
                 "coi binary lacks CAP_LINUX_IMMUTABLE "
                 "(grant with: sudo setcap cap_linux_immutable=ep <coi-binary>)"
@@ -1069,7 +1056,7 @@ class TestImmutableProtection:
         With host_immutable=false, the only protection is the read-only
         bind mount, which is defeated by unshare+umount.
         """
-        if not self._has_immutable_capability(coi_binary):
+        if not has_immutable_capability(coi_binary):
             pytest.skip(
                 "coi binary lacks CAP_LINUX_IMMUTABLE "
                 "(grant with: sudo setcap cap_linux_immutable=ep <coi-binary>)"
