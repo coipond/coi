@@ -147,10 +147,19 @@ Examples:
 			stop()
 		}
 
-		// Load config
+		// Load config. Most commands use one profile, so they read only the
+		// profiles they ask for; a requested --profile is read here so that it
+		// fails like the rest of the config.
 		var err error
 		stopLoad := timing.Start(timing.CatStep, "config load")
-		app.cfg, err = config.Load()
+		if commandNeedsAllProfiles(cmd) {
+			app.cfg, err = config.Load()
+		} else {
+			app.cfg, err = config.LoadOnDemand()
+			if err == nil && app.profile != "" {
+				_, err = app.cfg.LookupProfile(app.profile)
+			}
+		}
 		stopLoad()
 		if err != nil {
 			// Allow health command to run with defaults even if config is broken
@@ -195,6 +204,27 @@ Examples:
 
 		return nil
 	},
+}
+
+// allProfilesCommands are the top-level commands that list or check every
+// profile, so they load all of them up front.
+var allProfilesCommands = map[string]bool{
+	"build":    true,
+	"clean":    true,
+	"health":   true,
+	"profile":  true,
+	"validate": true,
+}
+
+// commandNeedsAllProfiles reports whether cmd is, or is under, a command in
+// allProfilesCommands.
+func commandNeedsAllProfiles(cmd *cobra.Command) bool {
+	for c := cmd; c.HasParent(); c = c.Parent() {
+		if !c.Parent().HasParent() {
+			return allProfilesCommands[c.Name()]
+		}
+	}
+	return false
 }
 
 // commandUsesIncusGroup reports whether a command should trigger the
@@ -261,7 +291,11 @@ func (a *App) defaultProfileFallbackName(cmd *cobra.Command) (string, error) {
 	if name == "" {
 		return "", nil
 	}
-	if a.cfg.GetProfile(name) == nil {
+	p, err := a.cfg.LookupProfile(name)
+	if err != nil {
+		return "", err
+	}
+	if p == nil {
 		return "", fmt.Errorf(
 			"[defaults] profile = %q does not name a known profile; "+
 				"run 'coi profile list' to see available profiles", name)
