@@ -33,7 +33,7 @@ esac
 	return logPath
 }
 
-func TestCoiContainerPatternSkipsForeignContainers(t *testing.T) {
+func TestContainerPatternSkipsForeignContainers(t *testing.T) {
 	tests := []struct {
 		name   string
 		prefix string

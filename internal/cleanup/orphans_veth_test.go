@@ -24,9 +24,9 @@ func fakeVethHost(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(netDir, "veth-bridged", "master"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	old := NetClassDir
-	NetClassDir = netDir
-	t.Cleanup(func() { NetClassDir = old })
+	old := netClassDir
+	netClassDir = netDir
+	t.Cleanup(func() { netClassDir = old })
 
 	binDir := t.TempDir()
 	logPath := filepath.Join(binDir, "calls")

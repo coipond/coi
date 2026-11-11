@@ -177,11 +177,15 @@ func CheckFirewalldVethBloat() HealthCheck {
 	}
 }
 
+// detectOrphanedVeths is cleanup.DetectOrphanedVeths. Package var so tests can
+// replace it.
+var detectOrphanedVeths = cleanup.DetectOrphanedVeths
+
 // CheckOrphanedResources checks for orphaned system resources
 func CheckOrphanedResources() HealthCheck {
 	// Check for orphaned veths
 	orphanedVeths := 0
-	if veths, err := cleanup.DetectOrphanedVeths(); err == nil {
+	if veths, err := detectOrphanedVeths(); err == nil {
 		orphanedVeths = len(veths)
 	}
 

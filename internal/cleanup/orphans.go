@@ -26,8 +26,9 @@ type OrphanedResources struct {
 	IptablesBridgeRules []string // Orphaned iptables coi-bridge-forward rules (no coi containers running)
 }
 
-// NetClassDir is where DetectOrphanedVeths reads host interfaces.
-var NetClassDir = "/sys/class/net"
+// netClassDir is where DetectOrphanedVeths reads host interfaces. Package var
+// so tests can point it at a fixture.
+var netClassDir = "/sys/class/net"
 
 // DetectOrphanedVeths finds veth interfaces that have no master bridge
 // These are typically left over from improperly cleaned up containers
@@ -35,7 +36,7 @@ func DetectOrphanedVeths() ([]string, error) {
 	var orphaned []string
 
 	// Read all network interfaces from /sys/class/net
-	entries, err := os.ReadDir(NetClassDir)
+	entries, err := os.ReadDir(netClassDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read network interfaces: %w", err)
 	}
@@ -56,7 +57,7 @@ func DetectOrphanedVeths() ([]string, error) {
 		}
 
 		// Check if this veth has a master (bridge)
-		masterPath := filepath.Join(NetClassDir, name, "master")
+		masterPath := filepath.Join(netClassDir, name, "master")
 		if _, err := os.Stat(masterPath); os.IsNotExist(err) {
 			// No master symlink = orphaned veth
 			orphaned = append(orphaned, name)

@@ -8,17 +8,7 @@ container and leave the foreign ones frozen.
 
 import subprocess
 
-from support.helpers import calculate_container_name
-
-
-def _incus_status(name):
-    result = subprocess.run(
-        ["incus", "list", f"^{name}$", "--format=csv", "-c", "s"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return result.stdout.strip().upper()
+from support.helpers import calculate_container_name, incus_status
 
 
 def test_unfreeze_spares_foreign_containers(
@@ -43,7 +33,7 @@ def test_unfreeze_spares_foreign_containers(
             timeout=30,
         )
         assert result.returncode == 0, f"incus pause {name} failed: {result.stderr}"
-        assert _incus_status(name) == "FROZEN"
+        assert incus_status(name) == "FROZEN"
 
     result = subprocess.run(
         [coi_binary, "unfreeze"],
@@ -54,6 +44,6 @@ def test_unfreeze_spares_foreign_containers(
     assert result.returncode == 0, f"unfreeze failed: {result.stderr}"
     assert "Unfroze 1 container(s)" in result.stderr, result.stderr
 
-    assert _incus_status(container_name) == "RUNNING"
+    assert incus_status(container_name) == "RUNNING"
     for name in paused_foreign:
-        assert _incus_status(name) == "FROZEN", f"coi unfreeze must not unfreeze {name}"
+        assert incus_status(name) == "FROZEN", f"coi unfreeze must not unfreeze {name}"

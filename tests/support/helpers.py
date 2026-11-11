@@ -1234,6 +1234,18 @@ def wait_for_pattern_in_monitor(monitor, pattern, timeout=30, poll_interval=0.5)
     return None
 
 
+def incus_status(container_name):
+    """Return the container's status from `incus list` in upper case
+    (RUNNING, STOPPED, FROZEN), or "" when it does not exist."""
+    r = subprocess.run(
+        ["incus", "list", f"^{re.escape(container_name)}$", "--format=csv", "-c", "s"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return r.stdout.strip().upper()
+
+
 def container_ipv4(container_name):
     """Return the container's eth0 IPv4 address from `incus list`, or None."""
     r = subprocess.run(
