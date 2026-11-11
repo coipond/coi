@@ -14,7 +14,7 @@ import (
 // Both DNS blocks answer TCP with a reset ahead of the reject, so blocked TCP
 // does not use up the container's ICMP rate-limit budget.
 func TestBlockDNSAddsTCPResetBeforeEachReject(t *testing.T) {
-	logPath := fakeNftSudo(t, "")
+	logPath := fakeNftSudo(t, "", "")
 	f := NewNftManager("10.0.0.2", "10.0.0.1")
 	if err := f.blockDNS(); err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestApplyOpenRules_RestoresResolverOnReuse(t *testing.T) {
 			"\t\tip saddr 10.0.0.2 reject comment \"coi-10.0.0.2\" # handle 6\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fakeNftSudo(t, "table ip coi {\n\tchain forward { # handle 1\n"+tc.listing+"\t}\n}\n")
+			fakeNftSudo(t, "table ip coi {\n\tchain forward { # handle 1\n"+tc.listing+"\t}\n}\n", "")
 			logPath := fakeIncus(t)
 			m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen}, logger.NewDiscard())
 			m.containerName = "c1"
