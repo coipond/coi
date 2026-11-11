@@ -496,8 +496,8 @@ func (m *Manager) SetTmpfsSize(size string) error {
 	return nil
 }
 
-// RemoveTmpfsSize removes the tmp.mount unit SetTmpfsSize installed and
-// unmounts its /tmp, inside a RUNNING container. Another tmp.mount is left
+// RemoveTmpfsSize replaces the tmp.mount unit SetTmpfsSize installed with a
+// mask and unmounts its /tmp, inside a RUNNING container. Another tmp.mount is left
 // alone. Reports whether coi's unit was there.
 func (m *Manager) RemoveTmpfsSize() (bool, error) {
 	out, err := m.ExecCommand(tmpfsRemoveScript(tmpMountUnitPath), ExecCommandOptions{Capture: true})
@@ -528,12 +528,14 @@ func tmpfsSizeScript(unitPath string, sizeBytes int64) string {
 		"systemctl reload-or-restart tmp.mount"
 }
 
-// tmpfsRemoveScript disables and deletes coi's unit at unitPath, then
-// unmounts /tmp, and prints "removed". It does nothing when there is no unit
-// or the unit is not coi's.
+// tmpfsRemoveScript disables coi's unit at unitPath and masks tmp.mount in
+// its place, then unmounts /tmp, and prints "removed". It does nothing when
+// there is no unit or the unit is not coi's. Masked, not deleted: the image
+// masks the RAM-backed tmp.mount Ubuntu 25.10+ enables, and a deleted unit
+// would let it mount /tmp at the next boot.
 func tmpfsRemoveScript(unitPath string) string {
 	return "u='" + unitPath + "'; grep -qx '" + tmpMountDescription + "' \"$u\" 2>/dev/null || exit 0; " +
-		"set -e; systemctl disable tmp.mount; rm -f \"$u\"; systemctl daemon-reload; " +
+		"set -e; systemctl disable tmp.mount; ln -sf /dev/null \"$u\"; systemctl daemon-reload; " +
 		"systemctl stop tmp.mount || umount -l /tmp; echo removed"
 }
 

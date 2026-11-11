@@ -144,6 +144,20 @@ def write_workspace_container_config(workspace_dir, persistent=None, image=None,
     return config_path
 
 
+if HAS_PYTE:
+
+    class _Screen(pyte.Screen):
+        """pyte.Screen that ignores private DSR queries (CSI ? Ps n).
+
+        pyte 0.8.2 passes private=True to report_device_status, which does not
+        accept it, so a query such as tmux 3.6's CSI ? 996 n raises TypeError.
+        """
+
+        def report_device_status(self, mode, private=False):
+            if not private:
+                super().report_device_status(mode)
+
+
 class TerminalEmulator:
     """
     Terminal emulator using pyte that properly handles ANSI escape sequences.
@@ -161,7 +175,7 @@ class TerminalEmulator:
                 "pyte is required for terminal emulation. Install with: pip install pyte"
             )
 
-        self.screen = pyte.Screen(columns, lines)
+        self.screen = _Screen(columns, lines)
         self.stream = pyte.Stream(self.screen)
         self.raw_output = []
         self.verbose = verbose
@@ -1256,6 +1270,20 @@ def container_ipv4(container_name):
             if a.get("family") == "inet":
                 return a["address"]
     return None
+
+
+def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
+    """Run cmd with bash -c in the container; return (returncode, combined output).
+
+    coi container exec does not keep the command's stdout and stderr apart
+    when not attached to a terminal, so callers match on both together.
+    """
+    argv = [coi_binary, "container", "exec", container_name]
+    if user is not None:
+        argv += ["--user", str(user), "--group", str(user), "--env", "HOME=/home/code"]
+    argv += ["--", "bash", "-c", cmd]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    return result.returncode, result.stdout + result.stderr
 
 
 def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):

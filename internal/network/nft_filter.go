@@ -505,16 +505,29 @@ func bootBlockComment(containerName string) string {
 	return "coi-boot-" + containerName
 }
 
-// DisableIPv6ForContainer disables IPv6 in the container to prevent firewall bypass.
+// disableIPv6Cmd disables IPv6 in the container to prevent firewall bypass.
 // All Coi IPv4 nft rules are IPv4-only; IPv6 would circumvent them entirely.
 //
 // NOTE: this runs an in-container sysctl, which in-container root can simply set
 // back to 0 (it owns CAP_NET_ADMIN over its own netns). It is therefore
 // defence-in-depth only — the enforced IPv6 egress boundary is the host-side
 // drop installed by ApplyIPv6BlockForContainer, which the container cannot touch.
-func DisableIPv6ForContainer(containerName string) error {
+const disableIPv6Cmd = "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
+
+// allSteps joins shell steps into one script that runs every step and fails
+// when any of them failed.
+func allSteps(steps ...string) string {
+	var b strings.Builder
+	b.WriteString("rc=0\n")
+	for _, s := range steps {
+		b.WriteString(s + " || rc=1\n")
+	}
+	b.WriteString("exit $rc")
+	return b.String()
+}
+
+func execInContainer(containerName, cmd string) error {
 	mgr := container.NewManager(containerName)
-	cmd := "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
 	_, err := mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true})
 	return err
 }
@@ -683,7 +696,19 @@ func (f *NftManager) addRule(source, destination, action string) error {
 // addRuleWithMatch is addRule with an optional extra match clause inserted
 // between the daddr match and the action (e.g. an L4 protocol / ICMP-type
 // constraint). match is a slice of nft tokens; nil/empty behaves like addRule.
+//
+// A reject also adds the tcpReset rule ahead of it.
 func (f *NftManager) addRuleWithMatch(source, destination string, match []string, action string) error {
+	if action == "reject" {
+		if err := f.addForwardRule(source, destination, match, tcpReset); err != nil {
+			return err
+		}
+	}
+	return f.addForwardRule(source, destination, match, []string{action})
+}
+
+// addForwardRule adds one rule to the coi forward chain (or the open batch).
+func (f *NftManager) addForwardRule(source, destination string, match, verdict []string) error {
 	args := []string{
 		"add", "rule", "ip", "coi", "forward",
 		"ip", "saddr", source,
@@ -693,7 +718,8 @@ func (f *NftManager) addRuleWithMatch(source, destination string, match []string
 		args = append(args, "ip", "daddr", destination)
 	}
 	args = append(args, match...)
-	args = append(args, action, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
+	args = append(args, verdict...)
+	args = append(args, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
 	if f.batch != nil {
 		f.batch = append(f.batch, args)
 		return nil
