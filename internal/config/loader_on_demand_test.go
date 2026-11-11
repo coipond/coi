@@ -34,6 +34,32 @@ func onDemandHome(t testing.TB) string {
 	return filepath.Join(home, ".coi")
 }
 
+func TestLoadWithoutProfiles_ListsNoProfile(t *testing.T) {
+	coiDir := onDemandHome(t)
+	writeTestProfile(t, coiDir, "good", "[container]\nimage = \"good-image\"\n")
+	writeTestProfile(t, coiDir, "broken", "[container\nimage = \n")
+	if err := os.WriteFile(filepath.Join(coiDir, "config.toml"),
+		[]byte("[incus]\nproject = \"p1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadWithoutProfiles()
+	if err != nil {
+		t.Fatalf("LoadWithoutProfiles(): %v", err)
+	}
+	if cfg.Incus.Project != "p1" {
+		t.Errorf("project = %q, want p1", cfg.Incus.Project)
+	}
+	if len(cfg.pendingProfiles) != 0 || cfg.GetProfile("good") != nil {
+		t.Error("a disk profile was listed")
+	}
+	for name := range cfg.Profiles {
+		if !IsBuiltinProfile(name) {
+			t.Errorf("profile %q was read", name)
+		}
+	}
+}
+
 func TestLoadOnDemand_BrokenUnrelatedProfileNotRead(t *testing.T) {
 	coiDir := onDemandHome(t)
 	writeTestProfile(t, coiDir, "good", "[container]\nimage = \"good-image\"\n")
@@ -318,6 +344,13 @@ func BenchmarkLoadProfiles(b *testing.B) {
 			writeTestProfile(b, coiDir, fmt.Sprintf("slot-%05d", i),
 				"[container]\nimage = \"coi-default\"\npersistent = true\n[environment]\nNODE = \"n1\"\n")
 		}
+		b.Run(fmt.Sprintf("without-profiles/%d", count), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := LoadWithoutProfiles(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 		b.Run(fmt.Sprintf("no-profile/%d", count), func(b *testing.B) {
 			for b.Loop() {
 				if _, err := LoadOnDemand(); err != nil {

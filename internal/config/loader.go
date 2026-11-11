@@ -30,9 +30,10 @@ import (
 // same profile name is defined in more than one location Load() returns an
 // error asking the user to resolve the conflict.
 //
-// Load reads every profile; LoadOnDemand reads only the profiles asked for.
+// Load reads every profile; LoadOnDemand reads only the profiles asked for;
+// LoadWithoutProfiles reads none.
 func Load() (*Config, error) {
-	return load(false)
+	return load(loadAllProfiles)
 }
 
 // LoadOnDemand is Load without reading the profiles: it lists the profile
@@ -41,11 +42,27 @@ func Load() (*Config, error) {
 // LookupProfile or ApplyProfile first asks for it. cfg.Profiles then holds only
 // the profiles read so far, plus the built-in profiles no disk profile replaces.
 func LoadOnDemand() (*Config, error) {
-	return load(true)
+	return load(loadProfilesOnDemand)
 }
 
-// load runs Load, or LoadOnDemand when onDemand is set.
-func load(onDemand bool) (_ *Config, err error) {
+// LoadWithoutProfiles is Load for commands that never apply a profile: it does
+// not list the profile directories, so its cost does not grow with the number
+// of profiles. cfg.Profiles holds only the built-in profiles.
+func LoadWithoutProfiles() (*Config, error) {
+	return load(loadNoProfiles)
+}
+
+// profileLoadMode selects which profiles load reads.
+type profileLoadMode int
+
+const (
+	loadAllProfiles profileLoadMode = iota
+	loadProfilesOnDemand
+	loadNoProfiles
+)
+
+// load runs Load, LoadOnDemand or LoadWithoutProfiles, as mode says.
+func load(mode profileLoadMode) (_ *Config, err error) {
 	// Every failure to load, parse, or validate config is a ConfigError, so the
 	// CLI can distinguish "your config is wrong" from a runtime failure with one
 	// errors.As. Wrapping once here covers all the return paths below without
@@ -70,10 +87,12 @@ func load(onDemand bool) (_ *Config, err error) {
 	// into a single namespace; duplicate names across locations are rejected
 	// by loadProfileDirectories so it's always clear which profile is used.
 	for _, dir := range GetProfileParentDirs() {
-		if onDemand {
-			_, err = indexProfileDirectory(cfg, dir, isTrustedProfileDir(dir))
-		} else {
+		switch mode {
+		case loadAllProfiles:
 			err = loadProfileDirectories(cfg, dir, isTrustedProfileDir(dir))
+		case loadProfilesOnDemand:
+			_, err = indexProfileDirectory(cfg, dir, isTrustedProfileDir(dir))
+		case loadNoProfiles:
 		}
 		if err != nil {
 			return nil, err
@@ -105,7 +124,7 @@ func load(onDemand bool) (_ *Config, err error) {
 		}
 	}
 
-	if !onDemand {
+	if mode == loadAllProfiles {
 		// Resolve profile inheritance after all profiles are loaded from all levels
 		if err := cfg.ResolveProfileInheritance(); err != nil {
 			return nil, fmt.Errorf("profile inheritance error: %w", err)
