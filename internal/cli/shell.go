@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -789,6 +790,12 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 		}
 	}
 
+	// Looked up only once the monitor sees a socket to a DNS or DHCP port.
+	gateway := sync.OnceValue(func() string {
+		gw, _ := network.GetContainerGatewayIP(containerName)
+		return gw
+	})
+
 	// Create daemon config
 	daemonCfg := monitor.DaemonConfig{
 		ContainerName:              containerName,
@@ -798,6 +805,7 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 		AllowedCIDRs:               allowedCIDRs,
 		AllowedCIDRsProvider:       allowedCIDRsProvider,
 		PermittedDestination:       permitted,
+		Gateway:                    gateway,
 		AllowedDomains:             cfg.Network.AllowedDomains,
 		GTFOBinsDir:                cfg.Detection.GTFOBinsDir,
 		SigmaDir:                   cfg.Detection.SigmaDir,

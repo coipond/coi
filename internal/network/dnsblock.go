@@ -108,16 +108,30 @@ const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>
 const restoreResolverCmd = "if [ -L /run/systemd/system/systemd-resolved.service ]; then " +
 	"systemctl unmask --runtime systemd-resolved.service && systemctl start systemd-resolved.service; fi"
 
+// filesOnlyHostsCmd makes name lookups in the container read /etc/hosts only,
+// until its next boot: a runtime copy of nsswitch.conf with "hosts: files" is
+// bind-mounted over the original.
+//
+// Without it a name not in /etc/hosts falls through to the dns module and sends
+// a query to the resolver stub on 127.0.0.53. That query cannot leave the
+// container, but its socket is a connection the security monitor sees.
+const filesOnlyHostsCmd = "if [ -f /etc/nsswitch.conf ] && ! grep -q ' /etc/nsswitch.conf ' /proc/self/mountinfo; then " +
+	"mkdir -p /run/coi && { grep -v '^hosts:' /etc/nsswitch.conf; echo 'hosts: files'; } >/run/coi/nsswitch.conf && " +
+	"mount --bind /run/coi/nsswitch.conf /etc/nsswitch.conf; fi"
+
+// restoreHostsCmd undoes filesOnlyHostsCmd.
+const restoreHostsCmd = "if grep -q ' /etc/nsswitch.conf ' /proc/self/mountinfo; then umount /etc/nsswitch.conf; fi"
+
 // containerNetCmd is the in-container part of a mode's network setup, as one
 // exec.
 func containerNetCmd(mode config.NetworkMode) string {
 	switch mode {
 	case config.NetworkModeAllowlist:
-		return allSteps(disableIPv6Cmd, stopResolverCmd)
+		return allSteps(disableIPv6Cmd, stopResolverCmd, filesOnlyHostsCmd)
 	case config.NetworkModeRestricted:
-		return allSteps(disableIPv6Cmd, restoreResolverCmd)
+		return allSteps(disableIPv6Cmd, restoreResolverCmd, restoreHostsCmd)
 	default:
-		return restoreResolverCmd
+		return allSteps(restoreResolverCmd, restoreHostsCmd)
 	}
 }
 
@@ -125,7 +139,7 @@ func containerNetCmd(mode config.NetworkMode) string {
 // the firewall is the enforced boundary.
 func (m *Manager) prepareContainer(containerName string) {
 	if err := execInContainer(containerName, containerNetCmd(m.config.Mode)); err != nil {
-		m.logger.Errorf("Warning: failed to prepare the container's network (IPv6, resolver): %v", err)
+		m.logger.Errorf("Warning: failed to prepare the container's network (IPv6, resolver, name lookup): %v", err)
 	}
 }
 

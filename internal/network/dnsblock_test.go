@@ -46,16 +46,17 @@ func fakeIncus(t *testing.T) string {
 	return logPath
 }
 
-// Allowlist mode stops the resolver; restricted and open modes give it back.
-// Only the IPv4-only modes disable IPv6.
+// Allowlist mode stops the resolver and limits name lookups to /etc/hosts;
+// restricted and open modes give both back. Only the IPv4-only modes disable
+// IPv6.
 func TestContainerNetCmd(t *testing.T) {
 	for _, tc := range []struct {
 		mode      config.NetworkMode
 		want, not []string
 	}{
-		{config.NetworkModeAllowlist, []string{disableIPv6Cmd, stopResolverCmd}, []string{restoreResolverCmd}},
-		{config.NetworkModeRestricted, []string{disableIPv6Cmd, restoreResolverCmd}, []string{stopResolverCmd}},
-		{config.NetworkModeOpen, []string{restoreResolverCmd}, []string{disableIPv6Cmd, stopResolverCmd}},
+		{config.NetworkModeAllowlist, []string{disableIPv6Cmd, stopResolverCmd, filesOnlyHostsCmd}, []string{restoreResolverCmd, restoreHostsCmd}},
+		{config.NetworkModeRestricted, []string{disableIPv6Cmd, restoreResolverCmd, restoreHostsCmd}, []string{stopResolverCmd, filesOnlyHostsCmd}},
+		{config.NetworkModeOpen, []string{restoreResolverCmd, restoreHostsCmd}, []string{disableIPv6Cmd, stopResolverCmd, filesOnlyHostsCmd}},
 	} {
 		got := containerNetCmd(tc.mode)
 		for _, w := range tc.want {

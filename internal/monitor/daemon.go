@@ -39,6 +39,7 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 	collector := NewCollector(cfg.ContainerName, "", cfg.WorkspacePath, cfg.AllowedCIDRs)
 	collector.SetAllowedCIDRsProvider(cfg.AllowedCIDRsProvider)
 	collector.SetPermittedDestination(cfg.PermittedDestination)
+	collector.SetGateway(cfg.Gateway)
 	detector := NewDetector(cfg.FileReadThresholdMB, cfg.FileReadRateMBPerSec).
 		WithProcessCountThreshold(cfg.ProcessCountThreshold).
 		WithProcessSpawnRateThreshold(cfg.ProcessSpawnRateThreshold).

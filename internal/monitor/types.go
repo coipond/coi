@@ -226,6 +226,9 @@ type DaemonConfig struct {
 	// service, including one added at runtime). Such connections are not flagged
 	// as private-network or allowlist violations; other checks still apply.
 	PermittedDestination PermittedDestinationFunc
+	// Gateway, when set, returns the container's bridge gateway IP. A socket
+	// to its DNS or DHCP port is not flagged. Asked only for such a socket.
+	Gateway func() string
 
 	// Detection database directories (populated from config.Detection)
 	GTFOBinsDir string // Local GTFOBins clone directory

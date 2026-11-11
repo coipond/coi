@@ -15,6 +15,7 @@ type Collector struct {
 	allowedCIDRs      []string
 	allowedCIDRsFn    func() []string
 	permitted         PermittedDestinationFunc
+	gateway           func() string
 	filesystemMonitor *FilesystemMonitor
 }
 
@@ -34,6 +35,11 @@ func (c *Collector) SetAllowedCIDRsProvider(fn func() []string) {
 // DaemonConfig.PermittedDestination).
 func (c *Collector) SetPermittedDestination(fn PermittedDestinationFunc) {
 	c.permitted = fn
+}
+
+// SetGateway supplies the container's bridge gateway (see DaemonConfig.Gateway).
+func (c *Collector) SetGateway(fn func() string) {
+	c.gateway = fn
 }
 
 // currentAllowedCIDRs returns the live allowlist when a provider is set and yields
@@ -75,7 +81,7 @@ func (c *Collector) Collect(ctx context.Context) (MonitorSnapshot, error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		networkStats, err := CollectNetworkStats(ctx, c.containerName, c.containerIP, c.currentAllowedCIDRs(), c.permitted)
+		networkStats, err := CollectNetworkStats(ctx, c.containerName, c.containerIP, c.currentAllowedCIDRs(), c.permitted, c.gateway)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
