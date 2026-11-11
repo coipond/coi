@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coipond/coi/internal/config"
 	"github.com/spf13/pflag"
 )
 
@@ -116,16 +117,19 @@ func TestExecute_AllProfilesCommandFailsOnBrokenProfile(t *testing.T) {
 }
 
 // An invalid requested profile fails at config load, as when every profile
-// was read: same message and exit code.
+// was read: same message and exit code. An invalid [defaults] profile fails
+// the same way in the commands that apply it.
 func TestExecute_InvalidRequestedProfileFailsConfigLoad(t *testing.T) {
 	tests := map[string]struct {
 		userConfig string
 		args       []string
 	}{
-		"--profile":           {"", []string{"version", "--profile", "broken"}},
-		"[defaults] profile":  {"[defaults]\nprofile = \"broken\"\n", []string{"version"}},
-		"broken parent":       {"", []string{"version", "--profile", "child"}},
-		"[defaults] inherits": {"[defaults]\nprofile = \"child\"\n", []string{"version"}},
+		"--profile":                    {"", []string{"version", "--profile", "broken"}},
+		"broken parent":                {"", []string{"version", "--profile", "child"}},
+		"[defaults] profile, run":      {"[defaults]\nprofile = \"broken\"\n", []string{"run", "true"}},
+		"[defaults] inherits, run":     {"[defaults]\nprofile = \"child\"\n", []string{"run", "true"}},
+		"[defaults] profile, attach":   {"[defaults]\nprofile = \"broken\"\n", []string{"attach"}},
+		"[defaults] profile, snapshot": {"[defaults]\nprofile = \"broken\"\n", []string{"snapshot", "list"}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -148,10 +152,30 @@ func TestExecute_InvalidRequestedProfileFailsConfigLoad(t *testing.T) {
 	}
 }
 
-// A [defaults] name with no profile does not fail commands that never apply
-// it (#607).
-func TestExecute_UnknownDefaultsProfileDoesNotFailLoad(t *testing.T) {
-	if err := executeWithProfiles(t, nil, "[defaults]\nprofile = \"nope\"\n", "version"); err != nil {
-		t.Fatalf("coi version: %v", err)
+// A [defaults] profile, unknown or broken, does not fail commands that never
+// apply it (#607), and they read no profile.
+func TestExecute_DefaultsProfileNotReadByOtherCommands(t *testing.T) {
+	for name, defaults := range map[string]string{"unknown": "nope", "broken": "broken"} {
+		t.Run(name, func(t *testing.T) {
+			profiles := map[string]string{"broken": brokenProfile}
+			userConfig := "[defaults]\nprofile = \"" + defaults + "\"\n"
+			if err := executeWithProfiles(t, profiles, userConfig, "version"); err != nil {
+				t.Fatalf("coi version: %v", err)
+			}
+			for name := range app.cfg.Profiles {
+				if !config.IsBuiltinProfile(name) {
+					t.Errorf("profile %q was read", name)
+				}
+			}
+		})
+	}
+}
+
+// A --profile that is not there, or was removed after the listing, fails as
+// a missing profile did when every profile was read.
+func TestExecute_MissingRequestedProfileFails(t *testing.T) {
+	err := executeWithProfiles(t, nil, "", "version", "--profile", "gone")
+	if err == nil || err.Error() != "profile 'gone' not found" {
+		t.Fatalf("coi version --profile gone = %v", err)
 	}
 }

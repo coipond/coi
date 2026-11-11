@@ -223,17 +223,20 @@ func TestLoadOnDemand_DiskProfileOverridesBuiltin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, ok := cfg.Profiles["default"]; ok {
+		t.Error("the disk default profile was read at load")
+	}
 	eager, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name := range builtinProfiles {
-		got, ok := cfg.Profiles[name]
-		if !ok {
-			t.Fatalf("built-in name %q not loaded at load", name)
+		got := cfg.GetProfile(name)
+		if got == nil {
+			t.Fatalf("built-in name %q not found", name)
 		}
-		if !reflect.DeepEqual(got, eager.Profiles[name]) {
-			t.Errorf("%s differs from Load's:\n got  %+v\n want %+v", name, got, eager.Profiles[name])
+		if !reflect.DeepEqual(*got, eager.Profiles[name]) {
+			t.Errorf("%s differs from Load's:\n got  %+v\n want %+v", name, *got, eager.Profiles[name])
 		}
 	}
 	if cfg.Profiles["default"].Container.Image != "disk-default" {
@@ -241,8 +244,56 @@ func TestLoadOnDemand_DiskProfileOverridesBuiltin(t *testing.T) {
 	}
 }
 
-// LoadOnDemand reads one profile, so its time must not grow with the number
-// of profiles on disk:
+// A disk profile named like a built-in that is removed before it is read
+// leaves the built-in, as Load does.
+func TestLoadOnDemand_RemovedDiskBuiltinFallsBack(t *testing.T) {
+	coiDir := onDemandHome(t)
+	path := writeTestProfile(t, coiDir, "default", "[container]\nimage = \"disk-default\"\n")
+
+	cfg, err := LoadOnDemand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	eager, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.GetProfile("default")
+	if got == nil || !reflect.DeepEqual(*got, eager.Profiles["default"]) {
+		t.Errorf("default = %+v, want the built-in %+v", got, eager.Profiles["default"])
+	}
+}
+
+// With thousands of profiles on disk, a command that uses no profile reads
+// none, and one that applies a profile reads only that one.
+func TestLoadOnDemand_ReadsOnlyUsedProfiles(t *testing.T) {
+	coiDir := onDemandHome(t)
+	writeTestProfile(t, coiDir, "base", "[environment]\nBASE = \"1\"\n")
+	for i := range 3000 {
+		writeTestProfile(t, coiDir, fmt.Sprintf("slot-%05d", i), "inherits = \"base\"\n")
+	}
+
+	cfg, err := LoadOnDemand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(cfg.Profiles); got != len(builtinProfiles) {
+		t.Errorf("profiles read at load = %d, want only the %d built-ins", got, len(builtinProfiles))
+	}
+	if err := cfg.ApplyProfile("slot-00042"); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(cfg.Profiles); got != len(builtinProfiles)+2 {
+		t.Errorf("profiles read after ApplyProfile = %d, want the built-ins, slot-00042 and base", got)
+	}
+}
+
+// LoadOnDemand reads no profile for a command that uses none (coi container
+// list) and one for a command that applies one (coi shell --profile X), so its
+// time must not grow with the number of profiles on disk:
 //
 //	go test ./internal/config -run '^$' -bench LoadProfiles -benchtime 20x
 func BenchmarkLoadProfiles(b *testing.B) {
@@ -252,7 +303,14 @@ func BenchmarkLoadProfiles(b *testing.B) {
 			writeTestProfile(b, coiDir, fmt.Sprintf("slot-%05d", i),
 				"[container]\nimage = \"coi-default\"\npersistent = true\n[environment]\nNODE = \"n1\"\n")
 		}
-		b.Run(fmt.Sprintf("on-demand/%d", count), func(b *testing.B) {
+		b.Run(fmt.Sprintf("no-profile/%d", count), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := LoadOnDemand(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("one-profile/%d", count), func(b *testing.B) {
 			for b.Loop() {
 				cfg, err := LoadOnDemand()
 				if err != nil {

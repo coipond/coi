@@ -39,7 +39,7 @@ func Load() (*Config, error) {
 // directories (and checks for duplicate names) but reads and validates a
 // profile, with the profiles it inherits from, only when GetProfile,
 // LookupProfile or ApplyProfile first asks for it. cfg.Profiles then holds only
-// the profiles read so far. The built-in profile names are read at load.
+// the profiles read so far, plus the built-in profiles no disk profile replaces.
 func LoadOnDemand() (*Config, error) {
 	return load(true)
 }
@@ -96,23 +96,16 @@ func load(onDemand bool) (_ *Config, err error) {
 
 	// Inject the built-in profiles; a disk profile of the same name overrides one.
 	for name, synthesize := range builtinProfiles {
-		if !cfg.hasProfile(name) {
+		if ref, pending := cfg.pendingProfiles[name]; pending {
+			builtin := synthesize(cfg)
+			ref.builtin = &builtin
+			cfg.pendingProfiles[name] = ref
+		} else if _, exists := cfg.Profiles[name]; !exists {
 			cfg.Profiles[name] = synthesize(cfg)
 		}
 	}
 
-	if onDemand {
-		// A disk profile named like a built-in may inherit from the other
-		// built-in, so read it after the synthesized ones are in place.
-		for name, synthesize := range builtinProfiles {
-			if err := cfg.loadProfile(name); err != nil {
-				return nil, err
-			}
-			if _, exists := cfg.Profiles[name]; !exists {
-				cfg.Profiles[name] = synthesize(cfg)
-			}
-		}
-	} else {
+	if !onDemand {
 		// Resolve profile inheritance after all profiles are loaded from all levels
 		if err := cfg.ResolveProfileInheritance(); err != nil {
 			return nil, fmt.Errorf("profile inheritance error: %w", err)
@@ -747,20 +740,12 @@ func isTrustedProfileDir(dir string) bool {
 type pendingProfile struct {
 	dir     string // <profiles>/<name>
 	trusted bool
+	builtin *ProfileConfig // the built-in it replaces, used if it is gone
 }
 
 // configPath returns the profile's config.toml path.
 func (p pendingProfile) configPath() string {
 	return filepath.Join(p.dir, "config.toml")
-}
-
-// hasProfile reports whether name is a loaded profile or one still to be read.
-func (c *Config) hasProfile(name string) bool {
-	if _, ok := c.Profiles[name]; ok {
-		return true
-	}
-	_, ok := c.pendingProfiles[name]
-	return ok
 }
 
 // loadProfileDirectories scans configDir/profiles/ for subdirectories containing config.toml
@@ -868,27 +853,41 @@ func (c *Config) readPendingProfile(profileName string) error {
 	data, err := os.ReadFile(profileConfigPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil // No config.toml in this subdirectory (or it was just removed)
+			// No config.toml in this subdirectory (or it was just removed)
+			if ref.builtin != nil {
+				c.Profiles[profileName] = *ref.builtin
+			}
+			return nil
 		}
 		return fmt.Errorf("failed to read profile %q config at %s: %w", profileName, profileConfigPath, err)
 	}
 
+	// Parse once; the struct, the deprecated-field check and the schema
+	// validation each decode that one parse.
+	var doc toml.Primitive
+	md, err := toml.Decode(string(data), &doc)
+	if err != nil {
+		return fmt.Errorf("failed to parse profile %q config at %s: %w", profileName, profileConfigPath, err)
+	}
 	var profileCfg ProfileConfig
-	if _, err := toml.Decode(string(data), &profileCfg); err != nil {
+	if err := md.PrimitiveDecode(doc, &profileCfg); err != nil {
 		return fmt.Errorf("failed to parse profile %q config at %s: %w", profileName, profileConfigPath, err)
 	}
 
 	// Detect pre-0.8.0 profile layouts and refuse to load with a friendly
 	// message before schema validation runs (deprecated fields would
 	// otherwise surface as unhelpful "additionalProperties not allowed").
-	if err := checkDeprecatedProfileData(profileConfigPath, data); err != nil {
-		return err
+	var trap deprecatedProfileFields
+	if md.PrimitiveDecode(doc, &trap) == nil {
+		if err := checkDeprecatedProfileTrap(profileConfigPath, trap); err != nil {
+			return err
+		}
 	}
 
 	// Validate the raw TOML against the JSON Schema to catch unknown keys,
 	// wrong types, and invalid enum values with precise error paths.
 	var rawMap map[string]any
-	if _, err := toml.Decode(string(data), &rawMap); err != nil {
+	if err := md.PrimitiveDecode(doc, &rawMap); err != nil {
 		return fmt.Errorf("failed to re-read profile %q for schema validation: %w", profileName, err)
 	}
 	DropRemovedProfileKeys(rawMap, profileConfigPath)
