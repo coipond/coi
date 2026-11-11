@@ -6,11 +6,14 @@ import contextlib
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from pexpect import EOF, TIMEOUT, spawn
@@ -39,6 +42,37 @@ def write_trusted_coi_config(content):
     with os.fdopen(fd, "w") as f:
         f.write(content)
     return {**os.environ, "COI_CONFIG": path}
+
+
+PORT_SENTINEL = "PORT_SENTINEL_9917"
+
+# Node one-liner for `sh -c` in a container: an HTTP server on
+# 0.0.0.0:$PORT replying with PORT_SENTINEL, exits after 60s.
+NODE_PORT_SERVER = (
+    'node -e \'require("http").createServer((q,s)=>s.end("' + PORT_SENTINEL + '"))'
+    '.listen(process.env.PORT,"0.0.0.0");setTimeout(()=>process.exit(0),60000)\''
+)
+
+
+def free_host_port(addr="127.0.0.1"):
+    """Return a TCP port that is free on the host address `addr`."""
+    with socket.socket() as s:
+        s.bind((addr, 0))
+        return s.getsockname()[1]
+
+
+def fetch_host_port(port, host="127.0.0.1", timeout_total=30):
+    """Poll http://<host>:<port>/ from the host until it answers; return the body."""
+    deadline = time.time() + timeout_total
+    last_err = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/", timeout=2) as r:
+                return r.read().decode()
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            last_err = e
+            time.sleep(1)
+    raise AssertionError(f"nothing answered on host {host}:{port}: {last_err}")
 
 
 _FAKE_LAN_LISTENER = """
@@ -1248,6 +1282,19 @@ def wait_for_pattern_in_monitor(monitor, pattern, timeout=30, poll_interval=0.5)
         time.sleep(poll_interval)
 
     return None
+
+
+def container_device_get(container_name, device, key):
+    """Return `incus config device get <container> <device> <key>`, or None."""
+    r = subprocess.run(
+        ["incus", "config", "device", "get", container_name, device, key],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
 
 
 def container_ipv4(container_name):
