@@ -8,7 +8,7 @@ import (
 )
 
 // The veth comes from the cheap volatile.eth0.host_name key when that
-// interface exists on the host — no full-state `incus list` (which can block
+// interface exists on the host — no instance state query (which can block
 // for seconds right after a start).
 func TestGetContainerVethName_UsesVolatileKey(t *testing.T) {
 	if _, err := os.Stat("/sys/class/net/lo"); err != nil {
@@ -29,7 +29,7 @@ func TestGetContainerVethName_UsesVolatileKey(t *testing.T) {
 		t.Fatalf("got %q, %v", veth, err)
 	}
 	b, _ := os.ReadFile(calls)
-	if strings.Contains(string(b), "--format=json") {
+	if strings.Contains(string(b), "/state") {
 		t.Errorf("must not fall back to the full-state query:\n%s", b)
 	}
 }
@@ -40,7 +40,7 @@ func TestGetContainerVethName_StaleKeyFallsBack(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncase \"$*\" in\n" +
 		"  *volatile.eth0.host_name*) echo vethgone123 ;;\n" +
-		"  *--format=json*) echo '[{\"name\":\"c2\",\"state\":{\"network\":{\"eth0\":{\"host_name\":\"vethreal\",\"addresses\":[]}}}}]' ;;\n" +
+		"  'query /1.0/instances/c2/state?project=default') echo '{\"network\":{\"eth0\":{\"host_name\":\"vethreal\",\"addresses\":[]}}}' ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)

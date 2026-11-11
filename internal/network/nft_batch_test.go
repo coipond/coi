@@ -1,6 +1,8 @@
 package network
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -52,14 +54,35 @@ func TestNftManagerBatchCollectsRules(t *testing.T) {
 }
 
 func TestParseInstanceNet(t *testing.T) {
-	out := `[{"name":"c1","state":{"network":{"eth0":{"host_name":"veth12","addresses":[{"family":"inet6","address":"fe80::1"},{"family":"inet","address":"10.0.0.2"}]},"lo":{"host_name":""}}}},
-	{"name":"c10","state":{"network":{"eth0":{"host_name":"veth99","addresses":[{"family":"inet","address":"10.0.0.9"}]}}}}]`
-	ip, veth, err := parseInstanceNet(out, "c1")
+	out := `{"status":"Running","network":{"eth0":{"host_name":"veth12","addresses":[{"family":"inet6","address":"fe80::1"},{"family":"inet","address":"10.0.0.2"}]},"lo":{"host_name":""}}}`
+	ip, veth, err := parseInstanceNet(out)
 	if err != nil || ip != "10.0.0.2" || veth != "veth12" {
 		t.Errorf("got %q %q %v", ip, veth, err)
 	}
-	ip, veth, _ = parseInstanceNet(`[{"name":"c1","state":{"network":{"eth0":{"host_name":"veth12","addresses":[]}}}}]`, "c1")
+	ip, veth, _ = parseInstanceNet(`{"network":{"eth0":{"host_name":"veth12","addresses":[]}}}`)
 	if ip != "" || veth != "veth12" {
 		t.Errorf("no lease yet: got %q %q", ip, veth)
+	}
+	ip, veth, err = parseInstanceNet(`{"status":"Stopped","network":null}`)
+	if err != nil || ip != "" || veth != "" {
+		t.Errorf("stopped: got %q %q %v", ip, veth, err)
+	}
+	if _, _, err := parseInstanceNet("not json"); err == nil {
+		t.Error("bad JSON: want error")
+	}
+}
+
+// A container Incus does not know has no address yet, as `incus list` gave.
+func TestLookupInstanceNet_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\necho 'Error: Instance not found' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ip, veth, err := lookupInstanceNet("coi-gone-1")
+	if err != nil || ip != "" || veth != "" {
+		t.Errorf("got %q %q %v", ip, veth, err)
 	}
 }

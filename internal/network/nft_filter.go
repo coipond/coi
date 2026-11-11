@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -929,7 +930,7 @@ type instanceNet struct {
 
 // instanceNetCache remembers complete (IPv4 + veth) answers briefly: one
 // launch asks for the IP and the veth 3-4 times (boot block, mode setup,
-// IPv6 block, [[network.hosts]]), each a full-state `incus list` (~100-200 ms).
+// IPv6 block, [[network.hosts]]), each an instance state query.
 // Only complete answers are cached, so a container still waiting for its DHCP
 // lease is always re-queried, and the short TTL covers just one launch.
 var instanceNetCache sync.Map // container name -> instanceNet
@@ -937,7 +938,7 @@ var instanceNetCache sync.Map // container name -> instanceNet
 const instanceNetTTL = 5 * time.Second
 
 // lookupInstanceNet returns the container's eth0 IPv4 address and veth name
-// (either may be empty) from one `incus list`.
+// (either may be empty) from one instance state query.
 func lookupInstanceNet(containerName string) (ip, veth string, err error) {
 	if v, ok := instanceNetCache.Load(containerName); ok {
 		// The veth is recreated on every container start: only trust a cached
@@ -947,11 +948,14 @@ func lookupInstanceNet(containerName string) (ip, veth string, err error) {
 		}
 		instanceNetCache.Delete(containerName)
 	}
-	output, err := container.IncusOutput("list", containerName, "--format=json")
+	output, err := container.InstanceStateJSON(containerName)
+	if errors.Is(err, container.ErrContainerNotFound) {
+		return "", "", nil
+	}
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get container info: %w", err)
 	}
-	ip, veth, err = parseInstanceNet(output, containerName)
+	ip, veth, err = parseInstanceNet(output)
 	if err != nil {
 		return "", "", err
 	}
@@ -970,32 +974,22 @@ func hostInterfaceExists(name string) bool {
 	return err == nil
 }
 
-// parseInstanceNet extracts eth0's IPv4 address and host_name for
-// containerName from `incus list --format=json` output.
-func parseInstanceNet(output, containerName string) (ip, veth string, err error) {
-	var containers []struct {
-		Name  string `json:"name"`
-		State struct {
-			Network map[string]struct {
-				HostName  string `json:"host_name"`
-				Addresses []struct {
-					Family  string `json:"family"`
-					Address string `json:"address"`
-				} `json:"addresses"`
-			} `json:"network"`
-		} `json:"state"`
+// parseInstanceNet extracts eth0's IPv4 address and host_name from
+// `/1.0/instances/<name>/state` JSON.
+func parseInstanceNet(output string) (ip, veth string, err error) {
+	var state struct {
+		Network map[string]struct {
+			HostName  string `json:"host_name"`
+			Addresses []struct {
+				Family  string `json:"family"`
+				Address string `json:"address"`
+			} `json:"addresses"`
+		} `json:"network"`
 	}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
+	if err := json.Unmarshal([]byte(output), &state); err != nil {
 		return "", "", fmt.Errorf("failed to parse container info: %w", err)
 	}
-	for _, c := range containers {
-		if c.Name != containerName {
-			continue
-		}
-		eth0, ok := c.State.Network["eth0"]
-		if !ok {
-			continue
-		}
+	if eth0, ok := state.Network["eth0"]; ok {
 		veth = eth0.HostName
 		for _, addr := range eth0.Addresses {
 			if addr.Family == "inet" {
