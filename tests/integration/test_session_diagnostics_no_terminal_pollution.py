@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pexpect
 import pytest
+from run.run_launch_config_timing_base_vs_head import test_launch_config_timing_base_vs_head  # noqa: F401  temporary
 
 from support.helpers import (
     TerminalEmulator,
