@@ -275,3 +275,57 @@ func BenchmarkLoadProfiles(b *testing.B) {
 		})
 	}
 }
+
+// A project profile must not get a trusted parent's session_name through
+// inheritance, and an invalid inherited session_name fails the lookup.
+func TestLoadOnDemand_InheritedSessionName(t *testing.T) {
+	coiDir := onDemandHome(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestProfile(t, coiDir, "trusted", "[container]\nsession_name = \"mine\"\n")
+	writeTestProfile(t, filepath.Join(cwd, ".coi"), "project", "inherits = \"trusted\"\n")
+
+	cfg, err := LoadOnDemand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := cfg.LookupProfile("project")
+	if err != nil || p == nil {
+		t.Fatalf("LookupProfile(project) = %v, %v", p, err)
+	}
+	if p.Container.SessionName != "" {
+		t.Errorf("project profile kept the inherited session_name %q", p.Container.SessionName)
+	}
+	if p := cfg.GetProfile("trusted"); p == nil || p.Container.SessionName != "mine" {
+		t.Errorf("trusted profile lost its session_name: %+v", p)
+	}
+}
+
+func TestLoadOnDemand_InvalidSessionNameFails(t *testing.T) {
+	coiDir := onDemandHome(t)
+	writeTestProfile(t, coiDir, "base", "[container]\nimage = \"x\"\n")
+	writeTestProfile(t, coiDir, "child", "inherits = \"base\"\n")
+
+	cfg, err := LoadOnDemand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The schema rejects a bad session_name on disk, so set one on the loaded
+	// parent, as a merge of other sources could.
+	if _, err := cfg.LookupProfile("base"); err != nil {
+		t.Fatal(err)
+	}
+	base := cfg.Profiles["base"]
+	base.Container.SessionName = "bad name"
+	cfg.Profiles["base"] = base
+
+	_, err = cfg.LookupProfile("child")
+	if err == nil || !strings.Contains(err.Error(), `profile "child"`) {
+		t.Fatalf("LookupProfile(child) = %v, want a session_name error", err)
+	}
+	if p := cfg.GetProfile("child"); p != nil {
+		t.Errorf("a failed profile must not be returned, got %+v", *p)
+	}
+}

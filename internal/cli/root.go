@@ -148,16 +148,22 @@ Examples:
 		}
 
 		// Load config. Most commands use one profile, so they read only the
-		// profiles they ask for; a requested --profile is read here so that it
-		// fails like the rest of the config.
+		// profiles they ask for. A requested --profile and the [defaults]
+		// profile are read here so that an invalid one fails like the rest of
+		// the config; a [defaults] name with no profile is left to
+		// defaultProfileFallbackName (#607).
 		var err error
 		stopLoad := timing.Start(timing.CatStep, "config load")
 		if commandNeedsAllProfiles(cmd) {
 			app.cfg, err = config.Load()
 		} else {
 			app.cfg, err = config.LoadOnDemand()
-			if err == nil && app.profile != "" {
-				_, err = app.cfg.LookupProfile(app.profile)
+			if err == nil {
+				for _, name := range []string{app.profile, app.cfg.Defaults.Profile} {
+					if err == nil && name != "" {
+						_, err = app.cfg.LookupProfile(name)
+					}
+				}
 			}
 		}
 		stopLoad()

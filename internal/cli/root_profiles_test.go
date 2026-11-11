@@ -1,6 +1,13 @@
 package cli
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/spf13/pflag"
+)
 
 func TestCommandNeedsAllProfiles(t *testing.T) {
 	tests := []struct {
@@ -31,5 +38,120 @@ func TestCommandNeedsAllProfiles(t *testing.T) {
 	}
 	if commandNeedsAllProfiles(rootCmd) {
 		t.Error("bare coi runs coi shell and needs one profile")
+	}
+}
+
+// executeWithProfiles runs `coi <args>` with a temp HOME holding the given
+// ~/.coi/profiles/<name>/config.toml files and an optional ~/.coi/config.toml.
+func executeWithProfiles(t *testing.T, profiles map[string]string, userConfig string, args ...string) error {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COI_CONFIG", "")
+	t.Chdir(t.TempDir())
+	for name, content := range profiles {
+		dir := filepath.Join(home, ".coi", "profiles", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if userConfig != "" {
+		if err := os.MkdirAll(filepath.Join(home, ".coi"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".coi", "config.toml"), []byte(userConfig), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Execute zeroes app and parses flags into it: reset both for later tests.
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		reset := func(f *pflag.Flag) {
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
+		}
+		rootCmd.PersistentFlags().VisitAll(reset)
+		if cmd, _, err := rootCmd.Find(args); err == nil {
+			cmd.Flags().VisitAll(reset)
+		}
+	})
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	rootCmd.SetOut(devNull)
+	defer rootCmd.SetOut(nil)
+	rootCmd.SetArgs(args)
+	return Execute()
+}
+
+const brokenProfile = "[container\nimage = \n"
+
+func TestExecute_BrokenUnrelatedProfileDoesNotFailCommand(t *testing.T) {
+	profiles := map[string]string{
+		"good":   "[container]\nimage = \"good-image\"\n",
+		"broken": brokenProfile,
+	}
+	if err := executeWithProfiles(t, profiles, "", "version", "--profile", "good"); err != nil {
+		t.Fatalf("coi version --profile good: %v", err)
+	}
+	if app.cfg.Container.Image != "good-image" {
+		t.Errorf("profile good not applied, image = %q", app.cfg.Container.Image)
+	}
+	if _, ok := app.cfg.Profiles["broken"]; ok {
+		t.Error("the unrelated profile was read")
+	}
+}
+
+func TestExecute_AllProfilesCommandFailsOnBrokenProfile(t *testing.T) {
+	profiles := map[string]string{"broken": brokenProfile}
+	err := executeWithProfiles(t, profiles, "", "profile", "list")
+	if err == nil || !strings.Contains(err.Error(), "failed to load config:") {
+		t.Fatalf("coi profile list = %v, want a config load error", err)
+	}
+}
+
+// An invalid requested profile fails at config load, as when every profile
+// was read: same message and exit code.
+func TestExecute_InvalidRequestedProfileFailsConfigLoad(t *testing.T) {
+	tests := map[string]struct {
+		userConfig string
+		args       []string
+	}{
+		"--profile":           {"", []string{"version", "--profile", "broken"}},
+		"[defaults] profile":  {"[defaults]\nprofile = \"broken\"\n", []string{"version"}},
+		"broken parent":       {"", []string{"version", "--profile", "child"}},
+		"[defaults] inherits": {"[defaults]\nprofile = \"child\"\n", []string{"version"}},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			profiles := map[string]string{
+				"broken": brokenProfile,
+				"child":  "inherits = \"broken\"\n",
+			}
+			err := executeWithProfiles(t, profiles, tt.userConfig, tt.args...)
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if !strings.HasPrefix(err.Error(), "failed to load config: invalid configuration: ") ||
+				!strings.Contains(err.Error(), "failed to parse profile \"broken\"") {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if got := ExitCodeFor(err); got != 5 {
+				t.Errorf("exit code = %d, want 5", got)
+			}
+		})
+	}
+}
+
+// A [defaults] name with no profile does not fail commands that never apply
+// it (#607).
+func TestExecute_UnknownDefaultsProfileDoesNotFailLoad(t *testing.T) {
+	if err := executeWithProfiles(t, nil, "[defaults]\nprofile = \"nope\"\n", "version"); err != nil {
+		t.Fatalf("coi version: %v", err)
 	}
 }
