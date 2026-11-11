@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from support.helpers import container_ipv4
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -58,20 +60,6 @@ def _wait_running(name: str, timeout: int = 60) -> bool:
     return False
 
 
-def _get_container_ip(container_name: str) -> str:
-    """Return the container's primary IPv4 address (eth0)."""
-    result = subprocess.run(
-        ["incus", "exec", container_name, "--", "hostname", "-I"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if result.returncode != 0:
-        return ""
-    parts = result.stdout.strip().split()
-    return parts[0] if parts else ""
-
-
 def _wait_for_ip(container_name: str, timeout: int = 30) -> str:
     """Wait until the container has a routable IPv4 address and return it.
 
@@ -79,7 +67,7 @@ def _wait_for_ip(container_name: str, timeout: int = 30) -> str:
     once immediately after _wait_running often returns an empty string.
     """
     for _ in range(timeout):
-        ip = _get_container_ip(container_name)
+        ip = container_ipv4(container_name)
         if ip:
             return ip
         time.sleep(1)
