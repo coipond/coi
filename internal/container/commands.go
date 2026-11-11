@@ -774,15 +774,11 @@ func initConfigureAndStart(imageAlias, containerName, pool string, ephemeral boo
 	return IncusExec("start", containerName)
 }
 
-// DisableGuestAPI prevents the Incus guest API (/dev/incus) from being
-// accessible inside the container. The guest API exposes host source paths
-// in the device topology, leaking the host username and workspace layout
-// (see FLAWS.md Finding 3). Coi communicates with containers via the host
-// admin socket and does not need the guest API.
-func DisableGuestAPI(containerName string) error {
-	return IncusExec("config", "set", containerName, guestAPIDisabled)
-}
-
+// guestAPIDisabled keeps the Incus guest API (/dev/incus) out of the
+// container. The guest API exposes host source paths in the device topology,
+// leaking the host username and workspace layout (see FLAWS.md Finding 3).
+// Coi communicates with containers via the host admin socket and does not
+// need the guest API.
 const guestAPIDisabled = "security.guestapi=false"
 
 // InitConfigArgs returns the `incus init` flags (`-c key=value` each) that
@@ -840,6 +836,8 @@ func EnableNICSecurity(containerName string) error {
 		"security.mac_filtering=true",
 		"security.port_isolation=true",
 	}
+	// Not an `incus init -d eth0,...` override: a key Incus rejects (e.g. on a
+	// macvlan NIC) would abort the creation, but this hardening is non-fatal.
 	// Materialize the profile NIC at the instance level with the keys set, in
 	// one call. On failure (e.g. a persistent container that was already
 	// overridden reports "already exists"), fall back to a plain override,
@@ -863,8 +861,8 @@ func EnableNICSecurity(containerName string) error {
 // It is defence-in-depth only: in-container root can re-enable IPv6 at runtime,
 // which is why the host-side ip6 drop (network.ApplyIPv6BlockForContainer) is the
 // actual enforced boundary. Must be set before first boot. Both keys go in one
-// call; it stays apart from `incus init` because it is non-fatal and depends
-// on the network mode, which the creation step does not know.
+// call; it stays apart from `incus init` because it is non-fatal: a rejected
+// key must not abort the creation.
 func DisableIPv6AtBoot(containerName string) error {
 	return IncusExec("config", "set", containerName,
 		"linux.sysctl.net.ipv6.conf.all.disable_ipv6=1",
