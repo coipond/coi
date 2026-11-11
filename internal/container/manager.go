@@ -31,6 +31,8 @@ import (
 // Manager provides a clean interface for Incus container operations
 type Manager struct {
 	ContainerName string
+	// InitConfig holds "key=value" pairs the Launch methods set at init.
+	InitConfig []string
 }
 
 // ExitError represents a command that ran but exited with non-zero status
@@ -69,7 +71,7 @@ func (m *Manager) Launch(image string, ephemeral bool, pool string) error {
 // before first boot, so callers with config in scope (e.g. `coi container
 // launch`) can honor [container] docker / [security] reduce_kernel_surface.
 func (m *Manager) LaunchWithPolicy(image string, ephemeral bool, pool string, policy HardeningPolicy) error {
-	return LaunchContainerWithPreStartPolicy(image, m.ContainerName, pool, ephemeral, nil, policy)
+	return launchContainer(image, m.ContainerName, pool, ephemeral, nil, policy, m.InitConfig)
 }
 
 // LaunchWithPreStart launches the container, running preStart after init/config
@@ -83,7 +85,7 @@ func (m *Manager) LaunchWithPreStart(image string, ephemeral bool, pool string, 
 // policy applied once before first boot (used by the run pipeline so a hardened
 // config is honored without a second reconcile pass).
 func (m *Manager) LaunchWithPreStartPolicy(image string, ephemeral bool, pool string, preStart func() error, policy HardeningPolicy) error {
-	return LaunchContainerWithPreStartPolicy(image, m.ContainerName, pool, ephemeral, preStart, policy)
+	return launchContainer(image, m.ContainerName, pool, ephemeral, preStart, policy, m.InitConfig)
 }
 
 // Stop stops the container
