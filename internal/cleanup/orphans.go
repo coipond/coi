@@ -36,11 +36,18 @@ func DetectOrphanedVeths() ([]string, error) {
 		return nil, fmt.Errorf("failed to read network interfaces: %w", err)
 	}
 
+	// A routed NIC's host veth has no master either; never take one from any
+	// instance, coi's or not.
+	inUse, err := instanceHostVeths()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list instance NICs: %w", err)
+	}
+
 	for _, entry := range entries {
 		name := entry.Name()
 
 		// Only check veth interfaces
-		if !strings.HasPrefix(name, "veth") {
+		if !strings.HasPrefix(name, "veth") || inUse[name] {
 			continue
 		}
 
@@ -124,6 +131,36 @@ func CleanupOrphanedIPv6Rules(names []string, logger func(string)) (int, error) 
 		cleaned++
 	}
 	return cleaned, nil
+}
+
+// instanceHostVeths returns the host-side interface names of every instance
+// NIC Incus reports.
+func instanceHostVeths() (map[string]bool, error) {
+	output, err := container.IncusOutput("list", "--format=json")
+	if err != nil {
+		return nil, err
+	}
+
+	var instances []struct {
+		State struct {
+			Network map[string]struct {
+				HostName string `json:"host_name"`
+			} `json:"network"`
+		} `json:"state"`
+	}
+	if err := parseJSON(output, &instances); err != nil {
+		return nil, err
+	}
+
+	veths := make(map[string]bool)
+	for _, inst := range instances {
+		for _, nic := range inst.State.Network {
+			if nic.HostName != "" {
+				veths[nic.HostName] = true
+			}
+		}
+	}
+	return veths, nil
 }
 
 // getRunningContainerNames returns the names of all running containers.
