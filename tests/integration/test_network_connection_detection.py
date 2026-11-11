@@ -64,7 +64,7 @@ def _wait_for_ip(container_name: str, timeout: int = 30) -> str:
     """Wait until the container has a routable IPv4 address and return it.
 
     A container can reach Running state before DHCP completes, so polling
-    once immediately after _wait_running often returns an empty string.
+    once immediately after _wait_running often finds no address yet.
     """
     for _ in range(timeout):
         ip = container_ipv4(container_name)
