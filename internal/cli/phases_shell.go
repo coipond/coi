@@ -195,13 +195,8 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				// unconditional metadata would make ephemeral-ness sticky
 				// forever, re-recorded into metadata on every resume).
 				a.persistent = resumePersistence(a.cfg.Container.Persistent, metadata.Persistent)
-				if a.persistent != metadata.Persistent {
-					fmt.Fprintf(os.Stderr,
-						"Config [container] persistent = %v overrides the session's saved mode\n",
-						a.persistent)
-				}
-				if a.persistent {
-					fmt.Fprintf(os.Stderr, "Inherited persistent mode from session\n")
+				if notice := resumePersistenceNotice(a.persistent, metadata.Persistent); notice != "" {
+					fmt.Fprintln(os.Stderr, notice)
 				}
 				if !cmd.Flags().Changed("slot") {
 					if _, origSlot, err := session.ParseContainerName(metadata.ContainerName); err == nil {
@@ -528,6 +523,20 @@ func resumePersistence(cfgPersistent *bool, metadataPersistent bool) bool {
 		return *cfgPersistent
 	}
 	return metadataPersistent
+}
+
+// resumePersistenceNotice is the line a resume prints about its persistence:
+// the override when config changed the session's saved mode, the inherit
+// line only when the persistence came from the session, else none.
+func resumePersistenceNotice(persistent, metadataPersistent bool) string {
+	switch {
+	case persistent != metadataPersistent:
+		return fmt.Sprintf("Config [container] persistent = %v overrides the session's saved mode", persistent)
+	case persistent:
+		return "Inherited persistent mode from session"
+	default:
+		return ""
+	}
 }
 
 // runToolPhase executes the AI coding tool (via tmux or direct mode) and

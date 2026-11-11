@@ -6,8 +6,8 @@ Tests that, in both directions (persistent session resumed with
 persistent = false, ephemeral session resumed with persistent = true):
 1. The resume prints "Config [container] persistent = <value> overrides the
    session's saved mode"
-2. A persistent session resumed as ephemeral does not print "Inherited
-   persistent mode from session"
+2. The resume does not print "Inherited persistent mode from session": the
+   mode came from config, not from the session
 3. The resumed session takes the configured mode: its saved metadata and
    `coi list` show it
 
@@ -106,10 +106,9 @@ def test_resume_config_overrides_saved_persistence(
     assert f"Config [container] persistent = {value} overrides the session's saved mode" in (
         result.stderr
     ), f"expected the override message:\n{result.stderr}"
-    if not configured:
-        assert "Inherited persistent mode from session" not in result.stderr, (
-            f"a session resumed as ephemeral must not inherit persistence:\n{result.stderr}"
-        )
+    assert "Inherited persistent mode from session" not in result.stderr, (
+        f"a config override must not claim the mode came from the session:\n{result.stderr}"
+    )
 
     # === Phase 3: the resumed session has the configured mode ===
 
