@@ -20,8 +20,13 @@ import threading
 import time
 from pathlib import Path
 
-from support.helpers import calculate_container_name, write_trusted_coi_config
-from support.monitoring import inject_literal_process
+from support.helpers import (
+    calculate_container_name,
+    launch_container,
+    run_audit,
+    write_trusted_coi_config,
+)
+from support.monitoring import cleanup_container, inject_literal_process
 
 # Monitoring on, automated responses off: the session must stay up while the
 # test reads its audit log.
@@ -43,16 +48,6 @@ process_spawn_rate_threshold = 9999
 SENTINEL = "coi-audit-follow-sentinel-5e2b"
 
 
-def _audit(coi_binary, *args, cwd=None):
-    return subprocess.run(
-        [coi_binary, "audit", *args],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        cwd=cwd,
-    )
-
-
 def _audit_log(container_name):
     return Path.home() / ".coi" / "audit" / f"{container_name}.jsonl"
 
@@ -68,16 +63,6 @@ def _start_monitored_shell(coi_binary, workspace_dir):
         env=env,
     )
     assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
-
-
-def _launch_container(coi_binary, container_name):
-    result = subprocess.run(
-        [coi_binary, "container", "launch", "coi-default", container_name],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert result.returncode == 0, f"container launch failed:\n{result.stderr}"
 
 
 def _snapshots(stdout, container_name):
@@ -110,29 +95,26 @@ def test_audit_container_prints_monitor_log(coi_binary, cleanup_containers, work
             if log.exists() and _snapshots(log.read_text(), container_name):
                 break
             time.sleep(1)
-        assert log.exists(), f"the monitor wrote no audit log at {log}"
+        assert log.exists() and _snapshots(log.read_text(), container_name), (
+            f"the monitor wrote no snapshot to {log}"
+        )
 
         # === Phase 3: Explicit container ===
-        r = _audit(coi_binary, container_name)
+        r = run_audit(coi_binary, container_name)
         assert r.returncode == 0, f"coi audit {container_name} failed:\n{r.stderr}"
         assert _snapshots(r.stdout, container_name), (
             f"coi audit must print the monitor's snapshots.\nstdout:\n{r.stdout[-2000:]}"
         )
 
         # === Phase 4: Container resolved from the workspace ===
-        r = _audit(coi_binary, "--workspace", workspace_dir, cwd=workspace_dir)
+        r = run_audit(coi_binary, "--workspace", workspace_dir, cwd=workspace_dir)
         assert r.returncode == 0, f"coi audit (auto-resolved) failed:\n{r.stderr}"
         assert _snapshots(r.stdout, container_name), (
             f"coi audit must resolve {container_name} from the workspace.\n"
             f"stdout:\n{r.stdout[-2000:]}\nstderr:\n{r.stderr}"
         )
     finally:
-        subprocess.run(
-            [coi_binary, "container", "delete", container_name, "--force"],
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
+        cleanup_container(container_name, coi_binary)
         log.unlink(missing_ok=True)
 
 
@@ -148,9 +130,9 @@ def test_audit_container_without_log_errors(coi_binary, cleanup_containers, work
     container_name = calculate_container_name(workspace_dir, 1)
     _audit_log(container_name).unlink(missing_ok=True)
 
-    _launch_container(coi_binary, container_name)
+    launch_container(coi_binary, container_name)
 
-    r = _audit(coi_binary, container_name)
+    r = run_audit(coi_binary, container_name)
     assert r.returncode != 0, "coi audit must fail when the container has no audit log"
     assert f"no audit log found for container {container_name}" in r.stderr, (
         f"expected the no-log error.\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}"
@@ -167,7 +149,7 @@ def test_audit_follow_stopped_container_errors(coi_binary, cleanup_containers, w
     """
     container_name = calculate_container_name(workspace_dir, 1)
 
-    _launch_container(coi_binary, container_name)
+    launch_container(coi_binary, container_name)
     result = subprocess.run(
         [coi_binary, "container", "stop", container_name],
         capture_output=True,
@@ -176,7 +158,7 @@ def test_audit_follow_stopped_container_errors(coi_binary, cleanup_containers, w
     )
     assert result.returncode == 0, f"container stop failed:\n{result.stderr}"
 
-    r = _audit(coi_binary, container_name, "--follow")
+    r = run_audit(coi_binary, container_name, "--follow")
     assert r.returncode != 0, "coi audit --follow must fail on a stopped container"
     assert (
         f"container {container_name} is not running; --follow needs a live container" in r.stderr
@@ -263,10 +245,5 @@ def test_audit_follow_running_container_streams(coi_binary, cleanup_containers, 
         if proc is not None and proc.poll() is None:
             proc.kill()
             proc.wait()
-        subprocess.run(
-            [coi_binary, "container", "delete", container_name, "--force"],
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
+        cleanup_container(container_name, coi_binary)
         log.unlink(missing_ok=True)
