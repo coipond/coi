@@ -260,7 +260,7 @@ func sampleContainerRows(ctx context.Context, interval time.Duration) ([]contain
 		net1[e.Name] = e
 	}
 
-	workspaces := loadContainerWorkspaces()
+	workspaces := containerWorkspaces(running)
 	secs := interval.Seconds()
 
 	rows := make([]containerTopRow, 0, len(running))
@@ -569,10 +569,33 @@ func listTopEntries() ([]incusTopEntry, error) {
 	return entries, nil
 }
 
-// loadContainerWorkspaces maps container name -> workspace from the session
-// metadata written at launch, matching how `coi list` resolves workspaces.
+// containerWorkspaces maps container name -> workspace from the
+// user.coi.workspace key that launch sets on the container. Only containers
+// launched before coi set that key fall back to the saved-session metadata.
+func containerWorkspaces(running []incusTopEntry) map[string]string {
+	out := make(map[string]string, len(running))
+	missing := make(map[string]bool)
+	for _, e := range running {
+		if ws := e.Config[session.WorkspaceConfigKey]; ws != "" {
+			out[e.Name] = ws
+		} else {
+			missing[e.Name] = true
+		}
+	}
+	if len(missing) > 0 {
+		for name, ws := range loadContainerWorkspaces(missing) {
+			out[name] = ws
+		}
+	}
+	return out
+}
+
+// loadContainerWorkspaces maps the wanted container names to their workspace
+// from the session metadata written at launch, matching how `coi list`
+// resolves workspaces. Session dirs are named by session ID, so each one is
+// read until every wanted container is found.
 // Best-effort: a missing/unreadable sessions dir yields an empty map.
-func loadContainerWorkspaces() map[string]string {
+func loadContainerWorkspaces(want map[string]bool) map[string]string {
 	out := make(map[string]string)
 	if app == nil || app.cfg == nil {
 		return out
@@ -591,6 +614,9 @@ func loadContainerWorkspaces() map[string]string {
 		return out
 	}
 	for _, entry := range entries {
+		if len(out) == len(want) {
+			break
+		}
 		if !entry.IsDir() {
 			continue
 		}
@@ -599,7 +625,7 @@ func loadContainerWorkspaces() map[string]string {
 			continue
 		}
 		var md session.SessionMetadata
-		if err := json.Unmarshal(data, &md); err == nil && md.ContainerName != "" {
+		if err := json.Unmarshal(data, &md); err == nil && want[md.ContainerName] && md.Workspace != "" {
 			out[md.ContainerName] = md.Workspace
 		}
 	}
