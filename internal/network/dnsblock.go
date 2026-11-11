@@ -124,22 +124,47 @@ const nssHostsSaved = "/etc/coi/nsswitch-hosts"
 // boot (before sysinit.target, so before coi's setup), as a persistent container
 // restarted in open mode gets no in-container step.
 const filesOnlyHostsCmd = "if [ -f /etc/nsswitch.conf ] && [ ! -e " + nssHostsSaved + " ]; then\n" +
-	"mkdir -p /etc/coi && " +
+	"mkdir -p /etc/coi && cat >" + nssRestoreScriptPath + " <<'COI_SCRIPT' && " +
 	"{ [ ! -d /etc/systemd/system ] || { mkdir -p /etc/systemd/system/sysinit.target.wants && " +
-	"cat >/etc/coi/nss-restore.sh <<'COI_SCRIPT' && cat >/etc/systemd/system/coi-nss-restore.service <<'COI_UNIT' && " +
+	"cat >/etc/systemd/system/coi-nss-restore.service <<'COI_UNIT' && " +
 	"ln -sf ../coi-nss-restore.service /etc/systemd/system/sysinit.target.wants/coi-nss-restore.service; }; } && " +
 	"{ grep '^hosts:' /etc/nsswitch.conf || true; } >" + nssHostsSaved + " && " +
 	"if grep -q '^hosts:' /etc/nsswitch.conf; then sed -i 's/^hosts:.*/hosts: files/' /etc/nsswitch.conf; " +
 	"else echo 'hosts: files' >>/etc/nsswitch.conf; fi\n" +
-	restoreHostsCmd + "\nCOI_SCRIPT\n" +
+	nssRestoreScript + "COI_SCRIPT\n" +
 	nssRestoreUnit + "COI_UNIT\nfi"
 
-// restoreHostsCmd undoes filesOnlyHostsCmd: it puts the saved "hosts:" line
-// back and keeps every other change made to the file since.
-const restoreHostsCmd = "if [ -e " + nssHostsSaved + " ]; then " +
-	"sed -i -e '/^hosts:/{r " + nssHostsSaved + "' -e 'd' -e '}' /etc/nsswitch.conf && " +
-	"{ grep -q '^hosts:' /etc/nsswitch.conf || cat " + nssHostsSaved + " >>/etc/nsswitch.conf; } && " +
-	"rm -f " + nssHostsSaved + "; fi"
+// restoreHostsCmd undoes filesOnlyHostsCmd.
+const restoreHostsCmd = "if [ -e " + nssHostsSaved + " ]; then sh " + nssRestoreScriptPath + "; fi"
+
+const nssRestoreScriptPath = "/etc/coi/nss-restore.sh"
+
+// nssRestoreScript puts the saved "hosts:" line back in place. Modules that a
+// package added to the line meanwhile (libnss-myhostname: "files myhostname")
+// are kept, after the saved ones. Every other line stays as it is now.
+const nssRestoreScript = `set -f
+f=/etc/nsswitch.conf s=` + nssHostsSaved + `
+[ -e "$s" ] || exit 0
+old=$(sed -n 's/^hosts:[[:space:]]*//p' "$s" | head -n 1)
+cur=$(sed -n 's/^hosts:[[:space:]]*//p' "$f" | head -n 1)
+extra=
+for m in $cur; do
+  case " $old files " in *" $m "*) ;; *) extra="$extra $m" ;; esac
+done
+if [ -n "$old" ]; then line="$(head -n 1 "$s")$extra"
+elif [ -n "$extra" ]; then line="hosts: $cur"
+else line=
+fi
+done=
+while IFS= read -r l || [ -n "$l" ]; do
+  case $l in
+    hosts:*) [ -n "$done" ] || { [ -z "$line" ] || printf '%s\n' "$line"; done=1; } ;;
+    *) printf '%s\n' "$l" ;;
+  esac
+done <"$f" >"$f.coi-tmp"
+[ -n "$done" ] || [ -z "$line" ] || printf '%s\n' "$line" >>"$f.coi-tmp"
+cat "$f.coi-tmp" >"$f" && rm -f "$f.coi-tmp" "$s"
+`
 
 // nssRestoreUnit runs restoreHostsCmd at boot (a no-op once nothing is saved).
 const nssRestoreUnit = "[Unit]\n" +
@@ -151,7 +176,7 @@ const nssRestoreUnit = "[Unit]\n" +
 	"\n" +
 	"[Service]\n" +
 	"Type=oneshot\n" +
-	"ExecStart=/bin/sh /etc/coi/nss-restore.sh\n" +
+	"ExecStart=/bin/sh " + nssRestoreScriptPath + "\n" +
 	"\n" +
 	"[Install]\n" +
 	"WantedBy=sysinit.target\n"

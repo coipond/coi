@@ -143,18 +143,41 @@ func runInRoot(t *testing.T, root, script string) {
 }
 
 // Allowlist mode sets "hosts: files" in nsswitch.conf itself (a package script
-// can still replace the file), installs a boot unit that undoes it, and the
-// restore puts the old line back while keeping later edits.
+// can still replace the file) and installs a boot unit that undoes it. The
+// restore puts the old line back, keeps modules a package added to it and every
+// other edit, and lets the next allowlist setup apply again.
 func TestFilesOnlyHosts(t *testing.T) {
 	const orig = "passwd:         files systemd\nhosts:          files mdns4_minimal [NOTFOUND=return] dns\nnetworks:       files\n"
 	for _, tc := range []struct {
 		name    string
 		systemd bool
 		conf    string
+		edit    string // what a package does while allowlist mode is on
+		want    string // after the restore
 	}{
-		{"systemd", true, orig},
-		{"no systemd", false, orig},
-		{"no hosts line", true, "passwd: files\n"},
+		{
+			"systemd", true, orig,
+			"sed -i 's/^passwd:.*/passwd: files/' /etc/nsswitch.conf",
+			strings.Replace(orig, "passwd:         files systemd", "passwd: files", 1),
+		},
+		{"no systemd", false, orig, "", orig},
+		{"no hosts line", true, "passwd: files\n", "", "passwd: files\n"},
+		{
+			"package adds a module", true, orig,
+			"sed -i 's/^hosts:.*/hosts: files myhostname/' /etc/nsswitch.conf",
+			strings.Replace(orig, "dns\n", "dns myhostname\n", 1),
+		},
+		{
+			"package adds a line", true, "passwd: files\n",
+			"sed -i 's/^hosts:.*/hosts: files myhostname/' /etc/nsswitch.conf",
+			"passwd: files\nhosts: files myhostname\n",
+		},
+		{
+			"package removes the line", true, orig,
+			"sed -i '/^hosts:/d' /etc/nsswitch.conf",
+			strings.Replace(orig, "hosts:          files mdns4_minimal [NOTFOUND=return] dns\n", "", 1) +
+				"hosts:          files mdns4_minimal [NOTFOUND=return] dns\n",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -177,21 +200,24 @@ func TestFilesOnlyHosts(t *testing.T) {
 				}
 				return string(b)
 			}
+			assertFilesOnly := func(when string) {
+				t.Helper()
+				var hosts []string
+				for _, line := range strings.Split(read(), "\n") {
+					if strings.HasPrefix(line, "hosts:") {
+						hosts = append(hosts, line)
+					}
+				}
+				if len(hosts) != 1 || hosts[0] != "hosts: files" {
+					t.Fatalf("%s: want exactly one 'hosts: files' line, got:\n%s", when, read())
+				}
+			}
 
 			runInRoot(t, root, filesOnlyHostsCmd)
 			runInRoot(t, root, filesOnlyHostsCmd)
-			got := read()
-			var hosts []string
-			for _, line := range strings.Split(got, "\n") {
-				if strings.HasPrefix(line, "hosts:") {
-					hosts = append(hosts, line)
-				}
-			}
-			if len(hosts) != 1 || hosts[0] != "hosts: files" {
-				t.Fatalf("want exactly one 'hosts: files' line, got:\n%s", got)
-			}
-			if !strings.HasPrefix(got, strings.SplitN(tc.conf, "\n", 2)[0]) {
-				t.Errorf("other lines must stay in place, got:\n%s", got)
+			assertFilesOnly("apply")
+			if !strings.HasPrefix(read(), strings.SplitN(tc.conf, "\n", 2)[0]) {
+				t.Errorf("other lines must stay in place, got:\n%s", read())
 			}
 
 			unit := filepath.Join(root, "etc", "systemd", "system", "coi-nss-restore.service")
@@ -207,29 +233,28 @@ func TestFilesOnlyHosts(t *testing.T) {
 				t.Errorf("no unit without systemd, stat: %v", err)
 			}
 
-			// A package script edits the file while allowlist mode is on.
-			runInRoot(t, root, "sed -i 's/^passwd:.*/passwd: files/' /etc/nsswitch.conf")
-			want := strings.Replace(tc.conf, "passwd:         files systemd", "passwd: files", 1)
-
+			if tc.edit != "" {
+				runInRoot(t, root, tc.edit)
+			}
 			if tc.systemd {
-				script, err := os.ReadFile(filepath.Join(root, "etc", "coi", "nss-restore.sh"))
-				if err != nil {
-					t.Fatal(err)
-				}
 				// What the boot unit runs; its paths are already under root.
-				if out, err := exec.Command("bash", "-c", string(script)).CombinedOutput(); err != nil {
+				if out, err := exec.Command("sh", filepath.Join(root, "etc", "coi", "nss-restore.sh")).CombinedOutput(); err != nil {
 					t.Fatalf("restore script: %v\n%s", err, out)
 				}
 			} else {
 				runInRoot(t, root, restoreHostsCmd)
 			}
-			if got := read(); got != want {
-				t.Errorf("restore:\ngot  %q\nwant %q", got, want)
+			if got := read(); got != tc.want {
+				t.Errorf("restore:\ngot  %q\nwant %q", got, tc.want)
 			}
 			runInRoot(t, root, restoreHostsCmd)
-			if got := read(); got != want {
+			if got := read(); got != tc.want {
 				t.Errorf("repeated restore changed the file: %q", got)
 			}
+
+			// The same running container set up in allowlist mode again.
+			runInRoot(t, root, filesOnlyHostsCmd)
+			assertFilesOnly("second apply")
 		})
 	}
 }
