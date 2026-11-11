@@ -8,7 +8,7 @@ import (
 
 func TestContainerInitArgs_RecordsWorkspace(t *testing.T) {
 	got := containerInitArgs("coi-default", "coi-abc-1", &SetupOptions{StoragePool: "fast", WorkspacePath: "/home/u/my proj"})
-	want := []string{"init", "coi-default", "coi-abc-1", "-s", "fast", "-c", "user.coi.workspace=/home/u/my proj"}
+	want := []string{"init", "coi-default", "coi-abc-1", "-s", "fast", "-c", "user.coi.managed=true", "-c", "user.coi.workspace=/home/u/my proj"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("init args = %q, want %q", got, want)
 	}

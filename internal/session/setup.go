@@ -635,6 +635,7 @@ func containerInitArgs(image, containerName string, opts *SetupOptions) []string
 	if opts.StoragePool != "" {
 		args = append(args, "-s", opts.StoragePool)
 	}
+	args = append(args, "-c", container.ManagedConfigKey+"=true")
 	if opts.WorkspacePath != "" {
 		args = append(args, "-c", WorkspaceConfigKey+"="+opts.WorkspacePath)
 	}

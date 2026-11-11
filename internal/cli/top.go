@@ -570,15 +570,18 @@ func listTopEntries() ([]incusTopEntry, error) {
 }
 
 // containerWorkspaces maps container name -> workspace from the
-// user.coi.workspace key that launch sets on the container. Only containers
-// launched before coi set that key fall back to the saved-session metadata.
+// user.coi.workspace key that launch sets on the container. A container coi
+// created without a workspace (`coi container launch`) carries
+// user.coi.managed instead; only containers with neither (created before coi
+// set them) fall back to the saved-session metadata.
 func containerWorkspaces(running []incusTopEntry) map[string]string {
 	out := make(map[string]string, len(running))
 	missing := make(map[string]bool)
 	for _, e := range running {
-		if ws := e.Config[session.WorkspaceConfigKey]; ws != "" {
+		switch ws := e.Config[session.WorkspaceConfigKey]; {
+		case ws != "":
 			out[e.Name] = ws
-		} else {
+		case e.Config[container.ManagedConfigKey] == "":
 			missing[e.Name] = true
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/monitor"
 	"github.com/coipond/coi/internal/session"
 )
@@ -117,8 +118,23 @@ func TestSampleContainerRows_WorkspaceNoSaves(t *testing.T) {
 	}
 }
 
+func TestSampleContainerRows_ManagedWithoutWorkspaceSkipsFallback(t *testing.T) {
+	sessionsDir := useTopHome(t)
+	// Even a matching save is not read: the marker says coi set no workspace.
+	writeSavedSession(t, sessionsDir, "s1", "coi-launched-1", "/home/u/stale")
+	stubTopRunning(t, []incusTopEntry{{
+		Name: "coi-launched-1", Status: "Running",
+		Config: map[string]string{container.ManagedConfigKey: "true"},
+	}})
+
+	if ws := workspacesByName(t)["coi-launched-1"]; ws != "" {
+		t.Errorf("workspace = %q; want none for a managed container without %s", ws, session.WorkspaceConfigKey)
+	}
+}
+
 // BenchmarkSampleContainerRows_SavedSessions shows `coi top` time does not
-// grow with the number of saved sessions when containers carry the key.
+// grow with the number of saved sessions when containers carry the key or the
+// managed marker.
 func BenchmarkSampleContainerRows_SavedSessions(b *testing.B) {
 	for _, saves := range []int{0, 1000, 20000} {
 		b.Run(fmt.Sprintf("saves=%d", saves), func(b *testing.B) {
@@ -133,6 +149,11 @@ func BenchmarkSampleContainerRows_SavedSessions(b *testing.B) {
 					Config: map[string]string{session.WorkspaceConfigKey: fmt.Sprintf("/home/u/run%d", i)},
 				})
 			}
+			// A `coi container launch` container: no workspace, no save.
+			running = append(running, incusTopEntry{
+				Name: "coi-launched-1", Status: "Running",
+				Config: map[string]string{container.ManagedConfigKey: "true"},
+			})
 			stubTopRunning(b, running)
 			for b.Loop() {
 				if _, err := sampleContainerRows(context.Background(), 0); err != nil {
