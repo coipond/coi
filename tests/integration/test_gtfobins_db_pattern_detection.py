@@ -1,7 +1,7 @@
 """
 Integration test: a GTFOBins DB-derived pattern is loaded and detected at runtime.
 
-Sets up a synthetic GTFOBins clone, starts the monitoring daemon with HOME pointing
+Sets up a synthetic GTFOBins clone, starts the security monitor with HOME pointing
 at that clone, execs a process whose name matches the DB-only pattern
 "frobnicator-reverse-shell", and asserts the daemon raises a HIGH threat event
 referencing that pattern name.

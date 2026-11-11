@@ -57,7 +57,7 @@ process_spawn_rate_threshold = 9999
             f"Container {container_name} did not start"
         )
 
-        # Allow monitoring daemon and PROC_EVENTS subscription to initialise.
+        # Allow security monitor and PROC_EVENTS subscription to initialise.
         time.sleep(3)
 
         # Run a Python one-liner whose cmdline contains "python3" and

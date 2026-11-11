@@ -158,7 +158,7 @@ func NewFileWatcher(containerName string, onThreat func(ThreatEvent), onError fu
 // Run starts the fanotify watch loop and blocks until ctx is cancelled.
 // If fanotify is unavailable (no CAP_SYS_ADMIN, kernel too old, or inotify
 // init limit reached) the method logs once via onError and returns immediately
-// so the rest of the monitoring daemon continues unaffected.
+// so the rest of the security monitor continues unaffected.
 func (w *FileWatcher) Run(ctx context.Context) {
 	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK, unix.O_RDONLY|unix.O_LARGEFILE)
 	if err != nil {
