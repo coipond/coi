@@ -10,10 +10,9 @@ Tests that:
 """
 
 import os
-import subprocess
 from pathlib import Path
 
-from support.helpers import calculate_container_name
+from support.helpers import run_and_show_config, write_profile
 
 
 def _write_user_config(tmp_path, content):
@@ -25,33 +24,6 @@ def _write_user_config(tmp_path, content):
     env["HOME"] = str(fake_home)
     env.pop("COI_CONFIG", None)
     return env
-
-
-def _write_profile(workspace_dir, name, content):
-    profile_dir = Path(workspace_dir) / ".coi" / "profiles" / name
-    profile_dir.mkdir(parents=True)
-    (profile_dir / "config.toml").write_text(content)
-
-
-def _run_and_show_config(coi_binary, workspace_dir, env, extra_args=()):
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, *extra_args, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
-        env=env,
-    )
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", "--expanded", calculate_container_name(workspace_dir, 1)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, "Should be able to read container config"
-    return result.stdout
 
 
 USER_LIMIT_500 = """
@@ -81,7 +53,7 @@ def test_user_config_process_limit_applied(coi_binary, workspace_dir, cleanup_co
     """Test that the user config limit alone is set on the container."""
     env = _write_user_config(tmp_path, USER_LIMIT_500)
 
-    config = _run_and_show_config(coi_binary, workspace_dir, env)
+    config = run_and_show_config(coi_binary, workspace_dir, env)
 
     assert 'limits.processes: "500"' in config, (
         f"User config process limit should be set. Config: {config}"
@@ -97,7 +69,7 @@ def test_project_zero_lifts_user_process_limit(
     config_dir.mkdir()
     (config_dir / "config.toml").write_text(UNLIMITED)
 
-    config = _run_and_show_config(coi_binary, workspace_dir, env)
+    config = run_and_show_config(coi_binary, workspace_dir, env)
 
     assert "limits.processes" not in config, (
         f"Project max_processes = 0 should lift the user limit. Config: {config}"
@@ -109,9 +81,9 @@ def test_profile_zero_lifts_user_process_limit(
 ):
     """Test that profile max_processes = 0 lifts the user config limit."""
     env = _write_user_config(tmp_path, USER_LIMIT_500)
-    _write_profile(workspace_dir, "unlimited", UNLIMITED)
+    write_profile(workspace_dir, "unlimited", UNLIMITED)
 
-    config = _run_and_show_config(coi_binary, workspace_dir, env, ["--profile", "unlimited"])
+    config = run_and_show_config(coi_binary, workspace_dir, env, ["--profile", "unlimited"])
 
     assert "limits.processes" not in config, (
         f"Profile max_processes = 0 should lift the user limit. Config: {config}"
@@ -123,9 +95,9 @@ def test_parent_profile_process_limit_applied(
 ):
     """Test that the parent profile limit alone is set on the container."""
     env = _write_user_config(tmp_path, "")
-    _write_profile(workspace_dir, "parent", PARENT_PROFILE_500)
+    write_profile(workspace_dir, "parent", PARENT_PROFILE_500)
 
-    config = _run_and_show_config(coi_binary, workspace_dir, env, ["--profile", "parent"])
+    config = run_and_show_config(coi_binary, workspace_dir, env, ["--profile", "parent"])
 
     assert 'limits.processes: "500"' in config, (
         f"Parent profile process limit should be set. Config: {config}"
@@ -137,10 +109,10 @@ def test_child_profile_zero_lifts_parent_process_limit(
 ):
     """Test that child profile max_processes = 0 lifts its parent's limit."""
     env = _write_user_config(tmp_path, "")
-    _write_profile(workspace_dir, "parent", PARENT_PROFILE_500)
-    _write_profile(workspace_dir, "child", 'inherits = "parent"\n' + UNLIMITED)
+    write_profile(workspace_dir, "parent", PARENT_PROFILE_500)
+    write_profile(workspace_dir, "child", 'inherits = "parent"\n' + UNLIMITED)
 
-    config = _run_and_show_config(coi_binary, workspace_dir, env, ["--profile", "child"])
+    config = run_and_show_config(coi_binary, workspace_dir, env, ["--profile", "child"])
 
     assert "limits.processes" not in config, (
         f"Child profile max_processes = 0 should lift the parent limit. Config: {config}"

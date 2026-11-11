@@ -1581,6 +1581,37 @@ def delete_storage_pool(name):
     )
 
 
+def write_profile(workspace_dir, name, content):
+    """Write a project profile to <workspace>/.coi/profiles/<name>/config.toml."""
+    profile_dir = Path(workspace_dir) / ".coi" / "profiles" / name
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "config.toml").write_text(content)
+
+
+def run_and_show_config(coi_binary, workspace_dir, env=None, extra_args=(), timeout=240):
+    """Run `coi run [extra_args] echo test` and return the slot-1 container's
+    expanded `incus config show` output. Asserts both commands succeed.
+    """
+    result = subprocess.run(
+        [coi_binary, "run", "--workspace", workspace_dir, *extra_args, "echo", "test"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=workspace_dir,
+        env=env,
+    )
+    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+
+    result = subprocess.run(
+        ["incus", "config", "show", "--expanded", calculate_container_name(workspace_dir, 1)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, "Should be able to read container config"
+    return result.stdout
+
+
 def run_coi_in_workspace(coi_binary, workspace_dir, argv, env=None, timeout=120):
     """Run `coi run -- <argv>` from workspace_dir, capturing output.
 
