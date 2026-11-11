@@ -13,10 +13,11 @@ var updatePatternsCmd = &cobra.Command{
 	Use:   "patterns",
 	Short: "Clone or update the GTFOBins and Sigma detection databases",
 	Long: `Clone (or update) the GTFOBins reverse-shell database and the Sigma
-linux/process_creation rule database used by the PROC_EVENTS monitoring daemon.
+linux/process_creation rule database used by each session's security monitor.
 
-Both databases are stored locally and read directly by the daemon at startup.
-Restart the monitoring daemon after running this command to pick up changes.
+Both databases are stored locally. A session's monitor loads them when the
+session starts, so new sessions use the updated databases; running sessions
+keep the previous ones until they end. Nothing needs restarting.
 
 Source URLs and local directories are configured in ~/.coi/config.toml under
 the [detection] section:
@@ -72,7 +73,7 @@ func updatePatternsCommand(cmd *cobra.Command, _ []string) error {
 
 	if !dryRun {
 		fmt.Println()
-		fmt.Println("Done. Restart the monitoring daemon to apply new patterns and rules.")
+		fmt.Println("Done. New sessions use the updated patterns and rules; running sessions keep the previous ones until they end.")
 	}
 	return nil
 }
