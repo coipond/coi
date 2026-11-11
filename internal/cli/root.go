@@ -150,8 +150,7 @@ Examples:
 		// Load config. Most commands use one profile, so they read only the
 		// profiles they ask for. A requested --profile and the [defaults]
 		// profile are read here so that an invalid one fails like the rest of
-		// the config; a [defaults] name with no profile is left to
-		// defaultProfileFallbackName (#607).
+		// the config.
 		var err error
 		stopLoad := timing.Start(timing.CatStep, "config load")
 		if commandNeedsAllProfiles(cmd) {
@@ -183,9 +182,9 @@ Examples:
 			}
 		}
 
-		// A misconfigured [defaults] profile is caught at the point it is
-		// applied (applyDefaultProfileFallback, only for coi shell/run), not
-		// here: this hook runs for EVERY command, so validating here would break
+		// A [defaults] profile name that names no profile is caught where it
+		// is applied (applyDefaultProfileFallback, only for coi shell/run), not
+		// here: this hook runs for EVERY command, so failing here would break
 		// unrelated operational commands (coi list/kill/clean/attach/…) on a
 		// typo — including the very commands used to recover — even though they
 		// never apply a profile (#607 follow-up).

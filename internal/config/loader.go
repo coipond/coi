@@ -44,6 +44,7 @@ func LoadOnDemand() (*Config, error) {
 	return load(true)
 }
 
+// load runs Load, or LoadOnDemand when onDemand is set.
 func load(onDemand bool) (_ *Config, err error) {
 	// Every failure to load, parse, or validate config is a ConfigError, so the
 	// CLI can distinguish "your config is wrong" from a runtime failure with one
@@ -535,6 +536,8 @@ func stripUntrustedInheritedSessionNames(cfg *Config) {
 	}
 }
 
+// stripUntrustedInheritedSessionName is stripUntrustedInheritedSessionNames
+// for one loaded profile.
 func stripUntrustedInheritedSessionName(cfg *Config, name string) {
 	p := cfg.Profiles[name]
 	// Synthesized profiles (default/hardened) have no Source and carry
@@ -746,6 +749,7 @@ type pendingProfile struct {
 	trusted bool
 }
 
+// configPath returns the profile's config.toml path.
 func (p pendingProfile) configPath() string {
 	return filepath.Join(p.dir, "config.toml")
 }
@@ -836,6 +840,7 @@ func indexProfileDirectory(cfg *Config, configDir string, trusted bool) ([]strin
 	return names, nil
 }
 
+// profileFileExists reports whether a profile config.toml exists at path.
 func profileFileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
@@ -855,12 +860,11 @@ func (c *Config) readPendingProfile(profileName string) error {
 	trusted := ref.trusted
 
 	// Read the file once and decode that content for every check below.
-	// Other processes add and remove profiles while this scan runs (an
-	// orchestrator launching many sessions creates and deletes one per
-	// session), so separate reads could each see a different file, or
+	// Other processes add and remove profiles between the listing and this
+	// read (an orchestrator launching many sessions creates and deletes one
+	// per session), so separate reads could each see a different file, or
 	// none: a profile removed between a stat and a later read used to
-	// fail this whole command with "failed to parse profile". A profile
-	// that is gone when it is read is skipped, as if never listed.
+	// fail this whole command with "failed to parse profile".
 	data, err := os.ReadFile(profileConfigPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

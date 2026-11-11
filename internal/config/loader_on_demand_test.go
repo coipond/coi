@@ -53,7 +53,6 @@ func TestLoadOnDemand_BrokenUnrelatedProfileNotRead(t *testing.T) {
 		t.Errorf("image = %q, want good-image", cfg.Container.Image)
 	}
 
-	// The broken profile fails when asked for, with Load's error.
 	_, lookupErr := cfg.LookupProfile("broken")
 	var cfgErr *ConfigError
 	if !errors.As(lookupErr, &cfgErr) {
@@ -69,7 +68,6 @@ func TestLoadOnDemand_BrokenUnrelatedProfileNotRead(t *testing.T) {
 	if !strings.Contains(lookupErr.Error(), brokenPath) {
 		t.Errorf("error should name %s, got: %v", brokenPath, lookupErr)
 	}
-	// A failed profile stays failed.
 	if err := cfg.ApplyProfile("broken"); err == nil || err.Error() != lookupErr.Error() {
 		t.Errorf("second ApplyProfile(broken) = %v, want %v", err, lookupErr)
 	}
@@ -185,7 +183,6 @@ func TestLoadOnDemand_DuplicateAcrossLocations(t *testing.T) {
 		t.Errorf("want a *ConfigError, got %T", err)
 	}
 
-	// A directory without config.toml is no profile, so it does not clash.
 	if err := os.Remove(homePath); err != nil {
 		t.Fatal(err)
 	}
