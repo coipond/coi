@@ -30,8 +30,10 @@ func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) 
 		}
 	}
 	// A fresh container gets the key at init; a reused one may predate it or
-	// have had its workspace moved (session_name).
-	if st.skipLaunch && st.opts.WorkspacePath != "" {
+	// have had its workspace moved (session_name). An explicit --container
+	// keeps its own workspace mounted (see the remount in Setup), so its key
+	// stays too.
+	if st.skipLaunch && st.opts.ContainerName == "" && st.opts.WorkspacePath != "" {
 		if _, err := container.ConfigSetIfChanged(context.Background(), st.result.ContainerName, WorkspaceConfigKey, st.opts.WorkspacePath); err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Failed to set workspace metadata: %v", err))
 		}

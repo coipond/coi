@@ -86,8 +86,11 @@ func TestSampleContainerRows_WorkspaceFromConfigKey(t *testing.T) {
 
 func TestSampleContainerRows_WorkspaceFallbackWithoutKey(t *testing.T) {
 	sessionsDir := useTopHome(t)
-	writeSavedSession(t, sessionsDir, "s1", "coi-bbbbbbbb-1", "/home/u/legacy")
-	writeSavedSession(t, sessionsDir, "s2", "coi-cccccccc-1", "/home/u/other")
+	// Dirs are read in name order: an unwanted save first must not end the
+	// scan, and the first wanted save ends it before the later one.
+	writeSavedSession(t, sessionsDir, "s1", "coi-cccccccc-1", "/home/u/other")
+	writeSavedSession(t, sessionsDir, "s2", "coi-bbbbbbbb-1", "/home/u/legacy")
+	writeSavedSession(t, sessionsDir, "s3", "coi-bbbbbbbb-1", "/home/u/later")
 	stubTopRunning(t, []incusTopEntry{
 		{Name: "coi-aaaaaaaa-1", Status: "Running", Config: map[string]string{session.WorkspaceConfigKey: "/home/u/proj"}},
 		{Name: "coi-bbbbbbbb-1", Status: "Running", Config: map[string]string{}},
