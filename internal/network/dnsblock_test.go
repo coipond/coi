@@ -142,12 +142,14 @@ func runInRoot(t *testing.T, root, script string) {
 	}
 }
 
-// Allowlist mode sets "hosts: files" in nsswitch.conf itself (a package script
-// can still replace the file) and installs a boot unit that undoes it. The
-// restore puts the old line back, keeps modules a package added to it and every
-// other edit, and lets the next allowlist setup apply again.
+// Allowlist mode puts filesOnlyPrefix in front of the "hosts:" modules in
+// nsswitch.conf itself (a package script can still replace the file) and
+// installs a boot unit that undoes it. A package edits the line as usual; the
+// restore removes only the prefix, so the package's change stays, and the next
+// allowlist setup applies again.
 func TestFilesOnlyHosts(t *testing.T) {
 	const orig = "passwd:         files systemd\nhosts:          files mdns4_minimal [NOTFOUND=return] dns\nnetworks:       files\n"
+	const plain = "hosts:          files dns\n"
 	for _, tc := range []struct {
 		name    string
 		systemd bool
@@ -161,22 +163,26 @@ func TestFilesOnlyHosts(t *testing.T) {
 			strings.Replace(orig, "passwd:         files systemd", "passwd: files", 1),
 		},
 		{"no systemd", false, orig, "", orig},
-		{"no hosts line", true, "passwd: files\n", "", "passwd: files\n"},
+		{"no hosts line", true, "passwd: files\n", "", "passwd: files\nhosts: dns [!UNAVAIL=return] files\n"},
 		{
-			"package adds a module", true, orig,
-			"sed -i 's/^hosts:.*/hosts: files myhostname/' /etc/nsswitch.conf",
-			strings.Replace(orig, "dns\n", "dns myhostname\n", 1),
+			"package inserts a module before dns", true, plain,
+			"sed -i 's/ dns$/ mdns4_minimal [NOTFOUND=return] dns/' /etc/nsswitch.conf",
+			"hosts:          files mdns4_minimal [NOTFOUND=return] dns\n",
 		},
 		{
-			"package adds a line", true, "passwd: files\n",
-			"sed -i 's/^hosts:.*/hosts: files myhostname/' /etc/nsswitch.conf",
-			"passwd: files\nhosts: files myhostname\n",
+			"package appends a module", true, plain,
+			"sed -i '/^hosts:/s/$/ myhostname/' /etc/nsswitch.conf",
+			"hosts:          files dns myhostname\n",
+		},
+		{
+			"package removes a module", true, orig,
+			"sed -i 's/mdns4_minimal \\[NOTFOUND=return\\] //' /etc/nsswitch.conf",
+			strings.Replace(orig, "mdns4_minimal [NOTFOUND=return] ", "", 1),
 		},
 		{
 			"package removes the line", true, orig,
 			"sed -i '/^hosts:/d' /etc/nsswitch.conf",
-			strings.Replace(orig, "hosts:          files mdns4_minimal [NOTFOUND=return] dns\n", "", 1) +
-				"hosts:          files mdns4_minimal [NOTFOUND=return] dns\n",
+			strings.Replace(orig, "hosts:          files mdns4_minimal [NOTFOUND=return] dns\n", "", 1),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,16 +214,16 @@ func TestFilesOnlyHosts(t *testing.T) {
 						hosts = append(hosts, line)
 					}
 				}
-				if len(hosts) != 1 || hosts[0] != "hosts: files" {
-					t.Fatalf("%s: want exactly one 'hosts: files' line, got:\n%s", when, read())
+				if len(hosts) != 1 || !strings.HasPrefix(strings.TrimLeft(strings.TrimPrefix(hosts[0], "hosts:"), " \t"), filesOnlyPrefix) {
+					t.Fatalf("%s: want one 'hosts:' line starting with %q, got:\n%s", when, filesOnlyPrefix, read())
 				}
 			}
 
 			runInRoot(t, root, filesOnlyHostsCmd)
 			runInRoot(t, root, filesOnlyHostsCmd)
 			assertFilesOnly("apply")
-			if !strings.HasPrefix(read(), strings.SplitN(tc.conf, "\n", 2)[0]) {
-				t.Errorf("other lines must stay in place, got:\n%s", read())
+			if want := strings.Replace(tc.conf, "hosts:          files", "hosts:          "+filesOnlyPrefix+"files", 1); strings.Contains(tc.conf, "hosts:") && read() != want {
+				t.Errorf("apply must only add the prefix:\ngot  %q\nwant %q", read(), want)
 			}
 
 			unit := filepath.Join(root, "etc", "systemd", "system", "coi-nss-restore.service")

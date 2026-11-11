@@ -102,7 +102,7 @@ file_read_rate_mb_per_sec = 1000
     holders = []
     try:
         nss = _exec(container_name, "grep", "^hosts:", "/etc/nsswitch.conf")
-        assert nss.stdout.split() == ["hosts:", "files"], (
+        assert nss.stdout.split()[1:3] == ["files", "[!SUCCESS=return]"], (
             f"allowlist mode must look names up in /etc/hosts only: {nss.stdout}{nss.stderr}"
         )
         start = time.monotonic()

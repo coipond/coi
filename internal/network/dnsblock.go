@@ -108,71 +108,52 @@ const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>
 const restoreResolverCmd = "if [ -L /run/systemd/system/systemd-resolved.service ]; then " +
 	"systemctl unmask --runtime systemd-resolved.service && systemctl start systemd-resolved.service; fi"
 
-// nssHostsSaved holds the container's own "hosts:" line(s) of nsswitch.conf
-// while filesOnlyHostsCmd is in effect (empty: the file had none).
-const nssHostsSaved = "/etc/coi/nsswitch-hosts"
+// filesOnlyPrefix goes in front of the container's own "hosts:" modules. After
+// "files", any result returns, so no later module (dns, resolve, mdns) runs.
+const filesOnlyPrefix = "files [!SUCCESS=return] "
 
-// filesOnlyHostsCmd makes name lookups in the container read /etc/hosts only:
-// it sets "hosts: files" in nsswitch.conf and saves the old line.
+// filesOnlyHostsCmd makes name lookups in the container read /etc/hosts only,
+// by putting filesOnlyPrefix in front of the "hosts:" line of nsswitch.conf.
 //
 // Without it a name not in /etc/hosts falls through to the dns module and sends
 // a query to the resolver stub on 127.0.0.53. That query cannot leave the
 // container, but its socket is a connection the security monitor sees.
 //
 // The file is edited in place, not covered by a mount, so package scripts and
-// editors can still replace it. A systemd unit undoes the change at the next
-// boot (before sysinit.target, so before coi's setup), as a persistent container
-// restarted in open mode gets no in-container step.
-const filesOnlyHostsCmd = "if [ -f /etc/nsswitch.conf ] && [ ! -e " + nssHostsSaved + " ]; then\n" +
+// editors can still replace it. The old modules stay on the line, so a package
+// that adds its module next to "dns" edits it as usual, and the restore only
+// removes the prefix. A systemd unit restores at the next boot (before
+// sysinit.target, so before coi's setup), as a persistent container restarted
+// in open mode gets no in-container step.
+const filesOnlyHostsCmd = "if [ -f /etc/nsswitch.conf ] && ! grep -q " + nssPrefixPattern + " /etc/nsswitch.conf; then\n" +
 	"mkdir -p /etc/coi && cat >" + nssRestoreScriptPath + " <<'COI_SCRIPT' && " +
 	"{ [ ! -d /etc/systemd/system ] || { mkdir -p /etc/systemd/system/sysinit.target.wants && " +
 	"cat >/etc/systemd/system/coi-nss-restore.service <<'COI_UNIT' && " +
 	"ln -sf ../coi-nss-restore.service /etc/systemd/system/sysinit.target.wants/coi-nss-restore.service; }; } && " +
-	"{ grep '^hosts:' /etc/nsswitch.conf || true; } >" + nssHostsSaved + " && " +
-	"if grep -q '^hosts:' /etc/nsswitch.conf; then sed -i 's/^hosts:.*/hosts: files/' /etc/nsswitch.conf; " +
-	"else echo 'hosts: files' >>/etc/nsswitch.conf; fi\n" +
-	nssRestoreScript + "COI_SCRIPT\n" +
+	"if grep -q '^hosts:' /etc/nsswitch.conf; then " +
+	"sed -i 's/^hosts:\\([[:space:]]*\\)/hosts:\\1" + filesOnlyPrefix + "/' /etc/nsswitch.conf; " +
+	// No line means glibc's default, written out after the prefix.
+	"else echo 'hosts: " + filesOnlyPrefix + "dns [!UNAVAIL=return] files' >>/etc/nsswitch.conf; fi\n" +
+	restoreHostsCmd + "\nCOI_SCRIPT\n" +
 	nssRestoreUnit + "COI_UNIT\nfi"
 
-// restoreHostsCmd undoes filesOnlyHostsCmd.
-const restoreHostsCmd = "if [ -e " + nssHostsSaved + " ]; then sh " + nssRestoreScriptPath + "; fi"
+// nssPrefixPattern matches a "hosts:" line that starts with filesOnlyPrefix
+// (a grep and sed basic regex, single-quoted).
+const nssPrefixPattern = `'^\(hosts:[[:space:]]*\)files \[!SUCCESS=return\] '`
+
+// restoreHostsCmd undoes filesOnlyHostsCmd: it removes the prefix and keeps
+// every other change made to the file since.
+const restoreHostsCmd = "if grep -q " + nssPrefixPattern + " /etc/nsswitch.conf 2>/dev/null; then " +
+	"sed -i 's/'" + nssPrefixPattern + "'/\\1/' /etc/nsswitch.conf; fi"
 
 const nssRestoreScriptPath = "/etc/coi/nss-restore.sh"
 
-// nssRestoreScript puts the saved "hosts:" line back in place. Modules that a
-// package added to the line meanwhile (libnss-myhostname: "files myhostname")
-// are kept, after the saved ones. Every other line stays as it is now.
-const nssRestoreScript = `set -f
-f=/etc/nsswitch.conf s=` + nssHostsSaved + `
-[ -e "$s" ] || exit 0
-old=$(sed -n 's/^hosts:[[:space:]]*//p' "$s" | head -n 1)
-cur=$(sed -n 's/^hosts:[[:space:]]*//p' "$f" | head -n 1)
-extra=
-for m in $cur; do
-  case " $old files " in *" $m "*) ;; *) extra="$extra $m" ;; esac
-done
-if [ -n "$old" ]; then line="$(head -n 1 "$s")$extra"
-elif [ -n "$extra" ]; then line="hosts: $cur"
-else line=
-fi
-done=
-while IFS= read -r l || [ -n "$l" ]; do
-  case $l in
-    hosts:*) [ -n "$done" ] || { [ -z "$line" ] || printf '%s\n' "$line"; done=1; } ;;
-    *) printf '%s\n' "$l" ;;
-  esac
-done <"$f" >"$f.coi-tmp"
-[ -n "$done" ] || [ -z "$line" ] || printf '%s\n' "$line" >>"$f.coi-tmp"
-cat "$f.coi-tmp" >"$f" && rm -f "$f.coi-tmp" "$s"
-`
-
-// nssRestoreUnit runs restoreHostsCmd at boot (a no-op once nothing is saved).
+// nssRestoreUnit runs restoreHostsCmd at boot (a no-op once nothing is left).
 const nssRestoreUnit = "[Unit]\n" +
 	"Description=Undo coi allowlist name lookup (hosts: files)\n" +
 	"DefaultDependencies=no\n" +
 	"After=local-fs.target\n" +
 	"Before=sysinit.target\n" +
-	"ConditionPathExists=" + nssHostsSaved + "\n" +
 	"\n" +
 	"[Service]\n" +
 	"Type=oneshot\n" +
