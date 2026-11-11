@@ -1110,6 +1110,30 @@ func parseNamesCSV(output string) []string {
 	return names
 }
 
+// ListRunningInstanceNames lists the names of running instances. Like
+// ListInstanceNames, it asks for the name and status columns only (CSV), which
+// need no instance state.
+func ListRunningInstanceNames() ([]string, error) {
+	output, err := IncusOutput("list", "--format=csv", "--columns=ns")
+	if err != nil {
+		return nil, err
+	}
+	return parseRunningNamesCSV(output), nil
+}
+
+// parseRunningNamesCSV returns the running instances' names from
+// `incus list --format=csv --columns=ns` output ("name,STATUS" per line).
+func parseRunningNamesCSV(output string) []string {
+	var names []string
+	for _, line := range strings.Split(output, "\n") {
+		name, status, ok := strings.Cut(strings.TrimSpace(line), ",")
+		if ok && StatusIsRunning(status) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // InstanceStateJSON returns the `/1.0/instances/<name>/state` JSON of one
 // instance. Unlike `incus list <name> --format=json`, which loads the full
 // state of every instance whose name the filter matches, it fetches one.

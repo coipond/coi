@@ -2,7 +2,6 @@ package health
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -628,7 +627,7 @@ func CheckHostCredentialIsolation(imageName string, policy container.HardeningPo
 // Process monitoring reads /proc on the host filtered by container cgroup membership,
 // so this check verifies the host walk succeeds — not that ps runs inside the container.
 func CheckProcessMonitoringCapability(imageName string) HealthCheck {
-	output, err := container.IncusOutput("list", "--format=json")
+	running, err := container.ListRunningInstanceNames()
 	if err != nil {
 		return HealthCheck{
 			Name:    "process_monitoring",
@@ -640,26 +639,9 @@ func CheckProcessMonitoringCapability(imageName string) HealthCheck {
 		}
 	}
 
-	var containers []map[string]interface{}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		return HealthCheck{
-			Name:    "process_monitoring",
-			Status:  StatusWarning,
-			Message: "Unable to parse container list",
-			Details: map[string]interface{}{
-				"error": err.Error(),
-			},
-		}
-	}
-
 	var testContainer string
-	for _, c := range containers {
-		if status, ok := c["status"].(string); ok && container.StatusIsRunning(status) {
-			if name, ok := c["name"].(string); ok {
-				testContainer = name
-				break
-			}
-		}
+	if len(running) > 0 {
+		testContainer = running[0]
 	}
 
 	if testContainer == "" {

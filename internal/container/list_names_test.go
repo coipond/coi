@@ -101,3 +101,28 @@ func TestInstanceStateJSON(t *testing.T) {
 		t.Errorf("missing instance: err = %v, want ErrContainerNotFound", err)
 	}
 }
+
+func TestParseRunningNamesCSV(t *testing.T) {
+	for in, want := range map[string][]string{
+		"":                                     nil,
+		"c1,STOPPED\n":                         nil,
+		"c1,RUNNING\nc2,STOPPED\nc3,RUNNING\n": {"c1", "c3"},
+		"c1,RUNNING\r\n\nbad\n":                {"c1"},
+	} {
+		if got := parseRunningNamesCSV(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("parseRunningNamesCSV(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestListRunningInstanceNames(t *testing.T) {
+	logPath := fakeListIncus(t, "c1,RUNNING\nc2,FROZEN\nc3,RUNNING\n")
+
+	names, err := ListRunningInstanceNames()
+	if err != nil || !reflect.DeepEqual(names, []string{"c1", "c3"}) {
+		t.Fatalf("names = %q, %v", names, err)
+	}
+	if got := calls(t, logPath); !reflect.DeepEqual(got, []string{"--project default list --format=csv --columns=ns"}) {
+		t.Errorf("calls = %q", got)
+	}
+}
