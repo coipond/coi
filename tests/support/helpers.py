@@ -1268,6 +1268,20 @@ def container_ipv4(container_name):
     return None
 
 
+def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
+    """Run cmd with bash -c in the container; return (returncode, combined output).
+
+    coi container exec does not keep the command's stdout and stderr apart
+    when not attached to a terminal, so callers match on both together.
+    """
+    argv = [coi_binary, "container", "exec", container_name]
+    if user is not None:
+        argv += ["--user", str(user), "--group", str(user), "--env", "HOME=/home/code"]
+    argv += ["--", "bash", "-c", cmd]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    return result.returncode, result.stdout + result.stderr
+
+
 def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):
     """
     Poll nftables until the default-deny rule is active for a container.
