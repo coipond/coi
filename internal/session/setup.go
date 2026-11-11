@@ -638,10 +638,21 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 	// storage pool ([container] storage_pool) the same way the run pipeline
 	// does via `-s <pool>` — otherwise `coi shell` silently lands on the
 	// Incus default pool (#726). An empty pool means "use the default".
+	// The kernel-surface policy (Docker/nesting support and/or syscall denies
+	// per [container] docker and [security] reduce_kernel_surface) and the
+	// disabled guest API (FLAWS Finding 3) are set at creation, before first
+	// boot, with no extra `incus config set`.
+	policy := hardeningPolicyFrom(opts)
+	if policy.DockerEnabled() {
+		opts.Logger("Enabling Docker support...")
+	} else {
+		opts.Logger("Docker support disabled; applying kernel-surface hardening...")
+	}
 	initArgs := []string{"init", image, result.ContainerName}
 	if opts.StoragePool != "" {
 		initArgs = append(initArgs, "-s", opts.StoragePool)
 	}
+	initArgs = append(initArgs, container.InitConfigArgs(policy)...)
 	if err := container.IncusExec(initArgs...); err != nil {
 		return fmt.Errorf("failed to create container: %w", err)
 	}
@@ -742,33 +753,18 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 		}
 	}
 
-	// Apply the kernel-surface policy: Docker/nesting support and/or syscall
-	// denies per [container] docker and [security] reduce_kernel_surface
-	// (must be set before first boot).
-	policy := hardeningPolicyFrom(opts)
-	if policy.DockerEnabled() {
-		opts.Logger("Enabling Docker support...")
-	} else {
-		opts.Logger("Docker support disabled; applying kernel-surface hardening...")
-	}
-	if err := container.ApplyKernelSurfacePolicy(result.ContainerName, policy); err != nil {
-		return fmt.Errorf("failed to apply kernel-surface policy: %w", err)
-	}
-
 	// Isolate UID/GID namespace so each container gets a unique host-side UID
 	// range, preventing cross-container file access via shared host UIDs.
 	// Non-fatal: some environments (nested containers, CI runners) don't have
 	// enough subuid/subgid space. The fallback at start time handles this.
+	// Kept out of `incus init` and its own call: Incus checks the subuid space
+	// when the key is written, and that failure must not abort the creation
+	// or take other keys with it.
 	idmapIsolated := false
 	if err := container.IsolateUIDNamespace(result.ContainerName); err != nil {
 		opts.Logger(fmt.Sprintf("Warning: UID namespace isolation unavailable: %v", err))
 	} else {
 		idmapIsolated = true
-	}
-
-	// Disable guest API to prevent host topology leaks (FLAWS Finding 3)
-	if err := container.DisableGuestAPI(result.ContainerName); err != nil {
-		return fmt.Errorf("failed to disable guest API: %w", err)
 	}
 
 	// Harden the bridge NIC against egress-isolation bypass: anti-spoof the
