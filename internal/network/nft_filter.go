@@ -1098,19 +1098,23 @@ func BridgeInTrustedZone() (bool, string, error) {
 
 // EnsureBridgeInTrustedZone ensures the Incus bridge has iptables FORWARD ACCEPT
 // rules so containers can obtain IPs via DHCP even when the FORWARD policy is DROP.
+// When sudo refuses iptables, it asks for nothing if the FORWARD chain already
+// accepts the bridge's traffic. It acts once per process: later calls return
+// (false, bridgeName, nil).
 // Returns (changed, bridgeName, error).
 func EnsureBridgeInTrustedZone() (bool, string, error) {
 	bridgeName, err := GetIncusBridgeName()
 	if err != nil {
 		return false, "", fmt.Errorf("could not determine bridge name: %w", err)
 	}
-	if IptablesBridgeRulesExist(bridgeName) {
+	bridgeForwardMu.Lock()
+	defer bridgeForwardMu.Unlock()
+	if bridgeForwardEnsured {
 		return false, bridgeName, nil
 	}
-	if err := EnsureIptablesBridgeRules(bridgeName); err != nil {
-		return false, bridgeName, err
-	}
-	return true, bridgeName, nil
+	bridgeForwardEnsured = true
+	changed, err := ensureBridgeForward(bridgeName)
+	return changed, bridgeName, err
 }
 
 // IptablesAvailable checks if the iptables binary is installed
@@ -1194,11 +1198,19 @@ func lookupIncusBridgeName() (string, error) {
 // given bridge interface. The rules are tagged with a comment so they can be
 // identified for cleanup.
 func EnsureIptablesBridgeRules(bridgeName string) error {
+	_, err := insertIptablesBridgeRules(bridgeName)
+	return err
+}
+
+// insertIptablesBridgeRules is EnsureIptablesBridgeRules that also reports
+// whether it inserted a rule.
+func insertIptablesBridgeRules(bridgeName string) (bool, error) {
 	rules := [][]string{
-		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
-		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
+		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
+		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
 	}
 
+	inserted := false
 	for _, ruleSpec := range rules {
 		if iptablesRuleExists("FORWARD", ruleSpec...) {
 			continue
@@ -1207,17 +1219,18 @@ func EnsureIptablesBridgeRules(bridgeName string) error {
 		cmd := exec.Command("sudo", args...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("failed to add iptables rule: %s: %w", strings.TrimSpace(string(output)), err)
+			return inserted, fmt.Errorf("failed to add iptables rule: %s: %w", strings.TrimSpace(string(output)), err)
 		}
+		inserted = true
 	}
-	return nil
+	return inserted, nil
 }
 
 // RemoveIptablesBridgeRules removes the coi-bridge-forward iptables rules.
 func RemoveIptablesBridgeRules(bridgeName string) error {
 	rules := [][]string{
-		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
-		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
+		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
+		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
 	}
 
 	for _, ruleSpec := range rules {
@@ -1237,9 +1250,9 @@ func RemoveIptablesBridgeRules(bridgeName string) error {
 // IptablesBridgeRulesExist checks whether the coi-bridge-forward rules exist
 func IptablesBridgeRulesExist(bridgeName string) bool {
 	inRule := iptablesRuleExists("FORWARD",
-		"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward")
+		"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment)
 	outRule := iptablesRuleExists("FORWARD",
-		"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward")
+		"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment)
 	return inRule && outRule
 }
 

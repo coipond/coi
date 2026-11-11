@@ -15,7 +15,7 @@ import json
 import os
 import subprocess
 
-from support.helpers import calculate_container_name, get_container_list
+from support.helpers import kill_workspace_containers, workspace_containers
 
 BOGUS_ID = "no-such-session-49157"
 
@@ -28,25 +28,6 @@ def _shell(coi_binary, workspace_dir, env, *args):
         timeout=180,
         env=env,
     )
-
-
-def _workspace_containers(workspace_dir):
-    names = {calculate_container_name(workspace_dir, slot) for slot in range(1, 11)}
-    return names & set(get_container_list())
-
-
-def _kill_workspace_containers(coi_binary, workspace_dir, env):
-    running = _workspace_containers(workspace_dir)
-    assert running, "the session started no container for the workspace"
-    for name in running:
-        result = subprocess.run(
-            [coi_binary, "kill", "--force", name],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=env,
-        )
-        assert result.returncode == 0, f"coi kill {name} failed:\n{result.stderr}"
 
 
 def _saved_sessions(sessions_dir, workspace_dir):
@@ -87,7 +68,7 @@ def test_continue_alias_and_unknown_resume_id(
 
     result = _shell(coi_binary, workspace_dir, env, "--slot", "1")
     assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     saved = _saved_sessions(sessions_dir, workspace_dir)
     assert len(saved) == 1, f"expected one saved session for the workspace, got: {saved}"
@@ -100,7 +81,7 @@ def test_continue_alias_and_unknown_resume_id(
     assert f"Auto-detected session: {session_id}" in result.stderr, (
         f"--continue should auto-detect session {session_id}, like --resume:\n{result.stderr}"
     )
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     # === Phase 3: --continue=<id> resumes that session ===
 
@@ -109,7 +90,7 @@ def test_continue_alias_and_unknown_resume_id(
     assert f"Resuming session: {session_id}" in result.stderr, (
         f"--continue=<id> should resume session {session_id}, like --resume=<id>:\n{result.stderr}"
     )
-    _kill_workspace_containers(coi_binary, workspace_dir, env)
+    kill_workspace_containers(coi_binary, workspace_dir, env)
 
     # === Phase 4: an unknown --resume id fails with a hint ===
 
@@ -121,5 +102,5 @@ def test_continue_alias_and_unknown_resume_id(
     assert expected in result.stdout + result.stderr, (
         f"expected {expected!r} in the output, got:\n{result.stdout}\n{result.stderr}"
     )
-    leftover = _workspace_containers(workspace_dir)
+    leftover = workspace_containers(workspace_dir)
     assert not leftover, f"an unknown --resume id should create no container, found: {leftover}"
