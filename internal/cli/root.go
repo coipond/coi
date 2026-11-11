@@ -85,17 +85,17 @@ func warnDockerHardeningConflict(cfg *config.Config) {
 }
 
 // applyDefaultProfileForOps applies the [defaults] profile fallback for
-// OPERATIONAL commands (attach, monitor, snapshot) so a profile-carried
-// session_name — the documented placement — resolves the same container
-// identity the launch used. Unlike the session commands' fallback this is
-// error-TOLERANT: per #607, operational commands must keep working on a
-// misconfigured default profile (they are the recovery tools), so an unknown
-// profile is ignored rather than fatal. The same suppression rules apply: an
-// explicit --profile (or alias/resume-applied profile) means the fallback
+// OPERATIONAL commands (attach, monitor, snapshot, container launch/start) so
+// a profile-carried session_name — the documented placement — resolves the
+// same container identity the launch used. Unlike the session commands'
+// fallback, an unknown profile name is ignored with a warning rather than
+// fatal: per #607, operational commands must keep working on a typo (they are
+// the recovery tools). A default profile that fails to load is an error: it
+// may set the network mode or Incus project. The same suppression rules apply:
+// an explicit --profile (or alias/resume-applied profile) means the fallback
 // never applies, exactly as at launch. A session launched with a
 // session_name-carrying profile selected by --profile or an alias needs the
-// same flag repeated on the operational command. A default profile that fails
-// to load is still an error: it may set the network mode or Incus project.
+// same flag repeated on the operational command.
 func (a *App) applyDefaultProfileForOps(cmd *cobra.Command) error {
 	if _, err := a.applyDefaultProfileFallback(cmd); err != nil {
 		var cfgErr *config.ConfigError

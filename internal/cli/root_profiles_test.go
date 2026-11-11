@@ -116,9 +116,8 @@ func TestExecute_AllProfilesCommandFailsOnBrokenProfile(t *testing.T) {
 	}
 }
 
-// An invalid requested profile fails at config load, as when every profile
-// was read: same message and exit code. An invalid [defaults] profile fails
-// the same way in the commands that apply it.
+// An invalid requested profile fails at config load. An invalid [defaults]
+// profile fails the same way in the commands that apply it.
 func TestExecute_InvalidRequestedProfileFailsConfigLoad(t *testing.T) {
 	tests := map[string]struct {
 		userConfig string
@@ -145,8 +144,8 @@ func TestExecute_InvalidRequestedProfileFailsConfigLoad(t *testing.T) {
 				!strings.Contains(err.Error(), "failed to parse profile \"broken\"") {
 				t.Errorf("unexpected error: %v", err)
 			}
-			if got := ExitCodeFor(err); got != 5 {
-				t.Errorf("exit code = %d, want 5", got)
+			if got := ExitCodeFor(err); got != ExitConfig {
+				t.Errorf("exit code = %d, want %d", got, ExitConfig)
 			}
 		})
 	}
@@ -171,8 +170,6 @@ func TestExecute_DefaultsProfileNotReadByOtherCommands(t *testing.T) {
 	}
 }
 
-// A --profile that is not there, or was removed after the listing, fails as
-// a missing profile did when every profile was read.
 func TestExecute_MissingRequestedProfileFails(t *testing.T) {
 	err := executeWithProfiles(t, nil, "", "version", "--profile", "gone")
 	if err == nil || err.Error() != "profile 'gone' not found" {

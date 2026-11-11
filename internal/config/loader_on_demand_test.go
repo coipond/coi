@@ -347,7 +347,7 @@ func BenchmarkLoadProfiles(b *testing.B) {
 }
 
 // A project profile must not get a trusted parent's session_name through
-// inheritance, and an invalid inherited session_name fails the lookup.
+// inheritance.
 func TestLoadOnDemand_InheritedSessionName(t *testing.T) {
 	coiDir := onDemandHome(t)
 	cwd, err := os.Getwd()
