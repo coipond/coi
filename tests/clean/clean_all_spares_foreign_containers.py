@@ -7,12 +7,17 @@ Tests that:
 2. Run coi clean --all --force (stopped containers, orphans, pools)
 3. Verify the stopped coi container is removed
 4. Verify the foreign containers, the stopped one too, keep their status,
-   config, profiles, devices and snapshots
+   config, profiles, devices and snapshots, and the host profiles,
+   networks and pools stay unchanged
 """
 
 import subprocess
 
-from support.helpers import calculate_container_name, foreign_container_state
+from support.helpers import (
+    calculate_container_name,
+    foreign_container_state,
+    incus_host_state,
+)
 
 
 def test_clean_all_spares_foreign_containers(
@@ -38,6 +43,7 @@ def test_clean_all_spares_foreign_containers(
     assert result.returncode == 0, f"Container stop should succeed. stderr: {result.stderr}"
 
     before = foreign_container_state(foreign)
+    host_before = incus_host_state()
     assert sorted(before) == sorted(foreign), f"Foreign containers missing: {before}"
 
     result = subprocess.run(
@@ -61,3 +67,6 @@ def test_clean_all_spares_foreign_containers(
     assert result.returncode != 0, f"Stopped coi container {container_name} should be cleaned"
 
     assert foreign_container_state(foreign) == before
+    assert incus_host_state() == host_before, (
+        "coi must not change Incus profiles, networks or pools"
+    )

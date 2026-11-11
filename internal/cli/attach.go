@@ -67,7 +67,7 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Attaching to %s (slot %d)...\n", targetContainer, attachSlot)
 	} else {
 		// List all running containers with configured prefix
-		containers, err := container.ListContainers(coiContainerPattern())
+		containers, err := container.ListContainers(session.ContainerPattern())
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}

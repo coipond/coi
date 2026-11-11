@@ -9,7 +9,8 @@ Tests that:
    foreign container's IP
 4. Shut the coi container down
 5. Verify the foreign containers keep their status, config, profiles,
-   devices and snapshots, and the running ones keep their IP
+   devices and snapshots, the running ones keep their IP, and the host
+   profiles, networks and pools stay unchanged
 """
 
 import pathlib
@@ -21,6 +22,7 @@ from support.helpers import (
     calculate_container_name,
     container_ipv4,
     foreign_container_state,
+    incus_host_state,
     wait_for_firewall_rules,
 )
 
@@ -47,6 +49,7 @@ def test_network_spares_foreign_containers(
         foreign_ips[name] = ip
 
     before = foreign_container_state(foreign)
+    host_before = incus_host_state()
 
     config_dir = pathlib.Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
@@ -82,5 +85,8 @@ def test_network_spares_foreign_containers(
     assert result.returncode == 0, f"Shutdown should succeed. stderr: {result.stderr}"
 
     assert foreign_container_state(foreign) == before
+    assert incus_host_state() == host_before, (
+        "coi must not change Incus profiles, networks or pools"
+    )
     for name, ip in foreign_ips.items():
         assert container_ipv4(name) == ip, f"Foreign container {name} should keep its IP"

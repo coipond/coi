@@ -7,12 +7,16 @@ Tests that:
 2. Shut down all with --all --force
 3. Verify the coi container is deleted
 4. Verify the foreign containers' status, config, profiles, devices and
-   snapshots are unchanged
+   snapshots, and the host profiles, networks and pools, are unchanged
 """
 
 import subprocess
 
-from support.helpers import calculate_container_name, foreign_container_state
+from support.helpers import (
+    calculate_container_name,
+    foreign_container_state,
+    incus_host_state,
+)
 
 
 def test_shutdown_all_spares_foreign_containers(
@@ -30,6 +34,7 @@ def test_shutdown_all_spares_foreign_containers(
     assert result.returncode == 0, f"Container launch should succeed. stderr: {result.stderr}"
 
     before = foreign_container_state(foreign)
+    host_before = incus_host_state()
     assert sorted(before) == sorted(foreign), f"Foreign containers missing: {before}"
 
     result = subprocess.run(
@@ -57,3 +62,6 @@ def test_shutdown_all_spares_foreign_containers(
     )
 
     assert foreign_container_state(foreign) == before
+    assert incus_host_state() == host_before, (
+        "coi must not change Incus profiles, networks or pools"
+    )

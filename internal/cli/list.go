@@ -167,7 +167,7 @@ type SessionInfo struct {
 
 // listActiveContainers lists all active Coi containers
 func listActiveContainers() ([]ContainerInfo, error) {
-	output, err := container.IncusOutput("list", coiContainerPattern(), "--format=json")
+	output, err := container.IncusOutput("list", session.ContainerPattern(), "--format=json")
 	if err != nil {
 		return nil, err
 	}

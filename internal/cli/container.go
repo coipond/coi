@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/coipond/coi/internal/config"
@@ -152,12 +151,6 @@ func (a *App) isolateStartedContainer(cmd *cobra.Command, name string) error {
 // isCoiContainerName reports whether name follows coi's container naming.
 func isCoiContainerName(name string) bool {
 	return strings.HasPrefix(name, session.GetContainerPrefix())
-}
-
-// coiContainerPattern returns the container.ListContainers pattern that
-// matches only names starting with the configured container prefix.
-func coiContainerPattern() string {
-	return "^" + regexp.QuoteMeta(session.GetContainerPrefix())
 }
 
 // stopUnisolated stops a container whose network isolation could not be

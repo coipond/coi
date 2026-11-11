@@ -211,6 +211,23 @@ func IncusOutput(args ...string) (string, error) {
 	return IncusOutputContext(context.Background(), args...)
 }
 
+// IncusOutputAllProjects runs an Incus command with --all-projects and
+// without coi's --project, which Incus refuses together with it.
+func IncusOutputAllProjects(args ...string) (string, error) {
+	cmd := execIncusCommandContext(context.Background(), append(args, "--all-projects"))
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := runIncus(cmd)
+	output := strings.TrimSpace(stdout.String())
+	if err != nil {
+		return output, toExitError(err, strings.TrimSpace(stderr.String()))
+	}
+	return output, nil
+}
+
 // IncusOutputRawContext executes an Incus command with context support and returns the output (not trimmed)
 func IncusOutputRawContext(ctx context.Context, args ...string) (string, error) {
 	cmdArgs := buildIncusCommand(args...)

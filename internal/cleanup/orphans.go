@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/coipond/coi/internal/container"
@@ -25,13 +26,16 @@ type OrphanedResources struct {
 	IptablesBridgeRules []string // Orphaned iptables coi-bridge-forward rules (no coi containers running)
 }
 
+// NetClassDir is where DetectOrphanedVeths reads host interfaces.
+var NetClassDir = "/sys/class/net"
+
 // DetectOrphanedVeths finds veth interfaces that have no master bridge
 // These are typically left over from improperly cleaned up containers
 func DetectOrphanedVeths() ([]string, error) {
 	var orphaned []string
 
 	// Read all network interfaces from /sys/class/net
-	entries, err := os.ReadDir("/sys/class/net")
+	entries, err := os.ReadDir(NetClassDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read network interfaces: %w", err)
 	}
@@ -52,7 +56,7 @@ func DetectOrphanedVeths() ([]string, error) {
 		}
 
 		// Check if this veth has a master (bridge)
-		masterPath := fmt.Sprintf("/sys/class/net/%s/master", name)
+		masterPath := filepath.Join(NetClassDir, name, "master")
 		if _, err := os.Stat(masterPath); os.IsNotExist(err) {
 			// No master symlink = orphaned veth
 			orphaned = append(orphaned, name)
@@ -134,9 +138,9 @@ func CleanupOrphanedIPv6Rules(names []string, logger func(string)) (int, error) 
 }
 
 // instanceHostVeths returns the host-side interface names of every instance
-// NIC Incus reports.
+// NIC Incus reports, in every project.
 func instanceHostVeths() (map[string]bool, error) {
-	output, err := container.IncusOutput("list", "--format=json")
+	output, err := container.IncusOutputAllProjects("list", "--format=json")
 	if err != nil {
 		return nil, err
 	}

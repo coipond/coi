@@ -1550,6 +1550,27 @@ def foreign_container_state(names):
             "config": {k: v for k, v in c.get("config", {}).items() if k.startswith("user.")},
             "profiles": c.get("profiles"),
             "devices": c.get("devices"),
+            "expanded_devices": c.get("expanded_devices"),
             "snapshots": [s.get("name") for s in c.get("snapshots") or []],
         }
+    return state
+
+
+def incus_host_state():
+    """Snapshot the host-wide Incus objects coi must never change: profiles,
+    networks and storage pools. `used_by` is dropped: it lists coi's own
+    containers too."""
+    state = {}
+    for kind in ("profile", "network", "storage"):
+        r = subprocess.run(
+            ["incus", kind, "list", "--format=json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert r.returncode == 0, f"incus {kind} list failed: {r.stderr}"
+        state[kind] = sorted(
+            ({k: v for k, v in o.items() if k != "used_by"} for o in json.loads(r.stdout)),
+            key=lambda o: o.get("name", ""),
+        )
     return state

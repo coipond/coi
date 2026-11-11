@@ -16,10 +16,7 @@ import (
 
 // CheckActiveContainers counts running Coi containers
 func CheckActiveContainers() HealthCheck {
-	prefix := session.GetContainerPrefix()
-	pattern := fmt.Sprintf("^%s", prefix)
-
-	output, err := container.IncusOutput("list", pattern, "--format=json")
+	output, err := container.IncusOutput("list", session.ContainerPattern(), "--format=json")
 	if err != nil {
 		return HealthCheck{
 			Name:    "active_containers",

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/session"
 )
 
 // fakeScopeIncus puts an incus script on PATH that lists the given
@@ -48,12 +50,12 @@ func TestCoiContainerPatternSkipsForeignContainers(t *testing.T) {
 			t.Setenv("COI_CONTAINER_PREFIX", tt.prefix)
 			fakeScopeIncus(t, listJSON, "")
 
-			got, err := container.ListContainers(coiContainerPattern())
+			got, err := container.ListContainers(session.ContainerPattern())
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ListContainers(%q) = %v, want %v", coiContainerPattern(), got, tt.want)
+				t.Errorf("ListContainers(%q) = %v, want %v", session.ContainerPattern(), got, tt.want)
 			}
 		})
 	}
@@ -77,4 +79,50 @@ func TestUnfreezeAllFrozenSkipsForeignContainers(t *testing.T) {
 	if !strings.Contains(string(b), "start coi-test-abc12345-1") {
 		t.Errorf("unfreeze did not start the coi container; calls:\n%s", b)
 	}
+}
+
+// assertNoCallFor fails when any logged incus call names name.
+func assertNoCallFor(t *testing.T, logPath, name string) {
+	t.Helper()
+	b, _ := os.ReadFile(logPath)
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, name) {
+			t.Errorf("incus call on foreign container %s: %q", name, line)
+		}
+	}
+}
+
+const scopeListJSON = `[{"name":"coi-abc12345-1"},{"name":"coi-abc12345-2"},` +
+	`{"name":"web-coi-abc12345-1"}]`
+
+func TestTmuxListSkipsForeignContainers(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	logPath := fakeScopeIncus(t, scopeListJSON, "")
+
+	if err := tmuxListCommand(tmuxListCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), "coi-abc12345-1") {
+		t.Fatalf("tmux list did not check the coi container; calls:\n%s", b)
+	}
+	assertNoCallFor(t, logPath, "web-coi-")
+}
+
+func TestAttachListSkipsForeignContainers(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	t.Setenv("HOME", t.TempDir())
+	logPath := fakeScopeIncus(t, scopeListJSON, "")
+	attachCmd.SetContext(t.Context())
+
+	if err := (&App{cfg: &config.Config{}}).attachCommand(attachCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), "coi-abc12345-2") {
+		t.Fatalf("attach did not check the coi containers; calls:\n%s", b)
+	}
+	assertNoCallFor(t, logPath, "web-coi-")
 }

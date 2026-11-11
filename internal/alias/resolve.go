@@ -171,10 +171,7 @@ func (cs aliasedContainers) withAlias(alias string) []string {
 // runningAliases lists running Coi containers with their aliases in one
 // Incus call.
 func runningAliases() (aliasedContainers, error) {
-	prefix := session.GetContainerPrefix()
-	pattern := fmt.Sprintf("^%s", prefix)
-
-	output, err := container.IncusOutput("list", pattern, "--format=json")
+	output, err := container.IncusOutput("list", session.ContainerPattern(), "--format=json")
 	if err != nil {
 		return nil, err
 	}

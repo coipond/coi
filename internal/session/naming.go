@@ -24,6 +24,12 @@ func GetContainerPrefix() string {
 	return "coi-"
 }
 
+// ContainerPattern returns a name regex that matches only containers whose
+// name starts with the container prefix.
+func ContainerPattern() string {
+	return "^" + regexp.QuoteMeta(GetContainerPrefix())
+}
+
 // Identity returns the string every session-scoped resource is keyed on: the
 // configured `[container] session_name` (namespaced so a name can never
 // collide with a real path) when set, else the workspace's absolute path.

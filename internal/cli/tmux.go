@@ -157,7 +157,7 @@ func tmuxListCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// List all running containers with configured prefix
-	containers, err := container.ListContainers(coiContainerPattern())
+	containers, err := container.ListContainers(session.ContainerPattern())
 	if err != nil {
 		return fmt.Errorf("failed to list containers: %w", err)
 	}
