@@ -163,7 +163,7 @@ Examples:
 		switch {
 		case commandNeedsAllProfiles(cmd):
 			app.cfg, err = config.Load()
-		case app.profile == "" && loadsNoProfile(cmd):
+		case app.profile == "" && commandNeedsNoProfile(cmd):
 			app.cfg, err = config.LoadWithoutProfiles()
 		default:
 			app.cfg, err = config.LoadOnDemand()
@@ -227,9 +227,9 @@ var allProfilesCommands = map[string]bool{
 }
 
 // noProfileCommands are the commands that never apply a profile, not even the
-// [defaults] one, so without --profile they list no profile directory. They are
-// thin wrappers around one incus call, run many times per container by
-// orchestrators.
+// [defaults] one, so without --profile they read no profile
+// (config.LoadWithoutProfiles). They are thin wrappers around one incus call,
+// run many times per container by orchestrators.
 var noProfileCommands = map[string]bool{
 	"coi container exec":    true,
 	"coi container exists":  true,
@@ -244,8 +244,8 @@ var noProfileCommands = map[string]bool{
 	"coi kill":              true,
 }
 
-// loadsNoProfile reports whether cmd is in noProfileCommands.
-func loadsNoProfile(cmd *cobra.Command) bool {
+// commandNeedsNoProfile reports whether cmd is in noProfileCommands.
+func commandNeedsNoProfile(cmd *cobra.Command) bool {
 	return noProfileCommands[cmd.CommandPath()]
 }
 

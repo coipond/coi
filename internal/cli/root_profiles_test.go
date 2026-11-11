@@ -198,7 +198,7 @@ func fakeIncusLog(t *testing.T) string {
 	return logPath
 }
 
-func TestLoadsNoProfile(t *testing.T) {
+func TestCommandNeedsNoProfile(t *testing.T) {
 	tests := []struct {
 		args []string
 		want bool
@@ -228,8 +228,8 @@ func TestLoadsNoProfile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Find(%v): %v", tt.args, err)
 		}
-		if got := loadsNoProfile(cmd); got != tt.want {
-			t.Errorf("loadsNoProfile(%v) = %v, want %v", tt.args, got, tt.want)
+		if got := commandNeedsNoProfile(cmd); got != tt.want {
+			t.Errorf("commandNeedsNoProfile(%v) = %v, want %v", tt.args, got, tt.want)
 		}
 	}
 	for path := range noProfileCommands {
@@ -240,7 +240,7 @@ func TestLoadsNoProfile(t *testing.T) {
 	}
 }
 
-// A profile name in two locations still fails these commands (exit 5).
+// A profile name in two locations fails these commands (exit 5).
 func TestExecute_NoProfileCommandFailsOnDuplicateProfile(t *testing.T) {
 	fakeIncusLog(t)
 	home, work := t.TempDir(), t.TempDir()
@@ -265,8 +265,8 @@ func TestExecute_NoProfileCommandFailsOnDuplicateProfile(t *testing.T) {
 	}
 }
 
-// Container-level commands list no profile, so they cost the same with
-// thousands of profiles, and issue exactly one incus call.
+// Container-level commands read no profile, with thousands of profiles on
+// disk, and issue exactly one incus call.
 func TestExecute_NoProfileCommandsReadNoProfile(t *testing.T) {
 	profiles := map[string]string{"broken": brokenProfile}
 	for i := range 3000 {

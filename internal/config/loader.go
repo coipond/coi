@@ -94,17 +94,16 @@ func load(mode profileLoadMode) (_ *Config, err error) {
 		if err := checkProfileNameClashes(GetProfileParentDirs()); err != nil {
 			return nil, err
 		}
-	}
-	for _, dir := range GetProfileParentDirs() {
-		switch mode {
-		case loadAllProfiles:
-			err = loadProfileDirectories(cfg, dir, isTrustedProfileDir(dir))
-		case loadProfilesOnDemand:
-			_, err = indexProfileDirectory(cfg, dir, isTrustedProfileDir(dir))
-		case loadNoProfiles:
-		}
-		if err != nil {
-			return nil, err
+	} else {
+		for _, dir := range GetProfileParentDirs() {
+			if mode == loadProfilesOnDemand {
+				_, err = indexProfileDirectory(cfg, dir, isTrustedProfileDir(dir))
+			} else {
+				err = loadProfileDirectories(cfg, dir, isTrustedProfileDir(dir))
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -836,11 +835,7 @@ func indexProfileDirectory(cfg *Config, configDir string, trusted bool) ([]strin
 				continue
 			}
 			if !existingPending || profileFileExists(existingSource) {
-				return nil, fmt.Errorf(
-					"profile %q defined in multiple locations:\n  %s\n  %s\n"+
-						"Rename one of them or delete the duplicate so it's clear which profile is being used",
-					profileName, existingSource, ref.configPath(),
-				)
+				return nil, duplicateProfileError(profileName, existingSource, ref.configPath())
 			}
 		}
 
@@ -866,13 +861,17 @@ func checkProfileNameClashes(dirs []string) error {
 		}
 	}
 	names := make([][]string, len(profileDirs))
-	for i := len(profileDirs) - 1; i >= 0; i-- {
+	laterDirsEmpty := true
+	for i := 1; i < len(profileDirs); i++ {
 		names[i] = readDirNames(profileDirs[i])
-		// The first dir is read only when a later one has entries.
-		if i == 1 && !slices.ContainsFunc(names[1:], func(n []string) bool { return len(n) > 0 }) {
-			return nil
-		}
+		laterDirsEmpty = laterDirsEmpty && len(names[i]) == 0
 	}
+	// No clash is possible, and the first dir (~/.coi/profiles, the big one)
+	// need not be read.
+	if laterDirsEmpty {
+		return nil
+	}
+	names[0] = readDirNames(profileDirs[0])
 
 	seen := make(map[string]bool, len(names[0]))
 	for _, name := range names[0] {
@@ -895,11 +894,7 @@ func checkProfileNameClashes(dirs []string) error {
 				}
 			}
 			if path := profileConfigPath(profileDirs[i], name); existing != "" && path != "" {
-				return fmt.Errorf(
-					"profile %q defined in multiple locations:\n  %s\n  %s\n"+
-						"Rename one of them or delete the duplicate so it's clear which profile is being used",
-					name, existing, path,
-				)
+				return duplicateProfileError(name, existing, path)
 			}
 		}
 		for _, name := range names[i] {
@@ -907,6 +902,16 @@ func checkProfileNameClashes(dirs []string) error {
 		}
 	}
 	return nil
+}
+
+// duplicateProfileError is the error for a profile name defined in two
+// locations, at existing and at path.
+func duplicateProfileError(name, existing, path string) error {
+	return fmt.Errorf(
+		"profile %q defined in multiple locations:\n  %s\n  %s\n"+
+			"Rename one of them or delete the duplicate so it's clear which profile is being used",
+		name, existing, path,
+	)
 }
 
 // readDirNames returns the entry names of dir, unsorted, or nil when it cannot
