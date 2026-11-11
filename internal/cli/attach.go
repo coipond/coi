@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/coipond/coi/internal/alias"
 	"github.com/coipond/coi/internal/container"
@@ -68,8 +67,7 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Attaching to %s (slot %d)...\n", targetContainer, attachSlot)
 	} else {
 		// List all running containers with configured prefix
-		prefix := regexp.QuoteMeta(session.GetContainerPrefix())
-		containers, err := container.ListContainers(prefix + ".*")
+		containers, err := container.ListContainers(coiContainerPattern())
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}

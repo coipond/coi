@@ -1,0 +1,55 @@
+"""
+Test for coi kill --all - leaves non-coi containers alone.
+
+Tests that:
+1. Launch a coi container next to foreign containers (running, stopped, and
+   one whose name holds "coi-" but does not start with it)
+2. Kill all with --all --force
+3. Verify the coi container is deleted
+4. Verify the foreign containers' status, config, profiles, devices and
+   snapshots are unchanged
+"""
+
+import subprocess
+
+from support.helpers import calculate_container_name, foreign_container_state
+
+
+def test_kill_all_spares_foreign_containers(
+    coi_binary, cleanup_containers, workspace_dir, foreign_containers
+):
+    container_name = calculate_container_name(workspace_dir, 1)
+    foreign = list(foreign_containers.values())
+
+    result = subprocess.run(
+        [coi_binary, "container", "launch", "coi-default", container_name],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, f"Container launch should succeed. stderr: {result.stderr}"
+
+    before = foreign_container_state(foreign)
+    assert sorted(before) == sorted(foreign), f"Foreign containers missing: {before}"
+
+    result = subprocess.run(
+        [coi_binary, "kill", "--all", "--force"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, f"Kill --all should succeed. stderr: {result.stderr}"
+
+    combined_output = result.stdout + result.stderr
+    for name in foreign:
+        assert name not in combined_output, f"kill --all must not name {name}:\n{combined_output}"
+
+    result = subprocess.run(
+        [coi_binary, "container", "exists", container_name],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode != 0, f"Container {container_name} should not exist after kill --all"
+
+    assert foreign_container_state(foreign) == before

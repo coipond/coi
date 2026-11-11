@@ -1529,3 +1529,27 @@ def make_workspace_writable(workspace_dir):
     stop a write, preventing false passes.
     """
     subprocess.run(["chmod", "-R", "a+rwX", workspace_dir], check=True, capture_output=True)
+
+
+def foreign_container_state(names):
+    """Snapshot what coi must never change on non-coi containers: status,
+    user.* config, profiles, devices and snapshots, keyed by name."""
+    r = subprocess.run(
+        ["incus", "list", "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, f"incus list failed: {r.stderr}"
+    state = {}
+    for c in json.loads(r.stdout):
+        if c.get("name") not in names:
+            continue
+        state[c["name"]] = {
+            "status": c.get("status"),
+            "config": {k: v for k, v in c.get("config", {}).items() if k.startswith("user.")},
+            "profiles": c.get("profiles"),
+            "devices": c.get("devices"),
+            "snapshots": [s.get("name") for s in c.get("snapshots") or []],
+        }
+    return state
