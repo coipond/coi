@@ -1248,7 +1248,9 @@ def container_ipv4(container_name):
         # `incus list <name>` also lists containers whose name starts with <name>.
         if c.get("name") != container_name:
             continue
-        for a in c.get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
+        # A stopped container has "network": null.
+        network = (c.get("state") or {}).get("network") or {}
+        for a in (network.get("eth0") or {}).get("addresses") or []:
             if a.get("family") == "inet":
                 return a["address"]
     return None
