@@ -198,18 +198,33 @@ func MergeStringSliceUnique(base, other []string) []string {
 	return base
 }
 
-// GetProfile returns a profile by name, or nil if not found
+// GetProfile returns a profile by name, or nil if not found or if it fails to
+// load (see LookupProfile).
 func (c *Config) GetProfile(name string) *ProfileConfig {
-	if profile, ok := c.Profiles[name]; ok {
-		return &profile
+	profile, _ := c.LookupProfile(name)
+	return profile
+}
+
+// LookupProfile returns a profile by name, reading it first if LoadOnDemand
+// left it unread. It returns nil and no error if the profile is not found, and
+// a *ConfigError if the profile or one it inherits from fails to load.
+func (c *Config) LookupProfile(name string) (*ProfileConfig, error) {
+	if err := c.loadProfile(name); err != nil {
+		return nil, &ConfigError{Err: err}
 	}
-	return nil
+	if profile, ok := c.Profiles[name]; ok {
+		return &profile, nil
+	}
+	return nil, nil
 }
 
 // ApplyProfile applies a profile's settings to the defaults.
 // Returns an error if the profile is not found or fails validation.
 func (c *Config) ApplyProfile(name string) error {
-	profile := c.GetProfile(name)
+	profile, err := c.LookupProfile(name)
+	if err != nil {
+		return err
+	}
 	if profile == nil {
 		return fmt.Errorf("profile '%s' not found", name)
 	}
@@ -332,7 +347,10 @@ func (c *Config) ApplyProfile(name string) error {
 // (a full re-apply would duplicate profile mounts and sockets).
 // The project alias is preserved, mirroring ApplyProfile.
 func (c *Config) ReapplyProfileContainer(name string) error {
-	profile := c.GetProfile(name)
+	profile, err := c.LookupProfile(name)
+	if err != nil {
+		return err
+	}
 	if profile == nil {
 		return fmt.Errorf("profile '%s' not found", name)
 	}
@@ -694,9 +712,20 @@ func mergeDetectionInto(dst *DetectionConfig, src *DetectionConfig) {
 // It flattens each profile so that after resolution, profiles are self-contained.
 // Detects cycles and enforces a maximum inheritance depth.
 func (c *Config) ResolveProfileInheritance() error {
+	names := make([]string, 0, len(c.Profiles))
+	for name := range c.Profiles {
+		names = append(names, name)
+	}
+	return c.resolveProfileInheritance(names, nil)
+}
+
+// resolveProfileInheritance resolves the inheritance chains of the named
+// profiles. resolved holds profiles already flattened, which are not merged
+// again; nil means none.
+func (c *Config) resolveProfileInheritance(names []string, resolved map[string]bool) error {
 	// First pass: validate chain lengths and detect cycles before any resolution.
 	// This ensures max depth is checked against the full chain, not just recursion depth.
-	for name := range c.Profiles {
+	for _, name := range names {
 		if c.Profiles[name].Inherits == "" {
 			continue
 		}
@@ -722,7 +751,9 @@ func (c *Config) ResolveProfileInheritance() error {
 	}
 
 	// Second pass: resolve inheritance by merging parent into child.
-	resolved := make(map[string]bool, len(c.Profiles))
+	if resolved == nil {
+		resolved = make(map[string]bool, len(names))
+	}
 
 	var resolve func(name string) error
 	resolve = func(name string) error {
@@ -756,7 +787,7 @@ func (c *Config) ResolveProfileInheritance() error {
 		return nil
 	}
 
-	for name := range c.Profiles {
+	for _, name := range names {
 		if err := resolve(name); err != nil {
 			return err
 		}

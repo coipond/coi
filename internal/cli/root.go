@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -84,20 +85,26 @@ func warnDockerHardeningConflict(cfg *config.Config) {
 }
 
 // applyDefaultProfileForOps applies the [defaults] profile fallback for
-// OPERATIONAL commands (attach, monitor, snapshot) so a profile-carried
-// session_name — the documented placement — resolves the same container
-// identity the launch used. Unlike the session commands' fallback this is
-// error-TOLERANT: per #607, operational commands must keep working on a
-// misconfigured default profile (they are the recovery tools), so an unknown
-// profile is ignored rather than fatal. The same suppression rules apply: an
-// explicit --profile (or alias/resume-applied profile) means the fallback
+// OPERATIONAL commands (attach, monitor, snapshot, container launch/start) so
+// a profile-carried session_name — the documented placement — resolves the
+// same container identity the launch used. Unlike the session commands'
+// fallback, an unknown profile name is ignored with a warning rather than
+// fatal: per #607, operational commands must keep working on a typo (they are
+// the recovery tools). A default profile that fails to load is an error: it
+// may set the network mode or Incus project. The same suppression rules apply:
+// an explicit --profile (or alias/resume-applied profile) means the fallback
 // never applies, exactly as at launch. A session launched with a
 // session_name-carrying profile selected by --profile or an alias needs the
 // same flag repeated on the operational command.
-func (a *App) applyDefaultProfileForOps(cmd *cobra.Command) {
+func (a *App) applyDefaultProfileForOps(cmd *cobra.Command) error {
 	if _, err := a.applyDefaultProfileFallback(cmd); err != nil {
+		var cfgErr *config.ConfigError
+		if errors.As(err, &cfgErr) {
+			return err
+		}
 		fmt.Fprintf(os.Stderr, "Warning: %v (continuing without the default profile)\n", err)
 	}
+	return nil
 }
 
 // app is the singleton used by the cobra command tree. Execute() resets it to
@@ -147,10 +154,19 @@ Examples:
 			stop()
 		}
 
-		// Load config
+		// Load config. Most commands use at most one profile, so they read
+		// only the profiles they apply. A requested --profile is read here so
+		// that an invalid one fails like the rest of the config.
 		var err error
 		stopLoad := timing.Start(timing.CatStep, "config load")
-		app.cfg, err = config.Load()
+		if commandNeedsAllProfiles(cmd) {
+			app.cfg, err = config.Load()
+		} else {
+			app.cfg, err = config.LoadOnDemand()
+			if err == nil && app.profile != "" {
+				_, err = app.cfg.LookupProfile(app.profile)
+			}
+		}
 		stopLoad()
 		if err != nil {
 			// Allow health command to run with defaults even if config is broken
@@ -168,12 +184,11 @@ Examples:
 			}
 		}
 
-		// A misconfigured [defaults] profile is caught at the point it is
-		// applied (applyDefaultProfileFallback, only for coi shell/run), not
-		// here: this hook runs for EVERY command, so validating here would break
-		// unrelated operational commands (coi list/kill/clean/attach/…) on a
-		// typo — including the very commands used to recover — even though they
-		// never apply a profile (#607 follow-up).
+		// A misconfigured [defaults] profile is caught where it is applied
+		// (applyDefaultProfileFallback), not here: this hook runs for EVERY
+		// command, so failing here would break unrelated operational commands
+		// (coi list/kill/clean/…) on a typo — including the very commands used
+		// to recover — even though they never apply a profile (#607 follow-up).
 
 		// Apply Incus configuration from config file
 		container.Configure(app.cfg.Incus.Project, app.cfg.Incus.CodeUser, app.cfg.Incus.CodeUID)
@@ -195,6 +210,27 @@ Examples:
 
 		return nil
 	},
+}
+
+// allProfilesCommands are the top-level commands that list or check every
+// profile, so they load all of them up front.
+var allProfilesCommands = map[string]bool{
+	"build":    true,
+	"clean":    true,
+	"health":   true,
+	"profile":  true,
+	"validate": true,
+}
+
+// commandNeedsAllProfiles reports whether cmd is, or is under, a command in
+// allProfilesCommands.
+func commandNeedsAllProfiles(cmd *cobra.Command) bool {
+	for c := cmd; c.HasParent(); c = c.Parent() {
+		if !c.Parent().HasParent() {
+			return allProfilesCommands[c.Name()]
+		}
+	}
+	return false
 }
 
 // commandUsesIncusGroup reports whether a command should trigger the
@@ -261,7 +297,11 @@ func (a *App) defaultProfileFallbackName(cmd *cobra.Command) (string, error) {
 	if name == "" {
 		return "", nil
 	}
-	if a.cfg.GetProfile(name) == nil {
+	p, err := a.cfg.LookupProfile(name)
+	if err != nil {
+		return "", fmt.Errorf("failed to load config: %w", err)
+	}
+	if p == nil {
 		return "", fmt.Errorf(
 			"[defaults] profile = %q does not name a known profile; "+
 				"run 'coi profile list' to see available profiles", name)
