@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -46,8 +47,9 @@ func LoadOnDemand() (*Config, error) {
 }
 
 // LoadWithoutProfiles is Load for commands that never apply a profile: it does
-// not list the profile directories, so its cost does not grow with the number
-// of profiles. cfg.Profiles holds only the built-in profiles.
+// not list the user profile directory, so its cost does not grow with the
+// number of profiles there. A profile name in two locations is still an error
+// (checkProfileNameClashes). cfg.Profiles holds only the built-in profiles.
 func LoadWithoutProfiles() (*Config, error) {
 	return load(loadNoProfiles)
 }
@@ -85,7 +87,13 @@ func load(mode profileLoadMode) (_ *Config, err error) {
 
 	// Scan profile directories from all known locations. Profiles are merged
 	// into a single namespace; duplicate names across locations are rejected
-	// by loadProfileDirectories so it's always clear which profile is used.
+	// (by loadProfileDirectories, indexProfileDirectory or
+	// checkProfileNameClashes) so it's always clear which profile is used.
+	if mode == loadNoProfiles {
+		if err := checkProfileNameClashes(GetProfileParentDirs()); err != nil {
+			return nil, err
+		}
+	}
 	for _, dir := range GetProfileParentDirs() {
 		switch mode {
 		case loadAllProfiles:
@@ -842,6 +850,46 @@ func indexProfileDirectory(cfg *Config, configDir string, trusted bool) ([]strin
 		names = append(names, profileName)
 	}
 	return names, nil
+}
+
+// checkProfileNameClashes returns the error indexProfileDirectory returns for a
+// profile name defined in more than one of dirs, without listing the first
+// dir: only the later ones (project, COI_CONFIG; usually small or absent) are
+// listed, and each of their names is looked up in the earlier dirs. A dir that
+// repeats an earlier one is skipped, as the same path never clashes.
+func checkProfileNameClashes(dirs []string) error {
+	for i, dir := range dirs {
+		if i == 0 || slices.ContainsFunc(dirs[:i], func(d string) bool {
+			return filepath.Clean(d) == filepath.Clean(dir)
+		}) {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(dir, "profiles"))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			path := filepath.Join(dir, "profiles", entry.Name(), "config.toml")
+			if !profileFileExists(path) {
+				continue
+			}
+			for _, earlier := range dirs[:i] {
+				profileDir := filepath.Join(earlier, "profiles", entry.Name())
+				existing := filepath.Join(profileDir, "config.toml")
+				if fi, err := os.Lstat(profileDir); err == nil && fi.IsDir() && profileFileExists(existing) {
+					return fmt.Errorf(
+						"profile %q defined in multiple locations:\n  %s\n  %s\n"+
+							"Rename one of them or delete the duplicate so it's clear which profile is being used",
+						entry.Name(), existing, path,
+					)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // profileFileExists reports whether a profile config.toml exists at path.

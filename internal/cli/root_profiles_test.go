@@ -68,6 +68,12 @@ func executeWithProfiles(t *testing.T, profiles map[string]string, userConfig st
 			t.Fatal(err)
 		}
 	}
+	return executeArgs(t, args...)
+}
+
+// executeArgs runs `coi <args>` with output discarded.
+func executeArgs(t *testing.T, args ...string) error {
+	t.Helper()
 	// Execute zeroes app and parses flags into it: reset both for later tests.
 	t.Cleanup(func() {
 		rootCmd.SetArgs(nil)
@@ -192,13 +198,70 @@ func fakeIncusLog(t *testing.T) string {
 	return logPath
 }
 
-func TestNoProfileCommandsExist(t *testing.T) {
+func TestLoadsNoProfile(t *testing.T) {
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"container", "exec"}, true},
+		{[]string{"container", "exists"}, true},
+		{[]string{"container", "running"}, true},
+		{[]string{"container", "stop"}, true},
+		{[]string{"container", "delete"}, true},
+		{[]string{"container", "list"}, true},
+		{[]string{"container", "info"}, true},
+		{[]string{"container", "mount"}, true},
+		{[]string{"file", "push"}, true},
+		{[]string{"file", "pull"}, true},
+		{[]string{"kill"}, true},
+		{[]string{"container", "launch"}, false},
+		{[]string{"container", "start"}, false},
+		{[]string{"shell"}, false},
+		{[]string{"run"}, false},
+		{[]string{"attach"}, false},
+		{[]string{"monitor"}, false},
+		{[]string{"snapshot", "list"}, false},
+		{[]string{"list"}, false},
+	}
+	for _, tt := range tests {
+		cmd, _, err := rootCmd.Find(tt.args)
+		if err != nil {
+			t.Fatalf("Find(%v): %v", tt.args, err)
+		}
+		if got := loadsNoProfile(cmd); got != tt.want {
+			t.Errorf("loadsNoProfile(%v) = %v, want %v", tt.args, got, tt.want)
+		}
+	}
 	for path := range noProfileCommands {
-		args := strings.Fields(path)[1:]
-		cmd, _, err := rootCmd.Find(args)
+		cmd, _, err := rootCmd.Find(strings.Fields(path)[1:])
 		if err != nil || cmd.CommandPath() != path {
 			t.Errorf("noProfileCommands names %q, which is no command", path)
 		}
+	}
+}
+
+// A profile name in two locations still fails these commands (exit 5).
+func TestExecute_NoProfileCommandFailsOnDuplicateProfile(t *testing.T) {
+	fakeIncusLog(t)
+	home, work := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COI_CONFIG", "")
+	t.Chdir(work)
+	for _, parent := range []string{home, work} {
+		dir := filepath.Join(parent, ".coi", "profiles", "dup")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[container]\nimage = \"a\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := executeArgs(t, "container", "exists", "c1")
+	if err == nil || !strings.Contains(err.Error(), `profile "dup" defined in multiple locations`) {
+		t.Fatalf("coi container exists = %v, want a duplicate profile error", err)
+	}
+	if got := ExitCodeFor(err); got != ExitConfig {
+		t.Errorf("exit code = %d, want %d", got, ExitConfig)
 	}
 }
 

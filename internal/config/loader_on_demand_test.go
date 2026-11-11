@@ -60,6 +60,41 @@ func TestLoadWithoutProfiles_ListsNoProfile(t *testing.T) {
 	}
 }
 
+// LoadWithoutProfiles rejects a profile name in two locations like
+// LoadOnDemand does, and accepts what LoadOnDemand accepts.
+func TestLoadWithoutProfiles_DuplicateNames(t *testing.T) {
+	tests := map[string]struct {
+		projectHasConfig bool
+		sameDir          bool
+		wantErr          bool
+	}{
+		"duplicate":                  {projectHasConfig: true, wantErr: true},
+		"project dir without config": {},
+		"project dir is home":        {sameDir: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			coiDir := onDemandHome(t)
+			writeTestProfile(t, coiDir, "dup", "[container]\nimage = \"a\"\n")
+			if tt.sameDir {
+				t.Chdir(filepath.Dir(coiDir))
+			} else if tt.projectHasConfig {
+				writeTestProfile(t, ".coi", "dup", "[container]\nimage = \"b\"\n")
+			} else if err := os.MkdirAll(filepath.Join(".coi", "profiles", "dup"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, onDemandErr := LoadOnDemand()
+			_, err := LoadWithoutProfiles()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("LoadWithoutProfiles() = %v, wantErr %v", err, tt.wantErr)
+			}
+			if fmt.Sprint(err) != fmt.Sprint(onDemandErr) {
+				t.Errorf("error %q differs from LoadOnDemand's %q", err, onDemandErr)
+			}
+		})
+	}
+}
+
 func TestLoadOnDemand_BrokenUnrelatedProfileNotRead(t *testing.T) {
 	coiDir := onDemandHome(t)
 	writeTestProfile(t, coiDir, "good", "[container]\nimage = \"good-image\"\n")

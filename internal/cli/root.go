@@ -163,7 +163,7 @@ Examples:
 		switch {
 		case commandNeedsAllProfiles(cmd):
 			app.cfg, err = config.Load()
-		case app.profile == "" && noProfileCommands[cmd.CommandPath()]:
+		case app.profile == "" && loadsNoProfile(cmd):
 			app.cfg, err = config.LoadWithoutProfiles()
 		default:
 			app.cfg, err = config.LoadOnDemand()
@@ -242,6 +242,11 @@ var noProfileCommands = map[string]bool{
 	"coi file push":         true,
 	"coi file pull":         true,
 	"coi kill":              true,
+}
+
+// loadsNoProfile reports whether cmd is in noProfileCommands.
+func loadsNoProfile(cmd *cobra.Command) bool {
+	return noProfileCommands[cmd.CommandPath()]
 }
 
 // commandNeedsAllProfiles reports whether cmd is, or is under, a command in
