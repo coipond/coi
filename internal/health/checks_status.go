@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/coipond/coi/internal/cleanup"
 	"github.com/coipond/coi/internal/config"
@@ -185,18 +184,8 @@ func CheckFirewalldVethBloat() HealthCheck {
 func CheckOrphanedResources() HealthCheck {
 	// Check for orphaned veths
 	orphanedVeths := 0
-	entries, err := os.ReadDir("/sys/class/net")
-	if err == nil {
-		for _, entry := range entries {
-			name := entry.Name()
-			if !strings.HasPrefix(name, "veth") {
-				continue
-			}
-			masterPath := fmt.Sprintf("/sys/class/net/%s/master", name)
-			if _, err := os.Stat(masterPath); os.IsNotExist(err) {
-				orphanedVeths++
-			}
-		}
+	if veths, err := cleanup.DetectOrphanedVeths(); err == nil {
+		orphanedVeths = len(veths)
 	}
 
 	// Check for orphaned firewall rules
