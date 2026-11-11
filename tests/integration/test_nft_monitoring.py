@@ -2,7 +2,7 @@
 """
 Integration tests for nftables-based network monitoring.
 
-Tests NFT monitoring daemon lifecycle, rule management, threat detection,
+Tests nft network monitor lifecycle, rule management, threat detection,
 and integration with the monitoring system.
 
 These tests verify the critical security functionality:
@@ -371,7 +371,7 @@ class TestNFTRuleManagement:
             container_ip = wait_for_container_ip(container_name)
             assert container_ip, f"Container {container_name} got no IP address"
 
-            # Wait for NFT rules to be created (monitoring daemon may take time to set up)
+            # Wait for NFT rules to be created (the nft network monitor may take time to set up)
             nft_ready = False
             for _ in range(15):
                 if check_nft_rules_exist(container_ip):
@@ -970,7 +970,7 @@ class TestAuditLogging:
                 if not wait_for_container_ready(container_name, timeout=60):
                     pytest.fail(f"Container {container_name} did not start")
 
-                # Wait for the NFT monitoring daemon to actually start before
+                # Wait for the nft network monitor to actually start before
                 # triggering traffic. Without this, the curl may fire before the
                 # daemon is ready to observe it and write audit logs.
                 # The session supervisor runs the daemon and writes to the session
@@ -986,7 +986,7 @@ class TestAuditLogging:
 
                 if not daemon_started:
                     pytest.fail(
-                        "NFT monitoring daemon did not start in time. "
+                        "nft network monitor did not start in time. "
                         f"coi shell stderr and session logs:\n{output}"
                     )
 
@@ -1029,7 +1029,7 @@ class TestAuditLogging:
 
 
 class TestDaemonLifecycle:
-    """Test NFT monitoring daemon lifecycle."""
+    """Test nft network monitor lifecycle."""
 
     @pytest.fixture(autouse=True)
     def check_nft_available(self, nft_monitoring_available):
@@ -1293,7 +1293,7 @@ class TestNFTRuleCleanupOnShutdown:
             container_ip = wait_for_container_ip(container_name)
             assert container_ip, f"Container {container_name} got no IP address"
 
-            # Wait for NFT rules to be created (monitoring daemon may take time to set up)
+            # Wait for NFT rules to be created (the nft network monitor may take time to set up)
             nft_ready = False
             for _ in range(15):
                 if check_nft_rules_exist(container_ip):

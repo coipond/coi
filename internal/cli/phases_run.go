@@ -619,7 +619,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 	}
 }
 
-// startMonitoringRunPhase starts the security monitoring daemons for the run
+// startMonitoringRunPhase starts the security monitors for the run
 // container via the shared startSessionMonitoring helper (same watchers as an
 // agent session). Threat events land in the audit log via the responder;
 // diagnostics use a discard logger (run has no session log file).

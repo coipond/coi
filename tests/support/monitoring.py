@@ -451,7 +451,7 @@ process_spawn_rate_threshold = 9999
             f"Container {container_name} did not start"
         )
 
-        time.sleep(3)  # allow monitoring daemon and PROC_EVENTS to initialise
+        time.sleep(3)  # allow security monitor and PROC_EVENTS to initialise
 
         # exec -a sets argv[0] of sleep to the suspicious signature so the
         # proc_event watcher sees the right cmdline without needing the binary.

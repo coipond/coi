@@ -171,7 +171,7 @@ class TestLogWatcherInotify:
             assert container_exec_ready(container_name), (
                 f"Container {container_name} agent not ready for exec"
             )
-            time.sleep(3)  # wait for monitoring daemon to start
+            time.sleep(3)  # wait for security monitor to start
 
             write_syslog = [
                 "incus",
@@ -369,7 +369,7 @@ class TestLogWatcherInotify:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(5)  # let the monitoring daemon register its watches
+            time.sleep(5)  # let the security monitor register its watches
 
             # Write the first suspicious line into the original auth.log, re-writing
             # on each poll. Just like the post-rotation write below, a single write

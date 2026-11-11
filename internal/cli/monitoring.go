@@ -15,7 +15,7 @@ import (
 	"github.com/coipond/coi/internal/session"
 )
 
-// startSessionMonitoring starts the security monitoring daemons
+// startSessionMonitoring starts the security monitors
 // (process/filesystem + nft network) for a container and returns a teardown
 // that stops them. It is the single implementation shared by the shell and
 // run pipelines so the two paths cannot drift: an arbitrary command or run
@@ -53,7 +53,7 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 	permitted, stopPermits := a.startEgressPermits(ctx, containerName, nftEnabled)
 
 	if err := startMonitoringDaemon(ctx, containerName, workspacePath, a.cfg, allowedCIDRs, permitted, log, mon); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to start monitoring daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: Failed to start security monitor: %v\n", err)
 	}
 
 	if config.BoolVal(a.cfg.Monitoring.NFT.Enabled) {
@@ -72,7 +72,7 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 			go func() {
 				defer wg.Done()
 				if err := (*mon).Stop(); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: Failed to stop monitoring daemon: %v\n", err)
+					fmt.Fprintf(os.Stderr, "Warning: Failed to stop security monitor: %v\n", err)
 				}
 			}()
 		}

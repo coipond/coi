@@ -2,7 +2,7 @@
 Repro for issue #505: panic "slice bounds out of range [:12] with length 11"
 at session start when [monitoring] enabled = true.
 
-Root cause: the host monitoring daemon's proc-event watcher loads the GTFOBins
+Root cause: the host security monitor's proc-event watcher loads the GTFOBins
 exec-pattern DB at startup (ProcEventWatcher.Run -> loadExecPatterns), and
 gtfobinsStripPlaceholders() panicked on the standard GTFOBins `socat` entry token
 "tcp-connect:attacker.com:12345" — it computed `lower` once but reassigned `token`
@@ -134,7 +134,7 @@ def test_monitoring_gtfobins_load_does_not_panic(
                 break
             time.sleep(1)
 
-        # Give the monitoring daemon's proc-watcher goroutine time to load the
+        # Give the security monitor's proc-watcher goroutine time to load the
         # GTFOBins DB (where the panic happens), then stop.
         time.sleep(6)
     finally:
