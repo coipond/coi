@@ -193,6 +193,21 @@ func TestLoadOnDemand_DuplicateAcrossLocations(t *testing.T) {
 	if p := cfg.GetProfile("dup"); p == nil || p.Container.Image != "project" {
 		t.Errorf("dup = %+v, want the project profile", p)
 	}
+
+	// A project directory without config.toml does not clash with a home one.
+	writeTestProfile(t, coiDir, "dup", "[container]\nimage = \"home\"\n")
+	if err := os.Remove(projPath); err != nil {
+		t.Fatal(err)
+	}
+	for name, load := range map[string]func() (*Config, error){"LoadOnDemand": LoadOnDemand, "Load": Load} {
+		cfg, err := load()
+		if err != nil {
+			t.Fatalf("%s() with an empty project dir: %v", name, err)
+		}
+		if p := cfg.GetProfile("dup"); p == nil || p.Container.Image != "home" {
+			t.Errorf("%s: dup = %+v, want the home profile", name, p)
+		}
+	}
 }
 
 func TestLoadOnDemand_ProfileRemovedAfterListing(t *testing.T) {
@@ -293,7 +308,7 @@ func TestLoadOnDemand_ReadsOnlyUsedProfiles(t *testing.T) {
 
 // LoadOnDemand reads no profile for a command that uses none (coi container
 // list) and one for a command that applies one (coi shell --profile X), so its
-// time must not grow with the number of profiles on disk:
+// time grows only with the directory listing, not with reading every profile:
 //
 //	go test ./internal/config -run '^$' -bench LoadProfiles -benchtime 20x
 func BenchmarkLoadProfiles(b *testing.B) {
