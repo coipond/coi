@@ -37,7 +37,7 @@ import time
 
 import pytest
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, container_ipv4
 
 # RFC 5737 TEST-NET-3 — never a real resolved/allowlisted address, so a clean
 # restricted setup never produces a rule referencing it.
@@ -66,25 +66,6 @@ def chain_text():
         timeout=10,
     )
     return result.stdout if result.returncode == 0 else ""
-
-
-def incus_ip(name):
-    result = subprocess.run(
-        ["incus", "list", name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    info = json.loads(result.stdout)
-    if not info:
-        return None
-    addrs = info[0].get("state", {}).get("network", {}).get("eth0", {}).get("addresses", [])
-    for addr in addrs:
-        if addr.get("family") == "inet":
-            return addr["address"]
-    return None
 
 
 def start_run(coi_binary, workspace_dir, stderr_file):
@@ -181,7 +162,7 @@ def test_setup_purges_stale_rules_for_reused_ip(coi_binary, workspace_dir, clean
             stop_run(proc1)
             pytest.skip(f"network isolation not applied within timeout; stderr:\n{_read(err1)}")
 
-        container_ip = incus_ip(container_name)
+        container_ip = container_ipv4(container_name)
         assert container_ip, "should resolve the container IP after first setup"
         assert FINGERPRINT not in chain_text(), "fingerprint must not pre-exist"
 
@@ -229,7 +210,7 @@ def test_setup_purges_stale_rules_for_reused_ip(coi_binary, workspace_dir, clean
 
             # Confirm the persistent container actually reused the same IP — only
             # then does the second setup target (and purge) container_ip's rules.
-            reused_ip = incus_ip(container_name)
+            reused_ip = container_ipv4(container_name)
             if reused_ip != container_ip:
                 pytest.skip(
                     f"persistent restart did not reuse the IP (was {container_ip}, "

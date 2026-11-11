@@ -7,11 +7,12 @@ but that host can access container services (response traffic allowed).
 Network isolation is implemented using nft rules.
 """
 
-import json
 import os
 import subprocess
 import tempfile
 import time
+
+from support.helpers import container_ipv4
 
 
 def test_restricted_blocks_rfc1918_addresses(coi_binary, workspace_dir, cleanup_containers):
@@ -237,22 +238,8 @@ mode = "restricted"
         # Wait for container to be fully ready
         time.sleep(2)
 
-        # Get container's IP address using incus list (more reliable than hostname -I)
-        result = subprocess.run(
-            ["incus", "list", container_name, "--format=json"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        assert result.returncode == 0, f"Failed to get container info: {result.stderr}"
-
-        container_info = json.loads(result.stdout)[0]
-        # Get eth0 IP address (container network IP, not Docker bridge IP)
-        eth0_addresses = container_info["state"]["network"]["eth0"]["addresses"]
-        ipv4_addresses = [addr["address"] for addr in eth0_addresses if addr["family"] == "inet"]
-        assert ipv4_addresses, f"No IPv4 address found for container {container_name}"
-        container_ip = ipv4_addresses[0]
+        container_ip = container_ipv4(container_name)
+        assert container_ip, f"No IPv4 address found for container {container_name}"
 
         # Start HTTP server in container
         server_proc = subprocess.Popen(
