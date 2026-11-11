@@ -877,6 +877,7 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 		ContainerName:        containerName,
 		ContainerIP:          containerIP,
 		AllowedCIDRs:         allowedCIDRs,
+		NetworkMode:          cfg.Network.Mode,
 		PermittedDestination: permitted,
 		GatewayIP:            gatewayIP,
 		AuditLogPath:         auditLogPath,

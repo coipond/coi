@@ -6,6 +6,8 @@ package nftmonitor
 import (
 	"testing"
 	"time"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 func TestNetworkDetector_MetadataEndpoint(t *testing.T) {
@@ -359,6 +361,62 @@ func TestNetworkDetector_RFC1918StillAlertsWithGateway(t *testing.T) {
 				t.Errorf("Expected 'Connection to private network' for %s, got %q", tt.dstIP, threat.Title)
 			}
 		})
+	}
+}
+
+// Open mode allows LAN traffic, so an RFC1918 destination is flagged only in
+// the other modes. Open mode still flags C2 ports and the metadata endpoint.
+func TestNetworkDetector_RFC1918ByNetworkMode(t *testing.T) {
+	event := func(dst string, port int) *NetworkEvent {
+		return &NetworkEvent{
+			Timestamp: time.Now(), ContainerIP: "10.47.62.50", SrcIP: "10.47.62.50",
+			DstIP: dst, DstPort: port, Protocol: "TCP",
+		}
+	}
+	for _, tc := range []struct {
+		name         string
+		mode         config.NetworkMode
+		allowedCIDRs []string
+		flagged      bool
+	}{
+		{"open", config.NetworkModeOpen, nil, false},
+		{"restricted", config.NetworkModeRestricted, nil, true},
+		{"allowlist", config.NetworkModeAllowlist, []string{"140.82.112.3/32"}, true},
+		{"unset", "", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nd := NewNetworkDetector(&Config{
+				ContainerIP:  "10.47.62.50",
+				GatewayIP:    "10.47.62.1",
+				NetworkMode:  tc.mode,
+				AllowedCIDRs: tc.allowedCIDRs,
+			})
+			threat := nd.Analyze(event("192.168.1.20", 443))
+			if !tc.flagged {
+				if threat != nil {
+					t.Errorf("LAN host in %s mode should not alert, got %q", tc.mode, threat.Title)
+				}
+				return
+			}
+			if threat == nil || threat.Level != ThreatLevelHigh || threat.Title != "Connection to private network" {
+				t.Errorf("LAN host in %s mode: want HIGH private network alert, got %v", tc.mode, threat)
+			}
+		})
+	}
+
+	nd := NewNetworkDetector(&Config{ContainerIP: "10.47.62.50", NetworkMode: config.NetworkModeOpen})
+	for _, tc := range []struct {
+		dst   string
+		port  int
+		title string
+	}{
+		{"192.168.1.20", 4444, "Connection to suspicious port"},
+		{"169.254.169.254", 80, "Metadata endpoint access"},
+	} {
+		threat := nd.Analyze(event(tc.dst, tc.port))
+		if threat == nil || threat.Level != ThreatLevelCritical || threat.Title != tc.title {
+			t.Errorf("open mode %s:%d: want CRITICAL %q, got %v", tc.dst, tc.port, tc.title, threat)
+		}
 	}
 }
 
