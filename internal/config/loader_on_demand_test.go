@@ -66,11 +66,13 @@ func TestLoadWithoutProfiles_DuplicateNames(t *testing.T) {
 	tests := map[string]struct {
 		projectHasConfig bool
 		sameDir          bool
+		symlink          bool
 		wantErr          bool
 	}{
 		"duplicate":                  {projectHasConfig: true, wantErr: true},
 		"project dir without config": {},
 		"project dir is home":        {sameDir: true},
+		"project dir is a symlink":   {symlink: true},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -78,6 +80,14 @@ func TestLoadWithoutProfiles_DuplicateNames(t *testing.T) {
 			writeTestProfile(t, coiDir, "dup", "[container]\nimage = \"a\"\n")
 			if tt.sameDir {
 				t.Chdir(filepath.Dir(coiDir))
+			} else if tt.symlink {
+				target := filepath.Dir(writeTestProfile(t, t.TempDir(), "dup", "[container]\nimage = \"b\"\n"))
+				if err := os.MkdirAll(filepath.Join(".coi", "profiles"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, filepath.Join(".coi", "profiles", "dup")); err != nil {
+					t.Fatal(err)
+				}
 			} else if tt.projectHasConfig {
 				writeTestProfile(t, ".coi", "dup", "[container]\nimage = \"b\"\n")
 			} else if err := os.MkdirAll(filepath.Join(".coi", "profiles", "dup"), 0o755); err != nil {

@@ -46,10 +46,11 @@ func LoadOnDemand() (*Config, error) {
 	return load(loadProfilesOnDemand)
 }
 
-// LoadWithoutProfiles is Load for commands that never apply a profile: it does
-// not list the user profile directory, so its cost does not grow with the
-// number of profiles there. A profile name in two locations is still an error
-// (checkProfileNameClashes). cfg.Profiles holds only the built-in profiles.
+// LoadWithoutProfiles is Load for commands that never apply a profile: it reads
+// no profile. A profile name in two locations is still an error
+// (checkProfileNameClashes), so it reads the entry names of the profile
+// directories, and those of ~/.coi/profiles only when ./.coi/profiles or the
+// COI_CONFIG dir has entries. cfg.Profiles holds only the built-in profiles.
 func LoadWithoutProfiles() (*Config, error) {
 	return load(loadNoProfiles)
 }
