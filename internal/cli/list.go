@@ -97,26 +97,7 @@ func listCommand(cmd *cobra.Command, args []string) error {
 		containers = filterContainersByStatus(containers, statusFilter)
 	}
 
-	// Build maps of container name -> workspace and container name -> persistent from saved sessions
-	// We search for metadata.json files directly (not using listSavedSessions which requires .claude dir)
-	// because metadata is saved early at session start, before .claude directory exists
-	containerWorkspaces := make(map[string]string)
-	containerPersistent := make(map[string]bool)
-	if entries, err := os.ReadDir(sessionsDir); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			metadataPath := filepath.Join(sessionsDir, entry.Name(), "metadata.json")
-			if data, err := os.ReadFile(metadataPath); err == nil {
-				var metadata session.SessionMetadata
-				if err := json.Unmarshal(data, &metadata); err == nil && metadata.ContainerName != "" {
-					containerWorkspaces[metadata.ContainerName] = metadata.Workspace
-					containerPersistent[metadata.ContainerName] = metadata.Persistent
-				}
-			}
-		}
-	}
+	containerWorkspaces, containerPersistent := containerSessionInfo(containers, sessionsDir)
 
 	// Get saved sessions if --all
 	var sessions []SessionInfo
@@ -148,6 +129,13 @@ type ContainerInfo struct {
 	// being used, not the configured one.
 	Pool  string
 	Alias string
+	// Workspace and Persistent come from the user.coi.workspace and
+	// user.coi.persistent keys launch sets; PersistentSet is false when the
+	// container lacks the persistence key. Managed is user.coi.managed.
+	Workspace     string
+	Persistent    bool
+	PersistentSet bool
+	Managed       bool
 	// Ports are the container's published host ports (its coi-port-* proxy
 	// devices), parsed from the same expanded_devices JSON — no extra Incus
 	// calls. Identity-mapped pool ports render as the bare number ("23410"),
@@ -187,6 +175,9 @@ func listActiveContainers() ([]ContainerInfo, error) {
 		config, _ := c["config"].(map[string]interface{})      // Type assertion
 		image, _ := config["image.description"].(string)       // Type assertion
 		containerAlias, _ := config["user.coi.alias"].(string) // Alias metadata
+		workspace, _ := config[session.WorkspaceConfigKey].(string)
+		persistentKey, persistentSet := config[session.PersistentConfigKey].(string)
+		managed, _ := config[container.ManagedConfigKey].(string)
 
 		// Parse created_at time
 		createdTime := ""
@@ -211,10 +202,44 @@ func listActiveContainers() ([]ContainerInfo, error) {
 			Pool:      pool,
 			Alias:     containerAlias,
 			Ports:     extractPublishedPorts(c),
+
+			Workspace:     workspace,
+			Persistent:    persistentKey == "true",
+			PersistentSet: persistentSet,
+			Managed:       managed != "",
 		})
 	}
 
 	return result, nil
+}
+
+// containerSessionInfo maps container name -> workspace and -> persistent from
+// the keys launch sets on the container. Saved-session metadata is read only
+// for containers created before coi set the persistence key; a managed
+// container without a workspace (`coi container launch`) has no session.
+func containerSessionInfo(containers []ContainerInfo, sessionsDir string) (map[string]string, map[string]bool) {
+	workspaces := make(map[string]string, len(containers))
+	persistent := make(map[string]bool, len(containers))
+	missing := make(map[string]bool)
+	for _, c := range containers {
+		if c.Workspace != "" {
+			workspaces[c.Name] = c.Workspace
+		}
+		switch {
+		case c.PersistentSet:
+			persistent[c.Name] = c.Persistent
+		case c.Managed && c.Workspace == "":
+		default:
+			missing[c.Name] = true
+		}
+	}
+	for name, md := range readContainerMetadata(sessionsDir, missing) {
+		if _, ok := workspaces[name]; !ok {
+			workspaces[name] = md.Workspace
+		}
+		persistent[name] = md.Persistent
+	}
+	return workspaces, persistent
 }
 
 // validStatusFilters is the single source of the --status vocabulary: it
