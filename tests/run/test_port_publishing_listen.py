@@ -25,8 +25,10 @@ from support.helpers import (
     NODE_PORT_SERVER,
     PORT_SENTINEL,
     calculate_container_name,
+    container_device_get,
     fetch_host_port,
     free_host_port,
+    workspace_containers,
     write_trusted_coi_config,
 )
 
@@ -54,14 +56,9 @@ def _assert_refused(host, port):
 
 def _device_listen(workspace_dir, device):
     container_name = calculate_container_name(workspace_dir, 1)
-    r = subprocess.run(
-        ["incus", "config", "device", "get", container_name, device, "listen"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert r.returncode == 0, f"cannot read {device} of {container_name}: {r.stderr}"
-    return r.stdout.strip()
+    listen = container_device_get(container_name, device, "listen")
+    assert listen is not None, f"cannot read {device} of {container_name}"
+    return listen
 
 
 def _serve(coi_binary, workspace_dir, env, script):
@@ -179,11 +176,4 @@ def test_invalid_listen_fails_profile(coi_binary, cleanup_containers, workspace_
     assert "'listen' must be an IP address" in result.stderr, (
         f"error should name the invalid listen value. stderr: {result.stderr}"
     )
-    container_name = calculate_container_name(workspace_dir, 1)
-    check = subprocess.run(
-        ["incus", "list", container_name, "--format=csv"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert container_name not in check.stdout, "invalid config must abort before launch"
+    assert not workspace_containers(workspace_dir), "invalid config must abort before launch"

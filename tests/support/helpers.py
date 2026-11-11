@@ -1270,6 +1270,19 @@ def wait_for_pattern_in_monitor(monitor, pattern, timeout=30, poll_interval=0.5)
     return None
 
 
+def container_device_get(container_name, device, key):
+    """Return `incus config device get <container> <device> <key>`, or None."""
+    r = subprocess.run(
+        ["incus", "config", "device", "get", container_name, device, key],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
 def container_ipv4(container_name):
     """Return the container's eth0 IPv4 address from `incus list`, or None."""
     r = subprocess.run(
