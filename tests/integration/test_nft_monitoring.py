@@ -801,10 +801,8 @@ enabled = true
         self, test_workspace, coi_binary, coi_monitoring_env
     ):
         """Restricted mode blocks LAN traffic: an RFC1918 connection is a HIGH threat.
-        With auto_pause_on_high = false it is only alerted.
-
-        The nft monitor used to hard-code both auto-responses to true, so this
-        setting only governed the process monitor and the container was still paused.
+        With auto_pause_on_high = false it is only alerted and the container keeps
+        running.
         """
         # The LOG rules run before the restricted-mode firewall drops the SYN.
         Path(test_workspace, ".coi", "config.toml").write_text("""
