@@ -853,43 +853,86 @@ func indexProfileDirectory(cfg *Config, configDir string, trusted bool) ([]strin
 }
 
 // checkProfileNameClashes returns the error indexProfileDirectory returns for a
-// profile name defined in more than one of dirs, without listing the first
-// dir: only the later ones (project, COI_CONFIG; usually small or absent) are
-// listed, and each of their names is looked up in the earlier dirs. A dir that
-// repeats an earlier one is skipped, as the same path never clashes.
+// profile name defined in more than one of dirs. It reads only entry names and
+// stats only a name found in two dirs, so its cost stays small with many
+// profiles. A dir that repeats an earlier one is skipped, as the same path
+// never clashes.
 func checkProfileNameClashes(dirs []string) error {
-	for i, dir := range dirs {
-		if i == 0 || slices.ContainsFunc(dirs[:i], func(d string) bool {
-			return filepath.Clean(d) == filepath.Clean(dir)
-		}) {
-			continue
+	var profileDirs []string
+	for _, dir := range dirs {
+		if dir = filepath.Join(dir, "profiles"); !slices.Contains(profileDirs, dir) {
+			profileDirs = append(profileDirs, dir)
 		}
-		entries, err := os.ReadDir(filepath.Join(dir, "profiles"))
-		if err != nil {
-			continue
+	}
+	names := make([][]string, len(profileDirs))
+	for i := len(profileDirs) - 1; i >= 0; i-- {
+		names[i] = readDirNames(profileDirs[i])
+		// The first dir is read only when a later one has entries.
+		if i == 1 && !slices.ContainsFunc(names[1:], func(n []string) bool { return len(n) > 0 }) {
+			return nil
 		}
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
+	}
+
+	seen := make(map[string]bool, len(names[0]))
+	for _, name := range names[0] {
+		seen[name] = true
+	}
+	for i := 1; i < len(names); i++ {
+		var shared []string
+		for _, name := range names[i] {
+			if seen[name] {
+				shared = append(shared, name)
 			}
-			path := filepath.Join(dir, "profiles", entry.Name(), "config.toml")
-			if !profileFileExists(path) {
-				continue
-			}
-			for _, earlier := range dirs[:i] {
-				profileDir := filepath.Join(earlier, "profiles", entry.Name())
-				existing := filepath.Join(profileDir, "config.toml")
-				if fi, err := os.Lstat(profileDir); err == nil && fi.IsDir() && profileFileExists(existing) {
-					return fmt.Errorf(
-						"profile %q defined in multiple locations:\n  %s\n  %s\n"+
-							"Rename one of them or delete the duplicate so it's clear which profile is being used",
-						entry.Name(), existing, path,
-					)
+		}
+		sort.Strings(shared)
+		for _, name := range shared {
+			existing := ""
+			for j := range i {
+				if path := profileConfigPath(profileDirs[j], name); path != "" {
+					existing = path
+					break
 				}
 			}
+			if path := profileConfigPath(profileDirs[i], name); existing != "" && path != "" {
+				return fmt.Errorf(
+					"profile %q defined in multiple locations:\n  %s\n  %s\n"+
+						"Rename one of them or delete the duplicate so it's clear which profile is being used",
+					name, existing, path,
+				)
+			}
+		}
+		for _, name := range names[i] {
+			seen[name] = true
 		}
 	}
 	return nil
+}
+
+// readDirNames returns the entry names of dir, unsorted, or nil when it cannot
+// be read.
+func readDirNames(dir string) []string {
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	names, _ := f.Readdirnames(-1)
+	return names
+}
+
+// profileConfigPath returns profilesDir/name/config.toml when name is a
+// directory (not a symlink, as in indexProfileDirectory) holding a
+// config.toml, else "".
+func profileConfigPath(profilesDir, name string) string {
+	dir := filepath.Join(profilesDir, name)
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return ""
+	}
+	path := filepath.Join(dir, "config.toml")
+	if !profileFileExists(path) {
+		return ""
+	}
+	return path
 }
 
 // profileFileExists reports whether a profile config.toml exists at path.

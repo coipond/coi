@@ -467,3 +467,22 @@ func TestLoadOnDemand_InvalidSessionNameFails(t *testing.T) {
 		t.Errorf("a failed profile must not be returned, got %+v", *p)
 	}
 }
+
+// LoadWithoutProfiles with as many profiles in ./.coi/profiles as in
+// ~/.coi/profiles: the duplicate-name check reads names only.
+func BenchmarkLoadWithoutProfilesProjectProfiles(b *testing.B) {
+	for _, count := range []int{10, 1000, 5000} {
+		coiDir := onDemandHome(b)
+		for i := range count {
+			writeTestProfile(b, coiDir, fmt.Sprintf("user-%05d", i), "[container]\nimage = \"coi-default\"\n")
+			writeTestProfile(b, ".coi", fmt.Sprintf("project-%05d", i), "[container]\nimage = \"coi-default\"\n")
+		}
+		b.Run(fmt.Sprintf("%d", count), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := LoadWithoutProfiles(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
