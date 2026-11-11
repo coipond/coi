@@ -54,7 +54,7 @@ func TestContainerNetCmd(t *testing.T) {
 		mode      config.NetworkMode
 		want, not []string
 	}{
-		{config.NetworkModeAllowlist, []string{disableIPv6Cmd, stopResolverCmd, filesOnlyHostsCmd}, []string{restoreResolverCmd, restoreHostsCmd}},
+		{config.NetworkModeAllowlist, []string{disableIPv6Cmd, stopResolverCmd, filesOnlyHostsCmd}, []string{restoreResolverCmd}},
 		{config.NetworkModeRestricted, []string{disableIPv6Cmd, restoreResolverCmd, restoreHostsCmd}, []string{stopResolverCmd, filesOnlyHostsCmd}},
 		{config.NetworkModeOpen, []string{restoreResolverCmd, restoreHostsCmd}, []string{disableIPv6Cmd, stopResolverCmd, filesOnlyHostsCmd}},
 	} {
@@ -130,5 +130,106 @@ func TestAllSteps(t *testing.T) {
 		if (err == nil) != tc.ok {
 			t.Errorf("%v: err = %v, want ok=%v", tc.steps, err, tc.ok)
 		}
+	}
+}
+
+// runInRoot runs an in-container script with /etc/ moved under root.
+func runInRoot(t *testing.T, root, script string) {
+	t.Helper()
+	out, err := exec.Command("bash", "-c", strings.ReplaceAll(script, "/etc/", root+"/etc/")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+}
+
+// Allowlist mode sets "hosts: files" in nsswitch.conf itself (a package script
+// can still replace the file), installs a boot unit that undoes it, and the
+// restore puts the old line back while keeping later edits.
+func TestFilesOnlyHosts(t *testing.T) {
+	const orig = "passwd:         files systemd\nhosts:          files mdns4_minimal [NOTFOUND=return] dns\nnetworks:       files\n"
+	for _, tc := range []struct {
+		name    string
+		systemd bool
+		conf    string
+	}{
+		{"systemd", true, orig},
+		{"no systemd", false, orig},
+		{"no hosts line", true, "passwd: files\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			conf := filepath.Join(root, "etc", "nsswitch.conf")
+			if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.systemd {
+				if err := os.MkdirAll(filepath.Join(root, "etc", "systemd", "system"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(conf, []byte(tc.conf), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			read := func() string {
+				b, err := os.ReadFile(conf)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return string(b)
+			}
+
+			runInRoot(t, root, filesOnlyHostsCmd)
+			runInRoot(t, root, filesOnlyHostsCmd)
+			got := read()
+			var hosts []string
+			for _, line := range strings.Split(got, "\n") {
+				if strings.HasPrefix(line, "hosts:") {
+					hosts = append(hosts, line)
+				}
+			}
+			if len(hosts) != 1 || hosts[0] != "hosts: files" {
+				t.Fatalf("want exactly one 'hosts: files' line, got:\n%s", got)
+			}
+			if !strings.HasPrefix(got, strings.SplitN(tc.conf, "\n", 2)[0]) {
+				t.Errorf("other lines must stay in place, got:\n%s", got)
+			}
+
+			unit := filepath.Join(root, "etc", "systemd", "system", "coi-nss-restore.service")
+			wants := filepath.Join(root, "etc", "systemd", "system", "sysinit.target.wants", "coi-nss-restore.service")
+			if tc.systemd {
+				if b, err := os.ReadFile(unit); err != nil || string(b) != strings.ReplaceAll(nssRestoreUnit, "/etc/", root+"/etc/") {
+					t.Errorf("boot unit: %v\n%s", err, b)
+				}
+				if _, err := os.Stat(wants); err != nil {
+					t.Errorf("boot unit not enabled: %v", err)
+				}
+			} else if _, err := os.Stat(unit); !os.IsNotExist(err) {
+				t.Errorf("no unit without systemd, stat: %v", err)
+			}
+
+			// A package script edits the file while allowlist mode is on.
+			runInRoot(t, root, "sed -i 's/^passwd:.*/passwd: files/' /etc/nsswitch.conf")
+			want := strings.Replace(tc.conf, "passwd:         files systemd", "passwd: files", 1)
+
+			if tc.systemd {
+				script, err := os.ReadFile(filepath.Join(root, "etc", "coi", "nss-restore.sh"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				// What the boot unit runs; its paths are already under root.
+				if out, err := exec.Command("bash", "-c", string(script)).CombinedOutput(); err != nil {
+					t.Fatalf("restore script: %v\n%s", err, out)
+				}
+			} else {
+				runInRoot(t, root, restoreHostsCmd)
+			}
+			if got := read(); got != want {
+				t.Errorf("restore:\ngot  %q\nwant %q", got, want)
+			}
+			runInRoot(t, root, restoreHostsCmd)
+			if got := read(); got != want {
+				t.Errorf("repeated restore changed the file: %q", got)
+			}
+		})
 	}
 }

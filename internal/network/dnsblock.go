@@ -108,19 +108,53 @@ const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>
 const restoreResolverCmd = "if [ -L /run/systemd/system/systemd-resolved.service ]; then " +
 	"systemctl unmask --runtime systemd-resolved.service && systemctl start systemd-resolved.service; fi"
 
-// filesOnlyHostsCmd makes name lookups in the container read /etc/hosts only,
-// until its next boot: a runtime copy of nsswitch.conf with "hosts: files" is
-// bind-mounted over the original.
+// nssHostsSaved holds the container's own "hosts:" line(s) of nsswitch.conf
+// while filesOnlyHostsCmd is in effect (empty: the file had none).
+const nssHostsSaved = "/etc/coi/nsswitch-hosts"
+
+// filesOnlyHostsCmd makes name lookups in the container read /etc/hosts only:
+// it sets "hosts: files" in nsswitch.conf and saves the old line.
 //
 // Without it a name not in /etc/hosts falls through to the dns module and sends
 // a query to the resolver stub on 127.0.0.53. That query cannot leave the
 // container, but its socket is a connection the security monitor sees.
-const filesOnlyHostsCmd = "if [ -f /etc/nsswitch.conf ] && ! grep -q ' /etc/nsswitch.conf ' /proc/self/mountinfo; then " +
-	"mkdir -p /run/coi && { grep -v '^hosts:' /etc/nsswitch.conf; echo 'hosts: files'; } >/run/coi/nsswitch.conf && " +
-	"mount --bind /run/coi/nsswitch.conf /etc/nsswitch.conf; fi"
+//
+// The file is edited in place, not covered by a mount, so package scripts and
+// editors can still replace it. A systemd unit undoes the change at the next
+// boot (before sysinit.target, so before coi's setup), as a persistent container
+// restarted in open mode gets no in-container step.
+const filesOnlyHostsCmd = "if [ -f /etc/nsswitch.conf ] && [ ! -e " + nssHostsSaved + " ]; then\n" +
+	"mkdir -p /etc/coi && " +
+	"{ [ ! -d /etc/systemd/system ] || { mkdir -p /etc/systemd/system/sysinit.target.wants && " +
+	"cat >/etc/coi/nss-restore.sh <<'COI_SCRIPT' && cat >/etc/systemd/system/coi-nss-restore.service <<'COI_UNIT' && " +
+	"ln -sf ../coi-nss-restore.service /etc/systemd/system/sysinit.target.wants/coi-nss-restore.service; }; } && " +
+	"{ grep '^hosts:' /etc/nsswitch.conf || true; } >" + nssHostsSaved + " && " +
+	"if grep -q '^hosts:' /etc/nsswitch.conf; then sed -i 's/^hosts:.*/hosts: files/' /etc/nsswitch.conf; " +
+	"else echo 'hosts: files' >>/etc/nsswitch.conf; fi\n" +
+	restoreHostsCmd + "\nCOI_SCRIPT\n" +
+	nssRestoreUnit + "COI_UNIT\nfi"
 
-// restoreHostsCmd undoes filesOnlyHostsCmd.
-const restoreHostsCmd = "if grep -q ' /etc/nsswitch.conf ' /proc/self/mountinfo; then umount /etc/nsswitch.conf; fi"
+// restoreHostsCmd undoes filesOnlyHostsCmd: it puts the saved "hosts:" line
+// back and keeps every other change made to the file since.
+const restoreHostsCmd = "if [ -e " + nssHostsSaved + " ]; then " +
+	"sed -i -e '/^hosts:/{r " + nssHostsSaved + "' -e 'd' -e '}' /etc/nsswitch.conf && " +
+	"{ grep -q '^hosts:' /etc/nsswitch.conf || cat " + nssHostsSaved + " >>/etc/nsswitch.conf; } && " +
+	"rm -f " + nssHostsSaved + "; fi"
+
+// nssRestoreUnit runs restoreHostsCmd at boot (a no-op once nothing is saved).
+const nssRestoreUnit = "[Unit]\n" +
+	"Description=Undo coi allowlist name lookup (hosts: files)\n" +
+	"DefaultDependencies=no\n" +
+	"After=local-fs.target\n" +
+	"Before=sysinit.target\n" +
+	"ConditionPathExists=" + nssHostsSaved + "\n" +
+	"\n" +
+	"[Service]\n" +
+	"Type=oneshot\n" +
+	"ExecStart=/bin/sh /etc/coi/nss-restore.sh\n" +
+	"\n" +
+	"[Install]\n" +
+	"WantedBy=sysinit.target\n"
 
 // containerNetCmd is the in-container part of a mode's network setup, as one
 // exec.
