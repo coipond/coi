@@ -1,38 +1,20 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/session"
 )
 
-// writeListSave writes one saved session's metadata.json with its mode.
-func writeListSave(tb testing.TB, sessionsDir, id, containerName, workspace string, persistent bool) {
-	tb.Helper()
-	dir := filepath.Join(sessionsDir, id)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		tb.Fatal(err)
-	}
-	data, err := json.Marshal(session.SessionMetadata{SessionID: id, ContainerName: containerName, Workspace: workspace, Persistent: persistent})
-	if err != nil {
-		tb.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), data, 0o644); err != nil {
-		tb.Fatal(err)
-	}
-}
-
 func TestContainerSessionInfo_FromKeys(t *testing.T) {
 	dir := t.TempDir()
 	// Stale saves must not win over the keys on the containers.
-	writeListSave(t, dir, "s1", "coi-aaaaaaaa-1", "/old/path", false)
-	writeListSave(t, dir, "s2", "coi-bbbbbbbb-1", "/old/other", true)
+	writeSavedSession(t, dir, "s1", "coi-aaaaaaaa-1", "/old/path", false)
+	writeSavedSession(t, dir, "s2", "coi-bbbbbbbb-1", "/old/other", true)
 	ws, persistent := containerSessionInfo([]ContainerInfo{
 		{Name: "coi-aaaaaaaa-1", Workspace: "/home/u/proj", Persistent: true, PersistentSet: true},
 		{Name: "coi-bbbbbbbb-1", Workspace: "/home/u/eph", PersistentSet: true},
@@ -48,9 +30,9 @@ func TestContainerSessionInfo_FromKeys(t *testing.T) {
 
 func TestContainerSessionInfo_FallbackWithoutKeys(t *testing.T) {
 	dir := t.TempDir()
-	writeListSave(t, dir, "s1", "coi-cccccccc-1", "/home/u/other", false)
-	writeListSave(t, dir, "s2", "coi-bbbbbbbb-1", "/home/u/legacy", true)
-	writeListSave(t, dir, "s3", "coi-dddddddd-1", "/home/u/saved", true)
+	writeSavedSession(t, dir, "s1", "coi-cccccccc-1", "/home/u/other", false)
+	writeSavedSession(t, dir, "s2", "coi-bbbbbbbb-1", "/home/u/legacy", true)
+	writeSavedSession(t, dir, "s3", "coi-dddddddd-1", "/home/u/saved", true)
 	ws, persistent := containerSessionInfo([]ContainerInfo{
 		{Name: "coi-aaaaaaaa-1", Workspace: "/home/u/proj", PersistentSet: true},
 		// Created before coi set any key.
@@ -76,7 +58,7 @@ func TestContainerSessionInfo_FallbackWithoutKeys(t *testing.T) {
 func TestContainerSessionInfo_ManagedWithoutWorkspaceSkipsFallback(t *testing.T) {
 	dir := t.TempDir()
 	// Even a matching save is not read: the marker says coi set no workspace.
-	writeListSave(t, dir, "s1", "coi-launched-1", "/home/u/stale", true)
+	writeSavedSession(t, dir, "s1", "coi-launched-1", "/home/u/stale", true)
 	ws, persistent := containerSessionInfo([]ContainerInfo{{Name: "coi-launched-1", Managed: true}}, dir)
 
 	if w, ok := ws["coi-launched-1"]; ok || persistent["coi-launched-1"] {
@@ -90,7 +72,7 @@ func TestContainerSessionInfo_ShellIntoLaunchedContainerShowsNoWorkspace(t *test
 	// `coi shell --container` on a `coi container launch` container saves the
 	// dir it ran in, but that dir is not mounted: the container lists without
 	// a workspace, in the mode the session recorded on it.
-	writeListSave(t, dir, "s1", "coi-launched-1", "/home/u/w", false)
+	writeSavedSession(t, dir, "s1", "coi-launched-1", "/home/u/w", false)
 	ws, persistent := containerSessionInfo([]ContainerInfo{
 		{Name: "coi-launched-1", Managed: true, Persistent: true, PersistentSet: true},
 	}, dir)
@@ -157,7 +139,7 @@ func BenchmarkContainerSessionInfo_SavedSessions(b *testing.B) {
 		b.Run(fmt.Sprintf("saves=%d", saves), func(b *testing.B) {
 			dir := b.TempDir()
 			for i := range saves {
-				writeListSave(b, dir, fmt.Sprintf("s%05d", i), fmt.Sprintf("coi-%08x-1", i), fmt.Sprintf("/home/u/p%d", i), false)
+				writeSavedSession(b, dir, fmt.Sprintf("s%05d", i), fmt.Sprintf("coi-%08x-1", i), fmt.Sprintf("/home/u/p%d", i), false)
 			}
 			var containers []ContainerInfo
 			for i := range 5 {
@@ -172,29 +154,5 @@ func BenchmarkContainerSessionInfo_SavedSessions(b *testing.B) {
 				containerSessionInfo(containers, dir)
 			}
 		})
-	}
-}
-
-func TestPersistCommand_SetsPersistentKey(t *testing.T) {
-	sessionsDir := useTopHome(t)
-	writeListSave(t, sessionsDir, "s1", "coi-aaaaaaaa-1", "/home/u/proj", false)
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n  *\"list \"*) echo coi-aaaaaaaa-1 ;;\nesac\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	if err := persistCommand(persistCmd, []string{"coi-aaaaaaaa-1"}); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(b), "config set coi-aaaaaaaa-1 "+session.PersistentConfigKey+"=true") {
-		t.Errorf("want %s=true set on the container; calls:\n%s", session.PersistentConfigKey, b)
-	}
-	md, err := session.LoadSessionMetadata(filepath.Join(sessionsDir, "s1", "metadata.json"))
-	if err != nil || !md.Persistent {
-		t.Errorf("metadata persistent = %v (err %v); want true", md.Persistent, err)
 	}
 }

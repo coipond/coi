@@ -17,8 +17,8 @@ const WorkspaceConfigKey = "user.coi.workspace"
 // sessions.
 const PersistentConfigKey = "user.coi.persistent"
 
-// 5. Create and configure the container (unless reusing), and set/update alias
-// workspace and persistence metadata for running-container lookup.
+// 5. Create and configure the container (unless reusing), and set/update
+// alias, workspace and persistence metadata for running-container lookup.
 func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) {
 	// Always launch as non-ephemeral so we can save session data even if container is stopped
 	// (e.g., via 'sudo shutdown 0' from within). Cleanup will delete unless persistent mode is configured.
