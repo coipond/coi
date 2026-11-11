@@ -57,9 +57,9 @@ const teardownSetsListing = `table ip coi {
 		type ipv4_addr . inet_service
 		flags timeout
 	}
-	set coi_s_10_0_0_23 {
+	set coi_d_10_0_0_23 {
 		type ipv4_addr
-		flags interval
+		flags timeout
 	}
 	set coi_d_10_0_0_3 {
 		type ipv4_addr
