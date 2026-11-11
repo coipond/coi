@@ -19,7 +19,7 @@ from support.monitoring import (
     os.environ.get("GITHUB_ACTIONS") == "true",
     reason="cgroup io.stat does not track bind-mount I/O on GitHub Actions runners; "
     "writes to /workspace go through the host page cache and are not attributed "
-    "to the container's cgroup, so the monitoring daemon sees 0 bytes written.",
+    "to the container's cgroup, so the security monitor sees 0 bytes written.",
 )
 def test_large_write_triggers_high_threat(
     test_workspace, enable_monitoring_low_thresholds, coi_binary

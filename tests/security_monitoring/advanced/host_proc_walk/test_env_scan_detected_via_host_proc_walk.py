@@ -1,6 +1,6 @@
 """Verify that process threats are detected via the host /proc walk.
 
-The monitoring daemon now reads /proc on the host, filtered by the
+The security monitor now reads /proc on the host, filtered by the
 container's PID namespace, instead of running incus exec ps aux inside
 the container.  These tests check that the end-to-end pipeline still
 works: process injected into container → host /proc walk finds it →

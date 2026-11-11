@@ -13,11 +13,12 @@ var updatePatternsCmd = &cobra.Command{
 	Use:   "patterns",
 	Short: "Clone or update the GTFOBins and Sigma detection databases",
 	Long: `Clone (or update) the GTFOBins reverse-shell database and the Sigma
-linux/process_creation rule database used by each session's security monitor.
+linux/process_creation rule database used by each container's security monitor.
 
-Both databases are stored locally. A session's monitor loads them when the
-session starts, so new sessions use the updated databases; running sessions
-keep the previous ones until they end. Nothing needs restarting.
+Both databases are stored locally. A container's monitor loads them when the
+container starts, so containers started from now on use the updated databases;
+running containers, and new sessions that reuse them, keep the previous ones
+until they stop. Restart a running container to apply the update to it.
 
 Source URLs and local directories are configured in ~/.coi/config.toml under
 the [detection] section:
@@ -73,7 +74,7 @@ func updatePatternsCommand(cmd *cobra.Command, _ []string) error {
 
 	if !dryRun {
 		fmt.Println()
-		fmt.Println("Done. New sessions use the updated patterns and rules; running sessions keep the previous ones until they end.")
+		fmt.Println("Done. Containers started from now on use the updated patterns and rules; running containers keep the previous ones until they stop.")
 	}
 	return nil
 }

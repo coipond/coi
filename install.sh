@@ -925,7 +925,7 @@ fetch_detection_databases() {
     echo ""
     echo -e "${BLUE}→ Fetching detection databases (GTFOBins + Sigma)...${NC}"
     echo "  This clones the GTFOBins reverse-shell database and Sigma linux/process_creation"
-    echo "  rules used by each session's security monitor. The Sigma clone is sparse (~300 KB)."
+    echo "  rules used by each container's security monitor. The Sigma clone is sparse (~300 KB)."
     echo ""
 
     # `coi update patterns` clones these over git, so git must be present. A

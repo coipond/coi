@@ -57,7 +57,7 @@ process_spawn_rate_threshold = 9999
             f"Container {container_name} did not start"
         )
 
-        # Allow monitoring daemon to start.
+        # Allow security monitor to start.
         time.sleep(3)
 
         def inject_ssh_failure():
