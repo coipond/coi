@@ -7,8 +7,12 @@ import (
 	"github.com/coipond/coi/internal/container"
 )
 
+// WorkspaceConfigKey records the host workspace on the container, so `coi top`
+// maps a running container to its workspace without reading saved sessions.
+const WorkspaceConfigKey = "user.coi.workspace"
+
 // 5. Create and configure the container (unless reusing), and set/update alias
-// metadata for running-container lookup.
+// and workspace metadata for running-container lookup.
 func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) {
 	// Always launch as non-ephemeral so we can save session data even if container is stopped
 	// (e.g., via 'sudo shutdown 0' from within). Cleanup will delete unless persistent mode is configured.
@@ -23,6 +27,15 @@ func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) 
 	if st.opts.Alias != "" {
 		if _, err := container.ConfigSetIfChanged(context.Background(), st.result.ContainerName, "user.coi.alias", st.opts.Alias); err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Failed to set alias metadata: %v", err))
+		}
+	}
+	// A fresh container gets the key at init; a reused one may predate it or
+	// have had its workspace moved (session_name). An explicit --container
+	// keeps its own workspace mounted (see the remount in Setup), so its key
+	// stays too.
+	if st.skipLaunch && st.opts.ContainerName == "" && st.opts.WorkspacePath != "" {
+		if _, err := container.ConfigSetIfChanged(context.Background(), st.result.ContainerName, WorkspaceConfigKey, st.opts.WorkspacePath); err != nil {
+			st.opts.Logger(fmt.Sprintf("Warning: Failed to set workspace metadata: %v", err))
 		}
 	}
 	return nil, nil

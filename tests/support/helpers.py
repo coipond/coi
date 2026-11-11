@@ -118,7 +118,7 @@ def fake_lan(subnet, hosts=(20, 21), ports=(443, 8080)):
         sh("ip", "link", "del", host_if, check=False)
 
 
-def write_workspace_container_config(workspace_dir, persistent=None, image=None):
+def write_workspace_container_config(workspace_dir, persistent=None, image=None, alias=None):
     """Write [container] settings into <workspace>/.coi/config.toml.
 
     Replaces the removed --persistent / --image CLI flags: persistence and image
@@ -130,6 +130,8 @@ def write_workspace_container_config(workspace_dir, persistent=None, image=None)
     contain a [container] section — TOML forbids duplicate tables).
     """
     lines = ["[container]"]
+    if alias is not None:
+        lines.append(f'alias = "{alias}"')
     if persistent is not None:
         lines.append(f"persistent = {'true' if persistent else 'false'}")
     if image is not None:
@@ -140,6 +142,20 @@ def write_workspace_container_config(workspace_dir, persistent=None, image=None)
     with open(config_path, "a") as f:
         f.write("\n" + "\n".join(lines) + "\n")
     return config_path
+
+
+if HAS_PYTE:
+
+    class _Screen(pyte.Screen):
+        """pyte.Screen that ignores private DSR queries (CSI ? Ps n).
+
+        pyte 0.8.2 passes private=True to report_device_status, which does not
+        accept it, so a query such as tmux 3.6's CSI ? 996 n raises TypeError.
+        """
+
+        def report_device_status(self, mode, private=False):
+            if not private:
+                super().report_device_status(mode)
 
 
 class TerminalEmulator:
@@ -159,7 +175,7 @@ class TerminalEmulator:
                 "pyte is required for terminal emulation. Install with: pip install pyte"
             )
 
-        self.screen = pyte.Screen(columns, lines)
+        self.screen = _Screen(columns, lines)
         self.stream = pyte.Stream(self.screen)
         self.raw_output = []
         self.verbose = verbose
@@ -1248,7 +1264,9 @@ def container_ipv4(container_name):
         # `incus list <name>` also lists containers whose name starts with <name>.
         if c.get("name") != container_name:
             continue
-        for a in c.get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
+        # A stopped container has "network": null.
+        network = (c.get("state") or {}).get("network") or {}
+        for a in (network.get("eth0") or {}).get("addresses") or []:
             if a.get("family") == "inet":
                 return a["address"]
     return None
@@ -1543,3 +1561,24 @@ def make_workspace_writable(workspace_dir):
     stop a write, preventing false passes.
     """
     subprocess.run(["chmod", "-R", "a+rwX", workspace_dir], check=True, capture_output=True)
+
+
+def workspace_containers(workspace_dir):
+    """Names of the existing containers of workspace_dir (slots 1-10)."""
+    names = {calculate_container_name(workspace_dir, slot) for slot in range(1, 11)}
+    return names & set(get_container_list())
+
+
+def kill_workspace_containers(coi_binary, workspace_dir, env):
+    """`coi kill --force` every container of workspace_dir; assert there is one."""
+    running = workspace_containers(workspace_dir)
+    assert running, "the session started no container for the workspace"
+    for name in running:
+        result = subprocess.run(
+            [coi_binary, "kill", "--force", name],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert result.returncode == 0, f"coi kill {name} failed:\n{result.stderr}"

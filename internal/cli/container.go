@@ -33,7 +33,9 @@ var containerLaunchCmd = &cobra.Command{
 		// The [defaults] profile, as `coi shell` applies it: it can set the
 		// network mode isolation uses below, and the Incus project, so it must
 		// be in effect before the container is touched.
-		app.applyDefaultProfileForOps(cmd)
+		if err := app.applyDefaultProfileForOps(cmd); err != nil {
+			return err
+		}
 
 		ephemeral, _ := cmd.Flags().GetBool("ephemeral")
 		pool, _ := cmd.Flags().GetString("storage")
@@ -74,7 +76,9 @@ var containerStartCmd = &cobra.Command{
 		name := args[0]
 
 		// See containerLaunchCmd: the [defaults] profile before anything else.
-		app.applyDefaultProfileForOps(cmd)
+		if err := app.applyDefaultProfileForOps(cmd); err != nil {
+			return err
+		}
 
 		// #691: proactively apply the #683 shift→raw.idmap decision before
 		// starting, deriving the statfs-sweep sources from the container's own
@@ -125,7 +129,10 @@ func (a *App) isolateStartedContainer(cmd *cobra.Command, name string) error {
 		return nil
 	}
 	ctx := cmd.Context()
-	a.applyDefaultProfileForOps(cmd) // no-op if the caller already applied it
+	// no-op if the caller already applied it
+	if err := a.applyDefaultProfileForOps(cmd); err != nil {
+		return err
+	}
 	netCfg := a.cfg.Network
 	if m := netCfg.Mode; m != "" && m != config.NetworkModeOpen {
 		if err := network.ApplyBootBlockRule(name); err != nil {
