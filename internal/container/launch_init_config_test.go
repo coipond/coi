@@ -8,14 +8,20 @@ import (
 	"time"
 )
 
-func TestInitAndConfigureContainer_SetsManagedAndInitConfig(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+// initCalls returns the logged `incus init` calls, project prefix stripped.
+func initCalls(t *testing.T, logPath string) []string {
+	t.Helper()
+	var out []string
+	for _, c := range calls(t, logPath) {
+		if c = strings.TrimPrefix(c, "--project default "); strings.HasPrefix(c, "init ") {
+			out = append(out, c)
+		}
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return out
+}
+
+func TestInitAndConfigureContainer_SetsManagedAndInitConfig(t *testing.T) {
+	logPath := fakeIncusScript(t, "exit 0")
 
 	for _, tc := range []struct {
 		name       string
@@ -30,39 +36,15 @@ func TestInitAndConfigureContainer_SetsManagedAndInitConfig(t *testing.T) {
 			if err := initAndConfigureContainer("img", "lic-1", "", true, nil, DefaultHardeningPolicy(), tc.initConfig); err != nil {
 				t.Fatal(err)
 			}
-			var got string
-			for _, c := range calls(t, logPath) {
-				if c = strings.TrimPrefix(c, "--project default "); strings.HasPrefix(c, "init ") {
-					got = c
-				}
-			}
-			if got != tc.want {
-				t.Errorf("init call = %q, want %q", got, tc.want)
+			if got := initCalls(t, logPath); len(got) != 1 || got[0] != tc.want {
+				t.Errorf("init calls = %q, want [%q]", got, tc.want)
 			}
 		})
 	}
 }
 
-// initCalls returns the logged `incus init` calls, project prefix stripped.
-func initCalls(t *testing.T, logPath string) []string {
-	t.Helper()
-	var out []string
-	for _, c := range calls(t, logPath) {
-		if c = strings.TrimPrefix(c, "--project default "); strings.HasPrefix(c, "init ") {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 func TestManagerLaunch_PassesInitConfig(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := fakeIncusScript(t, "exit 0")
 
 	want := "init img mli-1 --ephemeral -c user.coi.managed=true -c user.coi.workspace=/home/u/proj"
 	m := &Manager{ContainerName: "mli-1", InitConfig: []string{"user.coi.workspace=/home/u/proj"}}
@@ -89,15 +71,8 @@ func TestLaunchContainer_RecreateKeepsInitConfig(t *testing.T) {
 
 	// The first start fails and Incus deletes the ephemeral container (list
 	// is empty), so coi recreates it; the second start succeeds.
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls")
-	failed := filepath.Join(dir, "failed")
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\n" +
-		"case \"$*\" in\n  *\"start rli-1\"*) [ -f " + failed + " ] && exit 0; touch " + failed + "; exit 1 ;;\nesac\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	failed := filepath.Join(t.TempDir(), "failed")
+	logPath := fakeIncusScript(t, "case \"$*\" in\n  *\"start rli-1\"*) [ -f "+failed+" ] && exit 0; touch "+failed+"; exit 1 ;;\nesac\nexit 0")
 
 	if err := launchContainer("img", "rli-1", "", true, nil, DefaultHardeningPolicy(), []string{"user.coi.workspace=/home/u/proj"}); err != nil {
 		t.Fatal(err)
