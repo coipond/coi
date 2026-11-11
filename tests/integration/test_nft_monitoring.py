@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from support.helpers import container_ipv4
 from support.monitoring import coi_session_logs
 
 
@@ -33,33 +34,11 @@ def get_container_name_from_workspace(workspace, slot=1):
     return f"coi-{hash_digest}-{slot}"
 
 
-def get_container_ip(container_name):
-    """Get container IP address from eth0."""
-    result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        return None
-    container_info = json.loads(result.stdout)
-    if not container_info:
-        return None
-
-    for iface_name, iface_info in container_info[0].get("state", {}).get("network", {}).items():
-        if iface_name == "eth0":
-            for addr in iface_info.get("addresses", []):
-                if addr["family"] == "inet":
-                    return addr["address"]
-    return None
-
-
 def wait_for_container_ip(container_name, timeout=30):
     """Wait for the container's eth0 IPv4 address (DHCP can lag behind Running)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        ip = get_container_ip(container_name)
+        ip = container_ipv4(container_name)
         if ip:
             return ip
         time.sleep(1)
