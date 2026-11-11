@@ -85,6 +85,22 @@ func TestContainerSessionInfo_ManagedWithoutWorkspaceSkipsFallback(t *testing.T)
 	}
 }
 
+func TestContainerSessionInfo_ShellIntoLaunchedContainerShowsNoWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	// `coi shell --container` on a `coi container launch` container saves the
+	// dir it ran in, but that dir is not mounted: the container lists without
+	// a workspace, in the mode the session recorded on it.
+	writeListSave(t, dir, "s1", "coi-launched-1", "/home/u/w", false)
+	ws, persistent := containerSessionInfo([]ContainerInfo{
+		{Name: "coi-launched-1", Managed: true, Persistent: true, PersistentSet: true},
+	}, dir)
+
+	if w, ok := ws["coi-launched-1"]; ok || !persistent["coi-launched-1"] {
+		t.Errorf("workspace=%q (present %v) persistent=%v; want no workspace, persistent from the key",
+			w, ok, persistent["coi-launched-1"])
+	}
+}
+
 func TestContainerSessionInfo_NoSaves(t *testing.T) {
 	ws, persistent := containerSessionInfo([]ContainerInfo{
 		{Name: "coi-aaaaaaaa-1", Workspace: "/home/u/proj", Persistent: true, PersistentSet: true},
@@ -104,7 +120,8 @@ func TestListActiveContainers_ReadsSessionKeys(t *testing.T) {
 	dir := t.TempDir()
 	listJSON := `[{"name":"coi-aaaaaaaa-1","status":"Running","config":{"` +
 		session.WorkspaceConfigKey + `":"/home/u/proj","` + session.PersistentConfigKey + `":"true","` +
-		container.ManagedConfigKey + `":"true"}},{"name":"coi-bbbbbbbb-1","status":"Stopped","config":{}}]`
+		container.ManagedConfigKey + `":"true"}},{"name":"coi-bbbbbbbb-1","status":"Stopped","config":{}},` +
+		`{"name":"coi-cccccccc-1","status":"Running","config":{"` + session.PersistentConfigKey + `":"false"}}]`
 	if err := os.WriteFile(filepath.Join(dir, "list.json"), []byte(listJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -118,14 +135,17 @@ func TestListActiveContainers_ReadsSessionKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d containers, want 2: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("got %d containers, want 3: %+v", len(got), got)
 	}
 	if c := got[0]; c.Workspace != "/home/u/proj" || !c.Persistent || !c.PersistentSet || !c.Managed {
 		t.Errorf("keyed container = %+v; want workspace, persistent, both keys set", c)
 	}
 	if c := got[1]; c.Workspace != "" || c.Persistent || c.PersistentSet || c.Managed {
 		t.Errorf("keyless container = %+v; want no session keys", c)
+	}
+	if c := got[2]; c.Persistent || !c.PersistentSet {
+		t.Errorf("ephemeral container = %+v; want the persistence key set to false", c)
 	}
 }
 
