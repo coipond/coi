@@ -292,10 +292,6 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 	if ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
 		return ""
 	}
-	// An unconnected UDP socket (bound only) has no peer.
-	if strings.HasPrefix(conn.Protocol, "udp") && conn.State == "CLOSE" && port == 0 {
-		return ""
-	}
 	// The bridge's DNS and DHCP service: a resolver or DHCP client in the
 	// container keeps a socket to it even where the firewall drops the packets.
 	// By port only: any other port on the gateway is still checked.
