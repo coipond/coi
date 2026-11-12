@@ -69,8 +69,14 @@ func gatewayFakeIncus(t *testing.T, containerName, network string) string {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	instanceNetCache.Delete(containerName)
 	gatewayMu.Lock()
+	prevGateways := gatewayByNetwork
 	gatewayByNetwork = map[string]string{}
 	gatewayMu.Unlock()
+	t.Cleanup(func() {
+		gatewayMu.Lock()
+		gatewayByNetwork = prevGateways
+		gatewayMu.Unlock()
+	})
 	return calls
 }
 
