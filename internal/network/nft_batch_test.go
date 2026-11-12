@@ -96,6 +96,11 @@ func TestParseInstanceNet_Network(t *testing.T) {
 		{"profile network", `{"eth0":{"type":"nic","network":"incusbr0"},"root":{"type":"disk","pool":"default"}}`, "incusbr0"},
 		{"own network", `{"eth0":{"type":"nic","network":"coinet1"}}`, "coinet1"},
 		{"bridged parent", `{"eth0":{"type":"nic","nictype":"bridged","parent":"br1"}}`, "br1"},
+		{"macvlan parent", `{"eth0":{"type":"nic","nictype":"macvlan","parent":"enp1s0"}}`, ""},
+		{"ipvlan parent", `{"eth0":{"type":"nic","nictype":"ipvlan","parent":"enp1s0"}}`, ""},
+		{"routed parent", `{"eth0":{"type":"nic","nictype":"routed","parent":"enp1s0"}}`, ""},
+		{"physical parent", `{"eth0":{"type":"nic","nictype":"physical","parent":"enp1s0"}}`, ""},
+		{"parent without nictype", `{"eth0":{"type":"nic","parent":"enp1s0"}}`, ""},
 		{"no eth0", `{"root":{"type":"disk","pool":"default"}}`, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {

@@ -1004,7 +1004,9 @@ func hostInterfaceExists(name string) bool {
 
 // parseInstanceNet extracts eth0's IPv4 address, host_name and network from
 // `/1.0/instances/<name>?recursion=1` JSON. The network is the expanded eth0
-// device's `network`, or its `parent` for a NIC without one.
+// device's `network`, or its `parent` for a bridged NIC without one. Other
+// NICs (macvlan, ipvlan, routed, physical) name a host NIC as `parent`, not a
+// bridge: no network.
 func parseInstanceNet(output string) (instanceNet, error) {
 	var c struct {
 		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
@@ -1024,7 +1026,7 @@ func parseInstanceNet(output string) (instanceNet, error) {
 	var n instanceNet
 	if dev := c.ExpandedDevices["eth0"]; dev["network"] != "" {
 		n.network = dev["network"]
-	} else {
+	} else if dev["nictype"] == "bridged" {
 		n.network = dev["parent"]
 	}
 	if eth0, ok := c.State.Network["eth0"]; ok {

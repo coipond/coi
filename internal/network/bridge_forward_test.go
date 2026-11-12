@@ -291,10 +291,16 @@ func TestEnsureBridgeInTrustedZone_SudoDisabledRunsNoSudo(t *testing.T) {
 // on network. Every call is logged. Returns the log path.
 func containerNetIncus(t *testing.T, c, network string) string {
 	t.Helper()
+	return containerNICIncus(t, c, `{"type":"nic","network":"`+network+`"}`)
+}
+
+// containerNICIncus is containerNetIncus for any eth0 device (JSON object).
+func containerNICIncus(t *testing.T, c, eth0 string) string {
+	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "incus.log")
 	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n" +
-		"  'query /1.0/instances/" + c + "?recursion=1&project=default') echo '{\"name\":\"" + c + "\",\"expanded_devices\":{\"eth0\":{\"type\":\"nic\",\"network\":\"" + network + "\"}},\"state\":{\"network\":{}}}' ;;\n" +
+		"  'query /1.0/instances/" + c + "?recursion=1&project=default') echo '{\"name\":\"" + c + "\",\"expanded_devices\":{\"eth0\":" + eth0 + "},\"state\":{\"network\":{}}}' ;;\n" +
 		"  *profile*) echo 'eth0:'; echo '  network: incusbr0' ;;\n" +
 		"esac\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o700); err != nil { //nolint:gosec // test fake must be executable
@@ -356,6 +362,42 @@ func TestEnsureContainerBridgeInTrustedZone_NoNetwork(t *testing.T) {
 	}
 	if calls := sudoCalls(t, sudoLog); len(calls) != 0 {
 		t.Errorf("want no sudo calls, got %q", calls)
+	}
+}
+
+// A bridged NIC without a managed network gets the rules on its parent
+// bridge. Any other NIC's parent is a host NIC: no rules, in either path.
+func TestEnsureContainerBridgeInTrustedZone_NICParent(t *testing.T) {
+	sudoLog := fakeForwardHost(t, nftIptables, `"iptables -S FORWARD") echo "-P FORWARD DROP" ;;
+"iptables -C"*) exit 1 ;;`)
+	containerNICIncus(t, "cb5", `{"type":"nic","nictype":"bridged","parent":"br5"}`)
+	if _, bridge, err := EnsureContainerBridgeInTrustedZone("cb5"); err != nil || bridge != "br5" {
+		t.Fatalf("got (%q, %v), want br5", bridge, err)
+	}
+	if n := insertedRulesFor(t, sudoLog, "br5"); n != 2 {
+		t.Errorf("want both rules for br5, got %d", n)
+	}
+
+	for _, nictype := range []string{"macvlan", "ipvlan", "routed", "physical"} {
+		t.Run(nictype, func(t *testing.T) {
+			sudoLog := fakeForwardHost(t, nftIptables, `"iptables -S FORWARD") echo "-P FORWARD DROP" ;;
+"iptables -C"*) exit 1 ;;`+"\n"+openFallbackHost)
+			eth0 := `{"type":"nic","nictype":"` + nictype + `","parent":"enp1s0"}`
+			containerNICIncus(t, "cb6", eth0)
+			if _, _, err := EnsureContainerBridgeInTrustedZone("cb6"); err == nil {
+				t.Error("EnsureContainerBridgeInTrustedZone: want an error")
+			}
+			containerNICIncus(t, "cb6", eth0)
+			m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen}, logger.NewDiscard())
+			if err := m.SetupForContainer(t.Context(), "cb6"); err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range sudoCalls(t, sudoLog) {
+				if strings.HasPrefix(c, "iptables -I") {
+					t.Errorf("must not add rules, ran %q", c)
+				}
+			}
+		})
 	}
 }
 
