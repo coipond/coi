@@ -101,7 +101,7 @@ func TestEnsureBridgeInTrustedZone_Integration(t *testing.T) {
 	}
 
 	// First call: should add the missing rules and report changed=true.
-	resetBridgeForwardEnsured()
+	ResetBridgeForwardMemo()
 	changed, name, err := EnsureBridgeInTrustedZone()
 	if err != nil {
 		t.Fatalf("EnsureBridgeInTrustedZone() first call: %v", err)

@@ -29,11 +29,31 @@ const bridgeForwardComment = "coi-bridge-forward"
 var errBridgeForwardUninspectable = errors.New("could not inspect the FORWARD chain")
 
 // bridgeForwardEnsured makes EnsureBridgeInTrustedZone act (and report) once
-// per process: one launch calls it from several phases.
+// per process and bridge: one launch calls it from several phases.
 var (
 	bridgeForwardMu      sync.Mutex
-	bridgeForwardEnsured bool
+	bridgeForwardEnsured = map[string]bool{}
 )
+
+// ResetBridgeForwardMemo forgets which bridges EnsureBridgeInTrustedZone and
+// EnsureContainerBridgeInTrustedZone already ensured. For tests.
+func ResetBridgeForwardMemo() {
+	bridgeForwardMu.Lock()
+	bridgeForwardEnsured = map[string]bool{}
+	bridgeForwardMu.Unlock()
+}
+
+// ensureBridgeForwardOnce is ensureBridgeForward, once per process for bridge.
+func ensureBridgeForwardOnce(bridge string) (bool, string, error) {
+	bridgeForwardMu.Lock()
+	defer bridgeForwardMu.Unlock()
+	if bridgeForwardEnsured[bridge] {
+		return false, bridge, nil
+	}
+	bridgeForwardEnsured[bridge] = true
+	changed, err := ensureBridgeForward(bridge)
+	return changed, bridge, err
+}
 
 // ensureBridgeForward installs coi's FORWARD rules for bridge. When sudo runs
 // iptables, it adds missing rules even if the chain accepts today, so a policy

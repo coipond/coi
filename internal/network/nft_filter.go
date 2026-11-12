@@ -1004,7 +1004,9 @@ func hostInterfaceExists(name string) bool {
 
 // parseInstanceNet extracts eth0's IPv4 address, host_name and network from
 // `/1.0/instances/<name>?recursion=1` JSON. The network is the expanded eth0
-// device's `network`, or its `parent` for a NIC without one.
+// device's `network`, or its `parent` for a bridged NIC without one. Other
+// NICs (macvlan, ipvlan, routed, physical) name a host NIC as `parent`, not a
+// bridge: no network.
 func parseInstanceNet(output string) (instanceNet, error) {
 	var c struct {
 		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
@@ -1024,7 +1026,7 @@ func parseInstanceNet(output string) (instanceNet, error) {
 	var n instanceNet
 	if dev := c.ExpandedDevices["eth0"]; dev["network"] != "" {
 		n.network = dev["network"]
-	} else {
+	} else if dev["nictype"] == "bridged" {
 		n.network = dev["parent"]
 	}
 	if eth0, ok := c.State.Network["eth0"]; ok {
@@ -1131,22 +1133,41 @@ func BridgeInTrustedZone() (bool, string, error) {
 // EnsureBridgeInTrustedZone ensures the Incus bridge has iptables FORWARD ACCEPT
 // rules so containers can obtain IPs via DHCP even when the FORWARD policy is DROP.
 // When sudo refuses iptables, it asks for nothing if the FORWARD chain already
-// accepts the bridge's traffic. It acts once per process: later calls return
-// (false, bridgeName, nil).
+// accepts the bridge's traffic. It acts once per process and bridge: later
+// calls return (false, bridgeName, nil).
+// The bridge is the default profile's, which a container launched next gets;
+// once the container exists, use EnsureContainerBridgeInTrustedZone.
 // Returns (changed, bridgeName, error).
 func EnsureBridgeInTrustedZone() (bool, string, error) {
 	bridgeName, err := GetIncusBridgeName()
 	if err != nil {
 		return false, "", fmt.Errorf("could not determine bridge name: %w", err)
 	}
-	bridgeForwardMu.Lock()
-	defer bridgeForwardMu.Unlock()
-	if bridgeForwardEnsured {
-		return false, bridgeName, nil
+	return ensureBridgeForwardOnce(bridgeName)
+}
+
+// EnsureContainerBridgeInTrustedZone is EnsureBridgeInTrustedZone for the
+// network the container's eth0 is attached to. When that network cannot be
+// determined, it adds no rules and returns an error.
+func EnsureContainerBridgeInTrustedZone(containerName string) (bool, string, error) {
+	bridgeName, err := containerNetworkName(containerName)
+	if err != nil {
+		return false, "", fmt.Errorf("could not determine bridge name: %w", err)
 	}
-	bridgeForwardEnsured = true
-	changed, err := ensureBridgeForward(bridgeName)
-	return changed, bridgeName, err
+	return ensureBridgeForwardOnce(bridgeName)
+}
+
+// containerNetworkName returns the Incus network the container's eth0 is
+// attached to, or an error when it has none.
+func containerNetworkName(containerName string) (string, error) {
+	n, err := lookupInstanceNet(containerName)
+	if err != nil {
+		return "", err
+	}
+	if n.network == "" {
+		return "", fmt.Errorf("no eth0 network found for container %s", containerName)
+	}
+	return n.network, nil
 }
 
 // IptablesAvailable checks if the iptables binary is installed
