@@ -8,8 +8,8 @@ import (
 )
 
 // The veth comes from the cheap volatile.eth0.host_name key when that
-// interface exists on the host — no instance state query (which can block
-// for seconds right after a start).
+// interface exists on the host — no instance query (which can block for
+// seconds right after a start).
 func TestGetContainerVethName_UsesVolatileKey(t *testing.T) {
 	if _, err := os.Stat("/sys/class/net/lo"); err != nil {
 		t.Skip("no /sys/class/net/lo")
@@ -29,13 +29,13 @@ func TestGetContainerVethName_UsesVolatileKey(t *testing.T) {
 		t.Fatalf("got %q, %v", veth, err)
 	}
 	b, _ := os.ReadFile(calls)
-	if strings.Contains(string(b), "/state") {
-		t.Errorf("must not fall back to the full-state query:\n%s", b)
+	if strings.Contains(string(b), "query ") {
+		t.Errorf("must not fall back to the instance query:\n%s", b)
 	}
 }
 
 // A key naming an interface that doesn't exist (stale) falls back to the
-// state query.
+// instance query.
 func TestGetContainerVethName_StaleKeyFallsBack(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncase \"$*\" in\n" +
@@ -48,7 +48,7 @@ func TestGetContainerVethName_StaleKeyFallsBack(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	instanceNetCache.Delete("c2")
 	if veth, err := GetContainerVethName("c2"); err != nil || veth != "vethreal" {
-		t.Errorf("got %q, %v; want the state query's answer", veth, err)
+		t.Errorf("got %q, %v; want the instance query's answer", veth, err)
 	}
 }
 
