@@ -35,11 +35,21 @@ def _write_hardened_config():
     return {**os.environ, "COI_CONFIG": path}
 
 
-def _list_running_probe_containers():
-    """Probe containers currently RUNNING. The kernel-surface policy is applied
-    at init, strictly BEFORE the first start — so reading the config of a
-    not-yet-started probe races the setup and can observe the pre-policy
-    state. A RUNNING probe's config is authoritative."""
+def _probe_started_ns(name):
+    """The UnixNano timestamp coi embeds in a probe name, or None."""
+    for prefix in PROBE_PREFIXES:
+        if name.startswith(prefix):
+            suffix = name[len(prefix) :]
+            return int(suffix) if suffix.isdigit() else None
+    return None
+
+
+def _list_running_probe_containers(since_ns):
+    """Probe containers currently RUNNING that were named at or after since_ns.
+    Older probes were left by earlier tests, not this health run. The
+    kernel-surface policy is applied at init, strictly BEFORE the first start —
+    so reading the config of a not-yet-started probe races the setup and can
+    observe the pre-policy state. A RUNNING probe's config is authoritative."""
     result = subprocess.run(
         ["incus", "list", "--format", "csv", "-c", "ns", "coi-"],
         capture_output=True,
@@ -49,11 +59,10 @@ def _list_running_probe_containers():
     names = []
     for row in result.stdout.strip().splitlines():
         parts = row.strip().split(",")
-        if (
-            len(parts) >= 2
-            and parts[0].startswith(PROBE_PREFIXES)
-            and parts[1].upper() == "RUNNING"
-        ):
+        if len(parts) < 2 or parts[1].upper() != "RUNNING":
+            continue
+        started_ns = _probe_started_ns(parts[0])
+        if started_ns is not None and started_ns >= since_ns:
             names.append(parts[0])
     return names
 
@@ -73,6 +82,7 @@ def test_health_probes_honor_reduce_kernel_surface(coi_binary, cleanup_container
     carry the hardened policy: nesting off and the syscall deny list set."""
     env = _write_hardened_config()
 
+    started_ns = time.time_ns()
     proc = subprocess.Popen(
         [coi_binary, "health", "--format", "json"],
         stdout=subprocess.PIPE,
@@ -87,7 +97,7 @@ def test_health_probes_honor_reduce_kernel_surface(coi_binary, cleanup_container
         # Poll while the health run is alive; each probe lives seconds. No
         # sleep — the incus list roundtrip (~50-100ms) is the throttle.
         while proc.poll() is None:
-            names = _list_running_probe_containers()
+            names = _list_running_probe_containers(started_ns)
             if names and (not samples or samples[-1][1] != names):
                 samples.append((time.time(), names))
             for name in names:
