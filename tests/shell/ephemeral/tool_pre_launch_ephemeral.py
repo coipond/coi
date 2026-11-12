@@ -20,7 +20,11 @@ import subprocess
 import time
 from pathlib import Path
 
-from support.helpers import calculate_container_name, write_trusted_coi_config
+from support.helpers import (
+    calculate_container_name,
+    exec_as_code_user,
+    write_trusted_coi_config,
+)
 
 AGENT_MARKER = ".coi-agent-started"
 PRE_MARKER = ".coi-pre-launch-ran"
@@ -144,26 +148,6 @@ def test_pre_launch_script_alone_with_real_tool(coi_binary, cleanup_containers, 
     )
 
 
-def _code_user_exec(container_name, *argv):
-    """Run a command in the container as the code user (owner of the tmux server)."""
-    return subprocess.run(
-        [
-            "incus",
-            "exec",
-            container_name,
-            "--user",
-            "1000",
-            "--env",
-            "HOME=/home/code",
-            "--",
-            *argv,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-
-
 def test_pre_launch_ctrl_c_skips_remaining(coi_binary, cleanup_containers, workspace_dir):
     """Ctrl+C during a slow pre_launch command skips it and the remaining
     commands, and the tool starts right away. (A regression once left the
@@ -181,14 +165,15 @@ def test_pre_launch_ctrl_c_skips_remaining(coi_binary, cleanup_containers, works
     container_name = calculate_container_name(workspace_dir, 1)
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
-        if _code_user_exec(container_name, "pgrep", "-f", "sleep 120").returncode == 0:
+        probe = exec_as_code_user(container_name, "pgrep", "-f", "sleep 120", timeout=15)
+        if probe.returncode == 0:
             break
         time.sleep(1)
     else:
         raise AssertionError("the slow pre_launch command never started")
 
-    sent = _code_user_exec(
-        container_name, "tmux", "send-keys", "-t", f"coi-{container_name}", "C-c"
+    sent = exec_as_code_user(
+        container_name, "tmux", "send-keys", "-t", f"coi-{container_name}", "C-c", timeout=15
     )
     assert sent.returncode == 0, f"could not send Ctrl+C: {sent.stderr}"
 
