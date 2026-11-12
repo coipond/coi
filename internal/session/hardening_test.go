@@ -45,11 +45,17 @@ func TestCreateAndStartContainer_SettingsAtInit(t *testing.T) {
 
 	result := &SetupResult{ContainerName: "c1"}
 	opts := &SetupOptions{StoragePool: "pool1", Logger: func(string) {}}
+	opts.Security.Docker = true
 	if err := createAndStartContainer(result, opts, "img", "c1"); err == nil {
 		t.Fatal("want the failed init to fail the create")
 	}
 	b, _ := os.ReadFile(logPath)
-	want := "init img c1 -s pool1 -c security.guestapi=false\n"
+	want := "init img c1 -s pool1" +
+		" -c security.nesting=true" +
+		" -c security.syscalls.intercept.mknod=true" +
+		" -c security.syscalls.intercept.setxattr=true" +
+		" -c linux.sysctl.net.ipv4.ip_unprivileged_port_start=0" +
+		" -c security.guestapi=false\n"
 	if string(b) != want {
 		t.Errorf("calls = %q, want %q", b, want)
 	}
