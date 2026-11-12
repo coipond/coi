@@ -37,7 +37,8 @@ func (c *Collector) SetPermittedDestination(fn PermittedDestinationFunc) {
 	c.permitted = fn
 }
 
-// SetGateway supplies the container's bridge gateway (see DaemonConfig.Gateway).
+// SetGateway supplies the container's bridge gateway (see
+// DaemonConfig.Gateway).
 func (c *Collector) SetGateway(fn func() string) {
 	c.gateway = fn
 }

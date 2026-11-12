@@ -763,8 +763,9 @@ func detectHostTimezone() string {
 }
 
 // monitorGateway returns the container's gateway lookup for the monitor, asked
-// only once it sees a socket to a DNS or DHCP port. Not cached here: the network
-// package keeps successes only, so a failed lookup is retried at the next ask.
+// only once it sees a socket to a DNS or DHCP port. Not cached here: the
+// network package keeps successes only, so a failed lookup is retried at the
+// next ask.
 func monitorGateway(containerName string) func() string {
 	return func() string {
 		gw, _ := network.GetContainerGatewayIP(containerName)

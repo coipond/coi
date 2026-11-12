@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// A failed gateway lookup is not kept: the monitor asks again at the next socket
-// to a DNS or DHCP port and gets the gateway once Incus answers.
+// A failed gateway lookup is not kept: the monitor asks again at the next
+// socket to a DNS or DHCP port and gets the gateway once Incus answers.
 func TestMonitorGateway_RetriesAfterFailure(t *testing.T) {
 	dir := t.TempDir()
 	failFlag := filepath.Join(dir, "fail")
@@ -22,7 +22,7 @@ case "$*" in
 esac
 exit 0
 `
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil { //nolint:gosec // test fake must be executable
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -2,14 +2,15 @@
 
 The resolver stub (127.0.0.53), services on other loopback addresses (127.0.0.2,
 127.0.1.1), a bound udp6 socket on ::, and a connected UDP socket to the bridge
-gateway's DNS port are all local or blocked by the firewall. Flagging them
-paused the container on a plain name lookup. Another port on the gateway must
-still be flagged, and a name not in /etc/hosts must fail at once."""
+gateway's DNS port are all local or blocked by the firewall. Another port on
+the gateway must still be flagged, and a name not in /etc/hosts must fail at
+once."""
 
 import subprocess
 import time
 from pathlib import Path
 
+from support.helpers import exec_in
 from support.monitoring import (
     cleanup_container,
     get_container_state,
@@ -19,7 +20,7 @@ from support.monitoring import (
 
 SLOT = 72
 
-HOLD = """
+GATEWAY = """
 import socket, struct, time
 
 def gateway():
@@ -28,7 +29,11 @@ def gateway():
             fields = line.split()
             if fields[1] == "00000000":
                 return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+"""
 
+HOLD = (
+    GATEWAY
+    + """
 held = []
 stub = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 stub.connect(("127.0.0.53", 53))
@@ -47,18 +52,16 @@ dns.connect((gateway(), 53))
 held.append(dns)
 time.sleep(60)
 """
+)
 
-HOLD_GATEWAY_OTHER_PORT = """
-import socket, struct, time
-with open("/proc/net/route") as f:
-    for line in f.readlines()[1:]:
-        fields = line.split()
-        if fields[1] == "00000000":
-            gw = socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+HOLD_GATEWAY_OTHER_PORT = (
+    GATEWAY
+    + """
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.connect((gw, 5353))
+s.connect((gateway(), 5353))
 time.sleep(60)
 """
+)
 
 
 def _hold(container_name, script):
@@ -66,15 +69,6 @@ def _hold(container_name, script):
         ["incus", "exec", container_name, "--", "python3", "-c", script],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-    )
-
-
-def _exec(container_name, *cmd, timeout=30):
-    return subprocess.run(
-        ["incus", "exec", container_name, "--", *cmd],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
     )
 
 
@@ -101,14 +95,14 @@ file_read_rate_mb_per_sec = 1000
     container_name, proc = start_shell(test_workspace, coi_binary, SLOT)
     holders = []
     try:
-        nss = _exec(container_name, "grep", "^hosts:", "/etc/nsswitch.conf")
-        assert nss.stdout.split()[1:3] == ["files", "[!SUCCESS=return]"], (
-            f"allowlist mode must look names up in /etc/hosts only: {nss.stdout}{nss.stderr}"
+        _, nss = exec_in(coi_binary, container_name, "grep '^hosts:' /etc/nsswitch.conf")
+        assert nss.split()[1:3] == ["files", "[!SUCCESS=return]"], (
+            f"allowlist mode must look names up in /etc/hosts only: {nss}"
         )
         start = time.monotonic()
-        lookup = _exec(container_name, "getent", "hosts", "example.org", timeout=15)
+        rc, lookup = exec_in(coi_binary, container_name, "getent hosts example.org", timeout=15)
         elapsed = time.monotonic() - start
-        assert lookup.returncode != 0, f"example.org is not in /etc/hosts: {lookup.stdout}"
+        assert rc != 0, f"example.org is not in /etc/hosts: {lookup}"
         assert elapsed < 5, f"an unknown name must fail at once, took {elapsed:.1f}s"
 
         holders.append(_hold(container_name, HOLD))

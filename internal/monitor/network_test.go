@@ -190,7 +190,7 @@ func TestCheckSuspicious_LISTEN_NotFlagged(t *testing.T) {
 
 // An unconnected UDP6 socket reads as :::0.
 func TestCheckSuspicious_Loopback_NotFlagged(t *testing.T) {
-	for _, remote := range []string{"127.0.0.1:8080", "127.0.0.53:53", "::1:53", "0.0.0.0:80", ":::0", "::ffff:127.0.0.1:53"} {
+	for _, remote := range []string{"127.0.0.1:8080", "127.0.0.53:53", "::1:53", "0.0.0.0:80", ":::0", "::ffff:127.0.0.1:53", "127.0.0.2:8080", "127.0.1.1:5432"} {
 		conn := Connection{Protocol: "udp", LocalAddr: "127.0.0.1:39386", RemoteAddr: remote, State: "ESTABLISHED"}
 		if reason := checkSuspicious(conn, []string{"1.1.1.1/32"}, nil, nil); reason != "" {
 			t.Errorf("%s should not be flagged, got %q", remote, reason)
@@ -250,13 +250,11 @@ func TestCheckSuspicious_RFC1918_OpenMode(t *testing.T) {
 	}
 }
 
-// Services on 127.0.0.2 or 127.0.1.1 (/etc/hosts) and bound, unconnected UDP
-// sockets are local too.
-func TestCheckSuspicious_LoopbackAndUnbound(t *testing.T) {
+// Bound, unconnected UDP sockets are local; a connected one to a private host
+// is not.
+func TestCheckSuspicious_UnconnectedUDP(t *testing.T) {
 	allowed := []string{"140.82.112.3/32"}
 	for _, conn := range []Connection{
-		{Protocol: "tcp", LocalAddr: "127.0.0.1:41000", RemoteAddr: "127.0.0.2:8080", State: "ESTABLISHED"},
-		{Protocol: "tcp", LocalAddr: "127.0.1.1:41000", RemoteAddr: "127.0.1.1:5432", State: "ESTABLISHED"},
 		{Protocol: "udp6", LocalAddr: ":::5353", RemoteAddr: ":::0", State: "CLOSE"},
 		{Protocol: "udp", LocalAddr: "10.0.0.2:68", RemoteAddr: "0.0.0.0:0", State: "CLOSE"},
 	} {
