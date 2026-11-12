@@ -591,9 +591,9 @@ def wait_for_specific_container_deletion(container_name, timeout=30, poll_interv
     return False
 
 
-def exec_as_code_user(container_name, *argv, timeout=30):
+def exec_as_code_user(container_name, *argv, timeout=30, cwd=None):
     """Run a command in the container as the code user (UID/GID 1000, HOME
-    /home/code) and return the CompletedProcess."""
+    /home/code), in cwd if given, and return the CompletedProcess."""
     return subprocess.run(
         [
             "incus",
@@ -603,6 +603,7 @@ def exec_as_code_user(container_name, *argv, timeout=30):
             "1000",
             "--group",
             "1000",
+            *(["--cwd", cwd] if cwd else []),
             "--env",
             "HOME=/home/code",
             "--",
@@ -617,7 +618,7 @@ def exec_as_code_user(container_name, *argv, timeout=30):
 def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
     """Run `sudo poweroff` in the coi shell's bash pane (which saves the
     session), wait for coi to exit and the container to go, and force-delete
-    it if it stays."""
+    it if it stays. Return whether it went without the force-delete."""
     child.send("sudo poweroff")
     time.sleep(0.3)
     child.send("\x0d")
@@ -629,12 +630,14 @@ def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
         child.close(force=False)
     except Exception:
         child.close(force=True)
-    if not wait_for_specific_container_deletion(container_name, timeout=timeout):
+    deleted = wait_for_specific_container_deletion(container_name, timeout=timeout)
+    if not deleted:
         subprocess.run(
             [coi_binary, "container", "delete", container_name, "--force"],
             capture_output=True,
             timeout=30,
         )
+    return deleted
 
 
 def wait_for_container_deletion(prefix="coi-test-", timeout=30, poll_interval=0.5):

@@ -27,13 +27,11 @@ unprivileged `code` user and inspects the file:
 """
 
 import os
-import subprocess
 import time
-
-from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    poweroff_and_wait,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
@@ -91,7 +89,7 @@ def test_managed_settings_root_owned_and_readable_by_code_user(
             child.send("\x0d")
             read_ok = wait_for_text_in_monitor(monitor, "disableAutoMode", timeout=15)
     finally:
-        _poweroff_and_cleanup(child, coi_binary, container_name)
+        poweroff_and_wait(child, coi_binary, container_name)
 
     assert perms_ok, (
         f"{MANAGED_SETTINGS_PATH} must be root-owned mode 644 (expected the "
@@ -101,25 +99,4 @@ def test_managed_settings_root_owned_and_readable_by_code_user(
     assert read_ok, (
         "the unprivileged 'code' user could not read the managed policy file "
         "(the EACCES OAuth regression that PR #606 fixes)"
-    )
-
-
-def _poweroff_and_cleanup(child, coi_binary, container_name):
-    """Power off the container and force-remove it, tolerating a slow exit."""
-    child.send("sudo poweroff")
-    time.sleep(0.3)
-    child.send("\x0d")
-    try:
-        child.expect(EOF, timeout=60)
-    except TIMEOUT:
-        pass
-    try:
-        child.close(force=False)
-    except Exception:
-        child.close(force=True)
-    time.sleep(3)
-    subprocess.run(
-        [coi_binary, "container", "delete", container_name, "--force"],
-        capture_output=True,
-        timeout=30,
     )
