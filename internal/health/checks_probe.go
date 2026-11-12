@@ -627,7 +627,7 @@ func CheckHostCredentialIsolation(imageName string, policy container.HardeningPo
 // Process monitoring reads /proc on the host filtered by container cgroup membership,
 // so this check verifies the host walk succeeds — not that ps runs inside the container.
 func CheckProcessMonitoringCapability(imageName string) HealthCheck {
-	running, err := container.ListRunningInstanceNames()
+	running, err := container.ListRunningContainerNames()
 	if err != nil {
 		return HealthCheck{
 			Name:    "process_monitoring",

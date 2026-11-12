@@ -9,28 +9,19 @@ import (
 	"testing"
 )
 
-// fakeListIncus puts an `incus` on PATH that logs its args and answers
-// `list` with listOut and `query` per the case below.
+// fakeListIncus puts an `incus` on PATH that answers `list` with listOut and
+// `query` per the case below, and returns the call log path.
 func fakeListIncus(t *testing.T, listOut string) (logPath string) {
 	t.Helper()
-	dir := t.TempDir()
-	logPath = filepath.Join(dir, "calls")
-	if err := os.WriteFile(filepath.Join(dir, "list.out"), []byte(listOut), 0o644); err != nil {
+	out := filepath.Join(t.TempDir(), "list.out")
+	if err := os.WriteFile(out, []byte(listOut), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	script := `#!/bin/sh
-echo "$*" >> ` + logPath + `
-case "$*" in
-  *" list "*) cat ` + filepath.Join(dir, "list.out") + ` ;;
+	return fakeIncusScript(t, `case "$*" in
+  *" list "*) cat `+out+` ;;
   "query /1.0/instances/gone/state"*) echo "Error: Instance not found" >&2; exit 1 ;;
   "query "*) echo '{"status":"Running"}' ;;
-esac
-`
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return logPath
+esac`)
 }
 
 func TestParseNamesCSV(t *testing.T) {
@@ -46,14 +37,14 @@ func TestParseNamesCSV(t *testing.T) {
 	}
 }
 
-func TestListInstanceNames(t *testing.T) {
+func TestListContainerNames(t *testing.T) {
 	logPath := fakeListIncus(t, "coi-ab12cd34-1\ncoi-ab12cd34-2\n")
 
-	names, err := ListInstanceNames("^coi-ab12cd34-")
+	names, err := ListContainerNames("^coi-ab12cd34-")
 	if err != nil || !reflect.DeepEqual(names, []string{"coi-ab12cd34-1", "coi-ab12cd34-2"}) {
 		t.Fatalf("names = %q, %v", names, err)
 	}
-	if _, err := ListInstanceNames(""); err != nil {
+	if _, err := ListContainerNames(""); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
@@ -65,9 +56,9 @@ func TestListInstanceNames(t *testing.T) {
 	}
 }
 
-func TestListInstanceNames_Empty(t *testing.T) {
+func TestListContainerNames_Empty(t *testing.T) {
 	fakeListIncus(t, "")
-	names, err := ListInstanceNames("^coi-")
+	names, err := ListContainerNames("^coi-")
 	if err != nil || len(names) != 0 {
 		t.Errorf("names = %q, %v", names, err)
 	}
@@ -88,16 +79,16 @@ func TestListContainers(t *testing.T) {
 	}
 }
 
-func TestInstanceStateJSON(t *testing.T) {
+func TestContainerStateJSON(t *testing.T) {
 	logPath := fakeListIncus(t, "")
 
-	if out, err := InstanceStateJSON("c1"); err != nil || strings.TrimSpace(out) != `{"status":"Running"}` {
-		t.Errorf("InstanceStateJSON = %q, %v", out, err)
+	if out, err := ContainerStateJSON("c1"); err != nil || strings.TrimSpace(out) != `{"status":"Running"}` {
+		t.Errorf("ContainerStateJSON = %q, %v", out, err)
 	}
 	if got := calls(t, logPath); len(got) != 1 || got[0] != "query /1.0/instances/c1/state?project=default" {
 		t.Errorf("calls = %q", got)
 	}
-	if _, err := InstanceStateJSON("gone"); !errors.Is(err, ErrContainerNotFound) {
+	if _, err := ContainerStateJSON("gone"); !errors.Is(err, ErrContainerNotFound) {
 		t.Errorf("missing instance: err = %v, want ErrContainerNotFound", err)
 	}
 }
@@ -115,10 +106,10 @@ func TestParseRunningNamesCSV(t *testing.T) {
 	}
 }
 
-func TestListRunningInstanceNames(t *testing.T) {
+func TestListRunningContainerNames(t *testing.T) {
 	logPath := fakeListIncus(t, "c1,RUNNING\nc2,FROZEN\nc3,RUNNING\n")
 
-	names, err := ListRunningInstanceNames()
+	names, err := ListRunningContainerNames()
 	if err != nil || !reflect.DeepEqual(names, []string{"c1", "c3"}) {
 		t.Fatalf("names = %q, %v", names, err)
 	}

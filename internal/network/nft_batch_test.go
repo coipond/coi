@@ -91,7 +91,7 @@ func TestParseInstanceNet(t *testing.T) {
 	}
 }
 
-// A container Incus does not know has no address yet, as `incus list` gave.
+// A container Incus does not know has no address yet: empty answer, no error.
 func TestLookupInstanceNet_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\necho 'Error: Instance not found' >&2\nexit 1\n"

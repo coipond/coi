@@ -128,7 +128,7 @@ func CleanupOrphanedIPv6Rules(names []string, logger func(string)) (int, error) 
 
 // getRunningContainerNames returns the names of all running containers.
 func getRunningContainerNames() ([]string, error) {
-	return container.ListRunningInstanceNames()
+	return container.ListRunningContainerNames()
 }
 
 // getRunningContainerIPs returns IPs of all running containers

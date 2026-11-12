@@ -250,7 +250,7 @@ func ListWorkspaceSessions(workspacePath, sessionName string) (map[int]string, e
 	hash := IdentityHash(workspacePath, sessionName)
 	prefix := fmt.Sprintf("%s%s-", GetContainerPrefix(), hash)
 
-	names, err := container.ListInstanceNames("^" + regexp.QuoteMeta(prefix))
+	names, err := container.ListContainerNames("^" + regexp.QuoteMeta(prefix))
 	if err != nil {
 		return nil, err
 	}

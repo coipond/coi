@@ -974,7 +974,7 @@ func lookupInstanceNet(containerName string) (ip, veth string, err error) {
 		}
 		instanceNetCache.Delete(containerName)
 	}
-	output, err := container.InstanceStateJSON(containerName)
+	output, err := container.ContainerStateJSON(containerName)
 	if errors.Is(err, container.ErrContainerNotFound) {
 		return "", "", nil
 	}

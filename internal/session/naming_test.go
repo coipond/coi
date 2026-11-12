@@ -284,8 +284,6 @@ func TestAllocateSlotFrom(t *testing.T) {
 	}
 }
 
-// ListWorkspaceSessions asks Incus for the names of this identity's
-// containers only and maps their slots.
 func TestListWorkspaceSessions(t *testing.T) {
 	t.Setenv("COI_CONTAINER_PREFIX", "")
 	hash := IdentityHash("/home/u/proj", "")

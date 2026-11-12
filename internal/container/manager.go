@@ -220,11 +220,17 @@ func (m *Manager) MountDisks(mounts []DiskMount) error {
 // incusQuery runs `incus query -X method [--data body] url` and returns stdout.
 // `incus query` rejects --project, so the project goes in the URL.
 func (m *Manager) incusQuery(method, queryURL, body string) (string, error) {
-	args := []string{"query", "-X", method}
+	args := []string{"-X", method}
 	if body != "" {
 		args = append(args, "--data", body)
 	}
-	cmd := execIncusCommand(append(args, queryURL))
+	return incusQuery(append(args, queryURL)...)
+}
+
+// incusQuery runs `incus query args...` and returns stdout. It goes through
+// execIncusCommand because `incus query` rejects --project.
+func incusQuery(args ...string) (string, error) {
+	cmd := execIncusCommand(append([]string{"query"}, args...))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := runIncus(cmd); err != nil {

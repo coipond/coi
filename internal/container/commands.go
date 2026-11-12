@@ -1082,7 +1082,7 @@ func ListContainers(pattern string) ([]string, error) {
 		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}
 
-	names, err := ListInstanceNames("")
+	names, err := ListContainerNames("")
 	if err != nil {
 		return nil, err
 	}
@@ -1097,11 +1097,11 @@ func ListContainers(pattern string) ([]string, error) {
 	return matching, nil
 }
 
-// ListInstanceNames lists instance names, optionally narrowed by an Incus
+// ListContainerNames lists container names, optionally narrowed by an Incus
 // name filter (e.g. "^coi-abc-"). It asks for the name column only (CSV):
 // `--format=json` makes the daemon fetch every instance's full state, which
 // grows with every container on the host.
-func ListInstanceNames(filter string) ([]string, error) {
+func ListContainerNames(filter string) ([]string, error) {
 	args := []string{"list"}
 	if filter != "" {
 		args = append(args, filter)
@@ -1125,10 +1125,10 @@ func parseNamesCSV(output string) []string {
 	return names
 }
 
-// ListRunningInstanceNames lists the names of running instances. Like
-// ListInstanceNames, it asks for the name and status columns only (CSV), which
-// need no instance state.
-func ListRunningInstanceNames() ([]string, error) {
+// ListRunningContainerNames lists the names of running containers. Like
+// ListContainerNames, it asks for the name and status columns only (CSV),
+// which need no instance state.
+func ListRunningContainerNames() ([]string, error) {
 	output, err := IncusOutput("list", "--format=csv", "--columns=ns")
 	if err != nil {
 		return nil, err
@@ -1149,20 +1149,14 @@ func parseRunningNamesCSV(output string) []string {
 	return names
 }
 
-// InstanceStateJSON returns the `/1.0/instances/<name>/state` JSON of one
-// instance. Unlike `incus list <name> --format=json`, which loads the full
+// ContainerStateJSON returns the `/1.0/instances/<name>/state` JSON of one
+// container. Unlike `incus list <name> --format=json`, which loads the full
 // state of every instance whose name the filter matches, it fetches one.
-func InstanceStateJSON(containerName string) (string, error) {
+func ContainerStateJSON(containerName string) (string, error) {
 	// `incus query` rejects --project, so the project goes in the URL.
 	query := fmt.Sprintf("/1.0/instances/%s/state?project=%s",
 		url.PathEscape(containerName), url.QueryEscape(IncusProject))
-	cmd := execIncusCommand([]string{"query", query})
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := runIncus(cmd); err != nil {
-		return "", ClassifyIncusErr(toExitError(err, strings.TrimSpace(stderr.String())), stderr.String())
-	}
-	return stdout.String(), nil
+	return incusQuery(query)
 }
 
 // buildIncusCommand builds the incus argv (project flag first, then args). The
