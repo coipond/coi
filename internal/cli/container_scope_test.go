@@ -14,13 +14,13 @@ import (
 
 // fakeScopeIncus puts an incus script on PATH that lists the given
 // containers and logs every other call. It returns the log path.
-func fakeScopeIncus(t *testing.T, listJSON, listCSV string) string {
+func fakeScopeIncus(t *testing.T, listNames, listCSV string) string {
 	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls")
 	script := `#!/bin/sh
 case "$*" in
-  *"list --format=json"*) printf '%s\n' '` + listJSON + `' ;;
+  *"list --format=csv --columns=n"*) printf '%s\n' '` + listNames + `' ;;
   *"list --format csv -c ns"*) printf '` + listCSV + `' ;;
   *"--format csv -c s") echo FROZEN ;;
   *) echo "$*" >> ` + logPath + ` ;;
@@ -42,13 +42,12 @@ func TestContainerPatternSkipsForeignContainers(t *testing.T) {
 		{"default prefix", "", []string{"coi-abc12345-1", "coi-db"}},
 		{"custom prefix", "coi.t-", []string{"coi.t-abc12345-1"}},
 	}
-	listJSON := `[{"name":"coi-abc12345-1"},{"name":"web-coi-abc12345-1"},` +
-		`{"name":"coi-db"},{"name":"mycoi-db"},{"name":"postgres"},` +
-		`{"name":"coi.t-abc12345-1"},{"name":"coiXt-abc12345-1"}]`
+	listNames := "coi-abc12345-1\nweb-coi-abc12345-1\n" +
+		"coi-db\nmycoi-db\npostgres\ncoi.t-abc12345-1\ncoiXt-abc12345-1"
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("COI_CONTAINER_PREFIX", tt.prefix)
-			fakeScopeIncus(t, listJSON, "")
+			fakeScopeIncus(t, listNames, "")
 
 			got, err := container.ListContainers(session.ContainerPattern())
 			if err != nil {
@@ -92,12 +91,13 @@ func assertNoCallFor(t *testing.T, logPath, name string) {
 	}
 }
 
-const scopeListJSON = `[{"name":"coi-abc12345-1"},{"name":"coi-abc12345-2"},` +
-	`{"name":"web-coi-abc12345-1"}]`
+const scopeListNames = `coi-abc12345-1
+coi-abc12345-2
+web-coi-abc12345-1`
 
 func TestTmuxListSkipsForeignContainers(t *testing.T) {
 	t.Setenv("COI_CONTAINER_PREFIX", "")
-	logPath := fakeScopeIncus(t, scopeListJSON, "")
+	logPath := fakeScopeIncus(t, scopeListNames, "")
 
 	if err := tmuxListCommand(tmuxListCmd, nil); err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestTmuxListSkipsForeignContainers(t *testing.T) {
 func TestAttachListSkipsForeignContainers(t *testing.T) {
 	t.Setenv("COI_CONTAINER_PREFIX", "")
 	t.Setenv("HOME", t.TempDir())
-	logPath := fakeScopeIncus(t, scopeListJSON, "")
+	logPath := fakeScopeIncus(t, scopeListNames, "")
 	attachCmd.SetContext(t.Context())
 
 	if err := (&App{cfg: &config.Config{}}).attachCommand(attachCmd, nil); err != nil {
