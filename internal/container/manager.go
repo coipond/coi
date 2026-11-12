@@ -846,8 +846,14 @@ func (m *Manager) PullFile(containerPath, localPath string) error {
 	defer os.RemoveAll(tempDir)
 
 	// Pull into the staging dir
+	// -P stages a symlink source as the link itself, so the regular-file
+	// check below refuses it on every client.
 	source := m.ContainerName + containerPath
-	cmdArgs := buildIncusCommand("file", "pull", source, tempDir)
+	pullArgs := []string{"file", "pull"}
+	if pullNoDereferenceSupported() {
+		pullArgs = append(pullArgs, "-P")
+	}
+	cmdArgs := buildIncusCommand(append(pullArgs, source, tempDir)...)
 	cmd := execIncusCommand(cmdArgs)
 	var stderr bytes.Buffer
 	cmd.Stdout = nil
