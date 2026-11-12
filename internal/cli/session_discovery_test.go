@@ -134,8 +134,8 @@ func TestPrepareLaunch_ResumesDiscoveredOpencodeSession(t *testing.T) {
 				}
 			}
 
-			if cmd != "opencode --session ses_abc123" {
-				t.Errorf("launch command = %q, want %q", cmd, "opencode --session ses_abc123")
+			if want := guardToolInstalled("opencode", "opencode --session ses_abc123"); cmd != want {
+				t.Errorf("launch command = %q, want %q", cmd, want)
 			}
 			if mgr.calls != 1 {
 				t.Fatalf("lookup calls = %d, want 1", mgr.calls)
@@ -161,7 +161,7 @@ func TestPrepareLaunch_NewSessionSkipsLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareDirect() error = %v", err)
 	}
-	if d.cmd != "opencode" || mgr.calls != 0 {
-		t.Errorf("launch command = %q with %d lookups, want %q with none", d.cmd, mgr.calls, "opencode")
+	if want := guardToolInstalled("opencode", "opencode"); d.cmd != want || mgr.calls != 0 {
+		t.Errorf("launch command = %q with %d lookups, want %q with none", d.cmd, mgr.calls, want)
 	}
 }

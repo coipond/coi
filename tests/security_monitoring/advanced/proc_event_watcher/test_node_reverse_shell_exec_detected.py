@@ -62,7 +62,7 @@ process_spawn_rate_threshold = 9999
             f"Container {container_name} did not start"
         )
 
-        # Allow monitoring daemon and PROC_EVENTS subscription to initialise.
+        # Allow security monitor and PROC_EVENTS subscription to initialise.
         time.sleep(3)
 
         # Use exec -a to set argv[0] to the Node reverse-shell signature and run

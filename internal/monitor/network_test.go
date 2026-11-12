@@ -188,6 +188,16 @@ func TestCheckSuspicious_LISTEN_NotFlagged(t *testing.T) {
 	}
 }
 
+// An unconnected UDP6 socket reads as :::0.
+func TestCheckSuspicious_Loopback_NotFlagged(t *testing.T) {
+	for _, remote := range []string{"127.0.0.1:8080", "127.0.0.53:53", "::1:53", "0.0.0.0:80", ":::0", "::ffff:127.0.0.1:53"} {
+		conn := Connection{Protocol: "udp", LocalAddr: "127.0.0.1:39386", RemoteAddr: remote, State: "ESTABLISHED"}
+		if reason := checkSuspicious(conn, []string{"1.1.1.1/32"}, nil); reason != "" {
+			t.Errorf("%s should not be flagged, got %q", remote, reason)
+		}
+	}
+}
+
 func TestCheckSuspicious_RFC1918_RestrictedMode(t *testing.T) {
 	conn := Connection{
 		Protocol:   "tcp",

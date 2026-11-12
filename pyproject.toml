@@ -46,4 +46,5 @@ norecursedirs = ["tests/support"]
 pythonpath = ["tests"]
 # Disable cache to avoid __pycache__ directories
 # Enable random test order to catch ordering dependencies
-addopts = "-p no:cacheprovider -p randomly"
+# importlib import mode: test files in different directories may share a basename
+addopts = "-p no:cacheprovider -p randomly --import-mode=importlib"

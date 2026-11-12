@@ -94,3 +94,44 @@ func TestReconcileResourceLimits_SizeOnNonQuotaPoolFails(t *testing.T) {
 		t.Errorf("a device key was set; calls:\n%s", b)
 	}
 }
+
+// Instance limits go in one `config set` and root disk limits in one
+// `config device set`.
+func TestApplyResourceLimits_OneCallPerKind(t *testing.T) {
+	logPath := fakeIncus(t, "devices:\n  root:\n    path: /\n    pool: p1\n    type: disk\n", `[{"name":"p1","driver":"btrfs"}]`)
+	opts := ApplyOptions{
+		ContainerName: "c1",
+		CPU:           CPULimits{Count: "2"},
+		Memory:        MemoryLimits{Limit: "2GiB", Enforce: "hard", Swap: "false"},
+		Disk:          DiskLimits{Read: "10MB", Size: "8GiB"},
+		Runtime:       RuntimeLimits{MaxProcesses: 500},
+	}
+	if err := ApplyResourceLimits(opts); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(logPath)
+	var writes []string
+	for _, c := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if strings.Contains(c, " set ") || strings.Contains(c, " add ") {
+			writes = append(writes, c[strings.Index(c, "config "):])
+		}
+	}
+	want := []string{
+		"config set c1 limits.cpu=2 limits.memory=2GiB limits.memory.enforce=hard limits.memory.swap=false limits.processes=500",
+		"config device add c1 root disk path=/ pool=p1",
+		"config device set c1 root limits.read=10MB size=8GiB",
+	}
+	if !reflect.DeepEqual(writes, want) {
+		t.Errorf("writes = %q, want %q", writes, want)
+	}
+}
+
+func TestApplyResourceLimits_NoneSet(t *testing.T) {
+	logPath := fakeIncus(t, "", "")
+	if err := ApplyResourceLimits(ApplyOptions{ContainerName: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(logPath); len(b) != 0 {
+		t.Errorf("calls = %q, want none", b)
+	}
+}

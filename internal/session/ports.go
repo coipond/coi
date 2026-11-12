@@ -26,8 +26,8 @@ import (
 const (
 	autoPortBase     = 20000
 	neighborhoods    = 400
-	neighborhoodSize = 100
 	slotStride       = 10
+	neighborhoodSize = MaxSlots * slotStride
 )
 
 // PublishedPort describes one resolved (and, after publish, live) port
@@ -120,8 +120,8 @@ func ResolvePorts(pc *PortConfig, workspacePath, sessionName string, slot int) (
 	// neighborhood; a larger (or non-positive) slot would silently compute
 	// ports inside ANOTHER workspace's block. Container naming tolerates any
 	// --slot value, so this is checked here, where it becomes harmful.
-	if maxSlots := neighborhoodSize / slotStride; slot < 1 || slot > maxSlots {
-		return nil, fmt.Errorf("[ports] requires a slot between 1 and %d (got %d): auto-allocated ports are laid out in per-slot blocks of %d", maxSlots, slot, slotStride)
+	if slot < 1 || slot > MaxSlots {
+		return nil, fmt.Errorf("[ports] requires a slot between 1 and %d (got %d): auto-allocated ports are laid out in per-slot blocks of %d", MaxSlots, slot, slotStride)
 	}
 
 	autoNeeded := pc.Pool

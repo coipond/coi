@@ -10,13 +10,14 @@ security.mac_filtering and security.port_isolation on eth0 before first boot
 (container.EnableNICSecurity).
 """
 
-import json
 import os
 import subprocess
 import tempfile
 import time
 
 import pytest
+
+from support.helpers import container_ipv4
 
 
 def _start_background_container(coi_binary, workspace_dir, network_mode, config_extra=""):
@@ -59,27 +60,6 @@ def _exec(coi_binary, container_name, argv, timeout=20):
         timeout=timeout,
         check=False,
     )
-
-
-def _container_ipv4(container_name):
-    """Return the container's eth0 IPv4 address, or None."""
-    result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    info = json.loads(result.stdout)
-    if not info:
-        return None
-    addrs = info[0].get("state", {}).get("network", {}).get("eth0", {}).get("addresses", [])
-    for addr in addrs:
-        if addr.get("family") == "inet":
-            return addr["address"]
-    return None
 
 
 def _device_key(container_name, key):
@@ -128,7 +108,7 @@ def test_source_ip_spoofing_blocked_in_restricted_mode(
         if baseline.returncode != 0:
             pytest.skip("no baseline internet egress in this environment")
 
-        real_ip = _container_ipv4(container_name)
+        real_ip = container_ipv4(container_name)
         if not real_ip:
             pytest.skip("could not determine container IPv4")
         spoof_ip = real_ip.rsplit(".", 1)[0] + ".250"
@@ -177,7 +157,7 @@ def test_sibling_container_isolation_in_restricted_mode(
         if c2 == c1:
             pytest.skip("could not start a distinct second container")
 
-        ip2 = _container_ipv4(c2)
+        ip2 = container_ipv4(c2)
         if not ip2:
             pytest.skip("could not determine sibling IPv4")
 

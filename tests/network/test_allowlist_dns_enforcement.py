@@ -22,7 +22,6 @@ exactly what an in-process DNS proxy could not do, since `coi shell --background
 returns immediately and the container outlives it.
 """
 
-import json
 import os
 import re
 import subprocess
@@ -31,7 +30,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from support.helpers import extract_container_name, wait_for_firewall_rules
+from support.helpers import container_ipv4, extract_container_name, wait_for_firewall_rules
 
 # A host behind a large, rotating pool of frontend addresses — the shape that
 # broke the old design. It answers with several addresses at once, and the
@@ -90,26 +89,6 @@ def container_exec(coi_binary, container_name, command, timeout=30):
         check=False,
     )
     return result.returncode, (result.stdout or "") + (result.stderr or "")
-
-
-def container_ip(container_name):
-    """The container's IPv4 address, or None."""
-    result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    for entry in json.loads(result.stdout):
-        if entry.get("name") != container_name:
-            continue
-        for addr in entry.get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
-            if addr.get("family") == "inet":
-                return addr.get("address")
-    return None
 
 
 def nft_coi_table():
@@ -329,7 +308,7 @@ allowed_domains = [
 """
     name = start_ready_container(coi_binary, workspace_dir, config)
 
-    ident = container_ip(name).replace(".", "_")
+    ident = container_ipv4(name).replace(".", "_")
     result = subprocess.run(
         ["sudo", "-n", "nft", "list", "set", "ip", "coi", f"coi_s_{ident}"],
         capture_output=True,
@@ -350,7 +329,7 @@ def test_teardown_removes_rules_and_sets(coi_binary, workspace_dir, cleanup_cont
     Order matters: the kernel refuses to drop a set a rule still references.
     """
     name = start_ready_container(coi_binary, workspace_dir)
-    ip = container_ip(name)
+    ip = container_ipv4(name)
     ident = ip.replace(".", "_")
     assert f"coi_d_{ident}" in nft_coi_table(), "the dynamic set should exist while running"
 
@@ -437,7 +416,7 @@ def test_allowlist_metadata_literal_stays_blocked_and_ordered_first(
     # reject must PRECEDE the allowlist set-accept, so a set member in that range is
     # rejected before the accept is reached. (nft evaluates rules top to bottom;
     # `sudo -n nft` matches the pattern the other network tests use.)
-    cip = container_ip(name)
+    cip = container_ipv4(name)
     assert cip, "could not determine container IP"
     chain = subprocess.run(
         ["sudo", "-n", "nft", "-a", "list", "chain", "ip", "coi", "forward"],

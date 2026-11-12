@@ -196,9 +196,8 @@ func (m *Manager) purgeStaleRulesForIP(containerIP string) {
 	}
 }
 
-// chainRule is one rule of an `nft -a list` listing of the ip coi table or
-// one of its chains: its handle and its text without the trailing
-// "# handle N".
+// chainRule is one rule of an `nft -a list chain` listing of an ip coi
+// chain: its handle and its text without the trailing "# handle N".
 type chainRule struct{ handle, text string }
 
 // forwardRulesWithComment lists the forward-chain rules carrying comment, in
@@ -253,6 +252,12 @@ func (m *Manager) applyOpenRules(ip string) {
 	if err == nil && len(rules) == 1 && rules[0].text == openModeRuleText(ip) {
 		m.purgeStaleSideStateForIP(ip)
 		return // already in place (a reused container): nothing to do
+	}
+	if len(rules) > 0 && m.containerName != "" {
+		// Another mode's rules: a running container from an earlier session,
+		// maybe an allowlist one that stopped the resolver. A new container has
+		// none, so it pays no exec.
+		m.prepareContainer(m.containerName)
 	}
 	if err == nil {
 		cmds := deleteChainRuleCmds("forward", rules)
@@ -374,10 +379,9 @@ func (m *Manager) setupRestricted(ctx context.Context, containerName string) err
 	}
 
 	// Disable IPv6 inside the container (defence-in-depth; reversible by
-	// in-container root, so the host-side drop below is the enforced boundary).
-	if err := DisableIPv6ForContainer(containerName); err != nil {
-		m.logger.Errorf("Warning: failed to disable IPv6 in container: %v", err)
-	}
+	// in-container root, so the host-side drop below is the enforced boundary),
+	// and give back the resolver an allowlist session on this boot stopped.
+	m.prepareContainer(containerName)
 
 	// Enforce the IPv6 egress boundary on the host: drop all forwarded IPv6 from
 	// the container's veth. The Coi filter table is IPv4-only, so without this an
@@ -477,10 +481,9 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 	m.logger.Printf("Gateway IP: %s", gatewayIP)
 
 	// Disable IPv6 inside the container (defence-in-depth; reversible by
-	// in-container root, so the host-side drop below is the enforced boundary).
-	if err := DisableIPv6ForContainer(containerName); err != nil {
-		m.logger.Errorf("Warning: failed to disable IPv6 in container: %v", err)
-	}
+	// in-container root, so the host-side drop below is the enforced boundary),
+	// and stop its resolver, which has no reachable upstream (see stopResolverCmd).
+	m.prepareContainer(containerName)
 
 	// Enforce the IPv6 egress boundary on the host: drop all forwarded IPv6 from
 	// the container's veth. The Coi filter table is IPv4-only, so without this an
@@ -872,11 +875,16 @@ func GetContainerGatewayIP(containerName string) (string, error) {
 	return getContainerGatewayIP(containerName)
 }
 
-// getContainerGatewayIP auto-detects the gateway IP for a container's network
+// getContainerGatewayIP auto-detects the gateway IP of the network the
+// container's eth0 is attached to (not the default profile's).
 func getContainerGatewayIP(containerName string) (string, error) {
-	networkName, err := GetIncusBridgeName()
+	n, err := lookupInstanceNet(containerName)
 	if err != nil {
 		return "", err
+	}
+	networkName := n.network
+	if networkName == "" {
+		return "", fmt.Errorf("no eth0 network found for container %s", containerName)
 	}
 	gatewayMu.Lock()
 	defer gatewayMu.Unlock()

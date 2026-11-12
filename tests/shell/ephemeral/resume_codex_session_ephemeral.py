@@ -21,14 +21,12 @@ import subprocess
 import time
 from pathlib import Path
 
-from pexpect import EOF, TIMEOUT
-
 from support.helpers import (
     calculate_container_name,
     make_workspace_writable,
+    poweroff_and_wait,
     spawn_coi,
     wait_for_container_ready,
-    wait_for_specific_container_deletion,
     write_trusted_coi_config,
 )
 
@@ -101,28 +99,10 @@ def _launch(coi_binary, workspace_dir, env, args, marker):
 
 
 def _poweroff(child, coi_binary, container_name):
-    """Power off from the bash pane, which saves the session, and wait for removal."""
+    """Power off from the bash pane, which saves the session, and return coi's output."""
     time.sleep(3)
-    child.send("sudo poweroff")
-    time.sleep(0.3)
-    child.send("\x0d")
-    try:
-        child.expect(EOF, timeout=60)
-    except TIMEOUT:
-        pass
-    output = child.logfile_read.get_raw_output() if child.logfile_read else ""
-    try:
-        child.close(force=False)
-    except Exception:
-        child.close(force=True)
-
-    if not wait_for_specific_container_deletion(container_name, timeout=60):
-        subprocess.run(
-            [coi_binary, "container", "delete", container_name, "--force"],
-            capture_output=True,
-            timeout=30,
-        )
-    return output
+    poweroff_and_wait(child, coi_binary, container_name)
+    return child.logfile_read.get_raw_output() if child.logfile_read else ""
 
 
 def test_resume_codex_session_discovery(coi_binary, cleanup_containers, workspace_dir):

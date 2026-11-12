@@ -101,6 +101,7 @@ func TestEnsureBridgeInTrustedZone_Integration(t *testing.T) {
 	}
 
 	// First call: should add the missing rules and report changed=true.
+	resetBridgeForwardEnsured()
 	changed, name, err := EnsureBridgeInTrustedZone()
 	if err != nil {
 		t.Fatalf("EnsureBridgeInTrustedZone() first call: %v", err)
@@ -117,13 +118,13 @@ func TestEnsureBridgeInTrustedZone_Integration(t *testing.T) {
 		t.Errorf("bridge rules not present after successful EnsureBridgeInTrustedZone")
 	}
 
-	// Second call: idempotent — should report changed=false.
+	// Second call: it acts once per process, so it reports changed=false.
 	changed, name, err = EnsureBridgeInTrustedZone()
 	if err != nil {
 		t.Fatalf("EnsureBridgeInTrustedZone() second call: %v", err)
 	}
 	if changed {
-		t.Errorf("EnsureBridgeInTrustedZone() second call: expected changed=false (rules already exist), got true")
+		t.Errorf("EnsureBridgeInTrustedZone() second call: expected changed=false (once per process), got true")
 	}
 	if name != bridgeName {
 		t.Errorf("EnsureBridgeInTrustedZone() second call: bridge name = %q, want %q", name, bridgeName)
