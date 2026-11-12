@@ -49,7 +49,12 @@ WRAPPER = f"""#!/bin/sh
 printf '%s\\n' "$@" > /workspace/.opencode2-args
 python3 /workspace/.fake-openai.py 18080 'touch /workspace/{SHELL_MARKER}' \\
     > ~/fake-openai.log 2>&1 < /dev/null &
-sleep 2
+i=0
+until python3 -c 'import socket; socket.create_connection(("127.0.0.1", 18080), 1)' \\
+    2>/dev/null || [ "$i" -ge 150 ]; do
+    i=$((i + 1))
+    sleep 0.2
+done
 exec opencode2 "$@"
 """
 
@@ -97,18 +102,23 @@ def _wait_for_opencode2(container_name, timeout=90):
     return None
 
 
+def _wait_for_opencode2_exit(container_name, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _opencode2_lines(container_name):
+            return True
+        time.sleep(1)
+    return False
+
+
 def _stop_opencode2(child, container_name, timeout=20):
     """Exit the TUI with Ctrl+C; SIGTERM it if it is still there."""
     child.send("\x03")
     time.sleep(1)
     child.send("\x03")
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not _opencode2_lines(container_name):
-            return
-        time.sleep(1)
-    exec_as_code_user(container_name, "pkill", "-TERM", "-f", "^opencode2 ")
-    time.sleep(3)
+    if not _wait_for_opencode2_exit(container_name, timeout):
+        exec_as_code_user(container_name, "pkill", "-TERM", "-f", "^opencode2 ")
+        _wait_for_opencode2_exit(container_name, 10)
 
 
 def test_opencode2_bypass_session(coi_binary, cleanup_containers, workspace_dir, tmp_path):
