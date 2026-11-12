@@ -2,7 +2,7 @@
 Integration tests: session-runtime diagnostics must never reach the terminal.
 
 Regression tests for the issue #372 class. During an interactive `coi shell`
-session the monitoring daemons and the runtime-limit watchdog run as background
+session the security monitors and the runtime-limit watchdog run as background
 goroutines in the same process that is interactively attached to the container's
 tmux — so the process's os.Stdout/os.Stderr ARE the user's terminal. Any
 diagnostic written there corrupts the AI tool's TUI. These tests lock the

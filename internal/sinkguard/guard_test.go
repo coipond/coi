@@ -10,7 +10,7 @@ import (
 )
 
 // guardedPackages run (in whole or in part) while a `coi shell` session is
-// interactively attached — the monitoring daemons, the runtime-limit watchdog,
+// interactively attached — the security monitors, the runtime-limit watchdog,
 // and the network background IP refresher all execute in the coi process whose
 // os.Stdout/os.Stderr are, at that point, the user's tmux terminal. They must
 // therefore never write to a terminal sink; diagnostics go to the file-based

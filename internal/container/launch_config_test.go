@@ -60,11 +60,11 @@ func TestInitConfigArgs(t *testing.T) {
 // no `config set` runs before preStart.
 func TestInitAndConfigureContainer_SettingsAtInit(t *testing.T) {
 	logPath := fakeIncusFailing(t, "")
-	if err := initAndConfigureContainer("img", "c1", "pool1", true, nil, HardeningPolicy{}); err != nil {
+	if err := initAndConfigureContainer("img", "c1", "pool1", true, nil, HardeningPolicy{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := calls(t, logPath)
-	if len(got) == 0 || got[0] != "init img c1 --ephemeral -s pool1 -c security.guestapi=false" {
+	if len(got) == 0 || got[0] != "init img c1 --ephemeral -s pool1 -c user.coi.managed=true -c security.guestapi=false" {
 		t.Fatalf("first call = %q", got)
 	}
 	for _, c := range got[1:] {

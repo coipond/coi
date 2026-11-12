@@ -243,7 +243,7 @@ func TestRestrictedModeMultipleDNSPins_Integration(t *testing.T) {
 		if strings.Contains(line, "accept") {
 			accepts++
 		}
-		if strings.Contains(line, "reject") {
+		if strings.Contains(line, "reject") && !strings.Contains(line, "tcp reset") {
 			rejects++
 		}
 	}
