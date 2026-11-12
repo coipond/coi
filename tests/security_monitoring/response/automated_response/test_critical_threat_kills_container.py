@@ -48,7 +48,7 @@ def test_critical_threat_kills_container(test_workspace, enable_monitoring, coi_
         stderr=subprocess.DEVNULL,
     )
 
-    # Give the monitoring daemon a moment to scan before polling state.
+    # Give the security monitor a moment to scan before polling state.
     time.sleep(5)
 
     # Wait for auto-kill

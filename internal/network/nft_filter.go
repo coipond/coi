@@ -506,16 +506,29 @@ func bootBlockComment(containerName string) string {
 	return "coi-boot-" + containerName
 }
 
-// DisableIPv6ForContainer disables IPv6 in the container to prevent firewall bypass.
+// disableIPv6Cmd disables IPv6 in the container to prevent firewall bypass.
 // All Coi IPv4 nft rules are IPv4-only; IPv6 would circumvent them entirely.
 //
 // NOTE: this runs an in-container sysctl, which in-container root can simply set
 // back to 0 (it owns CAP_NET_ADMIN over its own netns). It is therefore
 // defence-in-depth only — the enforced IPv6 egress boundary is the host-side
 // drop installed by ApplyIPv6BlockForContainer, which the container cannot touch.
-func DisableIPv6ForContainer(containerName string) error {
+const disableIPv6Cmd = "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
+
+// allSteps joins shell steps into one script that runs every step and fails
+// when any of them failed.
+func allSteps(steps ...string) string {
+	var b strings.Builder
+	b.WriteString("rc=0\n")
+	for _, s := range steps {
+		b.WriteString(s + " || rc=1\n")
+	}
+	b.WriteString("exit $rc")
+	return b.String()
+}
+
+func execInContainer(containerName, cmd string) error {
 	mgr := container.NewManager(containerName)
-	cmd := "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
 	_, err := mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true})
 	return err
 }
@@ -684,7 +697,19 @@ func (f *NftManager) addRule(source, destination, action string) error {
 // addRuleWithMatch is addRule with an optional extra match clause inserted
 // between the daddr match and the action (e.g. an L4 protocol / ICMP-type
 // constraint). match is a slice of nft tokens; nil/empty behaves like addRule.
+//
+// A reject also adds the tcpReset rule ahead of it.
 func (f *NftManager) addRuleWithMatch(source, destination string, match []string, action string) error {
+	if action == "reject" {
+		if err := f.addForwardRule(source, destination, match, tcpReset); err != nil {
+			return err
+		}
+	}
+	return f.addForwardRule(source, destination, match, []string{action})
+}
+
+// addForwardRule adds one rule to the coi forward chain (or the open batch).
+func (f *NftManager) addForwardRule(source, destination string, match, verdict []string) error {
 	args := []string{
 		"add", "rule", "ip", "coi", "forward",
 		"ip", "saddr", source,
@@ -694,7 +719,8 @@ func (f *NftManager) addRuleWithMatch(source, destination string, match []string
 		args = append(args, "ip", "daddr", destination)
 	}
 	args = append(args, match...)
-	args = append(args, action, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
+	args = append(args, verdict...)
+	args = append(args, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
 	if f.batch != nil {
 		f.batch = append(f.batch, args)
 		return nil
@@ -1092,19 +1118,23 @@ func BridgeInTrustedZone() (bool, string, error) {
 
 // EnsureBridgeInTrustedZone ensures the Incus bridge has iptables FORWARD ACCEPT
 // rules so containers can obtain IPs via DHCP even when the FORWARD policy is DROP.
+// When sudo refuses iptables, it asks for nothing if the FORWARD chain already
+// accepts the bridge's traffic. It acts once per process: later calls return
+// (false, bridgeName, nil).
 // Returns (changed, bridgeName, error).
 func EnsureBridgeInTrustedZone() (bool, string, error) {
 	bridgeName, err := GetIncusBridgeName()
 	if err != nil {
 		return false, "", fmt.Errorf("could not determine bridge name: %w", err)
 	}
-	if IptablesBridgeRulesExist(bridgeName) {
+	bridgeForwardMu.Lock()
+	defer bridgeForwardMu.Unlock()
+	if bridgeForwardEnsured {
 		return false, bridgeName, nil
 	}
-	if err := EnsureIptablesBridgeRules(bridgeName); err != nil {
-		return false, bridgeName, err
-	}
-	return true, bridgeName, nil
+	bridgeForwardEnsured = true
+	changed, err := ensureBridgeForward(bridgeName)
+	return changed, bridgeName, err
 }
 
 // IptablesAvailable checks if the iptables binary is installed
@@ -1188,11 +1218,19 @@ func lookupIncusBridgeName() (string, error) {
 // given bridge interface. The rules are tagged with a comment so they can be
 // identified for cleanup.
 func EnsureIptablesBridgeRules(bridgeName string) error {
+	_, err := insertIptablesBridgeRules(bridgeName)
+	return err
+}
+
+// insertIptablesBridgeRules is EnsureIptablesBridgeRules that also reports
+// whether it inserted a rule.
+func insertIptablesBridgeRules(bridgeName string) (bool, error) {
 	rules := [][]string{
-		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
-		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
+		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
+		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
 	}
 
+	inserted := false
 	for _, ruleSpec := range rules {
 		if iptablesRuleExists("FORWARD", ruleSpec...) {
 			continue
@@ -1201,17 +1239,18 @@ func EnsureIptablesBridgeRules(bridgeName string) error {
 		cmd := exec.Command("sudo", args...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("failed to add iptables rule: %s: %w", strings.TrimSpace(string(output)), err)
+			return inserted, fmt.Errorf("failed to add iptables rule: %s: %w", strings.TrimSpace(string(output)), err)
 		}
+		inserted = true
 	}
-	return nil
+	return inserted, nil
 }
 
 // RemoveIptablesBridgeRules removes the coi-bridge-forward iptables rules.
 func RemoveIptablesBridgeRules(bridgeName string) error {
 	rules := [][]string{
-		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
-		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
+		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
+		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
 	}
 
 	for _, ruleSpec := range rules {
@@ -1231,9 +1270,9 @@ func RemoveIptablesBridgeRules(bridgeName string) error {
 // IptablesBridgeRulesExist checks whether the coi-bridge-forward rules exist
 func IptablesBridgeRulesExist(bridgeName string) bool {
 	inRule := iptablesRuleExists("FORWARD",
-		"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward")
+		"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment)
 	outRule := iptablesRuleExists("FORWARD",
-		"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward")
+		"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment)
 	return inRule && outRule
 }
 

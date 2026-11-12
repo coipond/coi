@@ -237,7 +237,7 @@ def test_container_delete_removes_monitoring_log_rules(
         ip, _count = _wait_for_rules_for_ip(coi_binary, name, timeout=90)
         assert ip, f"{name} never got a DHCP IP"
 
-        # The monitoring daemon installs the LOG rules asynchronously; require
+        # The nft network monitor installs the LOG rules asynchronously; require
         # them as a precondition so this test genuinely exercises their removal.
         assert _poll_for_monitor_rules(ip) > 0, (
             f"nft monitoring LOG rules for {ip} were never installed"
