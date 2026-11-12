@@ -1,6 +1,10 @@
 package nftmonitor
 
-import "time"
+import (
+	"time"
+
+	"github.com/coipond/coi/internal/config"
+)
 
 // NetworkEvent represents a network activity event captured from nftables logs
 type NetworkEvent struct {
@@ -20,6 +24,9 @@ type Config struct {
 	ContainerName string
 	ContainerIP   string
 	AllowedCIDRs  []string
+	// NetworkMode is the container's [network] mode. Open mode allows LAN
+	// traffic, so RFC1918 destinations are not flagged there.
+	NetworkMode config.NetworkMode
 	// PermittedDestination, when set, reports whether the container's firewall
 	// deliberately accepts proto ("tcp"/"udp") traffic to ip:port (e.g. a [[network.hosts]] LAN
 	// service, including one added at runtime). Such connections are not flagged
