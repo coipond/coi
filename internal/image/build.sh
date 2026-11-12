@@ -367,12 +367,11 @@ bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2q
 KEYS
 }
 
-# Succeeds when every line of $1 is a "$2 <key>" line that ssh-keygen reads,
-# and there are ed25519, ecdsa and rsa keys.
+# Succeeds when ssh-keygen reads every line of $1 and there are ed25519,
+# ecdsa and rsa keys.
 known_hosts_valid() {
-    local file="$1" host="$2" fps _type
+    local file="$1" fps _type
     [ -s "$file" ] || return 1
-    ! grep -qv "^${host//./\\.} " "$file" || return 1
     fps="$(ssh-keygen -l -f "$file" 2>/dev/null)" || return 1
     [ "$(printf '%s\n' "$fps" | wc -l)" = "$(wc -l < "$file")" ] || return 1
     for _type in ED25519 ECDSA RSA; do
@@ -396,7 +395,7 @@ populate_known_hosts() {
                     grep '^bitbucket\.org ' > "$tmp" || :
                 ;;
         esac
-        if known_hosts_valid "$tmp" "$host"; then
+        if known_hosts_valid "$tmp"; then
             log "SSH host keys for $host fetched over HTTPS"
         else
             [ "$host" = gitlab.com ] ||

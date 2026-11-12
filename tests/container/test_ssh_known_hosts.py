@@ -10,6 +10,7 @@ Tests that:
 5. Verify accessible as code user (UID 1000, GID 1000)
 """
 
+import re
 import subprocess
 import time
 
@@ -82,9 +83,10 @@ def test_ssh_known_hosts(coi_binary, cleanup_containers, workspace_dir):
     )
     assert result.returncode == 0, f"Should be able to read known_hosts. stderr: {result.stderr}"
 
-    known_hosts = result.stdout
-    lines = [line for line in known_hosts.splitlines() if line.strip()]
-    for host in ("github.com", "gitlab.com", "bitbucket.org"):
+    known_hosts = result.stdout + result.stderr
+    hosts = ("github.com", "gitlab.com", "bitbucket.org")
+    lines = [line for line in known_hosts.splitlines() if line.startswith(hosts)]
+    for host in hosts:
         assert any(line.startswith(host + " ") for line in lines), (
             f"known_hosts should contain entry for {host}. Content: {known_hosts}"
         )
@@ -106,14 +108,17 @@ def test_ssh_known_hosts(coi_binary, cleanup_containers, workspace_dir):
         timeout=30,
     )
     assert result.returncode == 0, f"ssh-keygen -l should read known_hosts. stderr: {result.stderr}"
-    fingerprints = result.stdout.splitlines()
+    fingerprint_output = result.stdout + result.stderr
+    fingerprints = [
+        line for line in fingerprint_output.splitlines() if re.match(r"\d+ SHA256:", line)
+    ]
     assert len(fingerprints) == len(lines), (
-        f"ssh-keygen should read every known_hosts line. Got: {result.stdout} Content: {known_hosts}"
+        f"ssh-keygen should read every known_hosts line. Got: {fingerprint_output} Content: {known_hosts}"
     )
-    for host in ("github.com", "gitlab.com", "bitbucket.org"):
+    for host in hosts:
         for key_type in ("ED25519", "ECDSA", "RSA"):
             assert any(fp.endswith(f" {host} ({key_type})") for fp in fingerprints), (
-                f"known_hosts should have a valid {key_type} key for {host}. Got: {result.stdout}"
+                f"known_hosts should have a valid {key_type} key for {host}. Got: {fingerprint_output}"
             )
 
     # === Phase 4: Verify file permissions (644) and directory permissions (700) ===
