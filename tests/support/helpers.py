@@ -1535,6 +1535,42 @@ def extract_container_name(result):
     return None
 
 
+def start_background_shell(
+    coi_binary, workspace_dir, env=None, *, profile=None, slot=None, debug=True, timeout=120
+):
+    """Start `coi shell --background` for the workspace and assert it started.
+
+    Returns (container_name, result). With slot, passes `--slot` and derives the
+    name with calculate_container_name; otherwise reads it from the launch output
+    (extract_container_name). With profile, passes `--profile` and runs from the
+    workspace, as project profiles are discovered under <cwd>/.coi/profiles.
+    env None inherits os.environ.
+    """
+    argv = [coi_binary, "shell", "--workspace", workspace_dir]
+    if profile is not None:
+        argv += ["--profile", profile]
+    if slot is not None:
+        argv += ["--slot", str(slot)]
+    argv.append("--background")
+    if debug:
+        argv.append("--debug")
+    result = subprocess.run(
+        argv,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+        cwd=workspace_dir if profile is not None else None,
+    )
+    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
+    if slot is not None:
+        name = calculate_container_name(workspace_dir, slot)
+    else:
+        name = extract_container_name(result)
+        assert name, f"could not find container name. output: {result.stdout + result.stderr}"
+    return name, result
+
+
 def wait_for_container_started(coi_binary, container_name, timeout=90):
     """Poll until the container is up AND systemd's bus is reachable.
 
