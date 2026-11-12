@@ -85,7 +85,8 @@ def _probe_writes(coi_binary, workspace_dir, paths, env=None):
 def _assert_read_only(ws, found, rel):
     ok, error = found[rel]
     assert not ok, f"{rel} must be read-only"
-    assert "read-only file system" in error.lower(), (
+    # EPERM: coi also sets the host immutable bit where allowed (CI), checked first
+    assert any(m in error.lower() for m in ("read-only file system", "operation not permitted")), (
         f"{rel}: expected read-only error, got: {error}"
     )
     assert not (ws / rel / "coi-probe").exists(), f"{rel}: probe written on the host"
