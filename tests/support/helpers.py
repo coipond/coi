@@ -1703,6 +1703,30 @@ def make_workspace_writable(workspace_dir):
     subprocess.run(["chmod", "-R", "a+rwX", workspace_dir], check=True, capture_output=True)
 
 
+# git with a throwaway identity and the file protocol allowed, for local submodules.
+GIT = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
+
+
+def init_repo_with_submodule(workspace_dir, tmp_path):
+    """Make workspace_dir a repo with submodule `lib`, cloned from tmp_path/lib."""
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    for repo in (lib, Path(workspace_dir)):
+        subprocess.run([*GIT, "init", "-q"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            [*GIT, "commit", "-q", "--allow-empty", "-m", "init"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        [*GIT, "submodule", "add", "-q", str(lib), "lib"],
+        cwd=workspace_dir,
+        check=True,
+        capture_output=True,
+    )
+
+
 def workspace_containers(workspace_dir):
     """Names of the existing containers of workspace_dir (slots 1-10)."""
     names = {calculate_container_name(workspace_dir, slot) for slot in range(1, 11)}
