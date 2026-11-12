@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +68,12 @@ func executeWithProfiles(t *testing.T, profiles map[string]string, userConfig st
 			t.Fatal(err)
 		}
 	}
+	return executeArgs(t, args...)
+}
+
+// executeArgs runs `coi <args>` with output discarded.
+func executeArgs(t *testing.T, args ...string) error {
+	t.Helper()
 	// Execute zeroes app and parses flags into it: reset both for later tests.
 	t.Cleanup(func() {
 		rootCmd.SetArgs(nil)
@@ -174,5 +181,131 @@ func TestExecute_MissingRequestedProfileFails(t *testing.T) {
 	err := executeWithProfiles(t, nil, "", "version", "--profile", "gone")
 	if err == nil || err.Error() != "profile 'gone' not found" {
 		t.Fatalf("coi version --profile gone = %v", err)
+	}
+}
+
+// fakeIncusLog puts an `incus` on PATH that logs its calls, one per line, and
+// returns the log path.
+func fakeIncusLog(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in *list*) echo c1 ;; esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func TestCommandNeedsNoProfile(t *testing.T) {
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"container", "exec"}, true},
+		{[]string{"container", "exists"}, true},
+		{[]string{"container", "running"}, true},
+		{[]string{"container", "stop"}, true},
+		{[]string{"container", "delete"}, true},
+		{[]string{"container", "list"}, true},
+		{[]string{"container", "info"}, true},
+		{[]string{"container", "mount"}, true},
+		{[]string{"file", "push"}, true},
+		{[]string{"file", "pull"}, true},
+		{[]string{"kill"}, true},
+		{[]string{"container", "launch"}, false},
+		{[]string{"container", "start"}, false},
+		{[]string{"shell"}, false},
+		{[]string{"run"}, false},
+		{[]string{"attach"}, false},
+		{[]string{"monitor"}, false},
+		{[]string{"snapshot", "list"}, false},
+		{[]string{"list"}, false},
+	}
+	for _, tt := range tests {
+		cmd, _, err := rootCmd.Find(tt.args)
+		if err != nil {
+			t.Fatalf("Find(%v): %v", tt.args, err)
+		}
+		if got := commandNeedsNoProfile(cmd); got != tt.want {
+			t.Errorf("commandNeedsNoProfile(%v) = %v, want %v", tt.args, got, tt.want)
+		}
+	}
+	for path := range noProfileCommands {
+		cmd, _, err := rootCmd.Find(strings.Fields(path)[1:])
+		if err != nil || cmd.CommandPath() != path {
+			t.Errorf("noProfileCommands names %q, which is no command", path)
+		}
+	}
+}
+
+// A profile name in two locations fails these commands (exit 5).
+func TestExecute_NoProfileCommandFailsOnDuplicateProfile(t *testing.T) {
+	fakeIncusLog(t)
+	home, work := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COI_CONFIG", "")
+	t.Chdir(work)
+	for _, parent := range []string{home, work} {
+		dir := filepath.Join(parent, ".coi", "profiles", "dup")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[container]\nimage = \"a\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := executeArgs(t, "container", "exists", "c1")
+	if err == nil || !strings.Contains(err.Error(), `profile "dup" defined in multiple locations`) {
+		t.Fatalf("coi container exists = %v, want a duplicate profile error", err)
+	}
+	if got := ExitCodeFor(err); got != ExitConfig {
+		t.Errorf("exit code = %d, want %d", got, ExitConfig)
+	}
+}
+
+// Container-level commands read no profile, with thousands of profiles on
+// disk, and issue exactly one incus call.
+func TestExecute_NoProfileCommandsReadNoProfile(t *testing.T) {
+	profiles := map[string]string{"broken": brokenProfile}
+	for i := range 3000 {
+		profiles[fmt.Sprintf("p%d", i)] = "[container]\nimage = \"img\"\n"
+	}
+	src := filepath.Join(t.TempDir(), "f.txt")
+	if err := os.WriteFile(src, []byte("x"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string][]string{
+		"container exists":     {"container", "exists", "c1"},
+		"container exec --cwd": {"container", "exec", "c1", "--cwd", "/", "--", "true"},
+		"file push":            {"file", "push", src, "c1:/tmp/f.txt"},
+	}
+	for name, args := range tests {
+		t.Run(name, func(t *testing.T) {
+			logPath := fakeIncusLog(t)
+			userConfig := "[defaults]\nprofile = \"p1\"\n"
+			if err := executeWithProfiles(t, profiles, userConfig, args...); err != nil {
+				t.Fatalf("coi %v: %v", args, err)
+			}
+			if p := app.cfg.GetProfile("p1"); p != nil {
+				t.Error("a profile was listed")
+			}
+			b, _ := os.ReadFile(logPath)
+			if calls := strings.Split(strings.TrimSpace(string(b)), "\n"); len(calls) != 1 {
+				t.Errorf("incus calls = %q, want one", calls)
+			}
+		})
+	}
+}
+
+func TestExecute_NoProfileCommandAppliesRequestedProfile(t *testing.T) {
+	fakeIncusLog(t)
+	profiles := map[string]string{"good": "[incus]\nproject = \"good-project\"\n"}
+	if err := executeWithProfiles(t, profiles, "", "container", "exists", "c1", "--profile", "good"); err != nil {
+		t.Fatalf("coi container exists --profile good: %v", err)
+	}
+	if app.cfg.Incus.Project != "good-project" {
+		t.Errorf("profile good not applied, project = %q", app.cfg.Incus.Project)
 	}
 }
