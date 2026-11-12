@@ -33,8 +33,6 @@ CLAUDE_BYPASS_KEYS = (
     "skipDangerousModePermissionPrompt",
 )
 
-SHELL_ARGS = {"slot": 1, "debug": False, "timeout": 180}
-
 MARKER = ".coi-codex-argv-marker"
 
 FAKE_CODEX = f"""#!/bin/sh
@@ -82,7 +80,12 @@ def test_claude_interactive_has_no_bypass_settings(
     4. Assert managed-settings.json, if written, has no disableAutoMode
     """
     container_name, _ = start_background_shell(
-        coi_binary, workspace_dir, _claude_env(tmp_path, "interactive"), **SHELL_ARGS
+        coi_binary,
+        workspace_dir,
+        _claude_env(tmp_path, "interactive"),
+        slot=1,
+        debug=False,
+        timeout=180,
     )
 
     content = _read_container_file(container_name, CLAUDE_SETTINGS)
@@ -120,7 +123,7 @@ def test_claude_bypass_control_has_bypass_settings(
     4. Assert managed-settings.json has disableAutoMode
     """
     container_name, _ = start_background_shell(
-        coi_binary, workspace_dir, _claude_env(tmp_path, None), **SHELL_ARGS
+        coi_binary, workspace_dir, _claude_env(tmp_path, None), slot=1, debug=False, timeout=180
     )
 
     content = _read_container_file(container_name, CLAUDE_SETTINGS)
@@ -152,7 +155,9 @@ def test_opencode_interactive_asks_for_permission(coi_binary, cleanup_containers
     """
     env = write_trusted_coi_config('[tool]\nname = "opencode"\npermission_mode = "interactive"\n')
     env["COI_USE_DUMMY"] = "1"
-    container_name, _ = start_background_shell(coi_binary, workspace_dir, env, **SHELL_ARGS)
+    container_name, _ = start_background_shell(
+        coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180
+    )
 
     content = _read_container_file(container_name, OPENCODE_SETTINGS)
     assert content is not None, f"{OPENCODE_SETTINGS} was not written"
@@ -184,7 +189,7 @@ def test_codex_interactive_launch_flags(coi_binary, cleanup_containers, workspac
         'permission_mode = "interactive"\n'
     )
     env.pop("COI_USE_DUMMY", None)
-    start_background_shell(coi_binary, workspace_dir, env, **SHELL_ARGS)
+    start_background_shell(coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180)
 
     # The tool starts inside tmux shortly after the container is ready.
     deadline = time.monotonic() + 60
