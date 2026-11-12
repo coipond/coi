@@ -27,11 +27,17 @@ jobs:
   # Non-code-only pull requests (CHANGELOG.md, LICENSE, images, Markdown outside
   # the code dirs) skip build and so every job that needs it; CI Success still
   # reports success, so the required check does not stay pending.
-  # workflow_dispatch always runs everything.
+  # A follow-up push that changes only non-code files after a green run of this
+  # workflow on the same PR branch skips too (first attempt only; a re-run
+  # always runs everything). workflow_dispatch always runs everything.
   changes:
     name: Changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # --since-green lists this workflow's earlier runs on the PR branch
+      actions: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
@@ -45,12 +51,28 @@ jobs:
         id: filter
         env:
           EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          bash scripts/ci-changes.sh HEAD^1 HEAD
+          # owner/repo/.github/workflows/ci.yml@refs/... -> ci.yml
+          WORKFLOW_FILE="$(basename "${WORKFLOW_REF%@*}")"
+          export WORKFLOW_FILE
+          code="$(GITHUB_OUTPUT='' bash scripts/ci-changes.sh HEAD^1 HEAD | tee /dev/stderr | tail -n 1)"
+          if [ "$code" != "code=false" ]; then
+            code="$(GITHUB_OUTPUT='' bash scripts/ci-changes.sh --since-green | tee /dev/stderr | tail -n 1)"
+          fi
+          [ "$code" = "code=false" ] || code="code=true"
+          echo "$code"
+          echo "$code" >> "$GITHUB_OUTPUT"
 
   # Build job gates all tests - nothing runs if build fails
   build:
