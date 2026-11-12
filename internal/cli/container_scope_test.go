@@ -42,8 +42,10 @@ func TestContainerPatternSkipsForeignContainers(t *testing.T) {
 		{"default prefix", "", []string{"coi-abc12345-1", "coi-db"}},
 		{"custom prefix", "coi.t-", []string{"coi.t-abc12345-1"}},
 	}
-	names := []string{"coi-abc12345-1", "web-coi-abc12345-1", "coi-db", "mycoi-db",
-		"postgres", "coi.t-abc12345-1", "coiXt-abc12345-1"}
+	names := []string{
+		"coi-abc12345-1", "web-coi-abc12345-1", "coi-db", "mycoi-db",
+		"postgres", "coi.t-abc12345-1", "coiXt-abc12345-1",
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("COI_CONTAINER_PREFIX", tt.prefix)
