@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -121,5 +123,33 @@ func TestMarkUntrustedPorts(t *testing.T) {
 	markUntrustedPorts(empty, "/repo/.coi/config.toml")
 	if empty.PoolUntrusted {
 		t.Error("empty section must not be marked")
+	}
+}
+
+func TestConfigFilePortListenValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	write := func(listen string) {
+		t.Helper()
+		body := "[[ports.map]]\nname = \"web\"\ncontainer = 8000\nlisten = \"" + listen + "\"\n"
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, trusted := range []bool{true, false} {
+		write("localhost")
+		err := loadConfigFileScoped(GetDefaultConfig(), path, trusted)
+		if err == nil || !strings.Contains(err.Error(), "'listen' must be an IP address") {
+			t.Errorf("trusted=%v: non-IP listen should be rejected, got: %v", trusted, err)
+		}
+
+		write("0.0.0.0")
+		cfg := GetDefaultConfig()
+		if err := loadConfigFileScoped(cfg, path, trusted); err != nil {
+			t.Errorf("trusted=%v: IP listen rejected: %v", trusted, err)
+		}
+		if len(cfg.Ports.Map) != 1 || cfg.Ports.Map[0].Listen != "0.0.0.0" {
+			t.Errorf("trusted=%v: entry not merged: %+v", trusted, cfg.Ports.Map)
+		}
 	}
 }
