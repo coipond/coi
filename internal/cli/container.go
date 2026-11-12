@@ -138,7 +138,7 @@ func (a *App) isolateStartedContainer(cmd *cobra.Command, name string) error {
 		if err := network.ApplyBootBlockRule(name); err != nil {
 			return fmt.Errorf("boot network block failed in %s mode: %w", m, err)
 		}
-		if changed, bridgeName, err := network.EnsureBridgeInTrustedZone(); err != nil {
+		if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not ensure bridge forwarding rules: %v\n", err)
 		} else if changed {
 			fmt.Fprintf(os.Stderr, "Added iptables FORWARD rules for %s\n", bridgeName)
