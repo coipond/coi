@@ -14,6 +14,7 @@ import time
 
 from support.helpers import (
     calculate_container_name,
+    container_config_get,
 )
 
 
@@ -44,84 +45,25 @@ def test_docker_flags_enabled(coi_binary, cleanup_containers, workspace_dir):
     # === Phase 2: Verify Docker support flags are enabled ===
 
     # Check security.nesting
-    result = subprocess.run(
-        ["incus", "--project", "default", "config", "get", container_name, "security.nesting"],
-        capture_output=True,
-        text=True,
-        timeout=30,
+    assert container_config_get(container_name, "security.nesting") == "true", (
+        "security.nesting should be enabled for Docker support"
     )
-
-    assert result.returncode == 0, f"Failed to get security.nesting config. stderr: {result.stderr}"
-    assert result.stdout.strip() == "true", "security.nesting should be enabled for Docker support"
 
     # Check security.syscalls.intercept.mknod
-    result = subprocess.run(
-        [
-            "incus",
-            "--project",
-            "default",
-            "config",
-            "get",
-            container_name,
-            "security.syscalls.intercept.mknod",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, (
-        f"Failed to get security.syscalls.intercept.mknod config. stderr: {result.stderr}"
-    )
-    assert result.stdout.strip() == "true", (
+    assert container_config_get(container_name, "security.syscalls.intercept.mknod") == "true", (
         "security.syscalls.intercept.mknod should be enabled for Docker support"
     )
 
     # Check security.syscalls.intercept.setxattr
-    result = subprocess.run(
-        [
-            "incus",
-            "--project",
-            "default",
-            "config",
-            "get",
-            container_name,
-            "security.syscalls.intercept.setxattr",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, (
-        f"Failed to get security.syscalls.intercept.setxattr config. stderr: {result.stderr}"
-    )
-    assert result.stdout.strip() == "true", (
+    assert container_config_get(container_name, "security.syscalls.intercept.setxattr") == "true", (
         "security.syscalls.intercept.setxattr should be enabled for Docker support"
     )
 
     # Check linux.sysctl.net.ipv4.ip_unprivileged_port_start
-    result = subprocess.run(
-        [
-            "incus",
-            "--project",
-            "default",
-            "config",
-            "get",
-            container_name,
-            "linux.sysctl.net.ipv4.ip_unprivileged_port_start",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, (
-        f"Failed to get linux.sysctl.net.ipv4.ip_unprivileged_port_start config. stderr: {result.stderr}"
-    )
-    assert result.stdout.strip() == "0", (
-        "linux.sysctl.net.ipv4.ip_unprivileged_port_start should be 0 for Docker support"
-    )
+    assert (
+        container_config_get(container_name, "linux.sysctl.net.ipv4.ip_unprivileged_port_start")
+        == "0"
+    ), "linux.sysctl.net.ipv4.ip_unprivileged_port_start should be 0 for Docker support"
 
     # === Phase 3: Cleanup ===
 

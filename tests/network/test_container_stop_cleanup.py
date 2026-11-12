@@ -29,7 +29,7 @@ import time
 
 import pytest
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, container_config_get
 
 
 def _skip_unless_ready():
@@ -98,13 +98,7 @@ def _ip6_block_veths(name):
 
 
 def _current_veth(name):
-    r = subprocess.run(
-        ["incus", "config", "get", name, "volatile.eth0.host_name"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    return r.stdout.strip() if r.returncode == 0 else ""
+    return container_config_get(name, "volatile.eth0.host_name") or ""
 
 
 def _assert_ip6_block_on_current_veth(name, timeout=20):

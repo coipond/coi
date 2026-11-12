@@ -29,6 +29,7 @@ import time
 
 from support.helpers import (
     calculate_container_name,
+    container_config_get,
     extract_container_name,
 )
 
@@ -104,11 +105,9 @@ def test_workspace_write_access_raw_idmap(coi_binary, cleanup_containers, worksp
         assert result.returncode == 0, f"Setting raw.idmap should succeed. stderr: {result.stderr}"
 
         # Verify raw.idmap was set correctly
-        result = _incus_run("config", "get", container_name, "raw.idmap")
-        assert result.returncode == 0, f"Getting raw.idmap should succeed. stderr: {result.stderr}"
-        assert idmap_value in result.stdout, (
-            f"raw.idmap should be '{idmap_value}', got: '{result.stdout.strip()}'"
-        )
+        got = container_config_get(container_name, "raw.idmap")
+        assert got is not None, "Getting raw.idmap should succeed"
+        assert idmap_value in got, f"raw.idmap should be '{idmap_value}', got: '{got}'"
 
         # === Phase 5: Mount workspace WITHOUT shift ===
 
@@ -279,9 +278,8 @@ def test_matching_uid_disable_shift_auto_sets_raw_idmap(
 
         # 1. Mechanism: coi decided to set raw.idmap itself (the #667/#668 fix).
         #    An empty value means the regression is back.
-        got = _incus_run("config", "get", container_name, "raw.idmap")
-        assert got.returncode == 0, f"incus config get raw.idmap failed: {got.stderr}"
-        idmap = got.stdout.strip()
+        idmap = container_config_get(container_name, "raw.idmap")
+        assert idmap is not None, "incus config get raw.idmap failed"
         assert idmap == f"both {host_uid} {host_uid}", (
             f"coi must auto-set raw.idmap='both {host_uid} {host_uid}' when code_uid == host UID "
             f"and disable_shift is on (#667); got {idmap!r}. Empty means /workspace would be "

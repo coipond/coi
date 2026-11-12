@@ -17,7 +17,7 @@ container reuse in the harness is brittle.
 import os
 import subprocess
 
-from support.helpers import write_profile
+from support.helpers import container_config_get, write_profile
 
 MODEL = "coi-test-model-opus"
 
@@ -94,12 +94,5 @@ effort_level = "high"
     )
 
     # And it's recorded as container-level config (not a per-exec flag).
-    r = subprocess.run(
-        ["incus", "config", "get", container_name, "environment.ANTHROPIC_MODEL"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    assert r.stdout.strip() == MODEL, (
-        f"environment.ANTHROPIC_MODEL should be set on the container, got {r.stdout!r}"
-    )
+    got = container_config_get(container_name, "environment.ANTHROPIC_MODEL")
+    assert got == MODEL, f"environment.ANTHROPIC_MODEL should be set on the container, got {got!r}"
