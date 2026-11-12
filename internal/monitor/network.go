@@ -279,7 +279,7 @@ func tcpStateFromHex(hexState string) string {
 // nil) reports destinations the firewall deliberately accepts; those are exempt
 // from the private-network and allowlist checks, but not from the others.
 // gateway (may be nil) returns the container's bridge gateway, asked only for a
-// DNS or DHCP port.
+// DNS or DHCP port when allowedCIDRs is set.
 func checkSuspicious(conn Connection, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) string {
 	// Skip local connections (LISTEN state or localhost)
 	if conn.State == "LISTEN" {
@@ -295,8 +295,9 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 	}
 	// The bridge's DNS and DHCP service: a resolver or DHCP client in the
 	// container keeps a socket to it even where the firewall drops the packets.
-	// By port only: any other port on the gateway is still checked.
-	if (port == 53 || (port == 67 && strings.HasPrefix(conn.Protocol, "udp"))) && gateway != nil {
+	// By port only: any other port on the gateway is still checked. Without an
+	// allowlist nothing below flags these ports, so the gateway is not asked.
+	if len(allowedCIDRs) > 0 && (port == 53 || (port == 67 && strings.HasPrefix(conn.Protocol, "udp"))) && gateway != nil {
 		if gw := net.ParseIP(gateway()); gw != nil && gw.Equal(ip) {
 			return ""
 		}

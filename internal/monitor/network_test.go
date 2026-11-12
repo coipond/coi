@@ -305,4 +305,8 @@ func TestCheckSuspicious_GatewayDNSAndDHCP(t *testing.T) {
 	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, allowed, nil, nil); !strings.Contains(reason, "RFC1918") {
 		t.Errorf("without a known gateway, gateway:53 must still be flagged, got %q", reason)
 	}
+	asked = 0
+	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, nil, nil, gateway); reason != "" || asked != 0 {
+		t.Errorf("without an allowlist, gateway:53 got %q and asked the gateway %d times, want neither", reason, asked)
+	}
 }
