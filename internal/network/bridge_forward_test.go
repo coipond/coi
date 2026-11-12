@@ -96,22 +96,15 @@ func fakeForwardHost(t *testing.T, iptablesVersion, sudoCase string) string {
 	prevBridge := bridgeName
 	bridgeName = "incusbr0"
 	bridgeNameMu.Unlock()
-	resetBridgeForwardEnsured()
+	ResetBridgeForwardMemo()
 	t.Cleanup(func() {
 		SetSudoAllowed(prevSudo)
 		bridgeNameMu.Lock()
 		bridgeName = prevBridge
 		bridgeNameMu.Unlock()
-		resetBridgeForwardEnsured()
+		ResetBridgeForwardMemo()
 	})
 	return logPath
-}
-
-// resetBridgeForwardEnsured lets EnsureBridgeInTrustedZone act again.
-func resetBridgeForwardEnsured() {
-	bridgeForwardMu.Lock()
-	bridgeForwardEnsured = map[string]bool{}
-	bridgeForwardMu.Unlock()
 }
 
 func sudoCalls(t *testing.T, logPath string) []string {

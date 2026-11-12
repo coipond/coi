@@ -35,6 +35,14 @@ var (
 	bridgeForwardEnsured = map[string]bool{}
 )
 
+// ResetBridgeForwardMemo forgets which bridges EnsureBridgeInTrustedZone and
+// EnsureContainerBridgeInTrustedZone already ensured. For tests.
+func ResetBridgeForwardMemo() {
+	bridgeForwardMu.Lock()
+	bridgeForwardEnsured = map[string]bool{}
+	bridgeForwardMu.Unlock()
+}
+
 // ensureBridgeForwardOnce is ensureBridgeForward, once per process for bridge.
 func ensureBridgeForwardOnce(bridge string) (bool, string, error) {
 	bridgeForwardMu.Lock()

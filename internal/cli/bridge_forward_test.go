@@ -50,7 +50,11 @@ exit 0
 	t.Setenv("HOME", t.TempDir())
 	prev := network.SudoEnabled()
 	network.SetSudoAllowed(true)
-	t.Cleanup(func() { network.SetSudoAllowed(prev) })
+	network.ResetBridgeForwardMemo()
+	t.Cleanup(func() {
+		network.SetSudoAllowed(prev)
+		network.ResetBridgeForwardMemo()
+	})
 	return sudoLog
 }
 
