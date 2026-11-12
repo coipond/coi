@@ -24,7 +24,7 @@ import time
 
 from support.helpers import (
     container_ipv4,
-    extract_container_name,
+    start_background_shell,
     wait_for_firewall_rules,
     write_trusted_coi_config,
 )
@@ -35,16 +35,7 @@ def _launch(coi_binary, workspace_dir, project_config=None, env=None):
         config_dir = pathlib.Path(workspace_dir) / ".coi"
         config_dir.mkdir(exist_ok=True)
         (config_dir / "config.toml").write_text(project_config)
-    result = subprocess.run(
-        [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=env,
-    )
-    assert result.returncode == 0, f"Shell should start. stderr: {result.stderr}"
-    name = extract_container_name(result)
-    assert name, f"Should find container name. stderr: {result.stderr}"
+    name, _ = start_background_shell(coi_binary, workspace_dir, env, timeout=180)
     wait_for_firewall_rules(name)
     return name
 

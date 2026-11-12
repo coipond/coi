@@ -72,6 +72,8 @@ type Config struct {
 	Prompts            map[string]PromptEntry   `toml:"prompts"`
 	Profiles           map[string]ProfileConfig `toml:"-"` // Populated by loadProfileDirectories, not from TOML
 	ProfileContextFile string                   `toml:"-"` // Set by ApplyProfile, read by session setup
+
+	pendingProfiles map[string]pendingProfile // Listed by LoadOnDemand, not read yet
 }
 
 // PromptEntry is one entry in the [prompts] registry. It is a union that

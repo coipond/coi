@@ -5,6 +5,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // NetworkDetector analyzes network events for threats
@@ -42,8 +44,8 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 		return nd.config.PermittedDestination != nil && nd.config.PermittedDestination(event.Protocol, event.DstIP, event.DstPort)
 	}
 
-	// 1. RFC1918 addresses (should be blocked by firewall)
-	if isRFC1918(event.DstIP) && event.DstIP != nd.config.GatewayIP && !permitted() {
+	// 1. RFC1918 addresses (blocked by the firewall unless in open mode)
+	if nd.config.NetworkMode != config.NetworkModeOpen && isRFC1918(event.DstIP) && event.DstIP != nd.config.GatewayIP && !permitted() {
 		return &ThreatEvent{
 			Timestamp:   event.Timestamp,
 			Level:       ThreatLevelHigh,

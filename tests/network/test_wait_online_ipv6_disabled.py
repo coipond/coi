@@ -3,7 +3,7 @@ Regression test for issue #548 — systemd-networkd-wait-online must not hang
 when coi disables IPv6 in the container.
 
 In restricted/allowlist mode coi disables IPv6 (DisableIPv6AtBoot pre-start +
-DisableIPv6ForContainer post-start). With IPv6 kernel-disabled, systemd-networkd
+the network manager's prepareContainer post-start). With IPv6 kernel-disabled, systemd-networkd
 otherwise keeps failing to add the IPv6 link-local address, so eth0 never leaves
 the "configuring" setup state and systemd-networkd-wait-online — hence
 network-online.target and everything ordered after it (docker.service, and the

@@ -21,7 +21,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from support.helpers import calculate_container_name, write_trusted_coi_config
+from support.helpers import start_background_shell, write_trusted_coi_config
 
 CLAUDE_SETTINGS = "/home/code/.claude/settings.json"
 CLAUDE_MANAGED_SETTINGS = "/etc/claude-code/managed-settings.json"
@@ -40,18 +40,6 @@ FAKE_CODEX = f"""#!/bin/sh
 printf '%s\\n' "$@" > "$(dirname "$0")/{MARKER}"
 exec sleep 300
 """
-
-
-def _start_background_shell(coi_binary, workspace_dir, env):
-    result = subprocess.run(
-        [coi_binary, "shell", "--background", "--workspace", workspace_dir, "--slot", "1"],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=env,
-    )
-    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
-    return calculate_container_name(workspace_dir, 1)
 
 
 def _read_container_file(container_name, path):
@@ -91,8 +79,13 @@ def test_claude_interactive_has_no_bypass_settings(
        bypass keys and no permissions.defaultMode
     4. Assert managed-settings.json, if written, has no disableAutoMode
     """
-    container_name = _start_background_shell(
-        coi_binary, workspace_dir, _claude_env(tmp_path, "interactive")
+    container_name, _ = start_background_shell(
+        coi_binary,
+        workspace_dir,
+        _claude_env(tmp_path, "interactive"),
+        slot=1,
+        debug=False,
+        timeout=180,
     )
 
     content = _read_container_file(container_name, CLAUDE_SETTINGS)
@@ -129,7 +122,9 @@ def test_claude_bypass_control_has_bypass_settings(
        permissions, and permissions.defaultMode = bypassPermissions
     4. Assert managed-settings.json has disableAutoMode
     """
-    container_name = _start_background_shell(coi_binary, workspace_dir, _claude_env(tmp_path, None))
+    container_name, _ = start_background_shell(
+        coi_binary, workspace_dir, _claude_env(tmp_path, None), slot=1, debug=False, timeout=180
+    )
 
     content = _read_container_file(container_name, CLAUDE_SETTINGS)
     assert content is not None, f"{CLAUDE_SETTINGS} was not written"
@@ -160,7 +155,9 @@ def test_opencode_interactive_asks_for_permission(coi_binary, cleanup_containers
     """
     env = write_trusted_coi_config('[tool]\nname = "opencode"\npermission_mode = "interactive"\n')
     env["COI_USE_DUMMY"] = "1"
-    container_name = _start_background_shell(coi_binary, workspace_dir, env)
+    container_name, _ = start_background_shell(
+        coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180
+    )
 
     content = _read_container_file(container_name, OPENCODE_SETTINGS)
     assert content is not None, f"{OPENCODE_SETTINGS} was not written"
@@ -192,7 +189,7 @@ def test_codex_interactive_launch_flags(coi_binary, cleanup_containers, workspac
         'permission_mode = "interactive"\n'
     )
     env.pop("COI_USE_DUMMY", None)
-    _start_background_shell(coi_binary, workspace_dir, env)
+    start_background_shell(coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180)
 
     # The tool starts inside tmux shortly after the container is ready.
     deadline = time.monotonic() + 60

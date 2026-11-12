@@ -248,7 +248,10 @@ func confirmAction(prompt string) bool {
 }
 
 func snapshotCreateCommand(cmd *cobra.Command, args []string) error {
-	app.applyDefaultProfileForOps(cmd) // profile-carried session_name (#607-tolerant)
+	// profile-carried session_name (#607-tolerant)
+	if err := app.applyDefaultProfileForOps(cmd); err != nil {
+		return err
+	}
 	containerName, err := resolveContainer()
 	if err != nil {
 		return fmt.Errorf("%w", err)
@@ -288,7 +291,10 @@ func snapshotCreateCommand(cmd *cobra.Command, args []string) error {
 }
 
 func snapshotListCommand(cmd *cobra.Command, args []string) error {
-	app.applyDefaultProfileForOps(cmd) // profile-carried session_name (#607-tolerant)
+	// profile-carried session_name (#607-tolerant)
+	if err := app.applyDefaultProfileForOps(cmd); err != nil {
+		return err
+	}
 	// Validate format
 	applyJSONFormatAlias(cmd, &snapshotFormat)
 	if err := validateTextOrJSON(snapshotFormat); err != nil {
@@ -319,10 +325,7 @@ func snapshotListCommand(cmd *cobra.Command, args []string) error {
 
 func listAllSnapshots() error {
 	// Get all Coi containers
-	prefix := session.GetContainerPrefix()
-	pattern := fmt.Sprintf("^%s", prefix)
-
-	containers, err := container.ListContainers(pattern)
+	containers, err := container.ListContainers(session.ContainerPattern())
 	if err != nil {
 		return fmt.Errorf("failed to list containers: %v", err)
 	}
@@ -424,7 +427,10 @@ func outputSnapshotText(containerName string, snapshots []container.SnapshotInfo
 }
 
 func snapshotRestoreCommand(cmd *cobra.Command, args []string) error {
-	app.applyDefaultProfileForOps(cmd) // profile-carried session_name (#607-tolerant)
+	// profile-carried session_name (#607-tolerant)
+	if err := app.applyDefaultProfileForOps(cmd); err != nil {
+		return err
+	}
 	containerName, err := resolveContainer()
 	if err != nil {
 		return fmt.Errorf("%w", err)
@@ -471,7 +477,10 @@ func snapshotRestoreCommand(cmd *cobra.Command, args []string) error {
 }
 
 func snapshotDeleteCommand(cmd *cobra.Command, args []string) error {
-	app.applyDefaultProfileForOps(cmd) // profile-carried session_name (#607-tolerant)
+	// profile-carried session_name (#607-tolerant)
+	if err := app.applyDefaultProfileForOps(cmd); err != nil {
+		return err
+	}
 	containerName, err := resolveContainer()
 	if err != nil {
 		return fmt.Errorf("%w", err)
@@ -542,7 +551,10 @@ func snapshotDeleteCommand(cmd *cobra.Command, args []string) error {
 }
 
 func snapshotInfoCommand(cmd *cobra.Command, args []string) error {
-	app.applyDefaultProfileForOps(cmd) // profile-carried session_name (#607-tolerant)
+	// profile-carried session_name (#607-tolerant)
+	if err := app.applyDefaultProfileForOps(cmd); err != nil {
+		return err
+	}
 	// Validate format
 	applyJSONFormatAlias(cmd, &snapshotFormat)
 	if err := validateTextOrJSON(snapshotFormat); err != nil {

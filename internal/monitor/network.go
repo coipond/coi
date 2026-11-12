@@ -286,6 +286,7 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 		return ""
 	}
 
+	// Loopback and unspecified addresses never leave the container.
 	remoteIP := extractIP(conn.RemoteAddr)
 	port := extractPort(conn.RemoteAddr)
 	ip := net.ParseIP(remoteIP)

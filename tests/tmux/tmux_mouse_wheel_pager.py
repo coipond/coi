@@ -22,7 +22,12 @@ Tests that:
 import subprocess
 import time
 
-from support.helpers import calculate_container_name, spawn_coi
+from support.helpers import (
+    calculate_container_name,
+    spawn_coi,
+    tmux_as_code_user,
+    tmux_pane_in_mode,
+)
 
 WHEEL_UP = "\x1b[<64;10;5M"
 WHEEL_DOWN = "\x1b[<65;10;5M"
@@ -50,20 +55,14 @@ def _exec(coi_binary, container_name, *args):
     return result.stdout + result.stderr
 
 
-def _tmux(coi_binary, container_name, *args):
-    return _exec(coi_binary, container_name, "tmux", *args)
-
-
 def _top_line(coi_binary, container_name, target):
-    return _tmux(coi_binary, container_name, "capture-pane", "-p", "-t", target).splitlines()[0]
-
-
-def _in_mode(coi_binary, container_name, target):
-    return _tmux(coi_binary, container_name, "display", "-p", "-t", target, "#{pane_in_mode}")
+    return tmux_as_code_user(
+        coi_binary, container_name, "capture-pane", "-p", "-t", target
+    ).splitlines()[0]
 
 
 def _new_session(coi_binary, container_name, session, command):
-    _tmux(
+    tmux_as_code_user(
         coi_binary,
         container_name,
         "new-session",
@@ -148,7 +147,7 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
     time.sleep(1)
 
     after_down = _top_line(coi_binary, container_name, pager)
-    assert _in_mode(coi_binary, container_name, pager).strip() == "0", (
+    assert tmux_pane_in_mode(coi_binary, container_name, pager) == "0", (
         "Wheel-down in less must not enter copy mode"
     )
     assert after_down.isdigit() and int(after_down) > 1, (
@@ -161,7 +160,7 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
     time.sleep(1)
 
     after_up = _top_line(coi_binary, container_name, pager)
-    assert _in_mode(coi_binary, container_name, pager).strip() == "0", (
+    assert tmux_pane_in_mode(coi_binary, container_name, pager) == "0", (
         "Wheel-up in less must not enter copy mode"
     )
     assert after_up.isdigit() and int(after_up) < int(after_down), (
@@ -197,7 +196,7 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
     time.sleep(1)
 
     after_down = _top_line(coi_binary, container_name, git_log)
-    assert _in_mode(coi_binary, container_name, git_log).strip() == "0", (
+    assert tmux_pane_in_mode(coi_binary, container_name, git_log) == "0", (
         "Wheel-down in git log must not enter copy mode"
     )
     assert after_down.isdigit() and int(after_down) < 100, (
@@ -208,7 +207,7 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
     time.sleep(1)
 
     after_up = _top_line(coi_binary, container_name, git_log)
-    assert _in_mode(coi_binary, container_name, git_log).strip() == "0", (
+    assert tmux_pane_in_mode(coi_binary, container_name, git_log) == "0", (
         "Wheel-up in git log must not enter copy mode"
     )
     assert after_up.isdigit() and int(after_up) > int(after_down), (
@@ -243,7 +242,7 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
     # === Phase 7: Wheel up at a shell prompt enters copy mode ===
 
     shell = f"coi-{container_name}-shell"
-    _tmux(coi_binary, container_name, "new-session", "-d", "-s", shell, "bash")
+    tmux_as_code_user(coi_binary, container_name, "new-session", "-d", "-s", shell, "bash")
     time.sleep(1)
 
     child = _attach(coi_binary, container_name, shell)
@@ -251,7 +250,7 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
     child.send(WHEEL_UP)
     time.sleep(1)
 
-    assert _in_mode(coi_binary, container_name, shell).strip() == "1", (
+    assert tmux_pane_in_mode(coi_binary, container_name, shell) == "1", (
         "Wheel-up at a shell prompt must enter copy mode"
     )
 
@@ -261,9 +260,11 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
 
     stopped = f"coi-{container_name}-stopped"
     _new_session(coi_binary, container_name, stopped, "bash")
-    _tmux(coi_binary, container_name, "send-keys", "-t", stopped, "seq 1 300 | less -X", "Enter")
+    tmux_as_code_user(
+        coi_binary, container_name, "send-keys", "-t", stopped, "seq 1 300 | less -X", "Enter"
+    )
     time.sleep(1)
-    _tmux(coi_binary, container_name, "send-keys", "-t", stopped, "C-z")
+    tmux_as_code_user(coi_binary, container_name, "send-keys", "-t", stopped, "C-z")
     time.sleep(1)
 
     child = _attach(coi_binary, container_name, stopped)
@@ -271,7 +272,7 @@ def test_tmux_mouse_wheel_scrolls_pager(coi_binary, cleanup_containers, workspac
     child.send(WHEEL_UP)
     time.sleep(1)
 
-    assert _in_mode(coi_binary, container_name, stopped).strip() == "1", (
+    assert tmux_pane_in_mode(coi_binary, container_name, stopped) == "1", (
         "Wheel-up at a shell prompt with a stopped pager must enter copy mode"
     )
 

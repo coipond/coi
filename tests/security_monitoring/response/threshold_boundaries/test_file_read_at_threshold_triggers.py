@@ -20,7 +20,7 @@ from support.monitoring import (
     os.environ.get("GITHUB_ACTIONS") == "true",
     reason="cgroup io.stat does not track bind-mount I/O on GitHub Actions runners; "
     "reads from /workspace are served from the host page cache and not attributed "
-    "to the container's cgroup, so the monitoring daemon sees 0 bytes read.",
+    "to the container's cgroup, so the security monitor sees 0 bytes read.",
 )
 def test_file_read_at_threshold_triggers(
     test_workspace, enable_monitoring_low_thresholds, coi_binary

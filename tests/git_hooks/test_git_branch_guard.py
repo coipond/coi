@@ -17,7 +17,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from support.helpers import extract_container_name, write_trusted_coi_config
+from support.helpers import start_background_shell, write_trusted_coi_config
 
 HOME = "/home/code"
 REPO = "/tmp/guardrepo"
@@ -34,20 +34,6 @@ _SETUP = (
     "git commit -q --allow-empty -m root && "
     "echo hello > f.txt && git add f.txt"
 )
-
-
-def _start_background_shell(coi_binary, workspace_dir, env):
-    result = subprocess.run(
-        [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
-    name = extract_container_name(result)
-    assert name, f"could not find container name. stderr: {result.stderr}"
-    return name
 
 
 def _exec(coi_binary, name, script):
@@ -71,7 +57,7 @@ def test_branch_guard_blocks_protected_allows_feature(
     """protected_branches = ["main"]: commit/push to main is rejected; the same
     work on a feature branch succeeds."""
     env = write_trusted_coi_config('[git]\nprotected_branches = ["main"]\n')
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     rc, out = _exec(coi_binary, name, _SETUP)
     assert rc == 0, f"repo setup failed: {out}"
@@ -114,13 +100,37 @@ def test_branch_guard_disabled_allows_main(coi_binary, workspace_dir, cleanup_co
     """Control: protected_branches = [] disables the guard, so committing on main
     succeeds — proving the hooks (not something unrelated) are what block above."""
     env = write_trusted_coi_config("[git]\nprotected_branches = []\n")
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     rc, out = _exec(coi_binary, name, _SETUP)
     assert rc == 0, f"repo setup failed: {out}"
 
     rc, out = _exec(coi_binary, name, f"cd {REPO} && git commit -m 'on main'")
     assert rc == 0, f"with the guard disabled, a commit on main should succeed, got rc={rc}: {out}"
+
+
+def test_branch_guard_blocks_main_with_tag_named_main(
+    coi_binary, workspace_dir, cleanup_containers
+):
+    """A tag named `main` does not let a commit on branch `main` through: with
+    the tag, `git symbolic-ref --short HEAD` prints `heads/main`, which an exact
+    name match misses. A feature branch stays committable."""
+    env = write_trusted_coi_config('[git]\nprotected_branches = ["main"]\n')
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
+
+    rc, out = _exec(coi_binary, name, f"{_SETUP} && git tag main")
+    assert rc == 0, f"repo setup failed: {out}"
+
+    rc, out = _exec(coi_binary, name, f"cd {REPO} && git commit -m 'on main'")
+    assert rc != 0, f"commit on main with a tag named main should be rejected, got rc={rc}: {out}"
+    assert "refusing to commit on protected branch 'main'" in out, (
+        f"expected the branch-guard rejection, got: {out}"
+    )
+
+    rc, out = _exec(
+        coi_binary, name, f"cd {REPO} && git checkout -q -b feature && git commit -m 'on feature'"
+    )
+    assert rc == 0, f"commit on a feature branch should succeed, got rc={rc}: {out}"
 
 
 # Paths for the reference-transaction scenario: a bare "server", a seed repo
@@ -142,7 +152,7 @@ def test_branch_guard_reference_transaction_paths(coi_binary, workspace_dir, cle
     repo's first commit, creating main in a repo without remotes, and pushes
     INTO a local bare repository alone."""
     env = write_trusted_coi_config('[git]\nprotected_branches = ["main"]\n')
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     def ok(script, what):
         rc, out = _exec(coi_binary, name, script)
@@ -235,32 +245,6 @@ def _trusted_profile_env(tmp_path, name, body):
     return {**os.environ, "COI_CONFIG": str(cfg)}
 
 
-def _start_profile_shell(coi_binary, workspace_dir, env, profile):
-    result = subprocess.run(
-        [
-            coi_binary,
-            "shell",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            profile,
-            "--background",
-            "--debug",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-        # Run from the workspace, as a user would: project profiles are
-        # discovered under <cwd>/.coi/profiles.
-        cwd=workspace_dir,
-    )
-    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
-    name = extract_container_name(result)
-    assert name, f"could not find container name. stderr: {result.stderr}"
-    return name, result
-
-
 def test_branch_guard_list_from_profile(coi_binary, workspace_dir, cleanup_containers, tmp_path):
     """A user profile's [git] protected_branches replaces the default list: main
     becomes committable, the listed branch is guarded. (A profile containing the
@@ -268,7 +252,7 @@ def test_branch_guard_list_from_profile(coi_binary, workspace_dir, cleanup_conta
     env = _trusted_profile_env(
         tmp_path, "guard-release", '[git]\nprotected_branches = ["release"]\n'
     )
-    name, _ = _start_profile_shell(coi_binary, workspace_dir, env, "guard-release")
+    name, _ = start_background_shell(coi_binary, workspace_dir, env, profile="guard-release")
 
     rc, out = _exec(coi_binary, name, _SETUP)
     assert rc == 0, f"repo setup failed: {out}"
@@ -290,7 +274,7 @@ def test_branch_guard_disabled_from_profile(
 ):
     """A user profile's `protected_branches = []` disables the guard."""
     env = _trusted_profile_env(tmp_path, "guard-off", "[git]\nprotected_branches = []\n")
-    name, _ = _start_profile_shell(coi_binary, workspace_dir, env, "guard-off")
+    name, _ = start_background_shell(coi_binary, workspace_dir, env, profile="guard-off")
 
     rc, out = _exec(coi_binary, name, _SETUP)
     assert rc == 0, f"repo setup failed: {out}"
@@ -304,7 +288,9 @@ def test_branch_guard_project_profile_cannot_disable(coi_binary, workspace_dir, 
     _write_profile(
         Path(workspace_dir) / ".coi", "repo-guard-off", "[git]\nprotected_branches = []\n"
     )
-    name, result = _start_profile_shell(coi_binary, workspace_dir, {**os.environ}, "repo-guard-off")
+    name, result = start_background_shell(
+        coi_binary, workspace_dir, {**os.environ}, profile="repo-guard-off"
+    )
     assert "git.protected_branches" in result.stderr, (
         f"expected a warning about the ignored project setting:\n{result.stderr}"
     )

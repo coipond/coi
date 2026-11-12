@@ -170,6 +170,7 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			fmt.Fprintf(os.Stderr, "Launching container %s from image %s...\n", s.containerName, s.img)
 
 			mgr := container.NewManager(s.containerName)
+			mgr.InitConfig = []string{session.WorkspaceConfigKey + "=" + s.absWorkspace}
 			containerExists, err := mgr.Exists()
 			if err != nil {
 				return nil, fmt.Errorf("failed to check if container exists: %w", err)
@@ -275,6 +276,16 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 					// against a workspace it cannot write.
 					return idmapErr
 				}
+				// Resource limits before first boot (shell parity), so the start
+				// needs no extra calls for them; a reused container reconciles
+				// them in preRestart instead.
+				if limitsConfig := &a.cfg.Limits; limitsConfig.HasAny() {
+					fmt.Fprintf(os.Stderr, "Applying resource limits...\n")
+					applyOpts := session.LimitsApplyOptions(s.containerName, a.cfg.Incus.Project, limitsConfig)
+					if err := limits.ApplyResourceLimits(applyOpts); err != nil {
+						return fmt.Errorf("failed to apply resource limits: %w", err)
+					}
+				}
 				// Harden the bridge NIC against egress-isolation bypass: anti-spoof
 				// the source IP/MAC (so saddr-keyed nft rules can't be dodged) and
 				// isolate the bridge port (no L2 reach to sibling containers). The
@@ -331,6 +342,10 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				}
 				if err := session.ReconcileLimits(s.containerName, a.cfg.Incus.Project, &a.cfg.Limits, logFn); err != nil {
 					return err
+				}
+				// A persistent container from an older coi lacks the key.
+				if _, err := container.ConfigSetIfChanged(context.Background(), s.containerName, session.WorkspaceConfigKey, s.absWorkspace); err != nil {
+					logFn(fmt.Sprintf("Warning: Failed to set workspace metadata: %v", err))
 				}
 				s.containerWorkspace = mgr.GetWorkspacePath()
 				layout, wtErr := session.ResolveGitWorktree(s.absWorkspace)
@@ -448,8 +463,8 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 	}
 }
 
-// configureContainerRunPhase applies resource limits, waits for the container
-// to be ready, and remaps the code user's UID/GID if configured. Disk devices
+// configureContainerRunPhase waits for the container to be ready and remaps
+// the code user's UID/GID if configured. Resource limits and disk devices
 // (workspace, additional mounts, security + secret overlays) and the immutable
 // flags are the launch phase's job now — attached by its pre-start hook,
 // released by its teardown (#534); only the wasRestarted reuse path resolves
@@ -458,17 +473,6 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "configure-container",
 		RunFn: func(ctx context.Context) (session.Teardown, error) {
-			if !s.wasRestarted {
-				limitsConfig := &a.cfg.Limits
-				if limitsConfig.HasAny() {
-					fmt.Fprintf(os.Stderr, "Applying resource limits...\n")
-					applyOpts := session.LimitsApplyOptions(s.containerName, a.cfg.Incus.Project, limitsConfig)
-					if err := limits.ApplyResourceLimits(applyOpts); err != nil {
-						return nil, fmt.Errorf("failed to apply resource limits: %w", err)
-					}
-				}
-			}
-
 			logFn := stderrLogFn
 
 			// ctx is the pipeline's signal-cancelled context (run.go's
@@ -619,7 +623,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 	}
 }
 
-// startMonitoringRunPhase starts the security monitoring daemons for the run
+// startMonitoringRunPhase starts the security monitors for the run
 // container via the shared startSessionMonitoring helper (same watchers as an
 // agent session). Threat events land in the audit log via the responder;
 // diagnostics use a discard logger (run has no session log file).

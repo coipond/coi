@@ -24,7 +24,7 @@ type Daemon struct {
 	done         chan struct{}
 }
 
-// StartDaemon creates and starts a monitoring daemon
+// StartDaemon creates and starts a security monitor
 func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 	// Create audit log
 	auditLog, err := NewAuditLog(cfg.AuditLogPath)
@@ -183,7 +183,7 @@ func (d *Daemon) run() {
 	}
 }
 
-// Stop gracefully stops the monitoring daemon
+// Stop gracefully stops the security monitor
 func (d *Daemon) Stop() error {
 	d.cancel()
 

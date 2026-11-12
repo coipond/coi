@@ -17,7 +17,7 @@ func TestMonitorGateway_RetriesAfterFailure(t *testing.T) {
 	script := `#!/bin/sh
 [ -e ` + failFlag + ` ] && exit 1
 case "$*" in
-  *"profile device show default"*) printf 'eth0:\n  name: eth0\n  network: coitestbr0\n  type: nic\n' ;;
+  *"/1.0/instances/c1?"*) printf '{"name":"c1","expanded_devices":{"eth0":{"type":"nic","network":"coitestbr0"}},"state":{"network":{}}}' ;;
   *"network show coitestbr0"*) printf 'config:\n  ipv4.address: 10.250.0.1/24\n' ;;
 esac
 exit 0

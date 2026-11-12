@@ -3,6 +3,7 @@ package container
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -110,5 +111,60 @@ func TestSanitizePulledTreeBestEffort(t *testing.T) {
 
 	if _, err := os.Lstat(filepath.Join(root, "top-evil")); !os.IsNotExist(err) {
 		t.Errorf("reachable symlink should still be dropped despite unreadable subdir, stat err=%v", err)
+	}
+}
+
+// resetPullNoDereference gives one test a fresh, unprobed
+// pullNoDereferenceSupported.
+func resetPullNoDereference(t *testing.T) {
+	t.Helper()
+	orig := pullNoDereferenceSupported
+	pullNoDereferenceSupported = newPullNoDereferenceCheck()
+	t.Cleanup(func() { pullNoDereferenceSupported = orig })
+}
+
+// Without -P an Incus 6.23+ client follows a symlink source and stages a
+// regular file; older clients stage the link and have no -P. Either way the
+// staged entry is a symlink and PullFile refuses it, leaving nothing on the
+// host. A failed version probe pulls without -P, which every client accepts.
+func TestPullFile_SymlinkSourceRefusedByClientVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		probe   string
+		noDeref bool
+	}{
+		{"6.1", "echo 6.1", false},
+		{"6.22", "echo 6.22.0", false},
+		{"6.23", "echo 6.23.0", true},
+		{"7.6", "echo 7.6", true},
+		{"unparsable", "echo unknown", false},
+		{"probe fails", "exit 1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetPullNoDereference(t)
+			log := fakeIncusScript(t, `for a; do last=$a; done
+case "$*" in
+  *--version) `+tt.probe+`;;
+  *"file pull"*) ln -s /etc/passwd "$last/src-link";;
+esac`)
+			dest := filepath.Join(t.TempDir(), "out")
+
+			err := NewManager("c1").PullFile("/tmp/src-link", dest)
+			if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+				t.Fatalf("PullFile() error = %v, want a 'not a regular file' refusal", err)
+			}
+			if _, err := os.Lstat(dest); !os.IsNotExist(err) {
+				t.Errorf("refused pull left %s on the host (stat err=%v)", dest, err)
+			}
+			pull := "--project " + IncusProject + " file pull "
+			if tt.noDeref {
+				pull += "-P "
+			}
+			logged := calls(t, log)
+			if len(logged) != 2 || !strings.HasPrefix(logged[1], pull+"c1/tmp/src-link ") {
+				t.Errorf("incus calls = %q, want [version probe, %q<stage>]", logged, pull+"c1/tmp/src-link ")
+			}
+		})
 	}
 }
