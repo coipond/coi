@@ -109,7 +109,7 @@ func (p *ProfileConfig) Validate(name string) error {
 }
 
 // validatePortListen checks that a [[ports.map]] entry's listen address, if
-// set, is a bare IP address. Profiles and config files both run it.
+// set, is a bare IP address.
 func validatePortListen(i int, pe PortEntry) error {
 	if pe.Listen != "" && net.ParseIP(pe.Listen) == nil {
 		return fmt.Errorf("ports[%d] (%s) 'listen' must be an IP address (e.g. \"127.0.0.1\"), got %q", i, pe.Name, pe.Listen)
