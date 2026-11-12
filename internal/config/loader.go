@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -30,9 +31,10 @@ import (
 // same profile name is defined in more than one location Load() returns an
 // error asking the user to resolve the conflict.
 //
-// Load reads every profile; LoadOnDemand reads only the profiles asked for.
+// Load reads every profile; LoadOnDemand reads only the profiles asked for;
+// LoadWithoutProfiles reads none.
 func Load() (*Config, error) {
-	return load(false)
+	return load(loadAllProfiles)
 }
 
 // LoadOnDemand is Load without reading the profiles: it lists the profile
@@ -41,11 +43,29 @@ func Load() (*Config, error) {
 // LookupProfile or ApplyProfile first asks for it. cfg.Profiles then holds only
 // the profiles read so far, plus the built-in profiles no disk profile replaces.
 func LoadOnDemand() (*Config, error) {
-	return load(true)
+	return load(loadProfilesOnDemand)
 }
 
-// load runs Load, or LoadOnDemand when onDemand is set.
-func load(onDemand bool) (_ *Config, err error) {
+// LoadWithoutProfiles is Load for commands that never apply a profile: it reads
+// no profile. A profile name in two locations is still an error
+// (checkProfileNameClashes), so it reads the entry names of the profile
+// directories, and those of ~/.coi/profiles only when ./.coi/profiles or the
+// COI_CONFIG dir has entries. cfg.Profiles holds only the built-in profiles.
+func LoadWithoutProfiles() (*Config, error) {
+	return load(loadNoProfiles)
+}
+
+// profileLoadMode selects which profiles load reads.
+type profileLoadMode int
+
+const (
+	loadAllProfiles profileLoadMode = iota
+	loadProfilesOnDemand
+	loadNoProfiles
+)
+
+// load runs Load, LoadOnDemand or LoadWithoutProfiles, as mode says.
+func load(mode profileLoadMode) (_ *Config, err error) {
 	// Every failure to load, parse, or validate config is a ConfigError, so the
 	// CLI can distinguish "your config is wrong" from a runtime failure with one
 	// errors.As. Wrapping once here covers all the return paths below without
@@ -68,15 +88,22 @@ func load(onDemand bool) (_ *Config, err error) {
 
 	// Scan profile directories from all known locations. Profiles are merged
 	// into a single namespace; duplicate names across locations are rejected
-	// by loadProfileDirectories so it's always clear which profile is used.
-	for _, dir := range GetProfileParentDirs() {
-		if onDemand {
-			_, err = indexProfileDirectory(cfg, dir, isTrustedProfileDir(dir))
-		} else {
-			err = loadProfileDirectories(cfg, dir, isTrustedProfileDir(dir))
-		}
-		if err != nil {
+	// (by loadProfileDirectories, indexProfileDirectory or
+	// checkProfileNameClashes) so it's always clear which profile is used.
+	if mode == loadNoProfiles {
+		if err := checkProfileNameClashes(GetProfileParentDirs()); err != nil {
 			return nil, err
+		}
+	} else {
+		for _, dir := range GetProfileParentDirs() {
+			if mode == loadProfilesOnDemand {
+				_, err = indexProfileDirectory(cfg, dir, isTrustedProfileDir(dir))
+			} else {
+				err = loadProfileDirectories(cfg, dir, isTrustedProfileDir(dir))
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -105,7 +132,7 @@ func load(onDemand bool) (_ *Config, err error) {
 		}
 	}
 
-	if !onDemand {
+	if mode == loadAllProfiles {
 		// Resolve profile inheritance after all profiles are loaded from all levels
 		if err := cfg.ResolveProfileInheritance(); err != nil {
 			return nil, fmt.Errorf("profile inheritance error: %w", err)
@@ -808,11 +835,7 @@ func indexProfileDirectory(cfg *Config, configDir string, trusted bool) ([]strin
 				continue
 			}
 			if !existingPending || profileFileExists(existingSource) {
-				return nil, fmt.Errorf(
-					"profile %q defined in multiple locations:\n  %s\n  %s\n"+
-						"Rename one of them or delete the duplicate so it's clear which profile is being used",
-					profileName, existingSource, ref.configPath(),
-				)
+				return nil, duplicateProfileError(profileName, existingSource, ref.configPath())
 			}
 		}
 
@@ -823,6 +846,99 @@ func indexProfileDirectory(cfg *Config, configDir string, trusted bool) ([]strin
 		names = append(names, profileName)
 	}
 	return names, nil
+}
+
+// checkProfileNameClashes returns the error indexProfileDirectory returns for a
+// profile name defined in more than one of dirs. It reads only entry names and
+// stats only a name found in two dirs, so its cost stays small with many
+// profiles. A dir that repeats an earlier one is skipped, as the same path
+// never clashes.
+func checkProfileNameClashes(dirs []string) error {
+	var profileDirs []string
+	for _, dir := range dirs {
+		if dir = filepath.Join(dir, "profiles"); !slices.Contains(profileDirs, dir) {
+			profileDirs = append(profileDirs, dir)
+		}
+	}
+	names := make([][]string, len(profileDirs))
+	laterDirsEmpty := true
+	for i := 1; i < len(profileDirs); i++ {
+		names[i] = readDirNames(profileDirs[i])
+		laterDirsEmpty = laterDirsEmpty && len(names[i]) == 0
+	}
+	// No clash is possible, and the first dir (~/.coi/profiles, the big one)
+	// need not be read.
+	if laterDirsEmpty {
+		return nil
+	}
+	names[0] = readDirNames(profileDirs[0])
+
+	seen := make(map[string]bool, len(names[0]))
+	for _, name := range names[0] {
+		seen[name] = true
+	}
+	for i := 1; i < len(names); i++ {
+		var shared []string
+		for _, name := range names[i] {
+			if seen[name] {
+				shared = append(shared, name)
+			}
+		}
+		sort.Strings(shared)
+		for _, name := range shared {
+			existing := ""
+			for j := range i {
+				if path := profileConfigPath(profileDirs[j], name); path != "" {
+					existing = path
+					break
+				}
+			}
+			if path := profileConfigPath(profileDirs[i], name); existing != "" && path != "" {
+				return duplicateProfileError(name, existing, path)
+			}
+		}
+		for _, name := range names[i] {
+			seen[name] = true
+		}
+	}
+	return nil
+}
+
+// duplicateProfileError is the error for a profile name defined in two
+// locations, at existing and at path.
+func duplicateProfileError(name, existing, path string) error {
+	return fmt.Errorf(
+		"profile %q defined in multiple locations:\n  %s\n  %s\n"+
+			"Rename one of them or delete the duplicate so it's clear which profile is being used",
+		name, existing, path,
+	)
+}
+
+// readDirNames returns the entry names of dir, unsorted, or nil when it cannot
+// be read.
+func readDirNames(dir string) []string {
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	names, _ := f.Readdirnames(-1)
+	return names
+}
+
+// profileConfigPath returns profilesDir/name/config.toml when name is a
+// directory (not a symlink, as in indexProfileDirectory) holding a
+// config.toml, else "".
+func profileConfigPath(profilesDir, name string) string {
+	dir := filepath.Join(profilesDir, name)
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return ""
+	}
+	path := filepath.Join(dir, "config.toml")
+	if !profileFileExists(path) {
+		return ""
+	}
+	return path
 }
 
 // profileFileExists reports whether a profile config.toml exists at path.
