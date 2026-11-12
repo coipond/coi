@@ -16,7 +16,7 @@ THAT identity, so "no divergence between sources" is structural (no magic value)
 
 import subprocess
 
-from support.helpers import extract_container_name, write_trusted_coi_config
+from support.helpers import start_background_shell, write_trusted_coi_config
 
 BOT_NAME = "coipond-coder[bot]"
 BOT_EMAIL = "317930231+coipond-coder[bot]@users.noreply.github.com"
@@ -32,16 +32,7 @@ def _start_locked_shell(coi_binary, workspace_dir):
     env = write_trusted_coi_config(
         f'[git]\nname = "{BOT_NAME}"\nemail = "{BOT_EMAIL}"\nreadonly = true\nprotected_branches = []\n'
     )
-    result = subprocess.run(
-        [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
-    name = extract_container_name(result)
-    assert name, f"could not find container name. stderr: {result.stderr}"
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
     return name
 
 

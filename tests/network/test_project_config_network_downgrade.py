@@ -14,7 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from support.helpers import container_ipv4, wait_for_firewall_rules, write_trusted_coi_config
+from support.helpers import (
+    container_ipv4,
+    start_background_shell,
+    wait_for_firewall_rules,
+    write_trusted_coi_config,
+)
 
 
 def test_project_config_network_downgrade_refused(coi_binary, cleanup_containers, workspace_dir):
@@ -53,25 +58,6 @@ def test_project_config_network_downgrade_refused(coi_binary, cleanup_containers
 # is reachable when the local-network block is off and blocked when it is on.
 # (A dead RFC1918 IP can't distinguish "firewall blocked" from "nothing there";
 # the gateway responds, so it can.)
-
-
-def _start_background_shell(coi_binary, workspace_dir, env=None):
-    """Start a `--background` shell for the workspace; return (container_name, stderr)."""
-    r = subprocess.run(
-        [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
-        capture_output=True,
-        text=True,
-        timeout=90,
-        env=env,
-    )
-    assert r.returncode == 0, f"background shell should start. stderr: {r.stderr}"
-    name = None
-    for line in r.stderr.split("\n"):
-        if "Container name:" in line:
-            name = line.split("Container name:")[-1].strip()
-            break
-    assert name, f"could not find container name in output. stderr: {r.stderr}"
-    return name, r.stderr
 
 
 def _discover_gateway(coi_binary, container_name):
@@ -135,7 +121,7 @@ def test_untrusted_network_downgrade_gateway_still_blocked(
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(f'[network]\nmode = "restricted"\n{downgrade_line}\n')
 
-    container_name, setup_stderr = _start_background_shell(coi_binary, workspace_dir)
+    container_name, setup = start_background_shell(coi_binary, workspace_dir, timeout=90)
     wait_for_firewall_rules(container_name)
 
     gateway_ip = _discover_gateway(coi_binary, container_name)
@@ -144,9 +130,9 @@ def test_untrusted_network_downgrade_gateway_still_blocked(
         f"{warning_token}: the RFC1918 gateway {gateway_ip} was reachable — the untrusted "
         "downgrade was honored instead of stripped"
     )
-    combined = setup_stderr.lower()
+    combined = setup.stderr.lower()
     assert "ignoring security-downgrading" in combined and warning_token in combined, (
-        f"{warning_token}: expected the downgrade warning during setup.\n{setup_stderr}"
+        f"{warning_token}: expected the downgrade warning during setup.\n{setup.stderr}"
     )
 
 
@@ -159,7 +145,7 @@ def test_untrusted_mode_open_downgrade_ignored(coi_binary, cleanup_containers, w
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text('[network]\nmode = "open"\n')
 
-    container_name, setup_stderr = _start_background_shell(coi_binary, workspace_dir)
+    container_name, setup = start_background_shell(coi_binary, workspace_dir, timeout=90)
     wait_for_firewall_rules(container_name)
 
     gateway_ip = _discover_gateway(coi_binary, container_name)
@@ -167,9 +153,9 @@ def test_untrusted_mode_open_downgrade_ignored(coi_binary, cleanup_containers, w
     assert not _gateway_reachable(coi_binary, container_name, gateway_ip), (
         f"mode=open honored — gateway {gateway_ip} reachable; the downgrade to open was not stripped"
     )
-    combined = setup_stderr.lower()
+    combined = setup.stderr.lower()
     assert "ignoring security-downgrading" in combined and "network.mode=open" in combined, (
-        f"expected the mode=open downgrade warning during setup.\n{setup_stderr}"
+        f"expected the mode=open downgrade warning during setup.\n{setup.stderr}"
     )
 
 
@@ -225,19 +211,19 @@ def test_untrusted_block_metadata_endpoint_sanitized(
         config_dir.mkdir(exist_ok=True)
         (config_dir / "config.toml").write_text(f'[network]\nmode = "restricted"\n{project}\n')
 
-    container_name, setup_stderr = _start_background_shell(coi_binary, workspace_dir, env)
+    container_name, setup = start_background_shell(coi_binary, workspace_dir, env, timeout=90)
     assert wait_for_firewall_rules(container_name), f"no firewall rules for {container_name}"
 
     rules = _metadata_reject_rules(container_name)
     if want_rule:
         assert rules, (
             f"expected a 169.254.0.0/16 reject rule for {container_name} "
-            f"(trusted={trusted!r}, project={project!r})\n{setup_stderr}"
+            f"(trusted={trusted!r}, project={project!r})\n{setup.stderr}"
         )
     else:
         assert not rules, f"trusted block_metadata_endpoint=false should leave no rule, got {rules}"
 
-    warned = "network.block_metadata_endpoint=false" in setup_stderr
+    warned = "network.block_metadata_endpoint=false" in setup.stderr
     assert warned == want_warning, (
-        f"downgrade warning expected={want_warning}, got={warned}\n{setup_stderr}"
+        f"downgrade warning expected={want_warning}, got={warned}\n{setup.stderr}"
     )
