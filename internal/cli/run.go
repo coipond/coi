@@ -812,7 +812,7 @@ func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (
 		}
 		return nil, nil
 	}
-	if changed, bridgeName, err := network.EnsureBridgeInTrustedZone(); err != nil {
+	if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(containerName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not ensure bridge forwarding rules: %v\n", err)
 	} else if changed {
 		fmt.Fprintf(os.Stderr, "Added iptables FORWARD rules for %s\n", bridgeName)

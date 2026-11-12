@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/logger"
 )
 
 func TestCoiBridgeRulesListed(t *testing.T) {
@@ -107,7 +110,7 @@ func fakeForwardHost(t *testing.T, iptablesVersion, sudoCase string) string {
 // resetBridgeForwardEnsured lets EnsureBridgeInTrustedZone act again.
 func resetBridgeForwardEnsured() {
 	bridgeForwardMu.Lock()
-	bridgeForwardEnsured = false
+	bridgeForwardEnsured = map[string]bool{}
 	bridgeForwardMu.Unlock()
 }
 
@@ -281,5 +284,127 @@ func TestEnsureBridgeInTrustedZone_SudoDisabledRunsNoSudo(t *testing.T) {
 	}
 	if calls := sudoCalls(t, logPath); calls != nil {
 		t.Errorf("use_sudo=false must not invoke sudo, ran %q", calls)
+	}
+}
+
+// containerNetIncus puts a fake `incus` on PATH whose container c's eth0 is
+// on network. Every call is logged. Returns the log path.
+func containerNetIncus(t *testing.T, c, network string) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "incus.log")
+	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n" +
+		"  'query /1.0/instances/" + c + "?recursion=1&project=default') echo '{\"name\":\"" + c + "\",\"expanded_devices\":{\"eth0\":{\"type\":\"nic\",\"network\":\"" + network + "\"}},\"state\":{\"network\":{}}}' ;;\n" +
+		"  *profile*) echo 'eth0:'; echo '  network: incusbr0' ;;\n" +
+		"esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o700); err != nil { //nolint:gosec // test fake must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	instanceNetCache.Delete(c)
+	return logPath
+}
+
+func insertedRulesFor(t *testing.T, logPath, bridge string) int {
+	t.Helper()
+	n := 0
+	for _, c := range sudoCalls(t, logPath) {
+		if strings.HasPrefix(c, "iptables -I FORWARD") && strings.Contains(c, " "+bridge+" ") {
+			n++
+		}
+	}
+	return n
+}
+
+// The rules go on the bridge of the container's own network, also after the
+// default profile's bridge was ensured, and the default profile is not read.
+func TestEnsureContainerBridgeInTrustedZone_ContainerNetwork(t *testing.T) {
+	for _, network := range []string{"incusbr0", "coinet1"} {
+		t.Run(network, func(t *testing.T) {
+			sudoLog := fakeForwardHost(t, nftIptables, `"iptables -S FORWARD") echo "-P FORWARD DROP" ;;
+"iptables -C"*) exit 1 ;;`)
+			incusLog := containerNetIncus(t, "cb1", network)
+			if _, _, err := EnsureBridgeInTrustedZone(); err != nil {
+				t.Fatal(err)
+			}
+
+			changed, bridge, err := EnsureContainerBridgeInTrustedZone("cb1")
+			if err != nil || bridge != network {
+				t.Fatalf("got (%v, %q, %v), want bridge %q", changed, bridge, err, network)
+			}
+			if want := network != "incusbr0"; changed != want {
+				t.Errorf("changed = %v, want %v", changed, want)
+			}
+			if n := insertedRulesFor(t, sudoLog, network); n != 2 {
+				t.Errorf("want both rules for %s inserted once, got %d", network, n)
+			}
+			if b, _ := os.ReadFile(incusLog); strings.Contains(string(b), "profile") {
+				t.Errorf("must not read the default profile:\n%s", b)
+			}
+		})
+	}
+}
+
+// A container whose eth0 names no network gets no rules.
+func TestEnsureContainerBridgeInTrustedZone_NoNetwork(t *testing.T) {
+	sudoLog := fakeForwardHost(t, nftIptables, `"iptables -S FORWARD") echo "-P FORWARD DROP" ;;
+"iptables -C"*) exit 1 ;;`)
+	containerNetIncus(t, "cb2", "")
+
+	if changed, bridge, err := EnsureContainerBridgeInTrustedZone("cb2"); err == nil {
+		t.Fatalf("got (%v, %q, nil), want an error", changed, bridge)
+	}
+	if calls := sudoCalls(t, sudoLog); len(calls) != 0 {
+		t.Errorf("want no sudo calls, got %q", calls)
+	}
+}
+
+// openFallbackHost is a host without nft, with FORWARD policy DROP and no
+// coi rules: open mode takes the iptables fallback.
+const openFallbackHost = `"nft list tables") exit 1 ;;
+"iptables -L FORWARD -n") echo "Chain FORWARD (policy DROP)" ;;
+"iptables -C"*) exit 1 ;;`
+
+// The open-mode iptables fallback adds its rules for the container's own
+// network and remembers that bridge for teardown.
+func TestSetupForContainer_OpenIptablesFallbackUsesContainerNetwork(t *testing.T) {
+	for _, network := range []string{"incusbr0", "coinet1"} {
+		t.Run(network, func(t *testing.T) {
+			sudoLog := fakeForwardHost(t, nftIptables, openFallbackHost)
+			incusLog := containerNetIncus(t, "cb3", network)
+			m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen}, logger.NewDiscard())
+
+			if err := m.SetupForContainer(t.Context(), "cb3"); err != nil {
+				t.Fatal(err)
+			}
+			if m.iptablesBridgeName != network {
+				t.Errorf("iptablesBridgeName = %q, want %q", m.iptablesBridgeName, network)
+			}
+			if n := insertedRulesFor(t, sudoLog, network); n != 2 {
+				t.Errorf("want both rules for %s, got %d:\n%q", network, n, sudoCalls(t, sudoLog))
+			}
+			if b, _ := os.ReadFile(incusLog); strings.Contains(string(b), "profile") {
+				t.Errorf("must not read the default profile:\n%s", b)
+			}
+		})
+	}
+}
+
+// Without a network for the container, the fallback adds no rules.
+func TestSetupForContainer_OpenIptablesFallbackNoNetwork(t *testing.T) {
+	sudoLog := fakeForwardHost(t, nftIptables, openFallbackHost)
+	containerNetIncus(t, "cb4", "")
+	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen}, logger.NewDiscard())
+
+	if err := m.SetupForContainer(t.Context(), "cb4"); err != nil {
+		t.Fatal(err)
+	}
+	if m.iptablesBridgeName != "" {
+		t.Errorf("iptablesBridgeName = %q, want none", m.iptablesBridgeName)
+	}
+	for _, c := range sudoCalls(t, sudoLog) {
+		if strings.HasPrefix(c, "iptables -I") {
+			t.Errorf("must not add rules, ran %q", c)
+		}
 	}
 }
