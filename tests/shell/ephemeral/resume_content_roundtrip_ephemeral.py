@@ -17,14 +17,12 @@ If the round-trip is broken the sentinel is absent after resume and this fails r
 
 import time
 
-from pexpect import EOF, TIMEOUT
-
 from support.helpers import (
     calculate_container_name,
+    poweroff_and_wait,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
-    wait_for_specific_container_deletion,
     wait_for_text_in_monitor,
     with_live_screen,
 )
@@ -51,23 +49,6 @@ def _drain_output(child):
     return ""
 
 
-def _poweroff_and_wait(child, container_name):
-    """Poweroff, wait for the process to exit, and return (deleted, output)."""
-    child.send("sudo poweroff")
-    time.sleep(0.3)
-    child.send("\x0d")
-    try:
-        child.expect(EOF, timeout=60)
-    except TIMEOUT:
-        pass
-    output = _drain_output(child)
-    try:
-        child.close(force=False)
-    except Exception:
-        child.close(force=True)
-    return wait_for_specific_container_deletion(container_name, timeout=60), output
-
-
 def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_containers, workspace_dir):
     env = {"COI_USE_DUMMY": "1"}
     container_name = calculate_container_name(workspace_dir, 1)
@@ -90,7 +71,8 @@ def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_container
             "the sentinel write inside the container should complete"
         )
 
-    deleted, out1 = _poweroff_and_wait(child, container_name)
+    deleted = poweroff_and_wait(child, coi_binary, container_name)
+    out1 = _drain_output(child)
     assert deleted, f"container {container_name} should be deleted after poweroff"
     # Localize a later round-trip failure to save-vs-restore: the SAVE must happen
     # in session 1 (this is exactly what the pre-existing tests already assert).
@@ -118,7 +100,7 @@ def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_container
     # Clean up the second (resumed) container before asserting, so a failed
     # assertion never leaks it.
     container_name2 = calculate_container_name(workspace_dir, 1)
-    _poweroff_and_wait(child2, container_name2)
+    poweroff_and_wait(child2, coi_binary, container_name2)
 
     assert got_sentinel, (
         "the sentinel written in session 1 must be restored into the resumed "

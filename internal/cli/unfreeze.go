@@ -85,7 +85,7 @@ func unfreezeAllFrozen() error {
 		status := parts[1]
 
 		// Only unfreeze frozen Coi containers
-		if !strings.HasPrefix(name, "coi-") {
+		if !isCoiContainerName(name) {
 			continue
 		}
 
