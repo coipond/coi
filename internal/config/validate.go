@@ -59,9 +59,7 @@ func (p *ProfileConfig) Validate(name string) error {
 		}
 	}
 
-	// Validate port entries: name required and unique, container port in
-	// range, optional host pin in range, listen a bare address if set.
-	seenPortNames := map[string]bool{}
+	// Validate port entries
 	var portEntries []PortEntry
 	if p.Ports != nil {
 		if p.Ports.Pool < 0 || p.Ports.Pool > 10 {
@@ -69,23 +67,8 @@ func (p *ProfileConfig) Validate(name string) error {
 		}
 		portEntries = p.Ports.Map
 	}
-	for i, pe := range portEntries {
-		if pe.Name == "" {
-			return fmt.Errorf("profile '%s': ports[%d] is missing 'name'", name, i)
-		}
-		if seenPortNames[pe.Name] {
-			return fmt.Errorf("profile '%s': ports[%d] duplicates name %q", name, i, pe.Name)
-		}
-		seenPortNames[pe.Name] = true
-		if pe.Container < 1 || pe.Container > 65535 {
-			return fmt.Errorf("profile '%s': ports[%d] (%s) 'container' must be a TCP port (1-65535), got %d", name, i, pe.Name, pe.Container)
-		}
-		if pe.Host != 0 && (pe.Host < 1 || pe.Host > 65535) {
-			return fmt.Errorf("profile '%s': ports[%d] (%s) 'host' must be a TCP port (1-65535) or omitted for auto-allocation, got %d", name, i, pe.Name, pe.Host)
-		}
-		if err := validatePortListen(i, pe); err != nil {
-			return fmt.Errorf("profile '%s': %w", name, err)
-		}
+	if err := validatePortEntries(portEntries); err != nil {
+		return fmt.Errorf("profile '%s': %w", name, err)
 	}
 
 	// Validate network mode if set
@@ -108,11 +91,28 @@ func (p *ProfileConfig) Validate(name string) error {
 	return nil
 }
 
-// validatePortListen checks that a [[ports.map]] entry's listen address, if
-// set, is a bare IP address.
-func validatePortListen(i int, pe PortEntry) error {
-	if pe.Listen != "" && net.ParseIP(pe.Listen) == nil {
-		return fmt.Errorf("ports[%d] (%s) 'listen' must be an IP address (e.g. \"127.0.0.1\"), got %q", i, pe.Name, pe.Listen)
+// validatePortEntries checks [[ports.map]] entries: name required and unique,
+// container port in range, optional host pin in range, listen a bare address
+// if set.
+func validatePortEntries(entries []PortEntry) error {
+	seenNames := map[string]bool{}
+	for i, pe := range entries {
+		if pe.Name == "" {
+			return fmt.Errorf("ports[%d] is missing 'name'", i)
+		}
+		if seenNames[pe.Name] {
+			return fmt.Errorf("ports[%d] duplicates name %q", i, pe.Name)
+		}
+		seenNames[pe.Name] = true
+		if pe.Container < 1 || pe.Container > 65535 {
+			return fmt.Errorf("ports[%d] (%s) 'container' must be a TCP port (1-65535), got %d", i, pe.Name, pe.Container)
+		}
+		if pe.Host != 0 && (pe.Host < 1 || pe.Host > 65535) {
+			return fmt.Errorf("ports[%d] (%s) 'host' must be a TCP port (1-65535) or omitted for auto-allocation, got %d", i, pe.Name, pe.Host)
+		}
+		if pe.Listen != "" && net.ParseIP(pe.Listen) == nil {
+			return fmt.Errorf("ports[%d] (%s) 'listen' must be an IP address (e.g. \"127.0.0.1\"), got %q", i, pe.Name, pe.Listen)
+		}
 	}
 	return nil
 }
