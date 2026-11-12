@@ -790,11 +790,11 @@ install_pi() {
         sleep 10
     done
 
-    # Ensure pi is available system-wide for non-login/non-interactive shells
-    local PI_BIN
-    PI_BIN="$(su - "$CODE_USER" -c 'which pi' 2>/dev/null || true)"
-    if [[ -z "$PI_BIN" ]]; then
-        log "ERROR: pi binary not found after installation."
+    # Ensure pi is available system-wide
+    local PI_BIN="/home/$CODE_USER/.pi/agent/bin/pi"
+    if [[ ! -x "$PI_BIN" ]]; then
+        log "ERROR: pi binary not found at $PI_BIN after installation."
+        log "Installation may have failed or installed to an unexpected location."
         exit 1
     fi
     ln -sf "$PI_BIN" /usr/local/bin/pi
