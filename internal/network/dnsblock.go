@@ -3,6 +3,8 @@ package network
 import (
 	"fmt"
 	"strings"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // In allowlist mode the container has no DNS at all. Its only way to turn a name
@@ -24,6 +26,14 @@ import (
 //     is delivered via the input hook and NEVER traverses the forward chain. Only
 //     an input rule can stop it. This is the one that is easy to forget, and the
 //     one that would silently make everything above pointless.
+
+// tcpReset is the match and verdict of the rule that goes before each reject.
+//
+// The kernel rate-limits ICMP errors per destination (net.ipv4.icmp_ratelimit),
+// and a plain reject answers TCP with ICMP port-unreachable too. A container
+// whose blocked TCP retries use up that budget gets no reply for a blocked DNS
+// query and waits out the resolver timeout. A TCP reset is not rate-limited.
+var tcpReset = []string{"meta", "l4proto", "tcp", "reject", "with", "tcp", "reset"}
 
 // ensureCOIInputChain creates the input chain in the ip coi table.
 //
@@ -64,17 +74,59 @@ func (f *NftManager) blockDNS() error {
 	if err := ensureCOIInputChain(); err != nil {
 		return err
 	}
-	if _, err := runNFTCommand(
-		"add", "rule", "ip", "coi", "input",
-		"ip", "saddr", f.containerIP,
-		"meta", "l4proto", "{", "tcp,", "udp", "}",
-		"th", "dport", "53",
-		"reject",
-		"comment", fmt.Sprintf(`"coi-%s"`, f.containerIP),
-	); err != nil {
+	var cmds [][]string
+	for _, verdict := range [][]string{tcpReset, {"reject"}} {
+		args := []string{
+			"add", "rule", "ip", "coi", "input",
+			"ip", "saddr", f.containerIP,
+			"meta", "l4proto", "{", "tcp,", "udp", "}",
+			"th", "dport", "53",
+		}
+		args = append(args, verdict...)
+		cmds = append(cmds, append(args, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP)))
+	}
+	if err := runNFTScript(cmds); err != nil {
 		return fmt.Errorf("failed to add DNS block rule (input): %w", err)
 	}
 	return nil
+}
+
+// stopResolverCmd stops systemd-resolved in the container until its next boot
+// (a runtime mask, so socket activation cannot start it again).
+//
+// With DNS blocked, resolved still retries the blocked bridge resolver for every
+// name not in /etc/hosts, and each rejected UDP query uses up the ICMP budget
+// (see tcpReset). Stopped, resolved sends nothing, and a lookup through its stub
+// fails at once on the container's loopback. /etc/hosts keeps answering through
+// nss-files.
+const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>&1; then " +
+	"systemctl mask --runtime systemd-resolved.service && " +
+	"systemctl stop systemd-resolved.service 'systemd-resolved-*.socket'; fi"
+
+// restoreResolverCmd undoes stopResolverCmd, for a container that is still
+// running from an allowlist session and is now set up in another mode.
+const restoreResolverCmd = "if [ -L /run/systemd/system/systemd-resolved.service ]; then " +
+	"systemctl unmask --runtime systemd-resolved.service && systemctl start systemd-resolved.service; fi"
+
+// containerNetCmd is the in-container part of a mode's network setup, as one
+// exec.
+func containerNetCmd(mode config.NetworkMode) string {
+	switch mode {
+	case config.NetworkModeAllowlist:
+		return allSteps(disableIPv6Cmd, stopResolverCmd)
+	case config.NetworkModeRestricted:
+		return allSteps(disableIPv6Cmd, restoreResolverCmd)
+	default:
+		return restoreResolverCmd
+	}
+}
+
+// prepareContainer runs containerNetCmd for the manager's mode. Best effort:
+// the firewall is the enforced boundary.
+func (m *Manager) prepareContainer(containerName string) {
+	if err := execInContainer(containerName, containerNetCmd(m.config.Mode)); err != nil {
+		m.logger.Errorf("Warning: failed to prepare the container's network (IPv6, resolver): %v", err)
+	}
 }
 
 // removeInputRulesForIP drops the container's rules from the coi input chain.

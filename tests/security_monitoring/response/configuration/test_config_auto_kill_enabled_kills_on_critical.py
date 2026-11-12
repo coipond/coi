@@ -112,7 +112,7 @@ file_read_rate_mb_per_sec = 1000
             f"Events: {get_threat_events(container_name)}{coi_session_logs(container_name)}"
         )
 
-        # The monitoring daemon writes to the audit log and kills the
+        # The security monitor writes to the audit log and kills the
         # container concurrently. On fast CI machines the log flush may
         # lag behind the kill by a few seconds, so retry before failing.
         critical = []

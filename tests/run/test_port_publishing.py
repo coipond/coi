@@ -20,20 +20,15 @@ import os
 import re
 import socket
 import subprocess
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-from support.helpers import calculate_container_name, write_workspace_container_config
-
-SENTINEL = "PORT_SENTINEL_9917"
-
-# Node one-liner: HTTP server replying with the sentinel, exits after 60s.
-# PORT is substituted by the shell inside the container.
-NODE_SERVER = (
-    'node -e \'require("http").createServer((q,s)=>s.end("' + SENTINEL + '"))'
-    '.listen(process.env.PORT,"0.0.0.0");setTimeout(()=>process.exit(0),60000)\''
+from support.helpers import (
+    NODE_PORT_SERVER,
+    PORT_SENTINEL,
+    calculate_container_name,
+    fetch_host_port,
+    free_host_port,
+    write_workspace_container_config,
 )
 
 
@@ -52,28 +47,6 @@ def write_ports_config(workspace_dir, toml):
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(toml)
-
-
-def fetch(port, timeout_total=30):
-    """Poll http://127.0.0.1:<port>/ until it answers; return the body."""
-    deadline = time.time() + timeout_total
-    last_err = None
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as r:
-                return r.read().decode()
-        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
-            last_err = e
-            time.sleep(1)
-    raise AssertionError(f"nothing answered on host port {port}: {last_err}")
-
-
-def free_host_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
 
 
 def test_ports_env_exposed(coi_binary, cleanup_containers, workspace_dir):
@@ -142,7 +115,7 @@ host = {pin}
             "--",
             "sh",
             "-c",
-            f"PORT=8000 {NODE_SERVER}",
+            f"PORT=8000 {NODE_PORT_SERVER}",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -150,8 +123,8 @@ host = {pin}
         cwd=workspace_dir,
     )
     try:
-        body = fetch(pin, timeout_total=90)
-        assert SENTINEL in body, f"host fetch through pinned port returned: {body!r}"
+        body = fetch_host_port(pin, timeout_total=90)
+        assert PORT_SENTINEL in body, f"host fetch through pinned port returned: {body!r}"
     finally:
         proc.terminate()
         try:
@@ -182,7 +155,7 @@ pool = 1
             "--",
             "sh",
             "-c",
-            f'PORT="${{COI_PORTS%% *}}" {NODE_SERVER}',
+            f'PORT="${{COI_PORTS%% *}}" {NODE_PORT_SERVER}',
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -190,8 +163,8 @@ pool = 1
         cwd=workspace_dir,
     )
     try:
-        body = fetch(expected, timeout_total=90)
-        assert SENTINEL in body, f"host fetch through pool port returned: {body!r}"
+        body = fetch_host_port(expected, timeout_total=90)
+        assert PORT_SENTINEL in body, f"host fetch through pool port returned: {body!r}"
     finally:
         proc.terminate()
         try:

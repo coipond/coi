@@ -3,7 +3,7 @@ Integration test: a Sigma DB rule is loaded and matched at runtime.
 
 Counterpart to test_gtfobins_db_pattern_detection for the Sigma load path
 (internal/monitor/sigma.go), which otherwise has no integration coverage. Sets up
-a synthetic Sigma linux/process_creation rule, starts the monitoring daemon with
+a synthetic Sigma linux/process_creation rule, starts the security monitor with
 HOME pointing at that clone, execs a process whose command line contains the
 rule's distinctive token, and asserts the daemon raises a threat referencing the
 Sigma rule title.

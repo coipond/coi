@@ -56,7 +56,9 @@ Examples:
 func (a *App) monitorCommand(cmd *cobra.Command, args []string) error {
 	// Resolve the same session identity the launch used (profile-carried
 	// session_name), error-tolerantly per #607.
-	a.applyDefaultProfileForOps(cmd)
+	if err := a.applyDefaultProfileForOps(cmd); err != nil {
+		return err
+	}
 	// Reconcile --json flag with --format flag (backward compatibility)
 	if monitorJSON {
 		monitorFormat = "json"
