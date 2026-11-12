@@ -6,8 +6,9 @@ coi reads <CWD>/.coi/config.toml with the main config; a --workspace in
 another directory gets its .coi/config.toml loaded on top.
 
 Tests that:
-1. `coi run --workspace <dir>` and `coi shell --workspace <dir>` exit 5
-   (config error) on a TOML parse error and on a non-IP `[[ports.map]] listen`
+1. `coi run`, `coi shell`, `coi trust` and `coi untrust` with `--workspace
+   <dir>` exit 5 (config error) on a TOML parse error and on a non-IP
+   `[[ports.map]] listen`
 2. the error names the workspace and the cause
 3. no container is created
 """
@@ -30,6 +31,8 @@ BAD_CONFIGS = {
 COMMANDS = {
     "run": ["run", "--workspace", "{ws}", "--", "true"],
     "shell": ["shell", "--background", "--workspace", "{ws}"],
+    "trust": ["trust", "--workspace", "{ws}"],
+    "untrust": ["untrust", "--workspace", "{ws}"],
 }
 
 
