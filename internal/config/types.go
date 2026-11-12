@@ -72,6 +72,8 @@ type Config struct {
 	Prompts            map[string]PromptEntry   `toml:"prompts"`
 	Profiles           map[string]ProfileConfig `toml:"-"` // Populated by loadProfileDirectories, not from TOML
 	ProfileContextFile string                   `toml:"-"` // Set by ApplyProfile, read by session setup
+
+	pendingProfiles map[string]pendingProfile // Listed by LoadOnDemand, not read yet
 }
 
 // PromptEntry is one entry in the [prompts] registry. It is a union that
@@ -554,6 +556,14 @@ type NetworkConfig struct {
 	AllowedDomains          []string `toml:"allowed_domains"`
 	RefreshIntervalMinutes  *int     `toml:"refresh_interval_minutes"`   // 0 = no refresh; a pointer so an explicit 0 overrides the default
 	AllowLocalNetworkAccess *bool    `toml:"allow_local_network_access"` // Allow established connections from entire local network (not just gateway)
+	// AllowHostAccess lets a restricted or allowlist container reach every
+	// service on the host itself (the bridge gateway and the host's other
+	// addresses). Off by default: the host takes only DHCP, ping to the
+	// gateway (rate-limited) and, in restricted mode, DNS from the container,
+	// replies on connections the host opened, and the ports of
+	// [[network.hosts]] and allowed_domains entries that name a host address.
+	// Honored ONLY from trusted-scope config.
+	AllowHostAccess *bool `toml:"allow_host_access"`
 	// UseSudo controls whether Coi may invoke `sudo` for network operations (nft,
 	// iptables). Defaults to true. When false, Coi never shells out to sudo: it
 	// behaves as if passwordless sudo were unavailable, so `restricted`/`allowlist`

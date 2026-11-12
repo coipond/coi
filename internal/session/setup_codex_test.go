@@ -39,15 +39,15 @@ func (f *fakeCodexSetupManager) CreateFile(path, content string) error {
 	return f.fakeAutoCtxManager.CreateFile(path, content)
 }
 
-func codexToolWithConfigDirFiles(t *testing.T) tool.ToolWithConfigDirFiles {
+func toolWithConfigDirFiles(t *testing.T, name string) tool.ToolWithConfigDirFiles {
 	t.Helper()
-	c, err := tool.Get("codex")
+	c, err := tool.Get(name)
 	if err != nil {
-		t.Fatalf("Get(codex): %v", err)
+		t.Fatalf("Get(%s): %v", name, err)
 	}
 	tcf, ok := c.(tool.ToolWithConfigDirFiles)
 	if !ok {
-		t.Fatal("CodexTool must implement ToolWithConfigDirFiles")
+		t.Fatalf("%s must implement ToolWithConfigDirFiles", name)
 	}
 	return tcf
 }
@@ -73,7 +73,7 @@ func TestSetupCLIConfig_Codex_SeedsFilesVerbatim(t *testing.T) {
 	}
 
 	mgr := newFakeCodexSetupManager()
-	copied, err := setupCLIConfig(mgr, hostDir, "/home/code", codexToolWithConfigDirFiles(t), func(string) {})
+	copied, err := setupCLIConfig(mgr, hostDir, "/home/code", toolWithConfigDirFiles(t, "codex"), func(string) {})
 	if err != nil {
 		t.Fatalf("setupCLIConfig failed: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestSetupCLIConfig_Codex_MissingHostFilesSkipped(t *testing.T) {
 	var logs []string
 	logger := func(msg string) { logs = append(logs, msg) }
 
-	if _, err := setupCLIConfig(mgr, hostDir, "/home/code", codexToolWithConfigDirFiles(t), logger); err != nil {
+	if _, err := setupCLIConfig(mgr, hostDir, "/home/code", toolWithConfigDirFiles(t, "codex"), logger); err != nil {
 		t.Fatalf("setupCLIConfig must tolerate missing host files, got: %v", err)
 	}
 	if len(mgr.files) != 0 {
@@ -159,7 +159,7 @@ func TestInjectCredentials_Codex_RefreshesWithoutSettingsWrite(t *testing.T) {
 	// Simulate in-container state from the previous session.
 	mgr.files["/home/code/.codex/auth.json"] = `{"tokens": {"access_token": "stale"}}`
 
-	copied, err := injectCredentials(mgr, hostDir, "/home/code", codexToolWithConfigDirFiles(t), func(string) {})
+	copied, err := injectCredentials(mgr, hostDir, "/home/code", toolWithConfigDirFiles(t, "codex"), func(string) {})
 	if err != nil {
 		t.Fatalf("injectCredentials failed: %v", err)
 	}
@@ -173,5 +173,25 @@ func TestInjectCredentials_Codex_RefreshesWithoutSettingsWrite(t *testing.T) {
 	}
 	if len(mgr.createdFiles) != 0 {
 		t.Errorf("injectCredentials wrote synthesized files %v; codex resume must only re-push host files", mgr.createdFiles)
+	}
+}
+
+// TestInjectCredentials_Codex_NoMkdir verifies that a tool whose files all sit
+// in the config dir itself runs no extra command on resume.
+func TestInjectCredentials_Codex_NoMkdir(t *testing.T) {
+	hostDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hostDir, "auth.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := newFakeDirsManager("/home/code/.codex")
+	if _, err := injectCredentials(mgr, hostDir, "/home/code", toolWithConfigDirFiles(t, "codex"), func(string) {}); err != nil {
+		t.Fatalf("injectCredentials failed: %v", err)
+	}
+	if len(mgr.execArgs) != 0 {
+		t.Errorf("ExecArgs calls = %v, want none", mgr.execArgs)
+	}
+	if _, ok := mgr.files["/home/code/.codex/auth.json"]; !ok {
+		t.Error("auth.json not refreshed on resume")
 	}
 }

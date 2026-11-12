@@ -102,18 +102,21 @@ Profiles support inheritance, ship AI-agent context files, and can carry their o
 ## Supported AI Tools
 
 - Claude Code (default)
-- Codex CLI
+- Codex CLI (opt-in at build time)
 - opencode (OpenCode v1, opt-in at build time)
 - opencode2 (OpenCode v2)
 - pi
-- omp (Oh My Pi)
+- omp (Oh My Pi, opt-in at build time)
+- goose (opt-in at build time)
+
+An opt-in tool must be in `[container.build] agents` (e.g. `agents = ["claude", "codex"]`) before `coi build`; a persistent container keeps the image it was created from. If the configured tool is not installed, `coi shell` and `coi run --prompt` print how to add it instead of bash's `command not found`.
 
 Pick one in config or a profile:
 
 ```toml
 # ~/.coi/config.toml or ./.coi/config.toml
 [tool]
-name = "claude"              # or "codex", "opencode", "opencode2", "pi", "omp"
+name = "claude"              # or "codex", "opencode", "opencode2", "pi", "omp", "goose"
 permission_mode = "bypass"   # run autonomously ("bypass") or ask first ("interactive")
 ```
 

@@ -3,13 +3,17 @@ Helper utilities for pexpect-based CLI tests.
 """
 
 import contextlib
+import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from pexpect import EOF, TIMEOUT, spawn
@@ -38,6 +42,37 @@ def write_trusted_coi_config(content):
     with os.fdopen(fd, "w") as f:
         f.write(content)
     return {**os.environ, "COI_CONFIG": path}
+
+
+PORT_SENTINEL = "PORT_SENTINEL_9917"
+
+# Node one-liner for `sh -c` in a container: an HTTP server on
+# 0.0.0.0:$PORT replying with PORT_SENTINEL, exits after 60s.
+NODE_PORT_SERVER = (
+    'node -e \'require("http").createServer((q,s)=>s.end("' + PORT_SENTINEL + '"))'
+    '.listen(process.env.PORT,"0.0.0.0");setTimeout(()=>process.exit(0),60000)\''
+)
+
+
+def free_host_port(addr="127.0.0.1"):
+    """Return a TCP port that is free on the host address `addr`."""
+    with socket.socket() as s:
+        s.bind((addr, 0))
+        return s.getsockname()[1]
+
+
+def fetch_host_port(port, host="127.0.0.1", timeout_total=30):
+    """Poll http://<host>:<port>/ from the host until it answers; return the body."""
+    deadline = time.time() + timeout_total
+    last_err = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/", timeout=2) as r:
+                return r.read().decode()
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            last_err = e
+            time.sleep(1)
+    raise AssertionError(f"nothing answered on host {host}:{port}: {last_err}")
 
 
 _FAKE_LAN_LISTENER = """
@@ -117,7 +152,7 @@ def fake_lan(subnet, hosts=(20, 21), ports=(443, 8080)):
         sh("ip", "link", "del", host_if, check=False)
 
 
-def write_workspace_container_config(workspace_dir, persistent=None, image=None):
+def write_workspace_container_config(workspace_dir, persistent=None, image=None, alias=None):
     """Write [container] settings into <workspace>/.coi/config.toml.
 
     Replaces the removed --persistent / --image CLI flags: persistence and image
@@ -129,6 +164,8 @@ def write_workspace_container_config(workspace_dir, persistent=None, image=None)
     contain a [container] section — TOML forbids duplicate tables).
     """
     lines = ["[container]"]
+    if alias is not None:
+        lines.append(f'alias = "{alias}"')
     if persistent is not None:
         lines.append(f"persistent = {'true' if persistent else 'false'}")
     if image is not None:
@@ -139,6 +176,20 @@ def write_workspace_container_config(workspace_dir, persistent=None, image=None)
     with open(config_path, "a") as f:
         f.write("\n" + "\n".join(lines) + "\n")
     return config_path
+
+
+if HAS_PYTE:
+
+    class _Screen(pyte.Screen):
+        """pyte.Screen that ignores private DSR queries (CSI ? Ps n).
+
+        pyte 0.8.2 passes private=True to report_device_status, which does not
+        accept it, so a query such as tmux 3.6's CSI ? 996 n raises TypeError.
+        """
+
+        def report_device_status(self, mode, private=False):
+            if not private:
+                super().report_device_status(mode)
 
 
 class TerminalEmulator:
@@ -158,7 +209,7 @@ class TerminalEmulator:
                 "pyte is required for terminal emulation. Install with: pip install pyte"
             )
 
-        self.screen = pyte.Screen(columns, lines)
+        self.screen = _Screen(columns, lines)
         self.stream = pyte.Stream(self.screen)
         self.raw_output = []
         self.verbose = verbose
@@ -588,6 +639,55 @@ def wait_for_specific_container_deletion(container_name, timeout=30, poll_interv
         time.sleep(poll_interval)
 
     return False
+
+
+def exec_as_code_user(container_name, *argv, timeout=30, cwd=None):
+    """Run a command in the container as the code user (UID/GID 1000, HOME
+    /home/code), in cwd if given, and return the CompletedProcess."""
+    return subprocess.run(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--user",
+            "1000",
+            "--group",
+            "1000",
+            *(["--cwd", cwd] if cwd else []),
+            "--env",
+            "HOME=/home/code",
+            "--",
+            *argv,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
+    """Run `sudo poweroff` in the coi shell's bash pane (which saves the
+    session), wait for coi to exit and the container to go, and force-delete
+    it if it stays. Return whether it went without the force-delete."""
+    child.send("sudo poweroff")
+    time.sleep(0.3)
+    child.send("\x0d")
+    try:
+        child.expect(EOF, timeout=timeout)
+    except TIMEOUT:
+        pass
+    try:
+        child.close(force=False)
+    except Exception:
+        child.close(force=True)
+    deleted = wait_for_specific_container_deletion(container_name, timeout=timeout)
+    if not deleted:
+        subprocess.run(
+            [coi_binary, "container", "delete", container_name, "--force"],
+            capture_output=True,
+            timeout=30,
+        )
+    return deleted
 
 
 def wait_for_container_deletion(prefix="coi-test-", timeout=30, poll_interval=0.5):
@@ -1233,6 +1333,80 @@ def wait_for_pattern_in_monitor(monitor, pattern, timeout=30, poll_interval=0.5)
     return None
 
 
+def incus_status(container_name):
+    """Return the container's status from `incus list` in upper case
+    (RUNNING, STOPPED, FROZEN), or "" when it does not exist."""
+    r = subprocess.run(
+        ["incus", "list", f"^{re.escape(container_name)}$", "--format=csv", "-c", "s"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return r.stdout.strip().upper()
+
+
+def container_config_get(container_name, key):
+    """Return `incus config get <container> <key>`, or None."""
+    r = subprocess.run(
+        ["incus", "config", "get", container_name, key],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
+def container_device_get(container_name, device, key):
+    """Return `incus config device get <container> <device> <key>`, or None."""
+    r = subprocess.run(
+        ["incus", "config", "device", "get", container_name, device, key],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
+def container_ipv4(container_name):
+    """Return the container's eth0 IPv4 address from `incus list`, or None."""
+    r = subprocess.run(
+        ["incus", "list", container_name, "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    for c in json.loads(r.stdout):
+        # `incus list <name>` also lists containers whose name starts with <name>.
+        if c.get("name") != container_name:
+            continue
+        # A stopped container has "network": null.
+        network = (c.get("state") or {}).get("network") or {}
+        for a in (network.get("eth0") or {}).get("addresses") or []:
+            if a.get("family") == "inet":
+                return a["address"]
+    return None
+
+
+def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
+    """Run cmd with bash -c in the container; return (returncode, combined output).
+
+    coi container exec does not keep the command's stdout and stderr apart
+    when not attached to a terminal, so callers match on both together.
+    """
+    argv = [coi_binary, "container", "exec", container_name]
+    if user is not None:
+        argv += ["--user", str(user), "--group", str(user), "--env", "HOME=/home/code"]
+    argv += ["--", "bash", "-c", cmd]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    return result.returncode, result.stdout + result.stderr
+
+
 def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):
     """
     Poll nftables until the default-deny rule is active for a container.
@@ -1246,28 +1420,7 @@ def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):
         timeout: Maximum seconds to wait (default 30).
         poll_interval: Seconds between polls (default 0.5).
     """
-    # Resolve the container's IPv4 address once.
-    ip_result = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if ip_result.returncode != 0:
-        return False
-
-    import json as _json
-
-    info = _json.loads(ip_result.stdout)
-    if not info:
-        return False
-
-    container_ip = None
-    for addr in info[0].get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
-        if addr.get("family") == "inet":
-            container_ip = addr["address"]
-            break
-
+    container_ip = container_ipv4(container_name)
     if not container_ip:
         return False
 
@@ -1502,6 +1655,37 @@ def delete_storage_pool(name):
     )
 
 
+def write_profile(workspace_dir, name, content):
+    """Write a project profile to <workspace>/.coi/profiles/<name>/config.toml."""
+    profile_dir = Path(workspace_dir) / ".coi" / "profiles" / name
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "config.toml").write_text(content)
+
+
+def run_and_show_config(coi_binary, workspace_dir, env=None, extra_args=(), timeout=240):
+    """Run `coi run [extra_args] echo test` and return the slot-1 container's
+    expanded `incus config show` output. Asserts both commands succeed.
+    """
+    result = subprocess.run(
+        [coi_binary, "run", "--workspace", workspace_dir, *extra_args, "echo", "test"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=workspace_dir,
+        env=env,
+    )
+    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+
+    result = subprocess.run(
+        ["incus", "config", "show", "--expanded", calculate_container_name(workspace_dir, 1)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, "Should be able to read container config"
+    return result.stdout
+
+
 def run_coi_in_workspace(coi_binary, workspace_dir, argv, env=None, timeout=120):
     """Run `coi run -- <argv>` from workspace_dir, capturing output.
 
@@ -1529,3 +1713,93 @@ def make_workspace_writable(workspace_dir):
     stop a write, preventing false passes.
     """
     subprocess.run(["chmod", "-R", "a+rwX", workspace_dir], check=True, capture_output=True)
+
+
+def foreign_container_state(names):
+    """Snapshot what coi must never change on non-coi containers: status,
+    user.* config, profiles, devices and snapshots, keyed by name."""
+    r = subprocess.run(
+        ["incus", "list", "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, f"incus list failed: {r.stderr}"
+    state = {}
+    for c in json.loads(r.stdout):
+        if c.get("name") not in names:
+            continue
+        state[c["name"]] = {
+            "status": c.get("status"),
+            "config": {k: v for k, v in c.get("config", {}).items() if k.startswith("user.")},
+            "profiles": c.get("profiles"),
+            "devices": c.get("devices"),
+            "expanded_devices": c.get("expanded_devices"),
+            "snapshots": [s.get("name") for s in c.get("snapshots") or []],
+        }
+    return state
+
+
+def incus_host_state():
+    """Snapshot the host-wide Incus objects coi must never change: profiles,
+    networks and storage pools. `used_by` is dropped: it lists coi's own
+    containers too."""
+    state = {}
+    for kind in ("profile", "network", "storage"):
+        r = subprocess.run(
+            ["incus", kind, "list", "--format=json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert r.returncode == 0, f"incus {kind} list failed: {r.stderr}"
+        state[kind] = sorted(
+            ({k: v for k, v in o.items() if k != "used_by"} for o in json.loads(r.stdout)),
+            key=lambda o: o.get("name", ""),
+        )
+    return state
+
+
+# git with a throwaway identity and the file protocol allowed, for local submodules.
+GIT = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
+
+
+def init_repo_with_submodule(workspace_dir, tmp_path):
+    """Make workspace_dir a repo with submodule `lib`, cloned from tmp_path/lib."""
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    for repo in (lib, Path(workspace_dir)):
+        subprocess.run([*GIT, "init", "-q"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            [*GIT, "commit", "-q", "--allow-empty", "-m", "init"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        [*GIT, "submodule", "add", "-q", str(lib), "lib"],
+        cwd=workspace_dir,
+        check=True,
+        capture_output=True,
+    )
+
+
+def workspace_containers(workspace_dir):
+    """Names of the existing containers of workspace_dir (slots 1-10)."""
+    names = {calculate_container_name(workspace_dir, slot) for slot in range(1, 11)}
+    return names & set(get_container_list())
+
+
+def kill_workspace_containers(coi_binary, workspace_dir, env):
+    """`coi kill --force` every container of workspace_dir; assert there is one."""
+    running = workspace_containers(workspace_dir)
+    assert running, "the session started no container for the workspace"
+    for name in running:
+        result = subprocess.run(
+            [coi_binary, "kill", "--force", name],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert result.returncode == 0, f"coi kill {name} failed:\n{result.stderr}"

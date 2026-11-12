@@ -105,6 +105,7 @@ type NetworkGrants struct {
 	DNSServers     []string
 	Hosts          []config.HostEntry
 	LANAccess      bool // allow_local_network_access
+	HostAccess     bool // allow_host_access
 	LANBlocked     bool // block_private_networks
 	MetadataBlock  bool // block_metadata_endpoint
 }
@@ -239,6 +240,7 @@ func buildGrants(st *setupState) *Grants {
 	if nc := opts.Network.Config; nc != nil {
 		g.Network.Hosts = nc.Hosts
 		g.Network.LANAccess = config.BoolVal(nc.AllowLocalNetworkAccess)
+		g.Network.HostAccess = config.BoolVal(nc.AllowHostAccess)
 		g.Network.LANBlocked = config.BoolVal(nc.BlockPrivateNetworks)
 		g.Network.MetadataBlock = config.BoolVal(nc.BlockMetadataEndpoint)
 	}
@@ -958,6 +960,9 @@ func (g *Grants) networkLines() []string {
 		lines = append(lines, n.Mode)
 	}
 	enforcing := mode == config.NetworkModeRestricted || mode == config.NetworkModeAllowlist
+	if enforcing && n.HostAccess {
+		lines = append(lines, "host services allowed (allow_host_access)")
+	}
 	if enforcing && len(n.AllowedPorts) > 0 {
 		lines = append(lines, "ports "+joinInts(n.AllowedPorts)+" only")
 	}

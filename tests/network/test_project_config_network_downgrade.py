@@ -8,14 +8,13 @@ project scope (with a warning); only the user's ~/.coi/config.toml or an
 explicit COI_CONFIG may relax them.
 """
 
-import json
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from support.helpers import wait_for_firewall_rules, write_trusted_coi_config
+from support.helpers import container_ipv4, wait_for_firewall_rules, write_trusted_coi_config
 
 
 def test_project_config_network_downgrade_refused(coi_binary, cleanup_containers, workspace_dir):
@@ -185,27 +184,9 @@ def test_untrusted_mode_open_downgrade_ignored(coi_binary, cleanup_containers, w
 METADATA_REJECT = "ip daddr 169.254.0.0/16 reject"
 
 
-def _container_ip(container_name):
-    r = subprocess.run(
-        ["incus", "list", container_name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    if r.returncode != 0 or not r.stdout.strip():
-        return None
-    info = json.loads(r.stdout)
-    if not info:
-        return None
-    for addr in info[0].get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
-        if addr.get("family") == "inet":
-            return addr["address"]
-    return None
-
-
 def _metadata_reject_rules(container_name):
     """The container's metadata-block reject rules in the ip coi forward chain."""
-    ip = _container_ip(container_name)
+    ip = container_ipv4(container_name)
     assert ip, f"could not resolve the IPv4 address of {container_name}"
     r = subprocess.run(
         ["sudo", "-n", "nft", "list", "chain", "ip", "coi", "forward"],

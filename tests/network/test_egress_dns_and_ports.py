@@ -22,30 +22,15 @@ for the wrong reason (host simply unreachable):
     8.8.8.8 — Google:     listens on 443 and 53
 """
 
-import json
 import re
 import subprocess
 
-from support.helpers import fake_lan, wait_for_firewall_rules, write_trusted_coi_config
-
-
-def _container_ip(name):
-    """Resolve a container's IPv4 address via incus."""
-    result = subprocess.run(
-        ["incus", "list", name, "--format=json"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    info = json.loads(result.stdout)
-    if not info:
-        return None
-    for addr in info[0].get("state", {}).get("network", {}).get("eth0", {}).get("addresses", []):
-        if addr.get("family") == "inet":
-            return addr["address"]
-    return None
+from support.helpers import (
+    container_ipv4,
+    fake_lan,
+    wait_for_firewall_rules,
+    write_trusted_coi_config,
+)
 
 
 def _container_rule_lines(container_ip):
@@ -248,7 +233,7 @@ def test_restricted_allow_local_respects_port_cap(coi_binary, workspace_dir, cle
         '[network]\nmode = "restricted"\nallow_local_network_access = true\nallowed_ports = [443]\n'
     )
     name = _start_background_shell(coi_binary, workspace_dir, env)
-    ip = _container_ip(name)
+    ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
     lan_accepts = _lan_accept_lines(ip)
@@ -268,7 +253,7 @@ def test_restricted_allow_local_without_cap_is_blanket(
         '[network]\nmode = "restricted"\nallow_local_network_access = true\n'
     )
     name = _start_background_shell(coi_binary, workspace_dir, env)
-    ip = _container_ip(name)
+    ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
     lan_accepts = _lan_accept_lines(ip)
@@ -301,7 +286,7 @@ def test_restricted_host_entry_respects_port_cap(coi_binary, workspace_dir, clea
         'hostnames = ["capped-host.internal"]\n'
     )
     name = _start_background_shell(coi_binary, workspace_dir, env)
-    ip = _container_ip(name)
+    ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
     host_accepts = _host_accept_lines(ip, host_ip)
@@ -327,7 +312,7 @@ def test_restricted_host_entry_without_cap_is_blanket(
         'hostnames = ["blanket-host.internal"]\n'
     )
     name = _start_background_shell(coi_binary, workspace_dir, env)
-    ip = _container_ip(name)
+    ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
     host_accepts = _host_accept_lines(ip, host_ip)
@@ -360,7 +345,7 @@ def test_restricted_host_entry_per_entry_ports_decouple(
         "ports = [443]\n"
     )
     name = _start_background_shell(coi_binary, workspace_dir, env)
-    ip = _container_ip(name)
+    ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
     host_accepts = _host_accept_lines(ip, host_ip)
@@ -400,7 +385,7 @@ def test_allowlist_private_host_entry_scoped(coi_binary, workspace_dir, cleanup_
         "ports = [443]\n"
     )
     name = _start_background_shell(coi_binary, workspace_dir, env)
-    ip = _container_ip(name)
+    ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
     lines = _container_rule_lines(ip)
 

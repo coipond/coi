@@ -38,6 +38,22 @@ func ruleTexts(t *testing.T) []string {
 	return out
 }
 
+// allRuleTexts is ruleTexts for the forward and the input chain.
+func allRuleTexts(t *testing.T) []string {
+	t.Helper()
+	rules, _, err := coiChainRules("coi-" + batchTestIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, chain := range []string{"forward", "input"} {
+		for _, r := range rules[chain] {
+			out = append(out, chain+": "+r.text)
+		}
+	}
+	return out
+}
+
 func restrictedTestConfig() *config.NetworkConfig {
 	tr := true
 	return &config.NetworkConfig{
@@ -70,13 +86,16 @@ func TestApplyRestricted_BatchMatchesPerRule_Integration(t *testing.T) {
 	if err := f.addRestrictedRules(cfg, dns, ports); err != nil { // not batching: one exec per rule
 		t.Fatal(err)
 	}
-	perRule := ruleTexts(t)
+	perRule := allRuleTexts(t)
 	_ = DeleteCOIFilterRulesForIP(batchTestIP)
 
 	if err := f.ApplyRestricted(cfg); err != nil {
 		t.Fatal(err)
 	}
-	batched := ruleTexts(t)
+	batched := allRuleTexts(t)
+	if !strings.Contains(strings.Join(batched, "\n"), "input: ") {
+		t.Errorf("restricted mode must install input rules:\n%s", strings.Join(batched, "\n"))
+	}
 	if len(perRule) == 0 || strings.Join(perRule, "\n") != strings.Join(batched, "\n") {
 		t.Errorf("batched rules differ from per-rule rules:\nper-rule:\n%s\nbatched:\n%s",
 			strings.Join(perRule, "\n"), strings.Join(batched, "\n"))

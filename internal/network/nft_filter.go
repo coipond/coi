@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -74,12 +75,13 @@ func NewNftManager(containerIP, gatewayIP string) *NftManager {
 //   - dns_servers: pin the resolvers reachable on port 53 (see pinDNSForward).
 //   - allowed_ports: cap the otherwise-open internet egress to specific dports.
 func (f *NftManager) ApplyRestricted(cfg *config.NetworkConfig) error {
-	return f.applyRestricted(cfg, nil)
+	return f.applyRestricted(cfg, nil, false)
 }
 
 // applyRestricted is ApplyRestricted with prefix commands (stale-rule deletes)
-// applied in the same transaction as the new rules.
-func (f *NftManager) applyRestricted(cfg *config.NetworkConfig, prefix [][]string) error {
+// applied in the same transaction as the new rules. inputChainReady means the
+// prefix already provides the coi input chain.
+func (f *NftManager) applyRestricted(cfg *config.NetworkConfig, prefix [][]string, inputChainReady bool) error {
 	// Validate the optional egress controls up front. Setup is fail-closed, so a
 	// bad dns_servers/allowed_ports value aborts here with the boot block still in
 	// place rather than installing a half-applied policy.
@@ -94,6 +96,12 @@ func (f *NftManager) applyRestricted(cfg *config.NetworkConfig, prefix [][]strin
 
 	if err := EnsureBaseRules(); err != nil {
 		logWarnf("Warning: failed to ensure base rules: %v", err)
+	}
+
+	if !inputChainReady && !config.BoolVal(cfg.AllowHostAccess) {
+		if err := ensureCOIInputChain(); err != nil {
+			return err
+		}
 	}
 
 	// Every rule below is collected and applied as one transaction (together
@@ -164,7 +172,7 @@ func (f *NftManager) addRestrictedRules(cfg *config.NetworkConfig, dnsServers []
 		return fmt.Errorf("failed to add default allow rule: %w", err)
 	}
 
-	return nil
+	return f.addHostInputRules(cfg, config.NetworkModeRestricted, nil)
 }
 
 // ApplyAllowlist applies allowlist mode rules: block all DNS, accept traffic to
@@ -243,6 +251,14 @@ func (f *NftManager) ApplyAllowlist(cfg *config.NetworkConfig, _ []string) error
 	// of them apply, or none do and the boot block keeps the container dark.
 	f.beginBatch(nil)
 	if err := f.addAllowlistRules(cfg, allowedPorts); err != nil {
+		f.abortBatch()
+		return err
+	}
+	var hostAccepts []hostPortAccept
+	if !config.BoolVal(cfg.AllowHostAccess) {
+		hostAccepts = allowlistHostAccepts(policy.staticTuples(), intsToPortRanges(allowedPorts), hostIPv4Addrs())
+	}
+	if err := f.addHostInputRules(cfg, config.NetworkModeAllowlist, hostAccepts); err != nil {
 		f.abortBatch()
 		return err
 	}
@@ -328,7 +344,7 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 }
 
 // RemoveRules removes every host-side artefact Coi installed for this container:
-// forward rules, allowlist sets and the input-chain DNS block. See
+// forward rules, allowlist sets and the input-chain rules. See
 // DeleteCOIFilterRulesForIP, which is the shared implementation and the same path
 // kill and orphan cleanup take.
 func (f *NftManager) RemoveRules() error {
@@ -490,16 +506,29 @@ func bootBlockComment(containerName string) string {
 	return "coi-boot-" + containerName
 }
 
-// DisableIPv6ForContainer disables IPv6 in the container to prevent firewall bypass.
+// disableIPv6Cmd disables IPv6 in the container to prevent firewall bypass.
 // All Coi IPv4 nft rules are IPv4-only; IPv6 would circumvent them entirely.
 //
 // NOTE: this runs an in-container sysctl, which in-container root can simply set
 // back to 0 (it owns CAP_NET_ADMIN over its own netns). It is therefore
 // defence-in-depth only — the enforced IPv6 egress boundary is the host-side
 // drop installed by ApplyIPv6BlockForContainer, which the container cannot touch.
-func DisableIPv6ForContainer(containerName string) error {
+const disableIPv6Cmd = "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
+
+// allSteps joins shell steps into one script that runs every step and fails
+// when any of them failed.
+func allSteps(steps ...string) string {
+	var b strings.Builder
+	b.WriteString("rc=0\n")
+	for _, s := range steps {
+		b.WriteString(s + " || rc=1\n")
+	}
+	b.WriteString("exit $rc")
+	return b.String()
+}
+
+func execInContainer(containerName, cmd string) error {
 	mgr := container.NewManager(containerName)
-	cmd := "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
 	_, err := mgr.ExecCommand(cmd, container.ExecCommandOptions{Capture: true})
 	return err
 }
@@ -668,7 +697,19 @@ func (f *NftManager) addRule(source, destination, action string) error {
 // addRuleWithMatch is addRule with an optional extra match clause inserted
 // between the daddr match and the action (e.g. an L4 protocol / ICMP-type
 // constraint). match is a slice of nft tokens; nil/empty behaves like addRule.
+//
+// A reject also adds the tcpReset rule ahead of it.
 func (f *NftManager) addRuleWithMatch(source, destination string, match []string, action string) error {
+	if action == "reject" {
+		if err := f.addForwardRule(source, destination, match, tcpReset); err != nil {
+			return err
+		}
+	}
+	return f.addForwardRule(source, destination, match, []string{action})
+}
+
+// addForwardRule adds one rule to the coi forward chain (or the open batch).
+func (f *NftManager) addForwardRule(source, destination string, match, verdict []string) error {
 	args := []string{
 		"add", "rule", "ip", "coi", "forward",
 		"ip", "saddr", source,
@@ -678,7 +719,8 @@ func (f *NftManager) addRuleWithMatch(source, destination string, match []string
 		args = append(args, "ip", "daddr", destination)
 	}
 	args = append(args, match...)
-	args = append(args, action, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
+	args = append(args, verdict...)
+	args = append(args, "comment", fmt.Sprintf(`"coi-%s"`, f.containerIP))
 	if f.batch != nil {
 		f.batch = append(f.batch, args)
 		return nil
@@ -825,21 +867,30 @@ func ListCOIFilterRuleIPs() (map[string][]string, error) {
 }
 
 // DeleteCOIFilterRulesForIP removes every host-side artefact Coi installed for a
-// container IP: its forward rules, then its input-chain DNS block, then its
-// allowlist sets.
+// container IP: its forward rules, then its input-chain rules (host filter and
+// DNS block), then its allowlist sets.
 //
 // This is the single teardown entry point used by kill, orphan cleanup and
-// setup's stale-rule purge, so it must account for everything allowlist mode
-// creates: forward rules, the input-chain DNS block, and the two allowlist sets.
+// setup's stale-rule purge, so it must account for everything the modes
+// create: forward rules, input-chain rules, and the two allowlist sets.
 //
 // Rules go first, in both chains — the kernel refuses to drop a set that a rule
 // still references.
 //
-// It is safe for containers that never had sets or a DNS block (open and
-// restricted mode): removing something that was never created is a no-op.
+// It is safe for containers that never had sets or input rules (open mode):
+// removing something that was never created is a no-op.
 func DeleteCOIFilterRulesForIP(ip string) error {
 	if ip == "" {
 		return nil
+	}
+	// The transaction fails as a whole when a rule it names is already gone
+	// (another cleanup raced this one) or nft is briefly locked; the
+	// per-chain deletes below re-list and retry.
+	if rules, _, err := coiChainRules("coi-" + ip); err == nil {
+		cmds := append(deleteChainRuleCmds("forward", rules["forward"]), deleteChainRuleCmds("input", rules["input"])...)
+		if runNFTScript(cmds) == nil {
+			return removeAllowlistSetsForIP(ip)
+		}
 	}
 	if err := deleteNFTRulesByComment("coi-" + ip); err != nil {
 		return err
@@ -887,54 +938,59 @@ func GetContainerIPWithRetries(containerName string, maxRetries int) (string, er
 const ipPollInterval = 200 * time.Millisecond
 
 func getContainerIPOnce(containerName string) (string, error) {
-	ip, _, err := lookupInstanceNet(containerName)
+	n, err := lookupInstanceNet(containerName)
 	if err != nil {
 		return "", err
 	}
-	if ip == "" {
+	if n.ip == "" {
 		return "", fmt.Errorf("no IPv4 address found for container %s", containerName)
 	}
-	return ip, nil
+	return n.ip, nil
 }
 
-// instanceNet is a container's eth0 IPv4 address and host-side veth name.
+// instanceNet is a container's eth0 IPv4 address, host-side veth name and
+// the Incus network eth0 is attached to.
 type instanceNet struct {
-	ip, veth string
-	at       time.Time
+	ip, veth, network string
+	at                time.Time
 }
 
 // instanceNetCache remembers complete (IPv4 + veth) answers briefly: one
 // launch asks for the IP and the veth 3-4 times (boot block, mode setup,
-// IPv6 block, [[network.hosts]]), each a full-state `incus list` (~100-200 ms).
+// IPv6 block, [[network.hosts]]), each an instance state query.
 // Only complete answers are cached, so a container still waiting for its DHCP
 // lease is always re-queried, and the short TTL covers just one launch.
 var instanceNetCache sync.Map // container name -> instanceNet
 
 const instanceNetTTL = 5 * time.Second
 
-// lookupInstanceNet returns the container's eth0 IPv4 address and veth name
-// (either may be empty) from one `incus list`.
-func lookupInstanceNet(containerName string) (ip, veth string, err error) {
+// lookupInstanceNet returns the container's eth0 IPv4 address, veth name and
+// network (any may be empty) from one instance query.
+func lookupInstanceNet(containerName string) (instanceNet, error) {
 	if v, ok := instanceNetCache.Load(containerName); ok {
 		// The veth is recreated on every container start: only trust a cached
 		// answer whose veth still exists on the host.
 		if n, ok := v.(instanceNet); ok && time.Since(n.at) < instanceNetTTL && hostInterfaceExists(n.veth) {
-			return n.ip, n.veth, nil
+			return n, nil
 		}
 		instanceNetCache.Delete(containerName)
 	}
-	output, err := container.IncusOutput("list", containerName, "--format=json")
+	output, err := container.ContainerFullJSON(containerName)
+	if errors.Is(err, container.ErrContainerNotFound) {
+		return instanceNet{}, nil
+	}
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get container info: %w", err)
+		return instanceNet{}, fmt.Errorf("failed to get container info: %w", err)
 	}
-	ip, veth, err = parseInstanceNet(output, containerName)
+	n, err := parseInstanceNet(output)
 	if err != nil {
-		return "", "", err
+		return instanceNet{}, err
 	}
-	if ip != "" && veth != "" {
-		instanceNetCache.Store(containerName, instanceNet{ip: ip, veth: veth, at: time.Now()})
+	if n.ip != "" && n.veth != "" {
+		n.at = time.Now()
+		instanceNetCache.Store(containerName, n)
 	}
-	return ip, veth, nil
+	return n, nil
 }
 
 // hostInterfaceExists reports whether a network interface exists on the host.
@@ -946,12 +1002,13 @@ func hostInterfaceExists(name string) bool {
 	return err == nil
 }
 
-// parseInstanceNet extracts eth0's IPv4 address and host_name for
-// containerName from `incus list --format=json` output.
-func parseInstanceNet(output, containerName string) (ip, veth string, err error) {
-	var containers []struct {
-		Name  string `json:"name"`
-		State struct {
+// parseInstanceNet extracts eth0's IPv4 address, host_name and network from
+// `/1.0/instances/<name>?recursion=1` JSON. The network is the expanded eth0
+// device's `network`, or its `parent` for a NIC without one.
+func parseInstanceNet(output string) (instanceNet, error) {
+	var c struct {
+		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+		State           struct {
 			Network map[string]struct {
 				HostName  string `json:"host_name"`
 				Addresses []struct {
@@ -961,26 +1018,25 @@ func parseInstanceNet(output, containerName string) (ip, veth string, err error)
 			} `json:"network"`
 		} `json:"state"`
 	}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		return "", "", fmt.Errorf("failed to parse container info: %w", err)
+	if err := json.Unmarshal([]byte(output), &c); err != nil {
+		return instanceNet{}, fmt.Errorf("failed to parse container info: %w", err)
 	}
-	for _, c := range containers {
-		if c.Name != containerName {
-			continue
-		}
-		eth0, ok := c.State.Network["eth0"]
-		if !ok {
-			continue
-		}
-		veth = eth0.HostName
+	var n instanceNet
+	if dev := c.ExpandedDevices["eth0"]; dev["network"] != "" {
+		n.network = dev["network"]
+	} else {
+		n.network = dev["parent"]
+	}
+	if eth0, ok := c.State.Network["eth0"]; ok {
+		n.veth = eth0.HostName
 		for _, addr := range eth0.Addresses {
 			if addr.Family == "inet" {
-				ip = addr.Address
+				n.ip = addr.Address
 				break
 			}
 		}
 	}
-	return ip, veth, nil
+	return n, nil
 }
 
 // NftInstalled checks if the nft binary is installed
@@ -1074,19 +1130,23 @@ func BridgeInTrustedZone() (bool, string, error) {
 
 // EnsureBridgeInTrustedZone ensures the Incus bridge has iptables FORWARD ACCEPT
 // rules so containers can obtain IPs via DHCP even when the FORWARD policy is DROP.
+// When sudo refuses iptables, it asks for nothing if the FORWARD chain already
+// accepts the bridge's traffic. It acts once per process: later calls return
+// (false, bridgeName, nil).
 // Returns (changed, bridgeName, error).
 func EnsureBridgeInTrustedZone() (bool, string, error) {
 	bridgeName, err := GetIncusBridgeName()
 	if err != nil {
 		return false, "", fmt.Errorf("could not determine bridge name: %w", err)
 	}
-	if IptablesBridgeRulesExist(bridgeName) {
+	bridgeForwardMu.Lock()
+	defer bridgeForwardMu.Unlock()
+	if bridgeForwardEnsured {
 		return false, bridgeName, nil
 	}
-	if err := EnsureIptablesBridgeRules(bridgeName); err != nil {
-		return false, bridgeName, err
-	}
-	return true, bridgeName, nil
+	bridgeForwardEnsured = true
+	changed, err := ensureBridgeForward(bridgeName)
+	return changed, bridgeName, err
 }
 
 // IptablesAvailable checks if the iptables binary is installed
@@ -1136,8 +1196,8 @@ func GetIncusBridgeName() (string, error) {
 }
 
 // bridgeName memoizes GetIncusBridgeName's answer for the process: the default
-// profile's network doesn't change under a running coi, and a launch asked
-// for it twice (bridge trust check, gateway lookup). Only successes are kept.
+// profile's network doesn't change under a running coi, and a launch may ask
+// for it more than once. Only successes are kept.
 var (
 	bridgeNameMu sync.Mutex
 	bridgeName   string
@@ -1170,11 +1230,19 @@ func lookupIncusBridgeName() (string, error) {
 // given bridge interface. The rules are tagged with a comment so they can be
 // identified for cleanup.
 func EnsureIptablesBridgeRules(bridgeName string) error {
+	_, err := insertIptablesBridgeRules(bridgeName)
+	return err
+}
+
+// insertIptablesBridgeRules is EnsureIptablesBridgeRules that also reports
+// whether it inserted a rule.
+func insertIptablesBridgeRules(bridgeName string) (bool, error) {
 	rules := [][]string{
-		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
-		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
+		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
+		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
 	}
 
+	inserted := false
 	for _, ruleSpec := range rules {
 		if iptablesRuleExists("FORWARD", ruleSpec...) {
 			continue
@@ -1183,17 +1251,18 @@ func EnsureIptablesBridgeRules(bridgeName string) error {
 		cmd := exec.Command("sudo", args...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("failed to add iptables rule: %s: %w", strings.TrimSpace(string(output)), err)
+			return inserted, fmt.Errorf("failed to add iptables rule: %s: %w", strings.TrimSpace(string(output)), err)
 		}
+		inserted = true
 	}
-	return nil
+	return inserted, nil
 }
 
 // RemoveIptablesBridgeRules removes the coi-bridge-forward iptables rules.
 func RemoveIptablesBridgeRules(bridgeName string) error {
 	rules := [][]string{
-		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
-		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward"},
+		{"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
+		{"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment},
 	}
 
 	for _, ruleSpec := range rules {
@@ -1213,9 +1282,9 @@ func RemoveIptablesBridgeRules(bridgeName string) error {
 // IptablesBridgeRulesExist checks whether the coi-bridge-forward rules exist
 func IptablesBridgeRulesExist(bridgeName string) bool {
 	inRule := iptablesRuleExists("FORWARD",
-		"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward")
+		"-i", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment)
 	outRule := iptablesRuleExists("FORWARD",
-		"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", "coi-bridge-forward")
+		"-o", bridgeName, "-j", "ACCEPT", "-m", "comment", "--comment", bridgeForwardComment)
 	return inRule && outRule
 }
 
@@ -1243,12 +1312,12 @@ func GetContainerVethName(containerName string) (string, error) {
 	if veth, err := container.ConfigGetUncached(context.Background(), containerName, "volatile.eth0.host_name"); err == nil && hostInterfaceExists(veth) {
 		return veth, nil
 	}
-	_, veth, err := lookupInstanceNet(containerName)
+	n, err := lookupInstanceNet(containerName)
 	if err != nil {
 		return "", err
 	}
-	if veth == "" {
+	if n.veth == "" {
 		return "", fmt.Errorf("no veth interface found for container %s", containerName)
 	}
-	return veth, nil
+	return n.veth, nil
 }

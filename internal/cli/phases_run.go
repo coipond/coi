@@ -120,13 +120,13 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 				// its slot and would silently launch a FRESH container on
 				// the next slot (state never persists, slots exhaust).
 				if a.persistent {
-					if reuse, ok := session.FindReusablePersistentSlot(s.absWorkspace, a.sessionName(), 10); ok {
+					if reuse, ok := session.FindReusablePersistentSlot(s.absWorkspace, a.sessionName(), session.MaxSlots); ok {
 						slotNum = reuse
 						fmt.Fprintf(os.Stderr, "Reusing persistent container on slot %d\n", slotNum)
 					}
 				}
 				if slotNum == 0 {
-					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), 10)
+					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), session.MaxSlots)
 					if err != nil {
 						return nil, fmt.Errorf("failed to allocate slot: %w", err)
 					}
@@ -170,6 +170,7 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			fmt.Fprintf(os.Stderr, "Launching container %s from image %s...\n", s.containerName, s.img)
 
 			mgr := container.NewManager(s.containerName)
+			mgr.InitConfig = []string{session.WorkspaceConfigKey + "=" + s.absWorkspace}
 			containerExists, err := mgr.Exists()
 			if err != nil {
 				return nil, fmt.Errorf("failed to check if container exists: %w", err)
@@ -275,6 +276,16 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 					// against a workspace it cannot write.
 					return idmapErr
 				}
+				// Resource limits before first boot (shell parity), so the start
+				// needs no extra calls for them; a reused container reconciles
+				// them in preRestart instead.
+				if limitsConfig := &a.cfg.Limits; limitsConfig.HasAny() {
+					fmt.Fprintf(os.Stderr, "Applying resource limits...\n")
+					applyOpts := session.LimitsApplyOptions(s.containerName, a.cfg.Incus.Project, limitsConfig)
+					if err := limits.ApplyResourceLimits(applyOpts); err != nil {
+						return fmt.Errorf("failed to apply resource limits: %w", err)
+					}
+				}
 				// Harden the bridge NIC against egress-isolation bypass: anti-spoof
 				// the source IP/MAC (so saddr-keyed nft rules can't be dodged) and
 				// isolate the bridge port (no L2 reach to sibling containers). The
@@ -331,6 +342,10 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				}
 				if err := session.ReconcileLimits(s.containerName, a.cfg.Incus.Project, &a.cfg.Limits, logFn); err != nil {
 					return err
+				}
+				// A persistent container from an older coi lacks the key.
+				if _, err := container.ConfigSetIfChanged(context.Background(), s.containerName, session.WorkspaceConfigKey, s.absWorkspace); err != nil {
+					logFn(fmt.Sprintf("Warning: Failed to set workspace metadata: %v", err))
 				}
 				s.containerWorkspace = mgr.GetWorkspacePath()
 				layout, wtErr := session.ResolveGitWorktree(s.absWorkspace)
@@ -448,8 +463,8 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 	}
 }
 
-// configureContainerRunPhase applies resource limits, waits for the container
-// to be ready, and remaps the code user's UID/GID if configured. Disk devices
+// configureContainerRunPhase waits for the container to be ready and remaps
+// the code user's UID/GID if configured. Resource limits and disk devices
 // (workspace, additional mounts, security + secret overlays) and the immutable
 // flags are the launch phase's job now — attached by its pre-start hook,
 // released by its teardown (#534); only the wasRestarted reuse path resolves
@@ -458,17 +473,6 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "configure-container",
 		RunFn: func(ctx context.Context) (session.Teardown, error) {
-			if !s.wasRestarted {
-				limitsConfig := &a.cfg.Limits
-				if limitsConfig.HasAny() {
-					fmt.Fprintf(os.Stderr, "Applying resource limits...\n")
-					applyOpts := session.LimitsApplyOptions(s.containerName, a.cfg.Incus.Project, limitsConfig)
-					if err := limits.ApplyResourceLimits(applyOpts); err != nil {
-						return nil, fmt.Errorf("failed to apply resource limits: %w", err)
-					}
-				}
-			}
-
 			logFn := stderrLogFn
 
 			// ctx is the pipeline's signal-cancelled context (run.go's
@@ -619,7 +623,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 	}
 }
 
-// startMonitoringRunPhase starts the security monitoring daemons for the run
+// startMonitoringRunPhase starts the security monitors for the run
 // container via the shared startSessionMonitoring helper (same watchers as an
 // agent session). Threat events land in the audit log via the responder;
 // diagnostics use a discard logger (run has no session log file).
@@ -812,22 +816,9 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 				return nil, fmt.Errorf("failed to stage prompt file in container: %w", err)
 			}
 
-			// Build the headless (print-mode) launch command. A fresh session per
-			// fire (Resume:false) is the right cron default — deterministic, no
-			// accumulating conversation state.
-			argv, outOfBand, err := buildToolLaunchArgv(t, tool.LaunchSpec{
-				SessionID:  s.promptSessionID,
-				PromptFile: promptPath,
-				Print:      true,
-			})
+			script, err := buildPromptRunScript(t, s.promptSessionID, promptPath)
 			if err != nil {
 				return nil, err
-			}
-			if outOfBand != "" {
-				// Tool can't embed the prompt in argv and coi run has no
-				// orchestrator to deliver it out-of-band.
-				return nil, &ExitCodeError{Code: 2, Message: fmt.Sprintf(
-					"tool %q cannot run a prompt headlessly via coi run", t.Name())}
 			}
 
 			// incus exec as the run user; route through a non-login shell so the
@@ -845,7 +836,7 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 			if err != nil {
 				return nil, err
 			}
-			incusArgs = append(incusArgs, "--", "bash", "-c", strings.Join(argv, " "))
+			incusArgs = append(incusArgs, "--", "bash", "-c", script)
 
 			// A ToolWithHeadlessPrompt tool (opencode) creates its own session
 			// id, so coi's id would mislead there.
@@ -880,4 +871,26 @@ func sizeTmpfsAndRemapUser(mgr container.ContainerManager, limitsCfg *config.Lim
 	}
 	session.ApplyTmpfsSizing(mgr, limitsCfg, logFn)
 	return remapContainerUserIfNeeded(mgr, wasRestarted)
+}
+
+// buildPromptRunScript builds the headless (print-mode) launch command for
+// coi run --prompt, guarded so a tool missing from the image says so. A fresh
+// session per fire (Resume:false) is the right cron default — deterministic,
+// no accumulating conversation state.
+func buildPromptRunScript(t tool.Tool, sessionID, promptPath string) (string, error) {
+	argv, outOfBand, err := buildToolLaunchArgv(t, tool.LaunchSpec{
+		SessionID:  sessionID,
+		PromptFile: promptPath,
+		Print:      true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if outOfBand != "" {
+		// Tool can't embed the prompt in argv and coi run has no
+		// orchestrator to deliver it out-of-band.
+		return "", &ExitCodeError{Code: 2, Message: fmt.Sprintf(
+			"tool %q cannot run a prompt headlessly via coi run", t.Name())}
+	}
+	return guardToolInstalled(t.Name(), strings.Join(argv, " ")), nil
 }

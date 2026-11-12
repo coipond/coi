@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/coipond/coi/internal/alias"
 	"github.com/coipond/coi/internal/container"
@@ -44,7 +43,9 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 	// A profile-carried session_name changes which container this workspace
 	// resolves to, so the operational commands apply the same [defaults]
 	// profile fallback the launch used (error-tolerantly, per #607).
-	a.applyDefaultProfileForOps(cmd)
+	if err := a.applyDefaultProfileForOps(cmd); err != nil {
+		return err
+	}
 	var targetContainer string
 
 	// If --slot is provided, calculate container name from workspace and slot
@@ -68,8 +69,7 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Attaching to %s (slot %d)...\n", targetContainer, attachSlot)
 	} else {
 		// List all running containers with configured prefix
-		prefix := regexp.QuoteMeta(session.GetContainerPrefix())
-		containers, err := container.ListContainers(prefix + ".*")
+		containers, err := container.ListContainers(session.ContainerPattern())
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}

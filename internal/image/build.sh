@@ -21,6 +21,10 @@ OPENCODE2_FALLBACK_VERSION="2.1.0"
 # coi's sandbox context reaches OpenCode v2 through `instructions`, which v2
 # reads from 2.0.30 on.
 OPENCODE2_MIN_VERSION="2.0.30"
+# goose is pinned: build.sh checks each release tarball against its sha256.
+GOOSE_VERSION="v1.57.0"
+GOOSE_SHA256_X86_64="10eb96cb6a159b6e1d38eeedbef6ab64cd28168aad91948f1fa5c34eefdf98e3"
+GOOSE_SHA256_AARCH64="c32605acfd560aeb2adbf17ec359cc0217e28022a7e647b35a6af5dcfca91749"
 
 log() {
     echo "[coi] $*"
@@ -347,6 +351,70 @@ MISE_PROFILE_EOF
 }
 
 #######################################
+# Fill known_hosts for github.com, gitlab.com and bitbucket.org over HTTPS
+# only, never with a key scan on port 22: such scans trip IDS rules and
+# trust whatever answers. GitHub and Bitbucket publish their keys over TLS.
+# A failed or malformed fetch, and gitlab.com (no such endpoint), use the
+# embedded keys.
+#######################################
+known_hosts_embedded() {
+    # Published at https://api.github.com/meta,
+    # https://docs.gitlab.com/user/gitlab_com/#ssh-host-keys-fingerprints and
+    # https://bitbucket.org/site/ssh
+    cat <<'KEYS'
+github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY=
+gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf
+gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Yt0aGROY5qX2UKSeOvuP4D6TPqKF1onrSzH9bx9XUf2lEdWT/ia1NEKjunUqu1xOB/StKDHMoX4/OKyIzuS0q/T1zOATthvasJFoPrAjkohTyaDUz2LN5JoH839hViyEG82yB+MjcFV5MU3N1l1QL3cVUCh93xSaua1N85qivl+siMkPGbO5xR/En4iEY6K2XPASUEMaieWVNTRCtJ4S8H+9
+bitbucket.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPIQmuzMBuKdWeF4+a2sjSSpBK0iqitSQ+5BM9KhpexuGt20JpTVM7u5BDZngncgrqDMbWdxMWWOGtZ9UgbqgZE=
+bitbucket.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIazEu89wgQZ4bqs3d63QSMzYVa0MuJ2e2gKTKqu+UUO
+bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uh/7Iv4uyH/cV/0b4WDSd3DptigWq84lJubb9t/DnZlrJazxyDCulTmKdOR7vs9gMTo+uoIrPSb8ScTtvw65+odKAlBj59dhnVp9zd7QUojOpXlL62Aw56U4oO+FALuevvMjiWeavKhJqlR7i5n9srYcrNV7ttmDw7kf/97P5zauIhxcjX+xHv4M=
+KEYS
+}
+
+# Succeeds when ssh-keygen reads every line of $1 and there are ed25519,
+# ecdsa and rsa keys.
+known_hosts_valid() {
+    local file="$1" fps _type
+    [ -s "$file" ] || return 1
+    fps="$(ssh-keygen -l -f "$file" 2>/dev/null)" || return 1
+    [ "$(printf '%s\n' "$fps" | wc -l)" = "$(wc -l < "$file")" ] || return 1
+    for _type in ED25519 ECDSA RSA; do
+        printf '%s\n' "$fps" | grep -q "($_type)$" || return 1
+    done
+}
+
+populate_known_hosts() {
+    local file="$1" tmp host
+    : > "$file"
+    tmp="$(mktemp)" || return 1
+    for host in github.com gitlab.com bitbucket.org; do
+        : > "$tmp"
+        case "$host" in
+            github.com)
+                curl -fsS --max-time 15 --retry 2 https://api.github.com/meta 2>/dev/null |
+                    jq -r '.ssh_keys[] | "github.com " + .' > "$tmp" 2>/dev/null || :
+                ;;
+            bitbucket.org)
+                curl -fsS --max-time 15 --retry 2 https://bitbucket.org/site/ssh 2>/dev/null |
+                    grep '^bitbucket\.org ' > "$tmp" || :
+                ;;
+        esac
+        if known_hosts_valid "$tmp"; then
+            log "SSH host keys for $host fetched over HTTPS"
+        else
+            [ "$host" = gitlab.com ] ||
+                log "WARNING: no valid SSH host keys for $host over HTTPS, using the embedded keys"
+            known_hosts_embedded | grep "^${host//./\\.} " > "$tmp"
+        fi
+        cat "$tmp" >> "$file"
+    done
+    rm -f "$tmp"
+}
+
+#######################################
 # Create code user with passwordless sudo
 #######################################
 create_code_user() {
@@ -372,29 +440,8 @@ create_code_user() {
     # the image installs, so a mount target never leaves a root-owned parent
     # behind.
     mkdir -p "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state" "/home/$CODE_USER/.opencode"
-    # Pre-populate known_hosts. Try ssh-keyscan first (fresh keys); fall back to
-    # embedded static keys for hosts where the SSH endpoint is unreachable (e.g.
-    # bitbucket.org blocks automated scans, may be in maintenance windows).
-    for _host in github.com gitlab.com bitbucket.org; do
-        for _attempt in 1 2 3; do
-            if ssh-keyscan -T 10 -t ed25519,rsa,ecdsa "$_host" >> "/home/$CODE_USER/.ssh/known_hosts" 2>/dev/null; then
-                break
-            fi
-            sleep 2
-        done
-    done
-    unset _host _attempt
-
-    # Ensure bitbucket.org is always present — its SSH endpoint is sometimes
-    # unavailable (maintenance, IP rate-limiting). These are the published keys
-    # from https://www.atlassian.com/blog/bitbucket/ssh-host-key-changes
-    if ! grep -q "^bitbucket.org " "/home/$CODE_USER/.ssh/known_hosts" 2>/dev/null; then
-        cat >> "/home/$CODE_USER/.ssh/known_hosts" <<'BBKEYS'
-bitbucket.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPIQmuzMBuKdWeF4+a2sjSSpBK0iqitSQ+5BM9KhpexuGt20JpTVM7u5BDZngncgrqDMbWdxMWWOGtZ9UgbqgZE=
-bitbucket.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIazEu89wgQZ4bqs3d63QSMzYVa0MuJ2e2gKTKqu+UUO
-bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uh/7Iv4uyH/cV/0b4WDSd3DptigWq84lJubb9t/DnZlrJazxyDCulTmKdOR7vs9gMTo+uoIrPSb8ScTtvw65+odKAlBj59dhnVp9zd7QUojOpXlL62Aw56U4oO+FALuevvMjiWeavKhJqlR7i5n9srYcrNV7ttmDw7kf/97P5zauIhxcjX+xHv4M=
-BBKEYS
-    fi
+    populate_known_hosts "/home/$CODE_USER/.ssh/known_hosts" ||
+        log "WARNING: could not fill /home/$CODE_USER/.ssh/known_hosts"
     chmod 644 "/home/$CODE_USER/.ssh/known_hosts"
     chown -R "$CODE_USER:$CODE_USER" "/home/$CODE_USER"
 
@@ -891,6 +938,64 @@ install_omp() {
 }
 
 #######################################
+# Install goose from its pinned release tarball
+# See: https://goose-docs.ai
+#
+# Not in the default agent set — opt in via [container.build]
+# agents = ["claude", "goose"] before building (issue #970).
+#######################################
+install_goose() {
+    log "Installing goose $GOOSE_VERSION..."
+
+    local GOOSE_ARCH GOOSE_SHA256
+    case "$(uname -m)" in
+        x86_64) GOOSE_ARCH="x86_64"; GOOSE_SHA256="$GOOSE_SHA256_X86_64" ;;
+        aarch64|arm64) GOOSE_ARCH="aarch64"; GOOSE_SHA256="$GOOSE_SHA256_AARCH64" ;;
+        *)
+            log "ERROR: unsupported CPU architecture '$(uname -m)' for goose."
+            exit 1
+            ;;
+    esac
+
+    local URL="https://github.com/aaif-goose/goose/releases/download/${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz"
+    local TMP_DIR
+    TMP_DIR="$(mktemp -d)"
+    local TARBALL="$TMP_DIR/goose.tar.gz"
+
+    local attempt
+    for attempt in 1 2 3; do
+        if curl -fsSL -o "$TARBALL" "$URL"; then
+            break
+        fi
+        if [ "$attempt" -eq 3 ]; then
+            log "ERROR: goose download failed after 3 attempts."
+            exit 1
+        fi
+        log "goose download failed (attempt $attempt/3), retrying in 10s..."
+        sleep 10
+    done
+
+    if ! echo "$GOOSE_SHA256  $TARBALL" | sha256sum -c --quiet -; then
+        log "ERROR: goose tarball sha256 mismatch (want $GOOSE_SHA256)."
+        exit 1
+    fi
+
+    tar xzf "$TARBALL" -C "$TMP_DIR" ./goose
+    install -m 0755 "$TMP_DIR/goose" /usr/local/bin/goose
+    rm -rf "$TMP_DIR"
+
+    # Lowest-precedence config: the user's copied ~/.config/goose/config.yaml
+    # still wins. Any config file also skips goose's first-time setup.
+    mkdir -p /etc/goose
+    cat > /etc/goose/config.yaml << 'EOF'
+GOOSE_TELEMETRY_ENABLED: false
+GOOSE_DISABLE_KEYRING: true
+EOF
+
+    log "goose $(goose --version 2>/dev/null || echo 'installed')"
+}
+
+#######################################
 # Install dummy (test stub for testing)
 #######################################
 install_dummy() {
@@ -1027,6 +1132,13 @@ EOF
     # Enable the timer (it is masked in some minimal Ubuntu images)
     systemctl enable systemd-tmpfiles-clean.timer 2>/dev/null || true
 
+    # Ubuntu 25.10+ enables systemd's tmp.mount, a RAM-backed /tmp of 50% RAM.
+    # It mounts over workspace paths under /tmp and over the sized tmp.mount
+    # coi installs for [limits.disk] tmpfs_size. Keep /tmp disk-backed;
+    # SetTmpfsSize replaces the mask with its own unit.
+    systemctl mask tmp.mount ||
+        { log "ERROR: could not mask tmp.mount"; exit 1; }
+
     log "/tmp cleanup configured (1h age threshold, 15min timer)"
 }
 
@@ -1121,10 +1233,10 @@ cleanup() {
 #######################################
 # install_selected_agents installs the AI agents named in $COI_AGENTS (comma- or
 # space-separated). When COI_AGENTS is unset/empty it installs the default agents,
-# preserving the historical behavior (issue #454). codex is supported but opt-in
-# only (issue #698) — request it explicitly to include it. Unknown names are
-# warned and skipped (coi validates the list host-side before build, so this is
-# defense-in-depth).
+# preserving the historical behavior (issue #454). codex (issue #698), omp and
+# goose are supported but opt-in only — request them explicitly to include
+# them. Unknown names are warned and skipped (coi validates the list host-side
+# before build, so this is defense-in-depth).
 install_selected_agents() {
     local agents="${COI_AGENTS:-claude opencode2 pi}"
     for agent in ${agents//,/ }; do
@@ -1135,6 +1247,7 @@ install_selected_agents() {
             pi) install_pi ;;
             codex) install_codex ;;
             omp) install_omp ;;
+            goose) install_goose ;;
             "") ;;
             *) log "WARNING: unknown agent '$agent' in COI_AGENTS, skipping" ;;
         esac
