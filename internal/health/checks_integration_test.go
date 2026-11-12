@@ -76,7 +76,7 @@ func TestCheckIncus_VersionCheck(t *testing.T) {
 }
 
 // evaluateIncusVersion should return StatusWarning with zabbly upgrade instructions for old versions
-// (6.0.x, 5.x), StatusWarning with "recommended" advice for versions between the hard minimum and
+// (6.0.x, 5.x), StatusOK with a "recommended" note for versions between the hard minimum and
 // the recommended floor, StatusOK for recommended-or-newer versions, and degrade gracefully
 // (StatusOK) when the version output is unparseable or empty.
 func TestEvaluateIncusVersion_OldVersion(t *testing.T) {

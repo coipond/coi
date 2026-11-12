@@ -34,6 +34,92 @@ func onDemandHome(t testing.TB) string {
 	return filepath.Join(home, ".coi")
 }
 
+func TestLoadWithoutProfiles_ListsNoProfile(t *testing.T) {
+	coiDir := onDemandHome(t)
+	writeTestProfile(t, coiDir, "good", "[container]\nimage = \"good-image\"\n")
+	writeTestProfile(t, coiDir, "broken", "[container\nimage = \n")
+	if err := os.WriteFile(filepath.Join(coiDir, "config.toml"),
+		[]byte("[incus]\nproject = \"p1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadWithoutProfiles()
+	if err != nil {
+		t.Fatalf("LoadWithoutProfiles(): %v", err)
+	}
+	if cfg.Incus.Project != "p1" {
+		t.Errorf("project = %q, want p1", cfg.Incus.Project)
+	}
+	if len(cfg.pendingProfiles) != 0 || cfg.GetProfile("good") != nil {
+		t.Error("a disk profile was listed")
+	}
+	for name := range cfg.Profiles {
+		if !IsBuiltinProfile(name) {
+			t.Errorf("profile %q was read", name)
+		}
+	}
+}
+
+// LoadWithoutProfiles rejects a profile name in two locations like
+// LoadOnDemand does, and accepts what LoadOnDemand accepts.
+func TestLoadWithoutProfiles_DuplicateNames(t *testing.T) {
+	// project is what ./.coi/profiles/dup is: "config" (a profile), "dir" (no
+	// config.toml), "symlink" (to a profile), "home" (cwd is HOME) or "" (none).
+	// coiConfig is what the COI_CONFIG dir holds: "" (COI_CONFIG unset),
+	// "empty" (no profiles) or "dup" (a dup profile).
+	tests := map[string]struct {
+		project   string
+		coiConfig string
+		wantErr   bool
+	}{
+		"duplicate":                                  {project: "config", wantErr: true},
+		"project dir without config":                 {project: "dir"},
+		"project dir is home":                        {project: "home"},
+		"project dir is a symlink":                   {project: "symlink"},
+		"duplicate, COI_CONFIG dir without profiles": {project: "config", coiConfig: "empty", wantErr: true},
+		"duplicate in COI_CONFIG dir, no project":    {coiConfig: "dup", wantErr: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			coiDir := onDemandHome(t)
+			writeTestProfile(t, coiDir, "dup", "[container]\nimage = \"a\"\n")
+			switch tt.project {
+			case "home":
+				t.Chdir(filepath.Dir(coiDir))
+			case "symlink":
+				target := filepath.Dir(writeTestProfile(t, t.TempDir(), "dup", "[container]\nimage = \"b\"\n"))
+				if err := os.MkdirAll(filepath.Join(".coi", "profiles"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, filepath.Join(".coi", "profiles", "dup")); err != nil {
+					t.Fatal(err)
+				}
+			case "config":
+				writeTestProfile(t, ".coi", "dup", "[container]\nimage = \"b\"\n")
+			case "dir":
+				if err := os.MkdirAll(filepath.Join(".coi", "profiles", "dup"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.coiConfig != "" {
+				dir := t.TempDir()
+				t.Setenv("COI_CONFIG", filepath.Join(dir, "config.toml"))
+				if tt.coiConfig == "dup" {
+					writeTestProfile(t, dir, "dup", "[container]\nimage = \"c\"\n")
+				}
+			}
+			_, onDemandErr := LoadOnDemand()
+			_, err := LoadWithoutProfiles()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("LoadWithoutProfiles() = %v, wantErr %v", err, tt.wantErr)
+			}
+			if fmt.Sprint(err) != fmt.Sprint(onDemandErr) {
+				t.Errorf("error %q differs from LoadOnDemand's %q", err, onDemandErr)
+			}
+		})
+	}
+}
+
 func TestLoadOnDemand_BrokenUnrelatedProfileNotRead(t *testing.T) {
 	coiDir := onDemandHome(t)
 	writeTestProfile(t, coiDir, "good", "[container]\nimage = \"good-image\"\n")
@@ -318,6 +404,13 @@ func BenchmarkLoadProfiles(b *testing.B) {
 			writeTestProfile(b, coiDir, fmt.Sprintf("slot-%05d", i),
 				"[container]\nimage = \"coi-default\"\npersistent = true\n[environment]\nNODE = \"n1\"\n")
 		}
+		b.Run(fmt.Sprintf("without-profiles/%d", count), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := LoadWithoutProfiles(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 		b.Run(fmt.Sprintf("no-profile/%d", count), func(b *testing.B) {
 			for b.Loop() {
 				if _, err := LoadOnDemand(); err != nil {
@@ -397,5 +490,24 @@ func TestLoadOnDemand_InvalidSessionNameFails(t *testing.T) {
 	}
 	if p := cfg.GetProfile("child"); p != nil {
 		t.Errorf("a failed profile must not be returned, got %+v", *p)
+	}
+}
+
+// LoadWithoutProfiles with as many profiles in ./.coi/profiles as in
+// ~/.coi/profiles: the duplicate-name check reads names only.
+func BenchmarkLoadWithoutProfilesProjectProfiles(b *testing.B) {
+	for _, count := range []int{10, 1000, 5000} {
+		coiDir := onDemandHome(b)
+		for i := range count {
+			writeTestProfile(b, coiDir, fmt.Sprintf("user-%05d", i), "[container]\nimage = \"coi-default\"\n")
+			writeTestProfile(b, ".coi", fmt.Sprintf("project-%05d", i), "[container]\nimage = \"coi-default\"\n")
+		}
+		b.Run(fmt.Sprintf("%d", count), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := LoadWithoutProfiles(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
