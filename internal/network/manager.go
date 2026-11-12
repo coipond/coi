@@ -875,11 +875,16 @@ func GetContainerGatewayIP(containerName string) (string, error) {
 	return getContainerGatewayIP(containerName)
 }
 
-// getContainerGatewayIP auto-detects the gateway IP for a container's network
+// getContainerGatewayIP auto-detects the gateway IP of the network the
+// container's eth0 is attached to (not the default profile's).
 func getContainerGatewayIP(containerName string) (string, error) {
-	networkName, err := GetIncusBridgeName()
+	n, err := lookupInstanceNet(containerName)
 	if err != nil {
 		return "", err
+	}
+	networkName := n.network
+	if networkName == "" {
+		return "", fmt.Errorf("no eth0 network found for container %s", containerName)
 	}
 	gatewayMu.Lock()
 	defer gatewayMu.Unlock()
