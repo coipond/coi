@@ -1333,6 +1333,18 @@ def wait_for_pattern_in_monitor(monitor, pattern, timeout=30, poll_interval=0.5)
     return None
 
 
+def incus_status(container_name):
+    """Return the container's status from `incus list` in upper case
+    (RUNNING, STOPPED, FROZEN), or "" when it does not exist."""
+    r = subprocess.run(
+        ["incus", "list", f"^{re.escape(container_name)}$", "--format=csv", "-c", "s"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return r.stdout.strip().upper()
+
+
 def container_config_get(container_name, key):
     """Return `incus config get <container> <key>`, or None."""
     r = subprocess.run(
@@ -1701,6 +1713,51 @@ def make_workspace_writable(workspace_dir):
     stop a write, preventing false passes.
     """
     subprocess.run(["chmod", "-R", "a+rwX", workspace_dir], check=True, capture_output=True)
+
+
+def foreign_container_state(names):
+    """Snapshot what coi must never change on non-coi containers: status,
+    user.* config, profiles, devices and snapshots, keyed by name."""
+    r = subprocess.run(
+        ["incus", "list", "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, f"incus list failed: {r.stderr}"
+    state = {}
+    for c in json.loads(r.stdout):
+        if c.get("name") not in names:
+            continue
+        state[c["name"]] = {
+            "status": c.get("status"),
+            "config": {k: v for k, v in c.get("config", {}).items() if k.startswith("user.")},
+            "profiles": c.get("profiles"),
+            "devices": c.get("devices"),
+            "expanded_devices": c.get("expanded_devices"),
+            "snapshots": [s.get("name") for s in c.get("snapshots") or []],
+        }
+    return state
+
+
+def incus_host_state():
+    """Snapshot the host-wide Incus objects coi must never change: profiles,
+    networks and storage pools. `used_by` is dropped: it lists coi's own
+    containers too."""
+    state = {}
+    for kind in ("profile", "network", "storage"):
+        r = subprocess.run(
+            ["incus", kind, "list", "--format=json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert r.returncode == 0, f"incus {kind} list failed: {r.stderr}"
+        state[kind] = sorted(
+            ({k: v for k, v in o.items() if k != "used_by"} for o in json.loads(r.stdout)),
+            key=lambda o: o.get("name", ""),
+        )
+    return state
 
 
 # git with a throwaway identity and the file protocol allowed, for local submodules.

@@ -167,11 +167,7 @@ type SessionInfo struct {
 
 // listActiveContainers lists all active Coi containers
 func listActiveContainers() ([]ContainerInfo, error) {
-	// Use the configured container prefix (respects COI_CONTAINER_PREFIX env var)
-	prefix := session.GetContainerPrefix()
-	pattern := fmt.Sprintf("^%s", prefix)
-
-	output, err := container.IncusOutput("list", pattern, "--format=json")
+	output, err := container.IncusOutput("list", session.ContainerPattern(), "--format=json")
 	if err != nil {
 		return nil, err
 	}

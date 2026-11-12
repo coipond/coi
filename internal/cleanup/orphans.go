@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/coipond/coi/internal/container"
@@ -25,27 +26,38 @@ type OrphanedResources struct {
 	IptablesBridgeRules []string // Orphaned iptables coi-bridge-forward rules (no coi containers running)
 }
 
+// netClassDir is where DetectOrphanedVeths reads host interfaces. Package var
+// so tests can point it at a fixture.
+var netClassDir = "/sys/class/net"
+
 // DetectOrphanedVeths finds veth interfaces that have no master bridge
 // These are typically left over from improperly cleaned up containers
 func DetectOrphanedVeths() ([]string, error) {
 	var orphaned []string
 
 	// Read all network interfaces from /sys/class/net
-	entries, err := os.ReadDir("/sys/class/net")
+	entries, err := os.ReadDir(netClassDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read network interfaces: %w", err)
+	}
+
+	// A routed NIC's host veth has no master either; never take one from any
+	// instance, coi's or not.
+	inUse, err := instanceHostVeths()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list instance NICs: %w", err)
 	}
 
 	for _, entry := range entries {
 		name := entry.Name()
 
 		// Only check veth interfaces
-		if !strings.HasPrefix(name, "veth") {
+		if !strings.HasPrefix(name, "veth") || inUse[name] {
 			continue
 		}
 
 		// Check if this veth has a master (bridge)
-		masterPath := fmt.Sprintf("/sys/class/net/%s/master", name)
+		masterPath := filepath.Join(netClassDir, name, "master")
 		if _, err := os.Stat(masterPath); os.IsNotExist(err) {
 			// No master symlink = orphaned veth
 			orphaned = append(orphaned, name)
@@ -124,6 +136,36 @@ func CleanupOrphanedIPv6Rules(names []string, logger func(string)) (int, error) 
 		cleaned++
 	}
 	return cleaned, nil
+}
+
+// instanceHostVeths returns the host-side interface names of every instance
+// NIC Incus reports, in every project.
+func instanceHostVeths() (map[string]bool, error) {
+	output, err := container.IncusOutputAllProjects("list", "--format=json")
+	if err != nil {
+		return nil, err
+	}
+
+	var instances []struct {
+		State struct {
+			Network map[string]struct {
+				HostName string `json:"host_name"`
+			} `json:"network"`
+		} `json:"state"`
+	}
+	if err := parseJSON(output, &instances); err != nil {
+		return nil, err
+	}
+
+	veths := make(map[string]bool)
+	for _, inst := range instances {
+		for _, nic := range inst.State.Network {
+			if nic.HostName != "" {
+				veths[nic.HostName] = true
+			}
+		}
+	}
+	return veths, nil
 }
 
 // getRunningContainerNames returns the names of all running containers.
