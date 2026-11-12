@@ -163,3 +163,24 @@ func detectPushArchive() bool {
 	}
 	return v.Major > 7 || (v.Major == 7 && v.Minor >= 5)
 }
+
+// pullNoDereferenceSupported reports, once per process, whether the incus
+// client has `file pull -P` (6.23+). Without -P, a 6.23+ client follows a
+// symlink source; older clients copy the link itself.
+var pullNoDereferenceSupported = newPullNoDereferenceCheck()
+
+func newPullNoDereferenceCheck() func() bool {
+	return sync.OnceValue(detectPullNoDereference)
+}
+
+func detectPullNoDereference() bool {
+	out, err := IncusOutput("--version")
+	if err != nil {
+		return false
+	}
+	v, err := ParseIncusVersion(out)
+	if err != nil {
+		return false
+	}
+	return v.Major > 6 || (v.Major == 6 && v.Minor >= 23)
+}
