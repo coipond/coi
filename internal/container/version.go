@@ -150,17 +150,31 @@ func FormatMinVersionError(v *IncusVersion) string {
 var pushArchiveSupported = newPushArchiveCheck()
 
 func newPushArchiveCheck() func() bool {
-	return sync.OnceValue(detectPushArchive)
+	return newClientVersionCheck(7, 5)
 }
 
-func detectPushArchive() bool {
-	out, err := IncusOutput("--version")
-	if err != nil {
-		return false
-	}
-	v, err := ParseIncusVersion(out)
-	if err != nil {
-		return false
-	}
-	return v.Major > 7 || (v.Major == 7 && v.Minor >= 5)
+// pullNoDereferenceSupported reports, once per process, whether the incus
+// client has `file pull -P` (6.23+). Without -P, a 6.23+ client follows a
+// symlink source; older clients copy the link itself.
+var pullNoDereferenceSupported = newPullNoDereferenceCheck()
+
+func newPullNoDereferenceCheck() func() bool {
+	return newClientVersionCheck(6, 23)
+}
+
+// newClientVersionCheck returns a check, probed on first use, of whether the
+// incus client is at least major.minor. A failed probe reports false, which
+// keeps the flags every client has.
+func newClientVersionCheck(major, minor int) func() bool {
+	return sync.OnceValue(func() bool {
+		out, err := IncusOutput("--version")
+		if err != nil {
+			return false
+		}
+		v, err := ParseIncusVersion(out)
+		if err != nil {
+			return false
+		}
+		return v.Major > major || (v.Major == major && v.Minor >= minor)
+	})
 }
