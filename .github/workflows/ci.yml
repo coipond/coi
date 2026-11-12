@@ -23,11 +23,42 @@ env:
   COI_APT_MIRROR: http://azure.archive.ubuntu.com/ubuntu
 
 jobs:
+  # Decides whether the pull request touches code (scripts/ci-changes.sh).
+  # Non-code-only pull requests (CHANGELOG.md, LICENSE, images, Markdown outside
+  # the code dirs) skip build and so every job that needs it; CI Success still
+  # reports success, so the required check does not stay pending.
+  # workflow_dispatch always runs everything.
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # HEAD is the PR merge commit, so HEAD^1..HEAD is what the PR changes
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Detect code changes
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bash scripts/ci-changes.sh HEAD^1 HEAD
+
   # Build job gates all tests - nothing runs if build fails
   build:
     name: Build
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -884,6 +915,7 @@ jobs:
     timeout-minutes: 5
     if: always()
     needs:
+      - changes
       - build
       - unit-tests
       - macos-unit-tests
@@ -891,10 +923,12 @@ jobs:
       - lima-smoke
       - installer-storage-arch
     steps:
+      # Skipped jobs are fine only when the changes job says non-code
       - name: Check all jobs passed
         if: |
+          needs.changes.result != 'success' ||
           contains(needs.*.result, 'failure') ||
           contains(needs.*.result, 'cancelled') ||
-          contains(needs.*.result, 'skipped')
+          (needs.changes.outputs.code != 'false' && contains(needs.*.result, 'skipped'))
         run: exit 1
       - run: echo "All CI checks passed!"
