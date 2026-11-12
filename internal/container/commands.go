@@ -673,6 +673,9 @@ func launchContainer(imageAlias, containerName, pool string, ephemeral bool, pre
 		return err
 	}
 	// Non-fatal: unset and retry at start time if the environment lacks subuid space.
+	// Its own call, not an `incus init -c`: Incus checks the subuid space when
+	// the key is written, and that failure must not abort the creation. After
+	// preStart, so the isolation-free recreate path shares initAndConfigureContainer.
 	_ = IsolateUIDNamespace(containerName)
 	if !ephemeral {
 		return startWithIsolationFallback(containerName)
@@ -757,10 +760,8 @@ func initAndConfigureContainer(imageAlias, containerName, pool string, ephemeral
 	for _, kv := range initConfig {
 		args = append(args, "-c", kv)
 	}
+	args = append(args, InitConfigArgs(policy)...)
 	if err := IncusExec(args...); err != nil {
-		return err
-	}
-	if err := ApplyKernelSurfacePolicy(containerName, policy); err != nil {
 		return err
 	}
 	// Fail closed BEFORE first boot when an attached Incus profile pins a key
@@ -769,9 +770,6 @@ func initAndConfigureContainer(imageAlias, containerName, pool string, ephemeral
 	// booting anyway would silently defeat the requested hardening. Free for
 	// the default (docker-on) policy — no reads are performed.
 	if err := VerifyKernelSurfacePolicy(containerName, policy); err != nil {
-		return err
-	}
-	if err := DisableGuestAPI(containerName); err != nil {
 		return err
 	}
 	if err := CheckNotPrivileged(containerName); err != nil {
@@ -792,13 +790,25 @@ func initConfigureAndStart(imageAlias, containerName, pool string, ephemeral boo
 	return IncusExec("start", containerName)
 }
 
-// DisableGuestAPI prevents the Incus guest API (/dev/incus) from being
-// accessible inside the container. The guest API exposes host source paths
-// in the device topology, leaking the host username and workspace layout
-// (see FLAWS.md Finding 3). Coi communicates with containers via the host
-// admin socket and does not need the guest API.
-func DisableGuestAPI(containerName string) error {
-	return IncusExec("config", "set", containerName, "security.guestapi=false")
+// guestAPIDisabled keeps the Incus guest API (/dev/incus) out of the
+// container. The guest API exposes host source paths in the device topology,
+// leaking the host username and workspace layout (see FLAWS.md Finding 3).
+// Coi communicates with containers via the host admin socket and does not
+// need the guest API.
+const guestAPIDisabled = "security.guestapi=false"
+
+// InitConfigArgs returns the `incus init` flags (`-c key=value` each) that
+// give a NEW container the kernel-surface policy and the disabled guest API
+// at creation. A key the policy unsets is left out: a fresh instance has no
+// instance-local value to clear.
+func InitConfigArgs(p HardeningPolicy) []string {
+	var args []string
+	for _, kv := range append(hardeningConfigArgs(p), guestAPIDisabled) {
+		if !strings.HasSuffix(kv, "=") {
+			args = append(args, "-c", kv)
+		}
+	}
+	return args
 }
 
 // IsolateUIDNamespace enables UID/GID namespace isolation for the container.
@@ -837,19 +847,24 @@ func IsolateUIDNamespace(containerName string) error {
 // unmanaged/static/macvlan NICs degrade to nft-only enforcement.
 func EnableNICSecurity(containerName string) error {
 	const nic = "eth0"
-	// Materialize the profile NIC at the instance level so device keys can be
-	// set on it. Ignored on failure: a re-run (e.g. persistent container that
-	// was already overridden) reports "already exists", and the explicit
-	// `config device set` calls below surface any real problem.
-	_ = IncusExecQuiet("config", "device", "override", containerName, nic)
-	for _, kv := range []string{
+	keys := []string{
 		"security.ipv4_filtering=true",
 		"security.mac_filtering=true",
 		"security.port_isolation=true",
-	} {
-		if err := IncusExec("config", "device", "set", containerName, nic, kv); err != nil {
-			return fmt.Errorf("failed to set %s on %s: %w", kv, nic, err)
-		}
+	}
+	// Not an `incus init -d eth0,...` override: a key Incus rejects (e.g. on a
+	// macvlan NIC) would abort the creation, but this hardening is non-fatal.
+	// Materialize the profile NIC at the instance level with the keys set, in
+	// one call. On failure (e.g. a persistent container that was already
+	// overridden reports "already exists"), fall back to a plain override,
+	// ignored on failure, and set the keys on the instance device: that
+	// `config device set` surfaces any real problem.
+	if IncusExecQuiet(append([]string{"config", "device", "override", containerName, nic}, keys...)...) == nil {
+		return nil
+	}
+	_ = IncusExecQuiet("config", "device", "override", containerName, nic)
+	if err := IncusExec(append([]string{"config", "device", "set", containerName, nic}, keys...)...); err != nil {
+		return fmt.Errorf("failed to set %s on %s: %w", strings.Join(keys, " "), nic, err)
 	}
 	return nil
 }
@@ -861,13 +876,12 @@ func EnableNICSecurity(containerName string) error {
 //
 // It is defence-in-depth only: in-container root can re-enable IPv6 at runtime,
 // which is why the host-side ip6 drop (network.ApplyIPv6BlockForContainer) is the
-// actual enforced boundary. Must be set before first boot.
+// actual enforced boundary. Must be set before first boot. It stays apart from
+// `incus init` because it is non-fatal: a rejected key must not abort the
+// creation.
 func DisableIPv6AtBoot(containerName string) error {
-	if err := IncusExec("config", "set", containerName,
-		"linux.sysctl.net.ipv6.conf.all.disable_ipv6=1"); err != nil {
-		return err
-	}
 	return IncusExec("config", "set", containerName,
+		"linux.sysctl.net.ipv6.conf.all.disable_ipv6=1",
 		"linux.sysctl.net.ipv6.conf.default.disable_ipv6=1")
 }
 
@@ -1149,12 +1163,13 @@ func parseRunningNamesCSV(output string) []string {
 	return names
 }
 
-// ContainerStateJSON returns the `/1.0/instances/<name>/state` JSON of one
-// container. Unlike `incus list <name> --format=json`, which loads the full
-// state of every instance whose name the filter matches, it fetches one.
-func ContainerStateJSON(containerName string) (string, error) {
+// ContainerFullJSON returns the `/1.0/instances/<name>?recursion=1` JSON of
+// one container: its config, expanded devices and state. Unlike
+// `incus list <name> --format=json`, which loads the full state of every
+// instance whose name the filter matches, it fetches one.
+func ContainerFullJSON(containerName string) (string, error) {
 	// `incus query` rejects --project, so the project goes in the URL.
-	query := fmt.Sprintf("/1.0/instances/%s/state?project=%s",
+	query := fmt.Sprintf("/1.0/instances/%s?recursion=1&project=%s",
 		url.PathEscape(containerName), url.QueryEscape(IncusProject))
 	return incusQuery(query)
 }
@@ -1169,6 +1184,12 @@ func buildIncusCommand(args ...string) []string {
 // ConfigSet sets a configuration key on a container.
 func ConfigSet(ctx context.Context, containerName, key, value string) error {
 	return IncusExecContext(ctx, "config", "set", containerName, key+"="+value)
+}
+
+// ConfigSetPairs sets several `key=value` pairs on a container in one
+// `incus config set`.
+func ConfigSetPairs(ctx context.Context, containerName string, pairs ...string) error {
+	return IncusExecContext(ctx, append([]string{"config", "set", containerName}, pairs...)...)
 }
 
 // ConfigGet returns the value of a configuration key on a container (trimmed).
@@ -1235,10 +1256,11 @@ func DeviceAdd(ctx context.Context, containerName string, deviceArgs ...string) 
 	return out, err
 }
 
-// DeviceSet sets a device-level configuration key on a container.
+// DeviceSet sets device-level `key=value` pairs on a container in one call.
 // Returns the combined stdout+stderr output (useful for error inspection) and any error.
-func DeviceSet(ctx context.Context, containerName, device, keyValue string) (string, error) {
-	return IncusOutputWithStderrContext(ctx, "config", "device", "set", containerName, device, keyValue)
+func DeviceSet(ctx context.Context, containerName, device string, pairs ...string) (string, error) {
+	args := append([]string{"config", "device", "set", containerName, device}, pairs...)
+	return IncusOutputWithStderrContext(ctx, args...)
 }
 
 // DeviceUnset removes a device-level configuration key from a container.

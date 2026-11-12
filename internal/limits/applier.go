@@ -36,74 +36,43 @@ func ApplyResourceLimitsContext(ctx context.Context, opts ApplyOptions) error {
 		return fmt.Errorf("validation failed: %s", FormatValidationErrors(validationErrors))
 	}
 
-	// Apply CPU limits
-	if err := applyCPULimits(ctx, opts.ContainerName, opts.CPU); err != nil {
-		return fmt.Errorf("failed to apply CPU limits: %w", err)
+	if pairs := instanceLimitPairs(opts); len(pairs) > 0 {
+		if err := container.ConfigSetPairs(ctx, opts.ContainerName, pairs...); err != nil {
+			return fmt.Errorf("failed to apply CPU/memory/process limits: %w", err)
+		}
 	}
 
-	// Apply memory limits
-	if err := applyMemoryLimits(ctx, opts.ContainerName, opts.Memory); err != nil {
-		return fmt.Errorf("failed to apply memory limits: %w", err)
-	}
-
-	// Apply disk limits
 	if err := applyDiskLimits(ctx, opts.ContainerName, opts.Disk); err != nil {
 		return fmt.Errorf("failed to apply disk limits: %w", err)
 	}
 
-	// Apply process limits
-	if err := applyProcessLimits(ctx, opts.ContainerName, opts.Runtime.MaxProcesses); err != nil {
-		return fmt.Errorf("failed to apply process limits: %w", err)
-	}
-
 	return nil
 }
 
-// applyCPULimits applies CPU limits to a container
-func applyCPULimits(ctx context.Context, containerName string, cpu CPULimits) error {
-	if cpu.Count != "" {
-		if err := container.ConfigSet(ctx, containerName, "limits.cpu", cpu.Count); err != nil {
-			return err
+// instanceLimitPairs returns the instance-level limit keys opts sets, as
+// `key=value` pairs, so they apply in one `incus config set`.
+func instanceLimitPairs(opts ApplyOptions) []string {
+	desired := DesiredLimits(opts)
+	var pairs []string
+	for _, k := range container.LimitKeys {
+		if v := desired[k]; v != "" && !strings.HasPrefix(k, "root.") {
+			pairs = append(pairs, k+"="+v)
 		}
 	}
-
-	if cpu.Allowance != "" {
-		if err := container.ConfigSet(ctx, containerName, "limits.cpu.allowance", cpu.Allowance); err != nil {
-			return err
-		}
-	}
-
-	if cpu.Priority != 0 {
-		if err := container.ConfigSet(ctx, containerName, "limits.cpu.priority", fmt.Sprintf("%d", cpu.Priority)); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return pairs
 }
 
-// applyMemoryLimits applies memory limits to a container
-func applyMemoryLimits(ctx context.Context, containerName string, memory MemoryLimits) error {
-	if memory.Limit != "" {
-		if err := container.ConfigSet(ctx, containerName, "limits.memory", memory.Limit); err != nil {
-			return err
+// rootDiskLimitPairs returns the root disk device keys disk sets, as
+// `key=value` pairs, so they apply in one `incus config device set`.
+func rootDiskLimitPairs(disk DiskLimits) []string {
+	desired := DesiredLimits(ApplyOptions{Disk: disk})
+	var pairs []string
+	for _, k := range container.LimitKeys {
+		if dk, isRoot := strings.CutPrefix(k, "root."); isRoot && desired[k] != "" {
+			pairs = append(pairs, dk+"="+desired[k])
 		}
 	}
-
-	if memory.Enforce != "" {
-		if err := container.ConfigSet(ctx, containerName, "limits.memory.enforce", memory.Enforce); err != nil {
-			return err
-		}
-	}
-
-	if memory.Swap != "" {
-		swapValue := NormalizeBoolString(memory.Swap)
-		if err := container.ConfigSet(ctx, containerName, "limits.memory.swap", swapValue); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return pairs
 }
 
 // applyDiskLimits applies disk I/O limits to the root device of a container.
@@ -131,35 +100,9 @@ func applyDiskLimits(ctx context.Context, containerName string, disk DiskLimits)
 		return fmt.Errorf("failed to ensure instance-level root device: %w", err)
 	}
 
-	if disk.Read != "" {
-		if out, err := container.DeviceSet(ctx, containerName, "root", "limits.read="+disk.Read); err != nil {
-			return fmt.Errorf("incus config device set limits.read=%s failed: %w (output: %s)", disk.Read, err, out)
-		}
-	}
-
-	if disk.Write != "" {
-		if out, err := container.DeviceSet(ctx, containerName, "root", "limits.write="+disk.Write); err != nil {
-			return fmt.Errorf("incus config device set limits.write=%s failed: %w (output: %s)", disk.Write, err, out)
-		}
-	}
-
-	if disk.Max != "" {
-		if out, err := container.DeviceSet(ctx, containerName, "root", "limits.max="+disk.Max); err != nil {
-			return fmt.Errorf("incus config device set limits.max=%s failed: %w (output: %s)", disk.Max, err, out)
-		}
-	}
-
-	if disk.Size != "" {
-		if out, err := container.DeviceSet(ctx, containerName, "root", "size="+disk.Size); err != nil {
-			return fmt.Errorf("incus config device set size=%s failed: %w (output: %s)", disk.Size, err, out)
-		}
-	}
-
-	if disk.Priority != 0 {
-		priority := fmt.Sprintf("%d", disk.Priority)
-		if out, err := container.DeviceSet(ctx, containerName, "root", "limits.disk.priority="+priority); err != nil {
-			return fmt.Errorf("incus config device set limits.disk.priority=%s failed: %w (output: %s)", priority, err, out)
-		}
+	pairs := rootDiskLimitPairs(disk)
+	if out, err := container.DeviceSet(ctx, containerName, "root", pairs...); err != nil {
+		return fmt.Errorf("incus config device set %s failed: %w (output: %s)", strings.Join(pairs, " "), err, out)
 	}
 
 	return nil
@@ -258,14 +201,4 @@ func getRootDevicePool(ctx context.Context, containerName string) (string, error
 	}
 
 	return "default", nil
-}
-
-// applyProcessLimits applies process limits to a container
-func applyProcessLimits(ctx context.Context, containerName string, maxProcesses int) error {
-	if maxProcesses > 0 {
-		if err := container.ConfigSet(ctx, containerName, "limits.processes", fmt.Sprintf("%d", maxProcesses)); err != nil {
-			return err
-		}
-	}
-	return nil
 }

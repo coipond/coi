@@ -19,7 +19,7 @@ func fakeListIncus(t *testing.T, listOut string) (logPath string) {
 	}
 	return fakeIncusScript(t, `case "$*" in
   *" list "*) cat `+out+` ;;
-  "query /1.0/instances/gone/state"*) echo "Error: Instance not found" >&2; exit 1 ;;
+  "query /1.0/instances/gone?"*) echo "Error: Instance not found" >&2; exit 1 ;;
   "query "*) echo '{"status":"Running"}' ;;
 esac`)
 }
@@ -79,16 +79,16 @@ func TestListContainers(t *testing.T) {
 	}
 }
 
-func TestContainerStateJSON(t *testing.T) {
+func TestContainerFullJSON(t *testing.T) {
 	logPath := fakeListIncus(t, "")
 
-	if out, err := ContainerStateJSON("c1"); err != nil || strings.TrimSpace(out) != `{"status":"Running"}` {
-		t.Errorf("ContainerStateJSON = %q, %v", out, err)
+	if out, err := ContainerFullJSON("c1"); err != nil || strings.TrimSpace(out) != `{"status":"Running"}` {
+		t.Errorf("ContainerFullJSON = %q, %v", out, err)
 	}
-	if got := calls(t, logPath); len(got) != 1 || got[0] != "query /1.0/instances/c1/state?project=default" {
+	if got := calls(t, logPath); len(got) != 1 || got[0] != "query /1.0/instances/c1?recursion=1&project=default" {
 		t.Errorf("calls = %q", got)
 	}
-	if _, err := ContainerStateJSON("gone"); !errors.Is(err, ErrContainerNotFound) {
+	if _, err := ContainerFullJSON("gone"); !errors.Is(err, ErrContainerNotFound) {
 		t.Errorf("missing instance: err = %v, want ErrContainerNotFound", err)
 	}
 }
