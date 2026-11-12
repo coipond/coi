@@ -11,18 +11,11 @@ Tests that:
 import subprocess
 from pathlib import Path
 
-from support.helpers import calculate_container_name
-
-
-def _get(*args):
-    result = subprocess.run(
-        ["incus", "config", *args],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"incus config {' '.join(args)} failed: {result.stderr}"
-    return result.stdout.strip()
+from support.helpers import (
+    calculate_container_name,
+    container_config_get,
+    container_device_get,
+)
 
 
 def test_run_launch_config_restricted_limits(coi_binary, workspace_dir, cleanup_containers):
@@ -72,9 +65,9 @@ swap = "false"
         "limits.memory.enforce": "soft",
         "limits.memory.swap": "false",
     }
-    got = {key: _get("get", container_name, key) for key in want}
+    got = {key: container_config_get(container_name, key) for key in want}
     assert got == want, f"instance config differs: {got}"
 
     nic_keys = ["security.ipv4_filtering", "security.mac_filtering", "security.port_isolation"]
-    nic = {key: _get("device", "get", container_name, "eth0", key) for key in nic_keys}
+    nic = {key: container_device_get(container_name, "eth0", key) for key in nic_keys}
     assert nic == dict.fromkeys(nic_keys, "true"), f"eth0 keys differ: {nic}"

@@ -798,8 +798,8 @@ const guestAPIDisabled = "security.guestapi=false"
 
 // InitConfigArgs returns the `incus init` flags (`-c key=value` each) that
 // give a NEW container the kernel-surface policy and the disabled guest API
-// at creation, so neither needs its own `incus config set`. A key the policy
-// unsets is left out: a fresh instance has no instance-local value to clear.
+// at creation. A key the policy unsets is left out: a fresh instance has no
+// instance-local value to clear.
 func InitConfigArgs(p HardeningPolicy) []string {
 	var args []string
 	for _, kv := range append(hardeningConfigArgs(p), guestAPIDisabled) {
@@ -875,9 +875,9 @@ func EnableNICSecurity(containerName string) error {
 //
 // It is defence-in-depth only: in-container root can re-enable IPv6 at runtime,
 // which is why the host-side ip6 drop (network.ApplyIPv6BlockForContainer) is the
-// actual enforced boundary. Must be set before first boot. Both keys go in one
-// call; it stays apart from `incus init` because it is non-fatal: a rejected
-// key must not abort the creation.
+// actual enforced boundary. Must be set before first boot. It stays apart from
+// `incus init` because it is non-fatal: a rejected key must not abort the
+// creation.
 func DisableIPv6AtBoot(containerName string) error {
 	return IncusExec("config", "set", containerName,
 		"linux.sysctl.net.ipv6.conf.all.disable_ipv6=1",
@@ -1202,8 +1202,8 @@ func DeviceAdd(ctx context.Context, containerName string, deviceArgs ...string) 
 
 // DeviceSet sets device-level `key=value` pairs on a container in one call.
 // Returns the combined stdout+stderr output (useful for error inspection) and any error.
-func DeviceSet(ctx context.Context, containerName, device string, keyValues ...string) (string, error) {
-	args := append([]string{"config", "device", "set", containerName, device}, keyValues...)
+func DeviceSet(ctx context.Context, containerName, device string, pairs ...string) (string, error) {
+	args := append([]string{"config", "device", "set", containerName, device}, pairs...)
 	return IncusOutputWithStderrContext(ctx, args...)
 }
 

@@ -8,12 +8,22 @@ import (
 	"time"
 )
 
+// incusCalls returns the logged incus calls, project prefix stripped.
+func incusCalls(t *testing.T, logPath string) []string {
+	t.Helper()
+	out := calls(t, logPath)
+	for i, c := range out {
+		out[i] = strings.TrimPrefix(c, "--project default ")
+	}
+	return out
+}
+
 // initCalls returns the logged `incus init` calls, project prefix stripped.
 func initCalls(t *testing.T, logPath string) []string {
 	t.Helper()
 	var out []string
-	for _, c := range calls(t, logPath) {
-		if c = strings.TrimPrefix(c, "--project default "); strings.HasPrefix(c, "init ") {
+	for _, c := range incusCalls(t, logPath) {
+		if strings.HasPrefix(c, "init ") {
 			out = append(out, c)
 		}
 	}
@@ -43,6 +53,24 @@ func TestInitAndConfigureContainer_SetsManagedAndInitConfig(t *testing.T) {
 				t.Errorf("init calls = %q, want [%q]", got, tc.want)
 			}
 		})
+	}
+}
+
+// The kernel-surface policy and the guest API go in the `incus init` call;
+// no `config set` runs before preStart.
+func TestInitAndConfigureContainer_SettingsAtInit(t *testing.T) {
+	logPath := fakeIncusScript(t, "exit 0")
+	if err := initAndConfigureContainer("img", "c1", "pool1", true, nil, HardeningPolicy{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := incusCalls(t, logPath)
+	if len(got) == 0 || got[0] != "init img c1 --ephemeral -s pool1 -c user.coi.managed=true -c security.guestapi=false" {
+		t.Fatalf("first call = %q", got)
+	}
+	for _, c := range got[1:] {
+		if strings.HasPrefix(c, "config set") || strings.HasPrefix(c, "init") {
+			t.Errorf("unexpected write after init: %q", c)
+		}
 	}
 }
 

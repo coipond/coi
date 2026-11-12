@@ -655,7 +655,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 	// The kernel-surface policy (Docker/nesting support and/or syscall denies
 	// per [container] docker and [security] reduce_kernel_surface) and the
 	// disabled guest API (FLAWS Finding 3) are set at creation, before first
-	// boot, with no extra `incus config set`.
+	// boot.
 	policy := hardeningPolicyFrom(opts)
 	if policy.DockerEnabled() {
 		opts.Logger("Enabling Docker support...")

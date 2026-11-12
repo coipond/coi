@@ -1284,6 +1284,19 @@ def wait_for_pattern_in_monitor(monitor, pattern, timeout=30, poll_interval=0.5)
     return None
 
 
+def container_config_get(container_name, key):
+    """Return `incus config get <container> <key>`, or None."""
+    r = subprocess.run(
+        ["incus", "config", "get", container_name, key],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
 def container_device_get(container_name, device, key):
     """Return `incus config device get <container> <device> <key>`, or None."""
     r = subprocess.run(
