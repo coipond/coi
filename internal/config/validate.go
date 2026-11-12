@@ -83,8 +83,8 @@ func (p *ProfileConfig) Validate(name string) error {
 		if pe.Host != 0 && (pe.Host < 1 || pe.Host > 65535) {
 			return fmt.Errorf("profile '%s': ports[%d] (%s) 'host' must be a TCP port (1-65535) or omitted for auto-allocation, got %d", name, i, pe.Name, pe.Host)
 		}
-		if pe.Listen != "" && net.ParseIP(pe.Listen) == nil {
-			return fmt.Errorf("profile '%s': ports[%d] (%s) 'listen' must be an IP address (e.g. \"127.0.0.1\"), got %q", name, i, pe.Name, pe.Listen)
+		if err := validatePortListen(i, pe); err != nil {
+			return fmt.Errorf("profile '%s': %w", name, err)
 		}
 	}
 
@@ -105,5 +105,14 @@ func (p *ProfileConfig) Validate(name string) error {
 		}
 	}
 
+	return nil
+}
+
+// validatePortListen checks that a [[ports.map]] entry's listen address, if
+// set, is a bare IP address.
+func validatePortListen(i int, pe PortEntry) error {
+	if pe.Listen != "" && net.ParseIP(pe.Listen) == nil {
+		return fmt.Errorf("ports[%d] (%s) 'listen' must be an IP address (e.g. \"127.0.0.1\"), got %q", i, pe.Name, pe.Listen)
+	}
 	return nil
 }

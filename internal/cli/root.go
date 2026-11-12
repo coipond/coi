@@ -155,13 +155,17 @@ Examples:
 		}
 
 		// Load config. Most commands use at most one profile, so they read
-		// only the profiles they apply. A requested --profile is read here so
-		// that an invalid one fails like the rest of the config.
+		// only the profiles they apply; noProfileCommands read none. A
+		// requested --profile is read here so that an invalid one fails like
+		// the rest of the config.
 		var err error
 		stopLoad := timing.Start(timing.CatStep, "config load")
-		if commandNeedsAllProfiles(cmd) {
+		switch {
+		case commandNeedsAllProfiles(cmd):
 			app.cfg, err = config.Load()
-		} else {
+		case app.profile == "" && commandNeedsNoProfile(cmd):
+			app.cfg, err = config.LoadWithoutProfiles()
+		default:
 			app.cfg, err = config.LoadOnDemand()
 			if err == nil && app.profile != "" {
 				_, err = app.cfg.LookupProfile(app.profile)
@@ -220,6 +224,29 @@ var allProfilesCommands = map[string]bool{
 	"health":   true,
 	"profile":  true,
 	"validate": true,
+}
+
+// noProfileCommands are the commands that never apply a profile, not even the
+// [defaults] one, so without --profile they read no profile
+// (config.LoadWithoutProfiles). They are thin wrappers around one incus call,
+// run many times per container by orchestrators.
+var noProfileCommands = map[string]bool{
+	"coi container exec":    true,
+	"coi container exists":  true,
+	"coi container running": true,
+	"coi container stop":    true,
+	"coi container delete":  true,
+	"coi container list":    true,
+	"coi container info":    true,
+	"coi container mount":   true,
+	"coi file push":         true,
+	"coi file pull":         true,
+	"coi kill":              true,
+}
+
+// commandNeedsNoProfile reports whether cmd is in noProfileCommands.
+func commandNeedsNoProfile(cmd *cobra.Command) bool {
+	return noProfileCommands[cmd.CommandPath()]
 }
 
 // commandNeedsAllProfiles reports whether cmd is, or is under, a command in
