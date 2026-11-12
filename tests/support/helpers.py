@@ -1536,7 +1536,15 @@ def extract_container_name(result):
 
 
 def start_background_shell(
-    coi_binary, workspace_dir, env=None, *, profile=None, slot=None, debug=True, timeout=120
+    coi_binary,
+    workspace_dir,
+    env=None,
+    *,
+    profile=None,
+    slot=None,
+    debug=True,
+    timeout=120,
+    extra_args=(),
 ):
     """Start `coi shell --background` for the workspace and assert it started.
 
@@ -1544,7 +1552,7 @@ def start_background_shell(
     name with calculate_container_name; otherwise reads it from the launch output
     (extract_container_name). With profile, passes `--profile` and runs from the
     workspace, as project profiles are discovered under <cwd>/.coi/profiles.
-    env None inherits os.environ.
+    extra_args are appended to the argv. env None inherits os.environ.
     """
     argv = [coi_binary, "shell", "--workspace", workspace_dir]
     if profile is not None:
@@ -1554,6 +1562,7 @@ def start_background_shell(
     argv.append("--background")
     if debug:
         argv.append("--debug")
+    argv += extra_args
     result = subprocess.run(
         argv,
         capture_output=True,
