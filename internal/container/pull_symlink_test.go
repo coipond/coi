@@ -126,25 +126,26 @@ func resetPullNoDereference(t *testing.T) {
 // Without -P an Incus 6.23+ client follows a symlink source and stages a
 // regular file; older clients stage the link and have no -P. Either way the
 // staged entry is a symlink and PullFile refuses it, leaving nothing on the
-// host.
+// host. A failed version probe pulls without -P, which every client accepts.
 func TestPullFile_SymlinkSourceRefusedByClientVersion(t *testing.T) {
 	tests := []struct {
 		name    string
-		version string
+		probe   string
 		noDeref bool
 	}{
-		{"6.1", "6.1", false},
-		{"6.22", "6.22.0", false},
-		{"6.23", "6.23.0", true},
-		{"7.6", "7.6", true},
-		{"unparsable", "unknown", false},
+		{"6.1", "echo 6.1", false},
+		{"6.22", "echo 6.22.0", false},
+		{"6.23", "echo 6.23.0", true},
+		{"7.6", "echo 7.6", true},
+		{"unparsable", "echo unknown", false},
+		{"probe fails", "exit 1", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetPullNoDereference(t)
 			log := fakeIncusScript(t, `for a; do last=$a; done
 case "$*" in
-  *--version) echo `+tt.version+`;;
+  *--version) `+tt.probe+`;;
   *"file pull"*) ln -s /etc/passwd "$last/src-link";;
 esac`)
 			dest := filepath.Join(t.TempDir(), "out")

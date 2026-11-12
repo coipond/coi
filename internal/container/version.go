@@ -149,19 +149,7 @@ func FormatMinVersionError(v *IncusVersion) string {
 var pushArchiveSupported = newPushArchiveCheck()
 
 func newPushArchiveCheck() func() bool {
-	return sync.OnceValue(detectPushArchive)
-}
-
-func detectPushArchive() bool {
-	out, err := IncusOutput("--version")
-	if err != nil {
-		return false
-	}
-	v, err := ParseIncusVersion(out)
-	if err != nil {
-		return false
-	}
-	return v.Major > 7 || (v.Major == 7 && v.Minor >= 5)
+	return newClientVersionCheck(7, 5)
 }
 
 // pullNoDereferenceSupported reports, once per process, whether the incus
@@ -170,17 +158,22 @@ func detectPushArchive() bool {
 var pullNoDereferenceSupported = newPullNoDereferenceCheck()
 
 func newPullNoDereferenceCheck() func() bool {
-	return sync.OnceValue(detectPullNoDereference)
+	return newClientVersionCheck(6, 23)
 }
 
-func detectPullNoDereference() bool {
-	out, err := IncusOutput("--version")
-	if err != nil {
-		return false
-	}
-	v, err := ParseIncusVersion(out)
-	if err != nil {
-		return false
-	}
-	return v.Major > 6 || (v.Major == 6 && v.Minor >= 23)
+// newClientVersionCheck returns a check, probed on first use, of whether the
+// incus client is at least major.minor. A failed probe reports false, which
+// keeps the flags every client has.
+func newClientVersionCheck(major, minor int) func() bool {
+	return sync.OnceValue(func() bool {
+		out, err := IncusOutput("--version")
+		if err != nil {
+			return false
+		}
+		v, err := ParseIncusVersion(out)
+		if err != nil {
+			return false
+		}
+		return v.Major > major || (v.Major == major && v.Minor >= minor)
+	})
 }
