@@ -16,15 +16,10 @@ container reuse in the harness is brittle.
 
 import os
 import subprocess
-from pathlib import Path
+
+from support.helpers import write_profile
 
 MODEL = "coi-test-model-opus"
-
-
-def _write_profile(workspace_dir, name, body):
-    profile_dir = Path(workspace_dir) / ".coi" / "profiles" / name
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    (profile_dir / "config.toml").write_text(body)
 
 
 def _start_background_shell(coi_binary, workspace_dir, profile):
@@ -71,7 +66,7 @@ def _printenv(coi_binary, container_name, var):
 
 def test_profile_model_reaches_container_exec(coi_binary, workspace_dir, cleanup_containers):
     """A profile's [tool.claude] model/effort is visible to `coi container exec`."""
-    _write_profile(
+    write_profile(
         workspace_dir,
         "modeltest",
         f"""
