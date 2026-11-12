@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, exec_in
 
 # One line of /sys/kernel/security/apparmor/profiles, e.g. "docker-default (enforce)".
 PROFILE_LINE = re.compile(r"^\S.* \((?:enforce|complain|kill|unconfined|prompt)\)$", re.MULTILINE)
@@ -42,20 +42,6 @@ def launch(coi_binary, workspace_dir):
     assert result.returncode == 0, f"Container launch should succeed. stderr: {result.stderr}"
     time.sleep(5)
     return container_name
-
-
-def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
-    """Run cmd in the container; return (returncode, combined output).
-
-    coi container exec does not keep the command's stdout and stderr apart
-    when not attached to a terminal, so callers match on both together.
-    """
-    argv = [coi_binary, "container", "exec", container_name]
-    if user is not None:
-        argv += ["--user", str(user), "--group", str(user), "--env", "HOME=/home/code"]
-    argv += ["--", "bash", "-c", cmd]
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-    return result.returncode, result.stdout + result.stderr
 
 
 def delete(coi_binary, container_name):

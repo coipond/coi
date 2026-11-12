@@ -19,7 +19,7 @@ type NetworkEvent struct {
 	Interface   string // IN/OUT interfaces
 }
 
-// Config holds the configuration for the NFT monitoring daemon
+// Config holds the configuration for the nft network monitor
 type Config struct {
 	ContainerName string
 	ContainerIP   string

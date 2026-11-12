@@ -30,7 +30,7 @@ type Daemon struct {
 	running     bool
 }
 
-// StartDaemon starts the nftables monitoring daemon
+// StartDaemon starts the nftables network monitor
 func StartDaemon(ctx context.Context, cfg Config) (*Daemon, error) {
 	// Create audit log
 	auditLog, err := monitor.NewAuditLog(cfg.AuditLogPath)

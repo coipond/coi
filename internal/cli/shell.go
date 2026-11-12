@@ -450,13 +450,16 @@ const userPreLaunchKillGraceSec = 10
 // ignores TERM still can't keep the agent from starting. Trade-off: with
 // --foreground, timeout only signals the command itself, so a process it
 // started in the background can outlive a timeout. stdin is /dev/null, so a
-// command never sits waiting for input.
+// command never sits waiting for input. The INT trap ends the script on
+// Ctrl+C: uutils timeout (Ubuntu 26.04) exits 124 instead of dying of SIGINT,
+// so bash alone would run the next command.
 func renderUserPreLaunchScript(cmds []string, timeoutSec, killGraceSec int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `#!/bin/bash
 # Managed by coi: [tool] pre_launch commands, run before the tool starts.
 # Each command gets %[1]ds; a failing or slow command never blocks the tool.
 # Ctrl+C skips the remaining commands.
+trap 'exit 130' INT
 coi_pre_launch() {
 	printf '[coi] pre-launch: %%s\n' "$1"
 	timeout --foreground -k %[2]d %[1]d bash -c "$1" </dev/null
@@ -759,7 +762,7 @@ func detectHostTimezone() string {
 	return tz
 }
 
-// startMonitoringDaemon starts the background monitoring daemon
+// startMonitoringDaemon starts the background security monitor
 func startMonitoringDaemon(ctx context.Context, containerName, workspacePath string, cfg *config.Config, allowedCIDRs []string, permitted func(proto, ip string, port int) bool, log *logger.SessionLogger, daemon *monitor.MonitorDaemon) error {
 	// Get home directory for audit log
 	homeDir, err := os.UserHomeDir()
@@ -841,7 +844,7 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 	return nil
 }
 
-// startNFTMonitoringDaemon starts the nftables network monitoring daemon
+// startNFTMonitoringDaemon starts the nftables network monitor
 func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *config.Config, allowedCIDRs []string, permitted func(proto, ip string, port int) bool, log *logger.SessionLogger, daemon *nftmonitor.NFTMonitorDaemon) error {
 	// Route the nft monitor's COI_NFT_DEBUG diagnostics to the session log
 	// instead of the user's attached terminal (issue #372 class).
