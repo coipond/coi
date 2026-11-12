@@ -272,6 +272,32 @@ func TestResumePersistence(t *testing.T) {
 	}
 }
 
+func TestResumePersistenceNotice(t *testing.T) {
+	const inherited = "Inherited persistent mode from session"
+	cases := []struct {
+		name               string
+		persistent         bool
+		metadataPersistent bool
+		want               string
+	}{
+		{"persistent session inherits", true, true, inherited},
+		{"ephemeral session stays ephemeral", false, false, ""},
+		{
+			"config converts ephemeral session", true, false,
+			"Config [container] persistent = true overrides the session's saved mode",
+		},
+		{
+			"config converts persistent session", false, true,
+			"Config [container] persistent = false overrides the session's saved mode",
+		},
+	}
+	for _, c := range cases {
+		if got := resumePersistenceNotice(c.persistent, c.metadataPersistent); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestDefaultConfig_PersistentUnset(t *testing.T) {
 	// The embedded default must leave [container] persistent as a nil pointer
 	// ("not configured") — resumePersistence relies on nil to let session
