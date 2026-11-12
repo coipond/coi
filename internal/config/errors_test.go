@@ -45,8 +45,8 @@ func TestLoad_WrapsParseFailureAsConfigError(t *testing.T) {
 	}
 }
 
-// A workspace config loaded by OverlayProjectConfig (coi run/shell --workspace
-// from another directory, alias launch) must fail like one Load reads.
+// A workspace config loaded by OverlayProjectConfig must fail like one Load
+// reads.
 func TestOverlayProjectConfig_WrapsFailureAsConfigError(t *testing.T) {
 	cases := map[string]string{
 		"parse error":   "this is = not valid toml ][\n",
@@ -74,7 +74,6 @@ func TestOverlayProjectConfig_WrapsFailureAsConfigError(t *testing.T) {
 	}
 }
 
-// A workspace without .coi/config.toml is not an error.
 func TestOverlayProjectConfig_MissingFileIsNoError(t *testing.T) {
 	if err := GetDefaultConfig().OverlayProjectConfig(t.TempDir()); err != nil {
 		t.Fatalf("missing project config must not fail, got %v", err)
