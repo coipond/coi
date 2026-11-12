@@ -25,6 +25,7 @@ func TestHostInputRuleCmds_Restricted(t *testing.T) {
 		`add rule ip coi input ip saddr 10.0.0.2 ip daddr 10.0.0.1 icmp type echo-request limit rate 10/second accept comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 ip daddr 10.0.0.1 meta l4proto { tcp, udp } th dport 53 accept comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 ip daddr 192.168.1.5 meta l4proto { tcp, udp } th dport { 8080, 9000-9100 } accept comment "coi-10.0.0.2"`,
+		`add rule ip coi input ip saddr 10.0.0.2 meta l4proto tcp reject with tcp reset comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 reject comment "coi-10.0.0.2"`,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -35,16 +36,16 @@ func TestHostInputRuleCmds_Restricted(t *testing.T) {
 // Allowlist mode adds no DNS accept: blockDNS rejects port 53 ahead of these rules.
 func TestHostInputRuleCmds_AllowlistHasNoDNSAccept(t *testing.T) {
 	got := joinCmds(hostInputRuleCmds("10.0.0.2", "10.0.0.1", config.NetworkModeAllowlist, nil))
-	if len(got) != 4 {
-		t.Fatalf("want established, DHCP, ping and reject, got %v", got)
+	if len(got) != 5 {
+		t.Fatalf("want established, DHCP, ping and the two rejects, got %v", got)
 	}
 	for _, r := range got {
 		if strings.Contains(r, "dport 53") {
 			t.Errorf("allowlist mode must not accept DNS to the host: %s", r)
 		}
 	}
-	if !strings.HasSuffix(got[3], `reject comment "coi-10.0.0.2"`) {
-		t.Errorf("last rule must be the reject, got %s", got[3])
+	if !strings.HasSuffix(got[4], `reject comment "coi-10.0.0.2"`) {
+		t.Errorf("last rule must be the reject, got %s", got[4])
 	}
 }
 
@@ -54,6 +55,7 @@ func TestHostInputRuleCmds_NoGateway(t *testing.T) {
 		`add rule ip coi input ip saddr 10.0.0.2 ct state established,related accept comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 udp dport 67 accept comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 meta l4proto { tcp, udp } th dport 53 accept comment "coi-10.0.0.2"`,
+		`add rule ip coi input ip saddr 10.0.0.2 meta l4proto tcp reject with tcp reset comment "coi-10.0.0.2"`,
 		`add rule ip coi input ip saddr 10.0.0.2 reject comment "coi-10.0.0.2"`,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -102,7 +104,7 @@ func TestAddHostInputRules(t *testing.T) {
 	if err := f.addHostInputRules(&config.NetworkConfig{}, config.NetworkModeRestricted, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.batch) != 5 || f.batch[0][4] != "input" {
+	if len(f.batch) != 6 || f.batch[0][4] != "input" {
 		t.Errorf("batch = %v", f.batch)
 	}
 
@@ -117,12 +119,12 @@ func TestAddHostInputRules(t *testing.T) {
 	f.abortBatch()
 
 	// Outside a batch every rule is its own nft call.
-	logPath := fakeNftSudo(t, "")
+	logPath := fakeNftSudo(t, "", "")
 	if err := f.addHostInputRules(&config.NetworkConfig{}, config.NetworkModeRestricted, nil); err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(readCalls(t, logPath), "add rule ip coi input"); n != 5 {
-		t.Errorf("want 5 input rule adds, got %d", n)
+	if n := strings.Count(readCalls(t, logPath), "add rule ip coi input"); n != 6 {
+		t.Errorf("want 6 input rule adds, got %d", n)
 	}
 }
 
@@ -138,45 +140,5 @@ func TestParseInputRulesForDelete(t *testing.T) {
 	rules := parseChainRules(listing, "coi-10.0.0.2")
 	if len(rules) != 2 || rules[0].handle != "7" || rules[1].handle != "8" {
 		t.Errorf("got %+v", rules)
-	}
-}
-
-func TestParseCOIChainRules(t *testing.T) {
-	listing := `table ip coi { # handle 4
-	set coi_s_10_0_0_2 { # handle 9
-		type ipv4_addr
-		flags interval
-		elements = { 1.1.1.1 }
-	}
-	chain forward { # handle 1
-		type filter hook forward priority 10; policy accept;
-		ct state established,related accept comment "coi-base" # handle 2
-		ip saddr 10.0.0.2 accept comment "coi-10.0.0.2" # handle 5
-		ip saddr 10.0.0.20 accept comment "coi-10.0.0.20" # handle 6
-	}
-	chain input { # handle 3
-		type filter hook input priority filter; policy accept;
-		ip saddr 10.0.0.2 ct state established,related accept comment "coi-10.0.0.2" # handle 7
-		ip saddr 10.0.0.2 reject comment "coi-10.0.0.2" # handle 8
-	}
-}`
-	rules, chains := parseCOIChainRules(listing, "coi-10.0.0.2")
-	if !chains["forward"] || !chains["input"] || len(chains) != 2 {
-		t.Errorf("chains = %v", chains)
-	}
-	if f := rules["forward"]; len(f) != 1 || f[0].handle != "5" {
-		t.Errorf("forward = %+v", f)
-	}
-	if in := rules["input"]; len(in) != 2 || in[0].handle != "7" || in[1].handle != "8" {
-		t.Errorf("input = %+v", in)
-	}
-	got := joinCmds(deleteChainRuleCmds("input", rules["input"]))
-	if want := []string{"delete rule ip coi input handle 7", "delete rule ip coi input handle 8"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("deletes = %v", got)
-	}
-
-	_, chains = parseCOIChainRules("table ip coi {\n\tchain forward {\n\t}\n}", "coi-10.0.0.2")
-	if chains["input"] {
-		t.Error("a table without an input chain must not report one")
 	}
 }

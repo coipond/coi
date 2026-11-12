@@ -3,6 +3,10 @@ package session
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -277,5 +281,31 @@ func TestAllocateSlotFrom(t *testing.T) {
 				t.Errorf("AllocateSlotFrom() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestListWorkspaceSessions(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	hash := IdentityHash("/home/u/proj", "")
+	prefix := "coi-" + hash + "-"
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nprintf '" +
+		prefix + "1\\n" + prefix + "10\\n" + prefix + "x\\n" + prefix + "2-backup\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := ListWorkspaceSessions("/home/u/proj", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[int]string{1: prefix + "1", 10: prefix + "10"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sessions = %v, want %v", got, want)
+	}
+	b, _ := os.ReadFile(logPath)
+	if call := strings.TrimSpace(string(b)); call != "--project default list ^"+prefix+" --format=csv --columns=n" {
+		t.Errorf("incus call = %q", call)
 	}
 }

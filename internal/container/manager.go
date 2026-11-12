@@ -31,6 +31,8 @@ import (
 // Manager provides a clean interface for Incus container operations
 type Manager struct {
 	ContainerName string
+	// InitConfig holds "key=value" pairs the Launch methods set at init.
+	InitConfig []string
 }
 
 // ExitError represents a command that ran but exited with non-zero status
@@ -69,7 +71,7 @@ func (m *Manager) Launch(image string, ephemeral bool, pool string) error {
 // before first boot, so callers with config in scope (e.g. `coi container
 // launch`) can honor [container] docker / [security] reduce_kernel_surface.
 func (m *Manager) LaunchWithPolicy(image string, ephemeral bool, pool string, policy HardeningPolicy) error {
-	return LaunchContainerWithPreStartPolicy(image, m.ContainerName, pool, ephemeral, nil, policy)
+	return launchContainer(image, m.ContainerName, pool, ephemeral, nil, policy, m.InitConfig)
 }
 
 // LaunchWithPreStart launches the container, running preStart after init/config
@@ -83,7 +85,7 @@ func (m *Manager) LaunchWithPreStart(image string, ephemeral bool, pool string, 
 // policy applied once before first boot (used by the run pipeline so a hardened
 // config is honored without a second reconcile pass).
 func (m *Manager) LaunchWithPreStartPolicy(image string, ephemeral bool, pool string, preStart func() error, policy HardeningPolicy) error {
-	return LaunchContainerWithPreStartPolicy(image, m.ContainerName, pool, ephemeral, preStart, policy)
+	return launchContainer(image, m.ContainerName, pool, ephemeral, preStart, policy, m.InitConfig)
 }
 
 // Stop stops the container
@@ -218,11 +220,17 @@ func (m *Manager) MountDisks(mounts []DiskMount) error {
 // incusQuery runs `incus query -X method [--data body] url` and returns stdout.
 // `incus query` rejects --project, so the project goes in the URL.
 func (m *Manager) incusQuery(method, queryURL, body string) (string, error) {
-	args := []string{"query", "-X", method}
+	args := []string{"-X", method}
 	if body != "" {
 		args = append(args, "--data", body)
 	}
-	cmd := execIncusCommand(append(args, queryURL))
+	return incusQuery(append(args, queryURL)...)
+}
+
+// incusQuery runs `incus query args...` and returns stdout. It goes through
+// execIncusCommand because `incus query` rejects --project.
+func incusQuery(args ...string) (string, error) {
+	cmd := execIncusCommand(append([]string{"query"}, args...))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := runIncus(cmd); err != nil {
@@ -494,8 +502,8 @@ func (m *Manager) SetTmpfsSize(size string) error {
 	return nil
 }
 
-// RemoveTmpfsSize removes the tmp.mount unit SetTmpfsSize installed and
-// unmounts its /tmp, inside a RUNNING container. Another tmp.mount is left
+// RemoveTmpfsSize replaces the tmp.mount unit SetTmpfsSize installed with a
+// mask and unmounts its /tmp, inside a RUNNING container. Another tmp.mount is left
 // alone. Reports whether coi's unit was there.
 func (m *Manager) RemoveTmpfsSize() (bool, error) {
 	out, err := m.ExecCommand(tmpfsRemoveScript(tmpMountUnitPath), ExecCommandOptions{Capture: true})
@@ -526,12 +534,14 @@ func tmpfsSizeScript(unitPath string, sizeBytes int64) string {
 		"systemctl reload-or-restart tmp.mount"
 }
 
-// tmpfsRemoveScript disables and deletes coi's unit at unitPath, then
-// unmounts /tmp, and prints "removed". It does nothing when there is no unit
-// or the unit is not coi's.
+// tmpfsRemoveScript disables coi's unit at unitPath and masks tmp.mount in
+// its place, then unmounts /tmp, and prints "removed". It does nothing when
+// there is no unit or the unit is not coi's. Masked, not deleted: the image
+// masks the RAM-backed tmp.mount Ubuntu 25.10+ enables, and a deleted unit
+// would let it mount /tmp at the next boot.
 func tmpfsRemoveScript(unitPath string) string {
 	return "u='" + unitPath + "'; grep -qx '" + tmpMountDescription + "' \"$u\" 2>/dev/null || exit 0; " +
-		"set -e; systemctl disable tmp.mount; rm -f \"$u\"; systemctl daemon-reload; " +
+		"set -e; systemctl disable tmp.mount; ln -sf /dev/null \"$u\"; systemctl daemon-reload; " +
 		"systemctl stop tmp.mount || umount -l /tmp; echo removed"
 }
 
@@ -836,8 +846,14 @@ func (m *Manager) PullFile(containerPath, localPath string) error {
 	defer os.RemoveAll(tempDir)
 
 	// Pull into the staging dir
+	// -P stages a symlink source as the link itself, so the regular-file
+	// check below refuses it on every client.
 	source := m.ContainerName + containerPath
-	cmdArgs := buildIncusCommand("file", "pull", source, tempDir)
+	pullArgs := []string{"file", "pull"}
+	if pullNoDereferenceSupported() {
+		pullArgs = append(pullArgs, "-P")
+	}
+	cmdArgs := buildIncusCommand(append(pullArgs, source, tempDir)...)
 	cmd := execIncusCommand(cmdArgs)
 	var stderr bytes.Buffer
 	cmd.Stdout = nil

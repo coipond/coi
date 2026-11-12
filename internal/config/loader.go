@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -29,7 +30,42 @@ import (
 // Profiles from all scan locations are merged into a single namespace; if the
 // same profile name is defined in more than one location Load() returns an
 // error asking the user to resolve the conflict.
-func Load() (_ *Config, err error) {
+//
+// Load reads every profile; LoadOnDemand reads only the profiles asked for;
+// LoadWithoutProfiles reads none.
+func Load() (*Config, error) {
+	return load(loadAllProfiles)
+}
+
+// LoadOnDemand is Load without reading the profiles: it lists the profile
+// directories (and checks for duplicate names) but reads and validates a
+// profile, with the profiles it inherits from, only when GetProfile,
+// LookupProfile or ApplyProfile first asks for it. cfg.Profiles then holds only
+// the profiles read so far, plus the built-in profiles no disk profile replaces.
+func LoadOnDemand() (*Config, error) {
+	return load(loadProfilesOnDemand)
+}
+
+// LoadWithoutProfiles is Load for commands that never apply a profile: it reads
+// no profile. A profile name in two locations is still an error
+// (checkProfileNameClashes), so it reads the entry names of the profile
+// directories, and those of ~/.coi/profiles only when ./.coi/profiles or the
+// COI_CONFIG dir has entries. cfg.Profiles holds only the built-in profiles.
+func LoadWithoutProfiles() (*Config, error) {
+	return load(loadNoProfiles)
+}
+
+// profileLoadMode selects which profiles load reads.
+type profileLoadMode int
+
+const (
+	loadAllProfiles profileLoadMode = iota
+	loadProfilesOnDemand
+	loadNoProfiles
+)
+
+// load runs Load, LoadOnDemand or LoadWithoutProfiles, as mode says.
+func load(mode profileLoadMode) (_ *Config, err error) {
 	// Every failure to load, parse, or validate config is a ConfigError, so the
 	// CLI can distinguish "your config is wrong" from a runtime failure with one
 	// errors.As. Wrapping once here covers all the return paths below without
@@ -52,10 +88,22 @@ func Load() (_ *Config, err error) {
 
 	// Scan profile directories from all known locations. Profiles are merged
 	// into a single namespace; duplicate names across locations are rejected
-	// by loadProfileDirectories so it's always clear which profile is used.
-	for _, dir := range GetProfileParentDirs() {
-		if err := loadProfileDirectories(cfg, dir, isTrustedProfileDir(dir)); err != nil {
+	// (by loadProfileDirectories, indexProfileDirectory or
+	// checkProfileNameClashes) so it's always clear which profile is used.
+	if mode == loadNoProfiles {
+		if err := checkProfileNameClashes(GetProfileParentDirs()); err != nil {
 			return nil, err
+		}
+	} else {
+		for _, dir := range GetProfileParentDirs() {
+			if mode == loadProfilesOnDemand {
+				_, err = indexProfileDirectory(cfg, dir, isTrustedProfileDir(dir))
+			} else {
+				err = loadProfileDirectories(cfg, dir, isTrustedProfileDir(dir))
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -75,17 +123,23 @@ func Load() (_ *Config, err error) {
 
 	// Inject the built-in profiles; a disk profile of the same name overrides one.
 	for name, synthesize := range builtinProfiles {
-		if _, exists := cfg.Profiles[name]; !exists {
+		if ref, pending := cfg.pendingProfiles[name]; pending {
+			builtin := synthesize(cfg)
+			ref.builtin = &builtin
+			cfg.pendingProfiles[name] = ref
+		} else if _, exists := cfg.Profiles[name]; !exists {
 			cfg.Profiles[name] = synthesize(cfg)
 		}
 	}
 
-	// Resolve profile inheritance after all profiles are loaded from all levels
-	if err := cfg.ResolveProfileInheritance(); err != nil {
-		return nil, fmt.Errorf("profile inheritance error: %w", err)
-	}
+	if mode == loadAllProfiles {
+		// Resolve profile inheritance after all profiles are loaded from all levels
+		if err := cfg.ResolveProfileInheritance(); err != nil {
+			return nil, fmt.Errorf("profile inheritance error: %w", err)
+		}
 
-	stripUntrustedInheritedSessionNames(cfg)
+		stripUntrustedInheritedSessionNames(cfg)
+	}
 
 	// Profiles are schema-validated, but the top-level config is not — and a
 	// malformed session_name (trailing space, path separators, invisible
@@ -165,6 +219,12 @@ func loadConfigFileScoped(cfg *Config, path string, trusted bool) error {
 	// Detect pre-0.8.0 layouts and refuse to load with an actionable error.
 	if err := checkDeprecatedConfigFields(path); err != nil {
 		return err
+	}
+
+	for i, pe := range fileCfg.Ports.Map {
+		if err := validatePortListen(i, pe); err != nil {
+			return err
+		}
 	}
 
 	if !trusted {
@@ -497,16 +557,23 @@ func sanitizeUntrustedDefaultProfile(d *DefaultsConfig, path string) {
 // `inherits = "<trusted profile>"` would smuggle what direct declaration
 // cannot (the per-profile strip runs before inheritance is resolved).
 func stripUntrustedInheritedSessionNames(cfg *Config) {
-	for name, p := range cfg.Profiles {
-		// Synthesized profiles (default/hardened) have no Source and carry
-		// only already-validated trusted config; disk profiles carry the
-		// Trusted stamp from their scan root.
-		if p.Container.SessionName == "" || p.Source == "" || p.Trusted {
-			continue
-		}
-		sanitizeUntrustedSessionName(&p.Container, p.Source)
-		cfg.Profiles[name] = p
+	for name := range cfg.Profiles {
+		stripUntrustedInheritedSessionName(cfg, name)
 	}
+}
+
+// stripUntrustedInheritedSessionName is stripUntrustedInheritedSessionNames
+// for one loaded profile.
+func stripUntrustedInheritedSessionName(cfg *Config, name string) {
+	p := cfg.Profiles[name]
+	// Synthesized profiles (default/hardened) have no Source and carry
+	// only already-validated trusted config; disk profiles carry the
+	// Trusted stamp from their scan root.
+	if p.Container.SessionName == "" || p.Source == "" || p.Trusted {
+		return
+	}
+	sanitizeUntrustedSessionName(&p.Container, p.Source)
+	cfg.Profiles[name] = p
 }
 
 // sessionNameRe mirrors the profile schema's session_name pattern.
@@ -701,6 +768,19 @@ func isTrustedProfileDir(dir string) bool {
 	return false
 }
 
+// pendingProfile is a profile directory that LoadOnDemand listed but has not
+// read yet.
+type pendingProfile struct {
+	dir     string // <profiles>/<name>
+	trusted bool
+	builtin *ProfileConfig // the built-in it replaces, used if it is gone
+}
+
+// configPath returns the profile's config.toml path.
+func (p pendingProfile) configPath() string {
+	return filepath.Join(p.dir, "config.toml")
+}
+
 // loadProfileDirectories scans configDir/profiles/ for subdirectories containing config.toml
 // and adds them to cfg.Profiles. Each subdirectory name becomes the profile name.
 //
@@ -710,125 +790,346 @@ func isTrustedProfileDir(dir string) bool {
 // together, and users are expected to use unique names across locations so
 // it's always clear which profile is being used.
 func loadProfileDirectories(cfg *Config, configDir string, trusted bool) error {
+	names, err := indexProfileDirectory(cfg, configDir, trusted)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if err := cfg.readPendingProfile(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// indexProfileDirectory lists configDir/profiles/ and records each
+// subdirectory as a profile to read, without reading any config.toml. It
+// returns the names it recorded, in directory order.
+//
+// A name already recorded or loaded from another location is an error when
+// both locations hold a config.toml. Only such a clash costs a stat.
+func indexProfileDirectory(cfg *Config, configDir string, trusted bool) ([]string, error) {
 	profilesDir := filepath.Join(configDir, "profiles")
 	entries, err := os.ReadDir(profilesDir)
 	if err != nil {
-		return nil // Directory doesn't exist or can't be read — that's fine
+		return nil, nil // Directory doesn't exist or can't be read — that's fine
 	}
 
+	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 
 		profileName := entry.Name()
-		profileConfigPath := filepath.Join(profilesDir, profileName, "config.toml")
-
-		// Read the file once and decode that content for every check below.
-		// Other processes add and remove profiles while this scan runs (an
-		// orchestrator launching many sessions creates and deletes one per
-		// session), so separate reads could each see a different file, or
-		// none: a profile removed between a stat and a later read used to
-		// fail this whole command with "failed to parse profile". A profile
-		// that is gone when it is read is skipped, as if never listed.
-		data, err := os.ReadFile(profileConfigPath)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue // No config.toml in this subdirectory (or it was just removed)
-			}
-			return fmt.Errorf("failed to read profile %q config at %s: %w", profileName, profileConfigPath, err)
-		}
+		ref := pendingProfile{dir: filepath.Join(profilesDir, profileName), trusted: trusted}
 
 		// Detect duplicate profile name across scan locations. The same path
 		// loaded twice is fine (idempotent), but two different paths for the
 		// same name is ambiguous — error out and tell the user to rename one.
-		if existing, ok := cfg.Profiles[profileName]; ok && existing.Source != "" && existing.Source != profileConfigPath {
-			return fmt.Errorf(
-				"profile %q defined in multiple locations:\n  %s\n  %s\n"+
-					"Rename one of them or delete the duplicate so it's clear which profile is being used",
-				profileName, existing.Source, profileConfigPath,
-			)
+		// A subdirectory without config.toml is no profile, so it never clashes.
+		existingSource := ""
+		existingPending := false
+		if existing, ok := cfg.Profiles[profileName]; ok {
+			existingSource = existing.Source
+		} else if existing, ok := cfg.pendingProfiles[profileName]; ok {
+			existingSource = existing.configPath()
+			existingPending = true
+		}
+		if existingSource != "" && existingSource != ref.configPath() {
+			if !profileFileExists(ref.configPath()) {
+				continue
+			}
+			if !existingPending || profileFileExists(existingSource) {
+				return nil, duplicateProfileError(profileName, existingSource, ref.configPath())
+			}
 		}
 
-		var profileCfg ProfileConfig
-		if _, err := toml.Decode(string(data), &profileCfg); err != nil {
-			return fmt.Errorf("failed to parse profile %q config at %s: %w", profileName, profileConfigPath, err)
+		if cfg.pendingProfiles == nil {
+			cfg.pendingProfiles = make(map[string]pendingProfile)
 		}
+		cfg.pendingProfiles[profileName] = ref
+		names = append(names, profileName)
+	}
+	return names, nil
+}
 
-		// Detect pre-0.8.0 profile layouts and refuse to load with a friendly
-		// message before schema validation runs (deprecated fields would
-		// otherwise surface as unhelpful "additionalProperties not allowed").
-		if err := checkDeprecatedProfileData(profileConfigPath, data); err != nil {
+// checkProfileNameClashes returns the error indexProfileDirectory returns for a
+// profile name defined in more than one of dirs. It reads only entry names and
+// stats only a name found in two dirs, so its cost stays small with many
+// profiles. A dir that repeats an earlier one is skipped, as the same path
+// never clashes.
+func checkProfileNameClashes(dirs []string) error {
+	var profileDirs []string
+	for _, dir := range dirs {
+		if dir = filepath.Join(dir, "profiles"); !slices.Contains(profileDirs, dir) {
+			profileDirs = append(profileDirs, dir)
+		}
+	}
+	names := make([][]string, len(profileDirs))
+	laterDirsEmpty := true
+	for i := 1; i < len(profileDirs); i++ {
+		names[i] = readDirNames(profileDirs[i])
+		laterDirsEmpty = laterDirsEmpty && len(names[i]) == 0
+	}
+	// No clash is possible, and the first dir (~/.coi/profiles, the big one)
+	// need not be read.
+	if laterDirsEmpty {
+		return nil
+	}
+	names[0] = readDirNames(profileDirs[0])
+
+	seen := make(map[string]bool, len(names[0]))
+	for _, name := range names[0] {
+		seen[name] = true
+	}
+	for i := 1; i < len(names); i++ {
+		var shared []string
+		for _, name := range names[i] {
+			if seen[name] {
+				shared = append(shared, name)
+			}
+		}
+		sort.Strings(shared)
+		for _, name := range shared {
+			existing := ""
+			for j := range i {
+				if path := profileConfigPath(profileDirs[j], name); path != "" {
+					existing = path
+					break
+				}
+			}
+			if path := profileConfigPath(profileDirs[i], name); existing != "" && path != "" {
+				return duplicateProfileError(name, existing, path)
+			}
+		}
+		for _, name := range names[i] {
+			seen[name] = true
+		}
+	}
+	return nil
+}
+
+// duplicateProfileError is the error for a profile name defined in two
+// locations, at existing and at path.
+func duplicateProfileError(name, existing, path string) error {
+	return fmt.Errorf(
+		"profile %q defined in multiple locations:\n  %s\n  %s\n"+
+			"Rename one of them or delete the duplicate so it's clear which profile is being used",
+		name, existing, path,
+	)
+}
+
+// readDirNames returns the entry names of dir, unsorted, or nil when it cannot
+// be read.
+func readDirNames(dir string) []string {
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	names, _ := f.Readdirnames(-1)
+	return names
+}
+
+// profileConfigPath returns profilesDir/name/config.toml when name is a
+// directory (not a symlink, as in indexProfileDirectory) holding a
+// config.toml, else "".
+func profileConfigPath(profilesDir, name string) string {
+	dir := filepath.Join(profilesDir, name)
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return ""
+	}
+	path := filepath.Join(dir, "config.toml")
+	if !profileFileExists(path) {
+		return ""
+	}
+	return path
+}
+
+// profileFileExists reports whether a profile config.toml exists at path.
+func profileFileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// readPendingProfile reads, validates and stores the listed profile name in
+// c.Profiles, without resolving its inheritance. A profile whose config.toml
+// is gone is dropped, as if never listed.
+func (c *Config) readPendingProfile(profileName string) error {
+	ref, ok := c.pendingProfiles[profileName]
+	if !ok {
+		return nil
+	}
+	delete(c.pendingProfiles, profileName)
+	profileDir := ref.dir
+	profileConfigPath := ref.configPath()
+	trusted := ref.trusted
+
+	// Read the file once and decode that content for every check below.
+	// Other processes add and remove profiles between the listing and this
+	// read (an orchestrator launching many sessions creates and deletes one
+	// per session), so separate reads could each see a different file, or
+	// none: a profile removed between a stat and a later read used to
+	// fail this whole command with "failed to parse profile".
+	data, err := os.ReadFile(profileConfigPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// No config.toml in this subdirectory (or it was just removed)
+			if ref.builtin != nil {
+				c.Profiles[profileName] = *ref.builtin
+			}
+			return nil
+		}
+		return fmt.Errorf("failed to read profile %q config at %s: %w", profileName, profileConfigPath, err)
+	}
+
+	// Parse once; the struct, the deprecated-field check and the schema
+	// validation each decode that one parse.
+	var doc toml.Primitive
+	md, err := toml.Decode(string(data), &doc)
+	if err != nil {
+		return fmt.Errorf("failed to parse profile %q config at %s: %w", profileName, profileConfigPath, err)
+	}
+	var profileCfg ProfileConfig
+	if err := md.PrimitiveDecode(doc, &profileCfg); err != nil {
+		return fmt.Errorf("failed to parse profile %q config at %s: %w", profileName, profileConfigPath, err)
+	}
+
+	// Detect pre-0.8.0 profile layouts and refuse to load with a friendly
+	// message before schema validation runs (deprecated fields would
+	// otherwise surface as unhelpful "additionalProperties not allowed").
+	var trap deprecatedProfileFields
+	if md.PrimitiveDecode(doc, &trap) == nil {
+		if err := checkDeprecatedProfileTrap(profileConfigPath, trap); err != nil {
 			return err
 		}
+	}
 
-		// Validate the raw TOML against the JSON Schema to catch unknown keys,
-		// wrong types, and invalid enum values with precise error paths.
-		var rawMap map[string]any
-		if _, err := toml.Decode(string(data), &rawMap); err != nil {
-			return fmt.Errorf("failed to re-read profile %q for schema validation: %w", profileName, err)
-		}
-		DropRemovedProfileKeys(rawMap, profileConfigPath)
-		if schemaErr := coischema.ValidateProfileMap(rawMap); schemaErr != nil {
-			return fmt.Errorf("profile %q at %s failed schema validation: %w",
-				profileName, profileConfigPath, schemaErr)
-		}
+	// Validate the raw TOML against the JSON Schema to catch unknown keys,
+	// wrong types, and invalid enum values with precise error paths.
+	var rawMap map[string]any
+	if err := md.PrimitiveDecode(doc, &rawMap); err != nil {
+		return fmt.Errorf("failed to re-read profile %q for schema validation: %w", profileName, err)
+	}
+	DropRemovedProfileKeys(rawMap, profileConfigPath)
+	if schemaErr := coischema.ValidateProfileMap(rawMap); schemaErr != nil {
+		return fmt.Errorf("profile %q at %s failed schema validation: %w",
+			profileName, profileConfigPath, schemaErr)
+	}
 
-		// Resolve paths relative to profile directory
-		profileDir := filepath.Join(profilesDir, profileName)
-		if profileCfg.Container.Build.Script != "" {
-			profileCfg.Container.Build.Script = resolveRelativePath(profileDir, profileCfg.Container.Build.Script)
-		}
-		if profileCfg.Context != "" {
-			profileCfg.Context = resolveRelativePath(profileDir, profileCfg.Context)
-		}
+	// Resolve paths relative to profile directory
+	if profileCfg.Container.Build.Script != "" {
+		profileCfg.Container.Build.Script = resolveRelativePath(profileDir, profileCfg.Container.Build.Script)
+	}
+	if profileCfg.Context != "" {
+		profileCfg.Context = resolveRelativePath(profileDir, profileCfg.Context)
+	}
 
-		// Tag with source location and the scan root's trust
-		profileCfg.Source = profileConfigPath
-		profileCfg.Trusted = trusted
+	// Tag with source location and the scan root's trust
+	profileCfg.Source = profileConfigPath
+	profileCfg.Trusted = trusted
 
-		// A project-scoped profile (under the workspace ./.coi) is untrusted — a
-		// cloned repo can ship it. Apply the same hardening as an untrusted
-		// top-level config: refuse network downgrades and tag its mounts so
-		// escaping host mounts are gated behind `coi trust`.
-		if !trusted {
-			sanitizeUntrustedNetwork(profileCfg.Network, profileConfigPath)
-			sanitizeUntrustedSessionName(&profileCfg.Container, profileConfigPath)
-			sanitizeUntrustedDocker(&profileCfg.Container, profileConfigPath)
-			sanitizeUntrustedSecurity(profileCfg.Security, profileConfigPath)
-			sanitizeUntrustedGit(profileCfg.Git, profileConfigPath)
-			sanitizeUntrustedTool(profileCfg.Tool, profileConfigPath)
-			sanitizeUntrustedPrompts(profileCfg.Prompts, profileConfigPath)
-			sanitizeUntrustedForwardEnv(&profileCfg.ForwardEnv, profileConfigPath)
-			sanitizeUntrustedSSH(profileCfg.SSH, profileConfigPath)
-			markUntrustedMounts(profileCfg.Mounts, profileConfigPath)
-			markUntrustedSockets(profileCfg.Sockets, profileConfigPath)
-			markUntrustedPorts(profileCfg.Ports, profileConfigPath)
-			markUntrustedCredentials(profileCfg.Credentials, profileConfigPath)
-			if len(profileCfg.EnvCommands) > 0 {
-				fmt.Fprintf(os.Stderr,
-					"WARNING: ignoring 'env_commands' in project profile %s; running a "+
-						"host command is host code execution. Move it to a profile under "+
-						"~/.coi/profiles to apply it.\n", profileConfigPath)
-				profileCfg.EnvCommands = nil
+	// A project-scoped profile (under the workspace ./.coi) is untrusted — a
+	// cloned repo can ship it. Apply the same hardening as an untrusted
+	// top-level config: refuse network downgrades and tag its mounts so
+	// escaping host mounts are gated behind `coi trust`.
+	if !trusted {
+		sanitizeUntrustedNetwork(profileCfg.Network, profileConfigPath)
+		sanitizeUntrustedSessionName(&profileCfg.Container, profileConfigPath)
+		sanitizeUntrustedDocker(&profileCfg.Container, profileConfigPath)
+		sanitizeUntrustedSecurity(profileCfg.Security, profileConfigPath)
+		sanitizeUntrustedGit(profileCfg.Git, profileConfigPath)
+		sanitizeUntrustedTool(profileCfg.Tool, profileConfigPath)
+		sanitizeUntrustedPrompts(profileCfg.Prompts, profileConfigPath)
+		sanitizeUntrustedForwardEnv(&profileCfg.ForwardEnv, profileConfigPath)
+		sanitizeUntrustedSSH(profileCfg.SSH, profileConfigPath)
+		markUntrustedMounts(profileCfg.Mounts, profileConfigPath)
+		markUntrustedSockets(profileCfg.Sockets, profileConfigPath)
+		markUntrustedPorts(profileCfg.Ports, profileConfigPath)
+		markUntrustedCredentials(profileCfg.Credentials, profileConfigPath)
+		if len(profileCfg.EnvCommands) > 0 {
+			fmt.Fprintf(os.Stderr,
+				"WARNING: ignoring 'env_commands' in project profile %s; running a "+
+					"host command is host code execution. Move it to a profile under "+
+					"~/.coi/profiles to apply it.\n", profileConfigPath)
+			profileCfg.EnvCommands = nil
+		}
+		// Strip the timeout unconditionally, even with no env_commands here: a
+		// lone env_command_timeout would otherwise survive and override the
+		// timeout applied to trusted-scope env_commands when this profile is
+		// selected — a project-scoped file must not influence how long a
+		// trusted host command may run.
+		profileCfg.EnvCommandTimeout = ""
+	}
+
+	// Resolve [prompts] file= paths AFTER the untrusted strip above, so only
+	// surviving (trusted) entries are resolved — matching the top-level
+	// loadConfigFileScoped order (sanitize first, then resolve).
+	resolvePromptFiles(profileCfg.Prompts, profileDir)
+
+	if c.Profiles == nil {
+		c.Profiles = make(map[string]ProfileConfig)
+	}
+	c.Profiles[profileName] = profileCfg
+	return nil
+}
+
+// loadProfile reads the listed profile name and the listed profiles it
+// inherits from, resolves its inheritance and stores them in c.Profiles. It
+// does nothing for a profile already loaded or never listed. On error it
+// leaves the chain listed and unread, so a later call fails the same way.
+func (c *Config) loadProfile(name string) (err error) {
+	if _, ok := c.pendingProfiles[name]; !ok {
+		return nil
+	}
+
+	var chain []string
+	refs := make(map[string]pendingProfile)
+	defer func() {
+		if err != nil {
+			for n, ref := range refs {
+				delete(c.Profiles, n)
+				c.pendingProfiles[n] = ref
 			}
-			// Strip the timeout unconditionally, even with no env_commands here: a
-			// lone env_command_timeout would otherwise survive and override the
-			// timeout applied to trusted-scope env_commands when this profile is
-			// selected — a project-scoped file must not influence how long a
-			// trusted host command may run.
-			profileCfg.EnvCommandTimeout = ""
 		}
-
-		// Resolve [prompts] file= paths AFTER the untrusted strip above, so only
-		// surviving (trusted) entries are resolved — matching the top-level
-		// loadConfigFileScoped order (sanitize first, then resolve).
-		resolvePromptFiles(profileCfg.Prompts, profileDir)
-
-		if cfg.Profiles == nil {
-			cfg.Profiles = make(map[string]ProfileConfig)
+	}()
+	for current := name; ; {
+		ref, ok := c.pendingProfiles[current]
+		if !ok {
+			break
 		}
-		cfg.Profiles[profileName] = profileCfg
+		refs[current] = ref
+		if err := c.readPendingProfile(current); err != nil {
+			return err
+		}
+		p, ok := c.Profiles[current]
+		if !ok {
+			break
+		}
+		chain = append(chain, current)
+		if p.Inherits == "" {
+			break
+		}
+		current = p.Inherits
+	}
+
+	resolved := make(map[string]bool, len(c.Profiles))
+	for n := range c.Profiles {
+		resolved[n] = true
+	}
+	for _, n := range chain {
+		delete(resolved, n)
+	}
+	if err := c.resolveProfileInheritance(chain, resolved); err != nil {
+		return fmt.Errorf("profile inheritance error: %w", err)
+	}
+
+	for _, n := range chain {
+		stripUntrustedInheritedSessionName(c, n)
+		if err := validateSessionName(c.Profiles[n].Container.SessionName); err != nil {
+			return fmt.Errorf("profile %q: %w", n, err)
+		}
 	}
 	return nil
 }

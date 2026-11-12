@@ -124,7 +124,7 @@ func TestTmpfsSizeScript(t *testing.T) {
 	}
 }
 
-// The remove script deletes only coi's own unit and unmounts /tmp.
+// The remove script swaps only coi's own unit for a mask and unmounts /tmp.
 func TestTmpfsRemoveScript(t *testing.T) {
 	dir := t.TempDir()
 	unit := filepath.Join(dir, "tmp.mount")
@@ -151,7 +151,7 @@ func TestTmpfsRemoveScript(t *testing.T) {
 	if want := []string{"disable tmp.mount", "daemon-reload", "stop tmp.mount"}; !reflect.DeepEqual(got, want) || out != "removed" {
 		t.Errorf("coi unit: systemctl %q, output %q, want %q and removed", got, out, want)
 	}
-	if _, err := os.Stat(unit); !os.IsNotExist(err) {
-		t.Errorf("coi unit not deleted: %v", err)
+	if dst, err := os.Readlink(unit); err != nil || dst != "/dev/null" {
+		t.Errorf("coi unit not masked: %q, %v", dst, err)
 	}
 }

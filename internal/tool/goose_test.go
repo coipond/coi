@@ -116,3 +116,117 @@ func TestGooseTool_RegistryLookup(t *testing.T) {
 		t.Errorf("DefaultBuildAgents() = %v, goose must stay opt-in", DefaultBuildAgents())
 	}
 }
+
+func TestGooseTool_BuildCommand_Resume(t *testing.T) {
+	goose := NewGoose()
+	want := []string{"goose", "session", "--resume", "--session-id", "20261107_3"}
+	if got := goose.BuildCommand("", true, "20261107_3"); !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildCommand(resume, id) = %v, want %v", got, want)
+	}
+	want = []string{"goose", "session"}
+	if got := goose.BuildCommand("", true, ""); !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildCommand(resume, no id) = %v, want %v", got, want)
+	}
+}
+
+func TestGooseTool_SessionDiscoveryCommand(t *testing.T) {
+	tcd, ok := NewGoose().(ToolWithContainerSessionDiscovery)
+	if !ok {
+		t.Fatal("GooseTool does not implement ToolWithContainerSessionDiscovery")
+	}
+	want := []string{"goose", "session", "list", "--format", "json", "--working_dir", "/workspace"}
+	if got := tcd.SessionDiscoveryCommand("/workspace"); !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionDiscoveryCommand() = %v, want %v", got, want)
+	}
+}
+
+func TestGooseTool_SetSessionDiscoveryOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name:   "exact working_dir beats a newer subdir row",
+			output: `[{"id":"20261107_4","working_dir":"/workspace/sub"},{"id":"20261107_3","working_dir":"/workspace"}]`,
+			want:   "20261107_3",
+		},
+		{
+			name:   "first exact row is the newest",
+			output: `[{"id":"20261107_5","working_dir":"/workspace/"},{"id":"20261107_3","working_dir":"/workspace"}]`,
+			want:   "20261107_5",
+		},
+		{
+			name:   "log line before the JSON",
+			output: "2026-11-07T10:00:00Z INFO goose: starting\n" + `[{"id":"20261107_1","working_dir":"/workspace"}]`,
+			want:   "20261107_1",
+		},
+		{
+			name:   "no sessions",
+			output: "[]",
+			want:   "",
+		},
+		{
+			name:   "only a subdir session",
+			output: `[{"id":"20261107_4","working_dir":"/workspace/sub"}]`,
+			want:   "",
+		},
+		{
+			name:   "id with shell metacharacters",
+			output: `[{"id":"20261107_1; rm -rf /","working_dir":"/workspace"}]`,
+			want:   "",
+		},
+		{
+			name:   "not JSON",
+			output: "error: no such command",
+			want:   "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			goose := NewGoose()
+			tcd := goose.(ToolWithContainerSessionDiscovery)
+			tcd.SessionDiscoveryCommand("/workspace")
+			tcd.SetSessionDiscoveryOutput(tt.output)
+			if got := goose.DiscoverSessionID(""); got != tt.want {
+				t.Errorf("DiscoverSessionID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGooseTool_SetSessionDiscoveryOutput_ResetsID(t *testing.T) {
+	goose := NewGoose()
+	tcd := goose.(ToolWithContainerSessionDiscovery)
+	tcd.SessionDiscoveryCommand("/workspace")
+	tcd.SetSessionDiscoveryOutput(`[{"id":"20261107_1","working_dir":"/workspace"}]`)
+	tcd.SetSessionDiscoveryOutput("[]")
+	if got := goose.DiscoverSessionID(""); got != "" {
+		t.Errorf("DiscoverSessionID() = %q after empty output, want \"\"", got)
+	}
+}
+
+func TestGooseTool_DataDirs(t *testing.T) {
+	tdd, ok := NewGoose().(ToolWithDataDirs)
+	if !ok {
+		t.Fatal("GooseTool does not implement ToolWithDataDirs")
+	}
+	want := []DataDir{
+		{Name: "share", HomeRelPath: ".local/share/goose"},
+		{Name: "state", HomeRelPath: ".local/state/goose"},
+	}
+	if got := tdd.DataDirs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("DataDirs() = %v, want %v", got, want)
+	}
+}
+
+func TestGooseTool_SessionExcludedFiles(t *testing.T) {
+	tse, ok := NewGoose().(ToolWithSessionExcludes)
+	if !ok {
+		t.Fatal("GooseTool does not implement ToolWithSessionExcludes")
+	}
+	want := []string{"tls", "roaming_node_key"}
+	if got := tse.SessionExcludedFiles(); !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionExcludedFiles() = %v, want %v", got, want)
+	}
+}

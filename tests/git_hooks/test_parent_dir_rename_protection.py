@@ -15,9 +15,12 @@ Tests that:
 import subprocess
 from pathlib import Path
 
-from support.helpers import make_workspace_writable, run_coi_in_workspace
-
-GIT = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
+from support.helpers import (
+    GIT,
+    init_repo_with_submodule,
+    make_workspace_writable,
+    run_coi_in_workspace,
+)
 
 
 def _assert_rename_blocked(result):
@@ -52,22 +55,7 @@ def test_root_git_dir_rename_blocked(coi_binary, workspace_dir, cleanup_containe
 
 def test_submodule_git_dir_rename_blocked(coi_binary, workspace_dir, tmp_path, cleanup_containers):
     """Renaming a submodule git dir, or .git/modules, and recreating it fails."""
-    lib = tmp_path / "lib"
-    lib.mkdir()
-    for repo in (lib, Path(workspace_dir)):
-        subprocess.run([*GIT, "init", "-q"], cwd=repo, check=True, capture_output=True)
-        subprocess.run(
-            [*GIT, "commit", "-q", "--allow-empty", "-m", "init"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-    subprocess.run(
-        [*GIT, "submodule", "add", "-q", str(lib), "lib"],
-        cwd=workspace_dir,
-        check=True,
-        capture_output=True,
-    )
+    init_repo_with_submodule(workspace_dir, tmp_path)
     make_workspace_writable(workspace_dir)
     modules = Path(workspace_dir) / ".git" / "modules"
     assert (modules / "lib" / "HEAD").is_file()
