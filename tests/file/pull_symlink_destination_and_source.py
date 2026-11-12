@@ -7,9 +7,8 @@ Tests that:
    - `-r` refuses it (`already exists and is not a directory`)
    - a single-file pull replaces the link itself with a regular file
    Nothing lands in, and nothing changes under, the links' targets.
-2. A container source that is a symlink is pulled as a regular file with the
-   link target's content (incus dereferences it inside the container); no
-   symlink is created on the host.
+2. A single-file pull of a container source that is a symlink is refused
+   (`not a regular file`) and leaves nothing on the host.
 """
 
 import os
@@ -28,7 +27,7 @@ def test_pull_symlink_destination_and_source(coi_binary, cleanup_containers, wor
     2. Create host symlinks in the workspace to a file and a directory outside it
     3. Pull -r onto each symlink: refused, targets unchanged
     4. Pull a single file onto each symlink: links replaced, targets unchanged
-    5. Pull a container symlink as a single file: regular file on the host
+    5. Pull a container symlink as a single file: refused, nothing on the host
     6. Cleanup
     """
     container_name = calculate_container_name(workspace_dir, 1)
@@ -140,16 +139,17 @@ def test_pull_symlink_destination_and_source(coi_binary, cleanup_containers, wor
             text=True,
             timeout=30,
         )
-        assert result.returncode == 0, (
-            f"Pulling a container symlink should succeed. stderr: {result.stderr}"
-        )
+        output = result.stdout + result.stderr
 
-        assert not os.path.islink(local_target), "No symlink should be created on the host"
-        assert os.path.isfile(local_target), "The pull should leave a regular file"
-        with open(local_target) as f:
-            content = f.read()
-        assert link_target_content in content, (
-            f"The file should hold the link target's content. Got: {content}"
+        # Should fail with exit code 1 (generic error)
+        assert result.returncode == 1, (
+            f"Pulling a container symlink should fail with exit 1. output: {output}"
+        )
+        assert "not a regular file" in output, (
+            f"Should report the non-regular source. output: {output}"
+        )
+        assert not os.path.lexists(local_target), (
+            f"A refused pull should leave nothing at {local_target}"
         )
     finally:
         # === Phase 6: Cleanup ===

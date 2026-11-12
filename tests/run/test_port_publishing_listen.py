@@ -11,6 +11,7 @@ Tests that:
 3. `listen = "<interface IP>"` binds that address only
 4. the pool stays on 127.0.0.1 even when a map entry uses 0.0.0.0
 5. a `listen` value that is not an IP address fails the profile
+6. a `listen` value that is not an IP address fails a config file
 
 Each launch serves a sentinel over HTTP inside the container; the host
 connects to the published port on each address. The ports come from a
@@ -171,6 +172,24 @@ def test_invalid_listen_fails_profile(coi_binary, cleanup_containers, workspace_
         text=True,
         timeout=60,
         cwd=workspace_dir,
+    )
+    assert result.returncode != 0, "coi run must fail on a non-IP listen value"
+    assert "'listen' must be an IP address" in result.stderr, (
+        f"error should name the invalid listen value. stderr: {result.stderr}"
+    )
+    assert not workspace_containers(workspace_dir), "invalid config must abort before launch"
+
+
+def test_invalid_listen_fails_config_file(coi_binary, cleanup_containers, workspace_dir):
+    """A non-IP `listen` in $COI_CONFIG aborts before any container."""
+    env = write_trusted_coi_config(_web_entry(free_host_port(), "localhost"))
+    result = subprocess.run(
+        [coi_binary, "run", "--workspace", workspace_dir, "--", "true"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=workspace_dir,
+        env=env,
     )
     assert result.returncode != 0, "coi run must fail on a non-IP listen value"
     assert "'listen' must be an IP address" in result.stderr, (

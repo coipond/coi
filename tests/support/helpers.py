@@ -641,6 +641,55 @@ def wait_for_specific_container_deletion(container_name, timeout=30, poll_interv
     return False
 
 
+def exec_as_code_user(container_name, *argv, timeout=30, cwd=None):
+    """Run a command in the container as the code user (UID/GID 1000, HOME
+    /home/code), in cwd if given, and return the CompletedProcess."""
+    return subprocess.run(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--user",
+            "1000",
+            "--group",
+            "1000",
+            *(["--cwd", cwd] if cwd else []),
+            "--env",
+            "HOME=/home/code",
+            "--",
+            *argv,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
+    """Run `sudo poweroff` in the coi shell's bash pane (which saves the
+    session), wait for coi to exit and the container to go, and force-delete
+    it if it stays. Return whether it went without the force-delete."""
+    child.send("sudo poweroff")
+    time.sleep(0.3)
+    child.send("\x0d")
+    try:
+        child.expect(EOF, timeout=timeout)
+    except TIMEOUT:
+        pass
+    try:
+        child.close(force=False)
+    except Exception:
+        child.close(force=True)
+    deleted = wait_for_specific_container_deletion(container_name, timeout=timeout)
+    if not deleted:
+        subprocess.run(
+            [coi_binary, "container", "delete", container_name, "--force"],
+            capture_output=True,
+            timeout=30,
+        )
+    return deleted
+
+
 def wait_for_container_deletion(prefix="coi-test-", timeout=30, poll_interval=0.5):
     """
     Wait for all containers matching prefix to be deleted.
@@ -1296,6 +1345,19 @@ def incus_status(container_name):
     return r.stdout.strip().upper()
 
 
+def container_config_get(container_name, key):
+    """Return `incus config get <container> <key>`, or None."""
+    r = subprocess.run(
+        ["incus", "config", "get", container_name, key],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
 def container_device_get(container_name, device, key):
     """Return `incus config device get <container> <device> <key>`, or None."""
     r = subprocess.run(
@@ -1593,6 +1655,37 @@ def delete_storage_pool(name):
     )
 
 
+def write_profile(workspace_dir, name, content):
+    """Write a project profile to <workspace>/.coi/profiles/<name>/config.toml."""
+    profile_dir = Path(workspace_dir) / ".coi" / "profiles" / name
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "config.toml").write_text(content)
+
+
+def run_and_show_config(coi_binary, workspace_dir, env=None, extra_args=(), timeout=240):
+    """Run `coi run [extra_args] echo test` and return the slot-1 container's
+    expanded `incus config show` output. Asserts both commands succeed.
+    """
+    result = subprocess.run(
+        [coi_binary, "run", "--workspace", workspace_dir, *extra_args, "echo", "test"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=workspace_dir,
+        env=env,
+    )
+    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+
+    result = subprocess.run(
+        ["incus", "config", "show", "--expanded", calculate_container_name(workspace_dir, 1)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, "Should be able to read container config"
+    return result.stdout
+
+
 def run_coi_in_workspace(coi_binary, workspace_dir, argv, env=None, timeout=120):
     """Run `coi run -- <argv>` from workspace_dir, capturing output.
 
@@ -1665,6 +1758,30 @@ def incus_host_state():
             key=lambda o: o.get("name", ""),
         )
     return state
+
+
+# git with a throwaway identity and the file protocol allowed, for local submodules.
+GIT = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "protocol.file.allow=always"]
+
+
+def init_repo_with_submodule(workspace_dir, tmp_path):
+    """Make workspace_dir a repo with submodule `lib`, cloned from tmp_path/lib."""
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    for repo in (lib, Path(workspace_dir)):
+        subprocess.run([*GIT, "init", "-q"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            [*GIT, "commit", "-q", "--allow-empty", "-m", "init"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        [*GIT, "submodule", "add", "-q", str(lib), "lib"],
+        cwd=workspace_dir,
+        check=True,
+        capture_output=True,
+    )
 
 
 def workspace_containers(workspace_dir):

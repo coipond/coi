@@ -422,7 +422,9 @@ func removeAllowlistSetsForIP(containerIP string) error {
 	}
 	// One listing tells which of the four sets exist, so the common case
 	// (open/restricted, no sets) costs one call instead of four failing deletes.
-	listing, listErr := runNFTCommand("list", "table", "ip", "coi")
+	// Terse set declarations only: listing the table or the elements costs
+	// time that grows with every container's set size.
+	listing, listErr := runNFTCommand("-t", "list", "sets", "table", "ip", "coi")
 	var firstErr error
 	for _, name := range []string{
 		staticSetName(containerIP), dynamicSetName(containerIP),
