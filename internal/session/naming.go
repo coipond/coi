@@ -2,7 +2,6 @@ package session
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -251,37 +250,17 @@ func ListWorkspaceSessions(workspacePath, sessionName string) (map[int]string, e
 	hash := IdentityHash(workspacePath, sessionName)
 	prefix := fmt.Sprintf("%s%s-", GetContainerPrefix(), hash)
 
-	output, err := container.IncusOutput("list", "--format=json")
+	names, err := container.ListContainerNames("^" + regexp.QuoteMeta(prefix))
 	if err != nil {
 		return nil, err
 	}
 
 	sessions := make(map[int]string)
 	re := regexp.MustCompile(fmt.Sprintf(`^%s(\d+)$`, regexp.QuoteMeta(prefix)))
-
-	// Parse JSON array of containers
-	var containers []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		// Fallback: if JSON parsing fails, try regex on raw output
-		nameMatches := regexp.MustCompile(`"name"\s*:\s*"([^"]+)"`).FindAllStringSubmatch(output, -1)
-		for _, match := range nameMatches {
-			if len(match) > 1 {
-				containerName := match[1]
-				if matches := re.FindStringSubmatch(containerName); len(matches) > 1 {
-					if slotNum, err := strconv.Atoi(matches[1]); err == nil {
-						sessions[slotNum] = containerName
-					}
-				}
-			}
-		}
-	} else {
-		for _, c := range containers {
-			if matches := re.FindStringSubmatch(c.Name); len(matches) > 1 {
-				if slotNum, err := strconv.Atoi(matches[1]); err == nil {
-					sessions[slotNum] = c.Name
-				}
+	for _, name := range names {
+		if matches := re.FindStringSubmatch(name); len(matches) > 1 {
+			if slotNum, err := strconv.Atoi(matches[1]); err == nil {
+				sessions[slotNum] = name
 			}
 		}
 	}

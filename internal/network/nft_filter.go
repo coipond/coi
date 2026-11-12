@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -956,7 +957,7 @@ type instanceNet struct {
 
 // instanceNetCache remembers complete (IPv4 + veth) answers briefly: one
 // launch asks for the IP and the veth 3-4 times (boot block, mode setup,
-// IPv6 block, [[network.hosts]]), each a full-state `incus list` (~100-200 ms).
+// IPv6 block, [[network.hosts]]), each an instance state query.
 // Only complete answers are cached, so a container still waiting for its DHCP
 // lease is always re-queried, and the short TTL covers just one launch.
 var instanceNetCache sync.Map // container name -> instanceNet
@@ -964,7 +965,7 @@ var instanceNetCache sync.Map // container name -> instanceNet
 const instanceNetTTL = 5 * time.Second
 
 // lookupInstanceNet returns the container's eth0 IPv4 address, veth name and
-// network (any may be empty) from one `incus list`.
+// network (any may be empty) from one instance query.
 func lookupInstanceNet(containerName string) (instanceNet, error) {
 	if v, ok := instanceNetCache.Load(containerName); ok {
 		// The veth is recreated on every container start: only trust a cached
@@ -974,11 +975,14 @@ func lookupInstanceNet(containerName string) (instanceNet, error) {
 		}
 		instanceNetCache.Delete(containerName)
 	}
-	output, err := container.IncusOutput("list", containerName, "--format=json")
+	output, err := container.ContainerFullJSON(containerName)
+	if errors.Is(err, container.ErrContainerNotFound) {
+		return instanceNet{}, nil
+	}
 	if err != nil {
 		return instanceNet{}, fmt.Errorf("failed to get container info: %w", err)
 	}
-	n, err := parseInstanceNet(output, containerName)
+	n, err := parseInstanceNet(output)
 	if err != nil {
 		return instanceNet{}, err
 	}
@@ -998,12 +1002,11 @@ func hostInterfaceExists(name string) bool {
 	return err == nil
 }
 
-// parseInstanceNet extracts eth0's IPv4 address, host_name and network for
-// containerName from `incus list --format=json` output. The network is the
-// expanded eth0 device's `network`, or its `parent` for a NIC without one.
-func parseInstanceNet(output, containerName string) (instanceNet, error) {
-	var containers []struct {
-		Name            string                       `json:"name"`
+// parseInstanceNet extracts eth0's IPv4 address, host_name and network from
+// `/1.0/instances/<name>?recursion=1` JSON. The network is the expanded eth0
+// device's `network`, or its `parent` for a NIC without one.
+func parseInstanceNet(output string) (instanceNet, error) {
+	var c struct {
 		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
 		State           struct {
 			Network map[string]struct {
@@ -1015,23 +1018,16 @@ func parseInstanceNet(output, containerName string) (instanceNet, error) {
 			} `json:"network"`
 		} `json:"state"`
 	}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
+	if err := json.Unmarshal([]byte(output), &c); err != nil {
 		return instanceNet{}, fmt.Errorf("failed to parse container info: %w", err)
 	}
 	var n instanceNet
-	for _, c := range containers {
-		if c.Name != containerName {
-			continue
-		}
-		if dev := c.ExpandedDevices["eth0"]; dev["network"] != "" {
-			n.network = dev["network"]
-		} else {
-			n.network = dev["parent"]
-		}
-		eth0, ok := c.State.Network["eth0"]
-		if !ok {
-			continue
-		}
+	if dev := c.ExpandedDevices["eth0"]; dev["network"] != "" {
+		n.network = dev["network"]
+	} else {
+		n.network = dev["parent"]
+	}
+	if eth0, ok := c.State.Network["eth0"]; ok {
 		n.veth = eth0.HostName
 		for _, addr := range eth0.Addresses {
 			if addr.Family == "inet" {

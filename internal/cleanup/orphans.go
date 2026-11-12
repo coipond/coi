@@ -128,28 +128,7 @@ func CleanupOrphanedIPv6Rules(names []string, logger func(string)) (int, error) 
 
 // getRunningContainerNames returns the names of all running containers.
 func getRunningContainerNames() ([]string, error) {
-	output, err := container.IncusOutput("list", "--format=json")
-	if err != nil {
-		return nil, err
-	}
-
-	var containers []struct {
-		Name  string `json:"name"`
-		State struct {
-			Status string `json:"status"`
-		} `json:"state"`
-	}
-	if err := parseJSON(output, &containers); err != nil {
-		return nil, err
-	}
-
-	var names []string
-	for _, c := range containers {
-		if container.StatusIsRunning(c.State.Status) {
-			names = append(names, c.Name)
-		}
-	}
-	return names, nil
+	return container.ListRunningContainerNames()
 }
 
 // getRunningContainerIPs returns IPs of all running containers
