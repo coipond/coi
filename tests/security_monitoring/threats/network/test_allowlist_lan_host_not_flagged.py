@@ -75,7 +75,8 @@ file_read_rate_mb_per_sec = 1000
             holders.append(_hold_connection(container_name, "redmine.lan", 443))
             time.sleep(15)
             assert get_container_state(container_name) == "Running", (
-                "a connection to the configured LAN service must not pause the container"
+                "a connection to the configured LAN service must not pause the container; "
+                f"threat events: {get_threat_events(container_name)}"
             )
             flagged = _threats_about(container_name, redmine)
             assert not flagged, f"redmine.lan:443 must not be flagged, got: {flagged}"

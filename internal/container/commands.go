@@ -644,6 +644,11 @@ func startWithIsolationFallback(containerName string) error {
 	return StartWithIsolationFallback(containerName)
 }
 
+// ManagedConfigKey marks a container that coi created with this key in place,
+// so `coi top` knows a container without user.coi.workspace has no workspace
+// rather than predating the key.
+const ManagedConfigKey = "user.coi.managed"
+
 // LaunchContainer launches an ephemeral container on the given storage pool.
 // An empty pool means "use Incus's default pool".
 // Uses init+configure+start (not launch) so security flags are set before first boot.
@@ -674,7 +679,13 @@ func LaunchContainerWithPreStart(imageAlias, containerName, pool string, ephemer
 // needs the workspace UID mapping set before first boot, and `incus launch`
 // would start too early. A nil preStart is a no-op.
 func LaunchContainerWithPreStartPolicy(imageAlias, containerName, pool string, ephemeral bool, preStart func() error, policy HardeningPolicy) error {
-	if err := initAndConfigureContainer(imageAlias, containerName, pool, ephemeral, preStart, policy); err != nil {
+	return launchContainer(imageAlias, containerName, pool, ephemeral, preStart, policy, nil)
+}
+
+// launchContainer is LaunchContainerWithPreStartPolicy that also sets
+// initConfig ("key=value" pairs) at init.
+func launchContainer(imageAlias, containerName, pool string, ephemeral bool, preStart func() error, policy HardeningPolicy, initConfig []string) error {
+	if err := initAndConfigureContainer(imageAlias, containerName, pool, ephemeral, preStart, policy, initConfig); err != nil {
 		return err
 	}
 	// Non-fatal: unset and retry at start time if the environment lacks subuid space.
@@ -705,7 +716,7 @@ func LaunchContainerWithPreStartPolicy(imageAlias, containerName, pool string, e
 			// prove that, and an idmapped-mount failure (#678) is a different
 			// class entirely (#716).
 			fmt.Fprintf(os.Stderr, "Warning: container start failed; recreating without UID namespace isolation and retrying\n")
-			recreateErr := initConfigureAndStart(imageAlias, containerName, pool, true, preStart, policy)
+			recreateErr := initConfigureAndStart(imageAlias, containerName, pool, true, preStart, policy, initConfig)
 			// The recreate's start (a plain `incus start`) can soft-fail —
 			// forkstart exits non-zero though the container came up — on the same
 			// nested/CI hosts the initial start does; treat a running container as
@@ -750,13 +761,17 @@ func LaunchContainerWithPreStartPolicy(imageAlias, containerName, pool string, e
 // (used for start-time-only settings like raw.idmap) before the caller starts
 // the container. The policy is applied once here, before first boot, so no
 // caller needs to patch it on afterward.
-func initAndConfigureContainer(imageAlias, containerName, pool string, ephemeral bool, preStart func() error, policy HardeningPolicy) error {
+func initAndConfigureContainer(imageAlias, containerName, pool string, ephemeral bool, preStart func() error, policy HardeningPolicy, initConfig []string) error {
 	args := []string{"init", imageAlias, containerName}
 	if ephemeral {
 		args = append(args, "--ephemeral")
 	}
 	if pool != "" {
 		args = append(args, "-s", pool)
+	}
+	args = append(args, "-c", ManagedConfigKey+"=true")
+	for _, kv := range initConfig {
+		args = append(args, "-c", kv)
 	}
 	if err := IncusExec(args...); err != nil {
 		return err
@@ -786,8 +801,8 @@ func initAndConfigureContainer(imageAlias, containerName, pool string, ephemeral
 
 // initConfigureAndStart creates, configures, and starts a container without
 // security.idmap.isolated — used as the isolation-unsupported fallback path.
-func initConfigureAndStart(imageAlias, containerName, pool string, ephemeral bool, preStart func() error, policy HardeningPolicy) error {
-	if err := initAndConfigureContainer(imageAlias, containerName, pool, ephemeral, preStart, policy); err != nil {
+func initConfigureAndStart(imageAlias, containerName, pool string, ephemeral bool, preStart func() error, policy HardeningPolicy, initConfig []string) error {
+	if err := initAndConfigureContainer(imageAlias, containerName, pool, ephemeral, preStart, policy, initConfig); err != nil {
 		return err
 	}
 	return IncusExec("start", containerName)

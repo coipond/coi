@@ -129,7 +129,12 @@ func checkDeprecatedProfileData(path string, data []byte) error {
 	if _, err := toml.Decode(string(data), &trap); err != nil {
 		return nil
 	}
+	return checkDeprecatedProfileTrap(path, trap)
+}
 
+// checkDeprecatedProfileTrap is checkDeprecatedProfileData for a profile
+// already decoded into the trap struct.
+func checkDeprecatedProfileTrap(path string, trap deprecatedProfileFields) error {
 	var problems []string
 	if trap.Image != "" {
 		problems = append(problems, fmt.Sprintf(

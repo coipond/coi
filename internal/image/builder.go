@@ -17,7 +17,7 @@ import (
 // Default image names: the upstream base image, the alias of the built coi
 // image, and the name of the temporary build container.
 const (
-	BaseImage      = "ubuntu:24.04"
+	BaseImage      = "ubuntu:26.04"
 	CoiAlias       = "coi-default"
 	BuildContainer = "coi-build"
 )

@@ -628,6 +628,20 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 	return nil
 }
 
+// containerInitArgs is the `incus init` argv for a fresh container. The
+// workspace key rides on init, so a launch pays no extra Incus call for it.
+func containerInitArgs(image, containerName string, opts *SetupOptions) []string {
+	args := []string{"init", image, containerName}
+	if opts.StoragePool != "" {
+		args = append(args, "-s", opts.StoragePool)
+	}
+	args = append(args, "-c", container.ManagedConfigKey+"=true")
+	if opts.WorkspacePath != "" {
+		args = append(args, "-c", WorkspaceConfigKey+"="+opts.WorkspacePath)
+	}
+	return args
+}
+
 // createAndStartContainer creates a fresh container (init), mounts the
 // workspace + configured/worktree/security devices, applies limits and the
 // pre-boot hardening, starts it, and applies the boot network block. It mutates
@@ -638,11 +652,7 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 	// storage pool ([container] storage_pool) the same way the run pipeline
 	// does via `-s <pool>` — otherwise `coi shell` silently lands on the
 	// Incus default pool (#726). An empty pool means "use the default".
-	initArgs := []string{"init", image, result.ContainerName}
-	if opts.StoragePool != "" {
-		initArgs = append(initArgs, "-s", opts.StoragePool)
-	}
-	if err := container.IncusExec(initArgs...); err != nil {
+	if err := container.IncusExec(containerInitArgs(image, result.ContainerName, opts)...); err != nil {
 		return fmt.Errorf("failed to create container: %w", err)
 	}
 

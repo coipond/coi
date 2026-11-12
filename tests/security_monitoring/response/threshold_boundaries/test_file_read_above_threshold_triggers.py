@@ -20,7 +20,7 @@ from support.monitoring import (
     os.environ.get("GITHUB_ACTIONS") == "true",
     reason="cgroup io.stat does not track bind-mount I/O on GitHub Actions runners; "
     "reads from /workspace are served from the host page cache and not attributed "
-    "to the container's cgroup, so the monitoring daemon sees 0 bytes read.",
+    "to the container's cgroup, so the security monitor sees 0 bytes read.",
 )
 def test_file_read_above_threshold_triggers(
     test_workspace, enable_monitoring_low_thresholds, coi_binary
@@ -68,7 +68,7 @@ def test_file_read_above_threshold_triggers(
     time.sleep(10)
 
     # Read the 250MB file with dd and direct I/O to bypass page cache.
-    # Use Popen (non-blocking) because the monitoring daemon may freeze the
+    # Use Popen (non-blocking) because the security monitor may freeze the
     # container mid-read, which would cause a blocking subprocess.run to
     # hang until timeout.
     dd_proc = subprocess.Popen(
@@ -87,7 +87,7 @@ def test_file_read_above_threshold_triggers(
         stderr=subprocess.DEVNULL,
     )
 
-    # Poll for the container to be frozen.  The monitoring daemon (1s poll
+    # Poll for the container to be frozen.  The security monitor (1s poll
     # interval) will detect the >50MB delta and freeze the container either
     # during or shortly after the dd read completes.
     paused = False
