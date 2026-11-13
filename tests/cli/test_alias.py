@@ -12,6 +12,7 @@ from support.helpers import (
     calculate_container_name,
     container_config_get,
     get_container_list,
+    incus_status,
     write_workspace_container_config,
 )
 
@@ -264,13 +265,7 @@ class TestUnfreezeByAlias:
         )
         if result.returncode == 0:
             # Verify container is running again
-            check = subprocess.run(
-                ["incus", "list", container_name, "--format=csv", "-c", "s"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            assert "RUNNING" in check.stdout.upper()
+            assert incus_status(container_name) == "RUNNING"
 
 
 # ============================================================
