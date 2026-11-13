@@ -110,20 +110,40 @@ def get_threat_events(container_name):
     return events
 
 
-def poll_network_threats(container_name, max_wait=45):
+def poll_network_threats(container_name, max_wait=45, match=None):
     """Poll the audit log for `network`-category threats, up to max_wait seconds.
 
     Network detection reads /proc/<init-pid>/net/* on a poll cycle, so a threat
-    can take several cycles to appear — a single fixed sleep races it. Returns the
-    list of network threats (possibly empty if none appeared within the budget).
+    can take several cycles to appear — a single fixed sleep races it. With match,
+    only threats whose description contains it count. Returns the list of network
+    threats (possibly empty if none appeared within the budget).
     """
+
+    def network_threats():
+        return [
+            e
+            for e in get_threat_events(container_name)
+            if e.get("category") == "network"
+            and (match is None or match in e.get("description", ""))
+        ]
+
     deadline = time.monotonic() + max_wait
     while time.monotonic() < deadline:
-        net = [e for e in get_threat_events(container_name) if e.get("category") == "network"]
+        net = network_threats()
         if net:
             return net
         time.sleep(2)
-    return [e for e in get_threat_events(container_name) if e.get("category") == "network"]
+    return network_threats()
+
+
+def hold_script(container_name, script, *args):
+    """Run `python3 -c script args...` in the container in the background, to
+    hold sockets open while the monitor polls. Returns the Popen; terminate it."""
+    return subprocess.Popen(
+        ["incus", "exec", container_name, "--", "python3", "-c", script, *args],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def find_container_cgroup_path(container_name: str) -> str | None:
