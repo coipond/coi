@@ -112,6 +112,7 @@ func killCommand(cmd *cobra.Command, args []string) error {
 	if containerNames == nil {
 		return nil
 	}
+	containerNames = uniqueNames(containerNames)
 
 	// Kill each container
 	killed := 0
@@ -189,6 +190,20 @@ func killCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// uniqueNames drops repeated names, keeping the first of each: a name given
+// twice (or an alias and the container name it resolves to) is one target.
+func uniqueNames(names []string) []string {
+	seen := make(map[string]bool, len(names))
+	out := names[:0]
+	for _, name := range names {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // cleanupNftRulesForIP removes any nft rules associated with a container IP
