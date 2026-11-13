@@ -1505,6 +1505,35 @@ def calculate_container_name(workspace_dir, slot, session_name=None):
     return f"{prefix}{identity_id}-{slot}"
 
 
+def tmux_as_code_user(coi_binary, container_name, *args):
+    """Run `tmux <args>` in the container as the code user (owner of the
+    session's tmux server), assert it succeeded, and return stdout + stderr."""
+    result = subprocess.run(
+        [coi_binary, "container", "exec", container_name, "--user", "1000", "--", "tmux", *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"tmux {args[0]} should succeed. stderr: {result.stderr}"
+    return result.stdout + result.stderr
+
+
+def tmux_pane_in_mode(coi_binary, container_name, target):
+    """Return `#{pane_in_mode}` of the target pane ("1" in copy mode, else "0")."""
+    return tmux_as_code_user(
+        coi_binary, container_name, "display", "-p", "-t", target, "#{pane_in_mode}"
+    ).strip()
+
+
+def session_for_container(sessions_dir, container_name):
+    """Return the id of the saved session in sessions_dir whose metadata names
+    container_name, or None."""
+    for metadata in Path(sessions_dir).glob("*/metadata.json"):
+        if json.loads(metadata.read_text()).get("container_name") == container_name:
+            return metadata.parent.name
+    return None
+
+
 def tool_data_dir(workspace_dir, tool, name):
     """Host dir backing one of a tool's data dirs for a workspace (#929):
     ~/.coi/tool-data/<tool>/<workspace-hash>/<name>, mirroring
@@ -1533,6 +1562,51 @@ def extract_container_name(result):
             if "Container: " in line:
                 return line.split("Container: ")[-1].strip()
     return None
+
+
+def start_background_shell(
+    coi_binary,
+    workspace_dir,
+    env=None,
+    *,
+    profile=None,
+    slot=None,
+    debug=True,
+    timeout=120,
+    extra_args=(),
+):
+    """Start `coi shell --background` for the workspace and assert it started.
+
+    Returns (container_name, result). With slot, passes `--slot` and derives the
+    name with calculate_container_name; otherwise reads it from the launch output
+    (extract_container_name). With profile, passes `--profile` and runs from the
+    workspace, as project profiles are discovered under <cwd>/.coi/profiles.
+    extra_args are appended to the argv. env None inherits os.environ.
+    """
+    argv = [coi_binary, "shell", "--workspace", workspace_dir]
+    if profile is not None:
+        argv += ["--profile", profile]
+    if slot is not None:
+        argv += ["--slot", str(slot)]
+    argv.append("--background")
+    if debug:
+        argv.append("--debug")
+    argv += extra_args
+    result = subprocess.run(
+        argv,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+        cwd=workspace_dir if profile is not None else None,
+    )
+    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
+    if slot is not None:
+        name = calculate_container_name(workspace_dir, slot)
+    else:
+        name = extract_container_name(result)
+        assert name, f"could not find container name. output: {result.stdout + result.stderr}"
+    return name, result
 
 
 def wait_for_container_started(coi_binary, container_name, timeout=90):

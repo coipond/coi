@@ -22,7 +22,11 @@ from pathlib import Path
 
 import pytest
 
-from support.helpers import calculate_container_name, write_trusted_coi_config
+from support.helpers import (
+    calculate_container_name,
+    start_background_shell,
+    write_trusted_coi_config,
+)
 
 MARKER = ".coi-tool-session-marker"
 CONTAINER_HOME = "/home/code"
@@ -50,14 +54,9 @@ exec sleep 300
 def _launch(coi_binary, workspace_dir, env, marker, *extra):
     if marker.exists():
         marker.unlink()
-    result = subprocess.run(
-        [coi_binary, "shell", "--background", "--workspace", workspace_dir, "--slot", "1", *extra],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=env,
+    _, result = start_background_shell(
+        coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180, extra_args=extra
     )
-    assert result.returncode == 0, f"coi shell --background {extra} failed:\n{result.stderr}"
 
     # The tool starts inside tmux shortly after the container is ready.
     deadline = time.monotonic() + 60

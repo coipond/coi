@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/network"
@@ -95,6 +96,15 @@ func resolveContainerArgs(args []string, all bool, force bool, action string) ([
 }
 
 func killCommand(cmd *cobra.Command, args []string) error {
+	// --slot is a root flag, so kill parses it; it would otherwise be ignored
+	// and kill the slot the name resolves to.
+	if cmd.Flags().Changed("slot") {
+		return &ExitCodeError{Code: ExitUsage, Message: "coi kill does not take --slot: name the slot as <alias>-<N> or use the container name"}
+	}
+	if killAll && len(args) > 0 {
+		return &ExitCodeError{Code: ExitUsage, Message: "--all kills every container: give container names or --all, not both"}
+	}
+
 	containerNames, err := resolveContainerArgs(args, killAll, killForce, "Kill")
 	if err != nil {
 		return err
@@ -102,9 +112,11 @@ func killCommand(cmd *cobra.Command, args []string) error {
 	if containerNames == nil {
 		return nil
 	}
+	containerNames = uniqueNames(containerNames)
 
 	// Kill each container
 	killed := 0
+	var notKilled []string
 	for _, name := range containerNames {
 		fmt.Printf("Killing container %s...\n", name)
 		mgr := container.NewManager(name)
@@ -112,10 +124,12 @@ func killCommand(cmd *cobra.Command, args []string) error {
 		state, containerIP, err := stateAndFirewallIP(mgr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: Failed to check if %s exists: %v\n", name, err)
+			notKilled = append(notKilled, name)
 			continue
 		}
 		if !state.Exists {
 			fmt.Fprintf(os.Stderr, "  Warning: Container %s does not exist\n", name)
+			notKilled = append(notKilled, name)
 			continue
 		}
 
@@ -157,6 +171,7 @@ func killCommand(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  ✓ Killed %s\n", name)
 			} else {
 				fmt.Fprintf(os.Stderr, "  Warning: Failed to delete %s: %v\n", name, err)
+				notKilled = append(notKilled, name)
 			}
 		}
 	}
@@ -165,13 +180,30 @@ func killCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nKilled %d container(s)\n", killed)
 	} else {
 		fmt.Println("\nNo containers were killed")
-		if len(containerNames) > 0 {
-			// User specified containers but none were killed - this is an error
-			return fmt.Errorf("failed to kill specified containers")
-		}
+	}
+
+	// With --all, a container gone since the list is not an error unless
+	// nothing was killed; every named target must be killed.
+	if len(notKilled) > 0 && (!killAll || killed == 0) {
+		return fmt.Errorf("failed to kill %d of %d container(s): %s",
+			len(notKilled), len(containerNames), strings.Join(notKilled, ", "))
 	}
 
 	return nil
+}
+
+// uniqueNames drops repeated names, keeping the first of each: a name given
+// twice (or an alias and the container name it resolves to) is one target.
+func uniqueNames(names []string) []string {
+	seen := make(map[string]bool, len(names))
+	out := names[:0]
+	for _, name := range names {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // cleanupNftRulesForIP removes any nft rules associated with a container IP

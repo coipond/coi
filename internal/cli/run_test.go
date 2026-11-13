@@ -251,6 +251,22 @@ func TestOverlayWorkspaceConfig_ProfileWinsOverWorkspace(t *testing.T) {
 	}
 }
 
+func TestOverlayWorkspaceConfig_BadConfigExitsConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgContent := "[[ports.map]]\nname = \"web\"\ncontainer = 8000\nlisten = \"localhost\"\n"
+	if err := os.WriteFile(filepath.Join(dir, ".coi", "config.toml"), []byte(cfgContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &App{cfg: config.GetDefaultConfig()}
+	if got := ExitCodeFor(a.overlayWorkspaceConfig(dir)); got != ExitConfig {
+		t.Errorf("exit code = %d, want %d (ExitConfig)", got, ExitConfig)
+	}
+}
+
 func TestResumePersistence(t *testing.T) {
 	tr, fa := true, false
 	cases := []struct {

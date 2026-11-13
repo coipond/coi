@@ -594,9 +594,7 @@ func containerWorkspaces(running []incusTopEntry) map[string]string {
 }
 
 // loadContainerWorkspaces maps the wanted container names to their workspace
-// from the session metadata written at launch, matching how `coi list`
-// resolves workspaces. Session dirs are named by session ID, so each one is
-// read until every wanted container is found.
+// from the session metadata written at launch (see readContainerMetadata).
 // Best-effort: a missing/unreadable sessions dir yields an empty map.
 func loadContainerWorkspaces(want map[string]bool) map[string]string {
 	out := make(map[string]string)
@@ -612,6 +610,21 @@ func loadContainerWorkspaces(want map[string]bool) map[string]string {
 		return out
 	}
 	sessionsDir := session.GetSessionsDir(filepath.Join(homeDir, ".coi"), toolInstance)
+	for name, md := range readContainerMetadata(sessionsDir, want) {
+		out[name] = md.Workspace
+	}
+	return out
+}
+
+// readContainerMetadata maps the wanted container names to the session
+// metadata written at launch. Session dirs are named by session ID, so each
+// one is read until every wanted container is found.
+// Best-effort: a missing/unreadable sessions dir yields an empty map.
+func readContainerMetadata(sessionsDir string, want map[string]bool) map[string]session.SessionMetadata {
+	out := make(map[string]session.SessionMetadata)
+	if len(want) == 0 {
+		return out
+	}
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		return out
@@ -629,7 +642,9 @@ func loadContainerWorkspaces(want map[string]bool) map[string]string {
 		}
 		var md session.SessionMetadata
 		if err := json.Unmarshal(data, &md); err == nil && want[md.ContainerName] && md.Workspace != "" {
-			out[md.ContainerName] = md.Workspace
+			if _, seen := out[md.ContainerName]; !seen {
+				out[md.ContainerName] = md
+			}
 		}
 	}
 	return out
