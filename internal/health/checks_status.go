@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/coipond/coi/internal/cleanup"
 	"github.com/coipond/coi/internal/config"
@@ -17,10 +16,7 @@ import (
 
 // CheckActiveContainers counts running Coi containers
 func CheckActiveContainers() HealthCheck {
-	prefix := session.GetContainerPrefix()
-	pattern := fmt.Sprintf("^%s", prefix)
-
-	output, err := container.IncusOutput("list", pattern, "--format=json")
+	output, err := container.IncusOutput("list", session.ContainerPattern(), "--format=json")
 	if err != nil {
 		return HealthCheck{
 			Name:    "active_containers",
@@ -181,22 +177,16 @@ func CheckFirewalldVethBloat() HealthCheck {
 	}
 }
 
+// detectOrphanedVeths is cleanup.DetectOrphanedVeths. Package var so tests can
+// replace it.
+var detectOrphanedVeths = cleanup.DetectOrphanedVeths
+
 // CheckOrphanedResources checks for orphaned system resources
 func CheckOrphanedResources() HealthCheck {
 	// Check for orphaned veths
 	orphanedVeths := 0
-	entries, err := os.ReadDir("/sys/class/net")
-	if err == nil {
-		for _, entry := range entries {
-			name := entry.Name()
-			if !strings.HasPrefix(name, "veth") {
-				continue
-			}
-			masterPath := fmt.Sprintf("/sys/class/net/%s/master", name)
-			if _, err := os.Stat(masterPath); os.IsNotExist(err) {
-				orphanedVeths++
-			}
-		}
+	if veths, err := detectOrphanedVeths(); err == nil {
+		orphanedVeths = len(veths)
 	}
 
 	// Check for orphaned firewall rules

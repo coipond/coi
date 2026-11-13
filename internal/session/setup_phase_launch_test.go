@@ -7,8 +7,8 @@ import (
 )
 
 func TestContainerInitArgs_RecordsWorkspace(t *testing.T) {
-	got := containerInitArgs("coi-default", "coi-abc-1", &SetupOptions{StoragePool: "fast", WorkspacePath: "/home/u/my proj"})
-	want := []string{"init", "coi-default", "coi-abc-1", "-s", "fast", "-c", "user.coi.managed=true", "-c", "user.coi.workspace=/home/u/my proj"}
+	got := containerInitArgs("coi-default", "coi-abc-1", &SetupOptions{StoragePool: "fast", WorkspacePath: "/home/u/my proj", Persistent: true})
+	want := []string{"init", "coi-default", "coi-abc-1", "-s", "fast", "-c", "user.coi.managed=true", "-c", "user.coi.persistent=true", "-c", "user.coi.workspace=/home/u/my proj"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("init args = %q, want %q", got, want)
 	}
@@ -20,11 +20,12 @@ func TestPhaseCreateContainer_ReuseSetsWorkspaceKey(t *testing.T) {
 		explicit                    bool
 		want                        []string
 	}{
-		{"key missing", "pcc-missing", "config: {}\ndevices: {}\n", false, []string{"config set pcc-missing user.coi.workspace=/home/u/proj"}},
-		{"workspace moved", "pcc-moved", "config:\n  user.coi.workspace: /old\ndevices: {}\n", false, []string{"config set pcc-moved user.coi.workspace=/home/u/proj"}},
-		{"key current", "pcc-current", "config:\n  user.coi.workspace: /home/u/proj\ndevices: {}\n", false, nil},
-		// --container enters the container as it is: its own workspace stays.
-		{"explicit --container", "pcc-explicit", "config:\n  user.coi.workspace: /home/u/orig\ndevices: {}\n", true, nil},
+		{"keys missing", "pcc-missing", "config: {}\ndevices: {}\n", false, []string{"config set pcc-missing user.coi.workspace=/home/u/proj", "config set pcc-missing user.coi.persistent=false"}},
+		{"workspace moved", "pcc-moved", "config:\n  user.coi.workspace: /old\n  user.coi.persistent: \"false\"\ndevices: {}\n", false, []string{"config set pcc-moved user.coi.workspace=/home/u/proj"}},
+		{"keys current", "pcc-current", "config:\n  user.coi.workspace: /home/u/proj\n  user.coi.persistent: \"false\"\ndevices: {}\n", false, nil},
+		// --container enters the container as it is: its own workspace stays,
+		// but this session's mode is recorded.
+		{"explicit --container", "pcc-explicit", "config:\n  user.coi.workspace: /home/u/orig\n  user.coi.persistent: \"true\"\ndevices: {}\n", true, []string{"config set pcc-explicit user.coi.persistent=false"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logPath := fakeLimitsIncus(t, tc.container, tc.configYAML)

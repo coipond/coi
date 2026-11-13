@@ -48,6 +48,7 @@ import time
 
 from support.helpers import (
     calculate_container_name,
+    start_background_shell,
     write_trusted_coi_config,
     write_workspace_container_config,
 )
@@ -59,14 +60,9 @@ MINTED_VALUE = "grants-report-minted-value-5517"
 
 def _run_shell(coi_binary, workspace_dir, env, args=("--slot", "1")):
     env["COI_USE_DUMMY"] = "1"
-    result = subprocess.run(
-        [coi_binary, "shell", "--background", "--workspace", str(workspace_dir), *args],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=env,
+    _, result = start_background_shell(
+        coi_binary, str(workspace_dir), env, debug=False, timeout=180, extra_args=args
     )
-    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
     return result
 
 

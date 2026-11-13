@@ -13,25 +13,11 @@ the identity is unchanged. The writable control proves the lock is what blocks i
 
 import subprocess
 
-from support.helpers import extract_container_name, write_trusted_coi_config
+from support.helpers import start_background_shell, write_trusted_coi_config
 
 BOT_NAME = "coipond-coder[bot]"
 BOT_EMAIL = "317930231+coipond-coder[bot]@users.noreply.github.com"
 HOME = "/home/code"
-
-
-def _start_background_shell(coi_binary, workspace_dir, env):
-    result = subprocess.run(
-        [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
-    name = extract_container_name(result)
-    assert name, f"could not find container name. stderr: {result.stderr}"
-    return name
 
 
 def _exec(coi_binary, name, script):
@@ -52,7 +38,7 @@ def test_git_readonly_locks_identity(coi_binary, workspace_dir, cleanup_containe
     env = write_trusted_coi_config(
         f'[git]\nname = "{BOT_NAME}"\nemail = "{BOT_EMAIL}"\nreadonly = true\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     # The configured identity is in place.
     rc, out = _exec(coi_binary, name, "git config --global --get user.name")
@@ -91,7 +77,7 @@ def test_git_writable_control_can_be_overwritten(coi_binary, workspace_dir, clea
         f'[git]\nname = "{BOT_NAME}"\nemail = "{BOT_EMAIL}"\n'
         # readonly not set (default false → writable ~/.gitconfig)
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     rc, out = _exec(coi_binary, name, "git config --global --get user.name")
     assert rc == 0 and BOT_NAME in out, f"expected the pinned name, got rc={rc}: {out}"

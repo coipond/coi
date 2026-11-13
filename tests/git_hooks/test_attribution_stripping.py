@@ -24,7 +24,7 @@ Covered:
 
 import subprocess
 
-from support.helpers import extract_container_name, write_trusted_coi_config
+from support.helpers import start_background_shell, write_trusted_coi_config
 
 BOT_NAME = "coi-test-bot"
 BOT_EMAIL = "bot@coi.test"
@@ -41,20 +41,6 @@ TRAILER_MSG = (
     "\\360\\237\\244\\226 Generated with [Claude Code](https://claude.com/claude-code)\\n\\n"
     "Co-Authored-By: Claude <noreply@anthropic.com>'"
 )
-
-
-def _start_background_shell(coi_binary, workspace_dir, env):
-    result = subprocess.run(
-        [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
-    name = extract_container_name(result)
-    assert name, f"could not find container name. stderr: {result.stderr}"
-    return name
 
 
 def _exec(coi_binary, name, script):
@@ -93,7 +79,7 @@ def test_strip_attribution_default_on(coi_binary, workspace_dir, cleanup_contain
     in-container; the subject/body survive; core.hooksPath is installed and
     the hook files are root-owned (the agent cannot rewrite its own policy)."""
     env = write_trusted_coi_config(IDENTITY_TOML)
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     rc, out = _exec(coi_binary, name, "git config --global --get core.hooksPath")
     assert rc == 0 and "/etc/coi/git-hooks" in out, (
@@ -121,7 +107,7 @@ def test_repo_hooks_still_run_via_delegation(coi_binary, workspace_dir, cleanup_
     repo's own pre-commit/commit-msg would silently stop running. Both must
     still fire — and the strip must still happen."""
     env = write_trusted_coi_config(IDENTITY_TOML)
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     setup = (
         "printf '#!/bin/sh\\ntouch .pre-commit-ran\\n' > .git/hooks/pre-commit && "
@@ -145,7 +131,7 @@ def test_husky_local_hookspath_is_a_known_hole(coi_binary, workspace_dir, cleanu
     This test pins the limitation; if it ever starts failing, the docs in
     internal/session/git_attribution.go and the wiki should be updated."""
     env = write_trusted_coi_config(IDENTITY_TOML)
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     setup = "mkdir -p .husky && git config core.hooksPath .husky && "
     rc, out = _make_repo_and_commit(coi_binary, name, "/tmp/husky-repo", extra_setup=setup)
@@ -162,7 +148,7 @@ def test_strip_attribution_disabled(coi_binary, workspace_dir, cleanup_container
     """Opt-out: strip_attribution = false keeps the trailer and does not set
     core.hooksPath."""
     env = write_trusted_coi_config(IDENTITY_TOML + "strip_attribution = false\n")
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     rc, out = _exec(coi_binary, name, "git config --global --get core.hooksPath")
     assert rc != 0 or "/etc/coi/git-hooks" not in out, (
@@ -181,7 +167,7 @@ def test_custom_patterns_replace_defaults(coi_binary, workspace_dir, cleanup_con
     env = write_trusted_coi_config(
         IDENTITY_TOML + 'strip_attribution_patterns = ["^X-Custom-Footer:"]\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     rc, out = _exec(
         coi_binary,
@@ -205,7 +191,7 @@ def test_claude_managed_settings_carry_include_coauthoredby(
     tier, not overridable in-session) carries includeCoAuthoredBy=false. This
     also covers the hook's blind spots (husky repos, --no-verify) for Claude."""
     env = write_trusted_coi_config(IDENTITY_TOML)
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env)
 
     rc, out = _exec(coi_binary, name, "cat /etc/claude-code/managed-settings.json")
     assert rc == 0, f"managed settings should exist for the claude tool: {out}"

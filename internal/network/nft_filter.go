@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -937,54 +938,59 @@ func GetContainerIPWithRetries(containerName string, maxRetries int) (string, er
 const ipPollInterval = 200 * time.Millisecond
 
 func getContainerIPOnce(containerName string) (string, error) {
-	ip, _, err := lookupInstanceNet(containerName)
+	n, err := lookupInstanceNet(containerName)
 	if err != nil {
 		return "", err
 	}
-	if ip == "" {
+	if n.ip == "" {
 		return "", fmt.Errorf("no IPv4 address found for container %s", containerName)
 	}
-	return ip, nil
+	return n.ip, nil
 }
 
-// instanceNet is a container's eth0 IPv4 address and host-side veth name.
+// instanceNet is a container's eth0 IPv4 address, host-side veth name and
+// the Incus network eth0 is attached to.
 type instanceNet struct {
-	ip, veth string
-	at       time.Time
+	ip, veth, network string
+	at                time.Time
 }
 
 // instanceNetCache remembers complete (IPv4 + veth) answers briefly: one
 // launch asks for the IP and the veth 3-4 times (boot block, mode setup,
-// IPv6 block, [[network.hosts]]), each a full-state `incus list` (~100-200 ms).
+// IPv6 block, [[network.hosts]]), each an instance state query.
 // Only complete answers are cached, so a container still waiting for its DHCP
 // lease is always re-queried, and the short TTL covers just one launch.
 var instanceNetCache sync.Map // container name -> instanceNet
 
 const instanceNetTTL = 5 * time.Second
 
-// lookupInstanceNet returns the container's eth0 IPv4 address and veth name
-// (either may be empty) from one `incus list`.
-func lookupInstanceNet(containerName string) (ip, veth string, err error) {
+// lookupInstanceNet returns the container's eth0 IPv4 address, veth name and
+// network (any may be empty) from one instance query.
+func lookupInstanceNet(containerName string) (instanceNet, error) {
 	if v, ok := instanceNetCache.Load(containerName); ok {
 		// The veth is recreated on every container start: only trust a cached
 		// answer whose veth still exists on the host.
 		if n, ok := v.(instanceNet); ok && time.Since(n.at) < instanceNetTTL && hostInterfaceExists(n.veth) {
-			return n.ip, n.veth, nil
+			return n, nil
 		}
 		instanceNetCache.Delete(containerName)
 	}
-	output, err := container.IncusOutput("list", containerName, "--format=json")
+	output, err := container.ContainerFullJSON(containerName)
+	if errors.Is(err, container.ErrContainerNotFound) {
+		return instanceNet{}, nil
+	}
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get container info: %w", err)
+		return instanceNet{}, fmt.Errorf("failed to get container info: %w", err)
 	}
-	ip, veth, err = parseInstanceNet(output, containerName)
+	n, err := parseInstanceNet(output)
 	if err != nil {
-		return "", "", err
+		return instanceNet{}, err
 	}
-	if ip != "" && veth != "" {
-		instanceNetCache.Store(containerName, instanceNet{ip: ip, veth: veth, at: time.Now()})
+	if n.ip != "" && n.veth != "" {
+		n.at = time.Now()
+		instanceNetCache.Store(containerName, n)
 	}
-	return ip, veth, nil
+	return n, nil
 }
 
 // hostInterfaceExists reports whether a network interface exists on the host.
@@ -996,12 +1002,13 @@ func hostInterfaceExists(name string) bool {
 	return err == nil
 }
 
-// parseInstanceNet extracts eth0's IPv4 address and host_name for
-// containerName from `incus list --format=json` output.
-func parseInstanceNet(output, containerName string) (ip, veth string, err error) {
-	var containers []struct {
-		Name  string `json:"name"`
-		State struct {
+// parseInstanceNet extracts eth0's IPv4 address, host_name and network from
+// `/1.0/instances/<name>?recursion=1` JSON. The network is the expanded eth0
+// device's `network`, or its `parent` for a NIC without one.
+func parseInstanceNet(output string) (instanceNet, error) {
+	var c struct {
+		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+		State           struct {
 			Network map[string]struct {
 				HostName  string `json:"host_name"`
 				Addresses []struct {
@@ -1011,26 +1018,25 @@ func parseInstanceNet(output, containerName string) (ip, veth string, err error)
 			} `json:"network"`
 		} `json:"state"`
 	}
-	if err := json.Unmarshal([]byte(output), &containers); err != nil {
-		return "", "", fmt.Errorf("failed to parse container info: %w", err)
+	if err := json.Unmarshal([]byte(output), &c); err != nil {
+		return instanceNet{}, fmt.Errorf("failed to parse container info: %w", err)
 	}
-	for _, c := range containers {
-		if c.Name != containerName {
-			continue
-		}
-		eth0, ok := c.State.Network["eth0"]
-		if !ok {
-			continue
-		}
-		veth = eth0.HostName
+	var n instanceNet
+	if dev := c.ExpandedDevices["eth0"]; dev["network"] != "" {
+		n.network = dev["network"]
+	} else {
+		n.network = dev["parent"]
+	}
+	if eth0, ok := c.State.Network["eth0"]; ok {
+		n.veth = eth0.HostName
 		for _, addr := range eth0.Addresses {
 			if addr.Family == "inet" {
-				ip = addr.Address
+				n.ip = addr.Address
 				break
 			}
 		}
 	}
-	return ip, veth, nil
+	return n, nil
 }
 
 // NftInstalled checks if the nft binary is installed
@@ -1190,8 +1196,8 @@ func GetIncusBridgeName() (string, error) {
 }
 
 // bridgeName memoizes GetIncusBridgeName's answer for the process: the default
-// profile's network doesn't change under a running coi, and a launch asked
-// for it twice (bridge trust check, gateway lookup). Only successes are kept.
+// profile's network doesn't change under a running coi, and a launch may ask
+// for it more than once. Only successes are kept.
 var (
 	bridgeNameMu sync.Mutex
 	bridgeName   string
@@ -1306,12 +1312,12 @@ func GetContainerVethName(containerName string) (string, error) {
 	if veth, err := container.ConfigGetUncached(context.Background(), containerName, "volatile.eth0.host_name"); err == nil && hostInterfaceExists(veth) {
 		return veth, nil
 	}
-	_, veth, err := lookupInstanceNet(containerName)
+	n, err := lookupInstanceNet(containerName)
 	if err != nil {
 		return "", err
 	}
-	if veth == "" {
+	if n.veth == "" {
 		return "", fmt.Errorf("no veth interface found for container %s", containerName)
 	}
-	return veth, nil
+	return n.veth, nil
 }
