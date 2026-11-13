@@ -31,27 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26'
-          check-latest: true
-          cache: true
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsystemd-dev
-
-      - name: Prepare embedded build assets
-        run: |
-          mkdir -p internal/image/embedded
-          mkdir -p internal/config/embedded
-          cp profiles/default/config.toml internal/config/embedded/default_config.toml
-          cp testdata/dummy/dummy internal/image/embedded/dummy
-          # GitHub Actions runners lack the memory.swap cgroup controller.
-          # Disable swap limit in the embedded default so tests can run.
-          sed -i 's/^swap = "true"/swap = ""/' internal/config/embedded/default_config.toml
+      - name: Set up Go build
+        uses: ./.github/actions/setup-go-build
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -74,27 +55,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26'
-          check-latest: true
-          cache: true
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsystemd-dev
-
-      - name: Prepare embedded build assets
-        run: |
-          mkdir -p internal/image/embedded
-          mkdir -p internal/config/embedded
-          cp profiles/default/config.toml internal/config/embedded/default_config.toml
-          cp testdata/dummy/dummy internal/image/embedded/dummy
-          # GitHub Actions runners lack the memory.swap cgroup controller.
-          # Disable swap limit in the embedded default so tests can run.
-          sed -i 's/^swap = "true"/swap = ""/' internal/config/embedded/default_config.toml
+      - name: Set up Go build
+        uses: ./.github/actions/setup-go-build
 
       - name: Run unit tests with coverage and race detector
         run: |
@@ -235,20 +197,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Set up Go build
+        uses: ./.github/actions/setup-go-build
         with:
-          go-version: '1.26'
-          check-latest: true
-          cache: true
+          packages: nftables
 
-      - name: Install system dependencies
+      - name: Configure nft and journal access
         env:
           NO_SUDOERS: ${{ matrix.test_group.no_sudoers }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libsystemd-dev nftables
-
           # Set up NFT monitoring access for CI
           # Add runner to systemd-journal group for log access
           sudo usermod -aG systemd-journal $USER
@@ -319,16 +276,6 @@ jobs:
           sudo aa-status | grep incus || echo "No incus AppArmor profiles"
           echo "Checking if AppArmor is blocking bind mounts:"
           sudo dmesg | grep -i "apparmor.*denied" | tail -20 || echo "No recent AppArmor denials"
-
-      - name: Prepare embedded build assets
-        run: |
-          mkdir -p internal/image/embedded
-          mkdir -p internal/config/embedded
-          cp profiles/default/config.toml internal/config/embedded/default_config.toml
-          cp testdata/dummy/dummy internal/image/embedded/dummy
-          # GitHub Actions runners lack the memory.swap cgroup controller.
-          # Disable swap limit in the embedded default so tests can run.
-          sed -i 's/^swap = "true"/swap = ""/' internal/config/embedded/default_config.toml
 
       - name: Build Coi binary
         run: |
@@ -508,20 +455,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      # qemu-system-x86 + qemu-utils: Lima's qemu driver; virtiofsd: the Rust
+      # vhost-user daemon Lima discovers via /usr/share/qemu/vhost-user/*.json
+      # (Lima does NOT search PATH for it).
+      - name: Set up Go build (+ QEMU, virtiofsd)
+        uses: ./.github/actions/setup-go-build
         with:
-          go-version: '1.26'
-          check-latest: true
-          cache: true
-
-      - name: Install host packages (QEMU + virtiofsd + build deps)
-        run: |
-          sudo apt-get update
-          # qemu-system-x86 + qemu-utils: Lima's qemu driver; virtiofsd: the Rust
-          # vhost-user daemon Lima discovers via /usr/share/qemu/vhost-user/*.json
-          # (Lima does NOT search PATH for it); libsystemd-dev: cgo build (sdjournal).
-          sudo apt-get install -y libsystemd-dev qemu-system-x86 qemu-utils virtiofsd
+          packages: qemu-system-x86 qemu-utils virtiofsd
 
       - name: Enable KVM (fail fast if unavailable)
         run: |
@@ -554,16 +494,6 @@ jobs:
           # make sure noble's restriction cannot block it (cheap insurance).
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           df -h /
-
-      - name: Prepare embedded build assets
-        run: |
-          mkdir -p internal/image/embedded
-          mkdir -p internal/config/embedded
-          cp profiles/default/config.toml internal/config/embedded/default_config.toml
-          cp testdata/dummy/dummy internal/image/embedded/dummy
-          # GitHub Actions runners lack the memory.swap cgroup controller.
-          # Disable swap limit in the embedded default so tests can run.
-          sed -i 's/^swap = "true"/swap = ""/' internal/config/embedded/default_config.toml
 
       - name: Build Coi binary (on the runner; go.mod needs Go 1.26)
         run: |

@@ -46,29 +46,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26'
-          check-latest: true
-          cache: true
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsystemd-dev
+      - name: Set up Go build
+        uses: ./.github/actions/setup-go-build
 
       - name: Set up Incus
         uses: ./.github/actions/setup-incus
-
-      - name: Prepare embedded build assets
-        run: |
-          mkdir -p internal/image/embedded
-          mkdir -p internal/config/embedded
-          cp profiles/default/config.toml internal/config/embedded/default_config.toml
-          cp testdata/dummy/dummy internal/image/embedded/dummy
-          # GitHub Actions runners lack the memory.swap cgroup controller.
-          sed -i 's/^swap = "true"/swap = ""/' internal/config/embedded/default_config.toml
 
       - name: Build Coi binary
         run: |
