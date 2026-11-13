@@ -18,8 +18,6 @@ from support.helpers import calculate_container_name, run_and_show_config
 
 def test_cpu_limit_applied(coi_binary, workspace_dir, cleanup_containers):
     """Test that CPU limits are applied to the container."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -32,34 +30,14 @@ count = "2"
 """
     )
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+    config = run_and_show_config(coi_binary, workspace_dir)
 
     # Verify CPU limit in container config
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    assert 'limits.cpu: "2"' in result.stdout, (
-        f"CPU limit should be set to 2. Config: {result.stdout}"
-    )
+    assert 'limits.cpu: "2"' in config, f"CPU limit should be set to 2. Config: {config}"
 
 
 def test_cpu_allowance_applied(coi_binary, workspace_dir, cleanup_containers):
     """Test that CPU allowance is applied to the container."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -72,33 +50,14 @@ allowance = "50%"
 """
     )
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    assert "limits.cpu.allowance: 50%" in result.stdout, (
-        f"CPU allowance should be set to 50%. Config: {result.stdout}"
+    config = run_and_show_config(coi_binary, workspace_dir)
+    assert "limits.cpu.allowance: 50%" in config, (
+        f"CPU allowance should be set to 50%. Config: {config}"
     )
 
 
 def test_memory_limit_applied(coi_binary, workspace_dir, cleanup_containers):
     """Test that memory limits are applied to the container."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -111,33 +70,12 @@ limit = "2GiB"
 """
     )
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    assert "limits.memory: 2GiB" in result.stdout, (
-        f"Memory limit should be set to 2GiB. Config: {result.stdout}"
-    )
+    config = run_and_show_config(coi_binary, workspace_dir)
+    assert "limits.memory: 2GiB" in config, f"Memory limit should be set to 2GiB. Config: {config}"
 
 
 def test_memory_swap_applied(coi_binary, workspace_dir, cleanup_containers):
     """Test that memory swap configuration is applied."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -151,33 +89,14 @@ swap = "false"
 """
     )
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    assert 'limits.memory.swap: "false"' in result.stdout, (
-        f"Memory swap should be disabled. Config: {result.stdout}"
+    config = run_and_show_config(coi_binary, workspace_dir)
+    assert 'limits.memory.swap: "false"' in config, (
+        f"Memory swap should be disabled. Config: {config}"
     )
 
 
 def test_disk_io_limits_applied(coi_binary, workspace_dir, cleanup_containers):
     """Test that disk I/O limits are applied to the container."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -191,36 +110,13 @@ write = "5MB"
 """
     )
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    assert "limits.read: 10MB" in result.stdout, (
-        f"Disk read limit should be set. Config: {result.stdout}"
-    )
-    assert "limits.write: 5MB" in result.stdout, (
-        f"Disk write limit should be set. Config: {result.stdout}"
-    )
+    config = run_and_show_config(coi_binary, workspace_dir)
+    assert "limits.read: 10MB" in config, f"Disk read limit should be set. Config: {config}"
+    assert "limits.write: 5MB" in config, f"Disk write limit should be set. Config: {config}"
 
 
 def test_process_limit_applied(coi_binary, workspace_dir, cleanup_containers):
     """Test that process limits are applied to the container."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -233,33 +129,14 @@ max_processes = 100
 """
     )
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    assert 'limits.processes: "100"' in result.stdout, (
-        f"Process limit should be set to 100. Config: {result.stdout}"
+    config = run_and_show_config(coi_binary, workspace_dir)
+    assert 'limits.processes: "100"' in config, (
+        f"Process limit should be set to 100. Config: {config}"
     )
 
 
 def test_multiple_limits_combined(coi_binary, workspace_dir, cleanup_containers):
     """Test that multiple limits can be applied together."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -281,25 +158,7 @@ max_processes = 100
 """
     )
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    config = result.stdout
+    config = run_and_show_config(coi_binary, workspace_dir)
 
     assert 'limits.cpu: "2"' in config, "CPU limit should be set"
     assert "limits.memory: 2GiB" in config, "Memory limit should be set"
@@ -309,8 +168,6 @@ max_processes = 100
 
 def test_cpu_priority_applied(coi_binary, workspace_dir, cleanup_containers):
     """Test that CPU priority is applied."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -324,33 +181,14 @@ priority = 5
 """
     )
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    assert 'limits.cpu.priority: "5"' in result.stdout, (
-        f"CPU priority should be set to 5. Config: {result.stdout}"
+    config = run_and_show_config(coi_binary, workspace_dir)
+    assert 'limits.cpu.priority: "5"' in config, (
+        f"CPU priority should be set to 5. Config: {config}"
     )
 
 
 def test_limits_work_with_persistent_containers(coi_binary, workspace_dir, cleanup_containers):
     """Test that limits work with persistent containers."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -367,62 +205,13 @@ limit = "2GiB"
     )
 
     # Launch persistent container with limits
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, "Should be able to read container config"
-    config = result.stdout
+    config = run_and_show_config(coi_binary, workspace_dir)
 
     assert 'limits.cpu: "2"' in config, "CPU limit should be set"
     assert "limits.memory: 2GiB" in config, "Memory limit should be set"
 
     # Run again with persistent container (should reuse)
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "echo",
-            "test2",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config = result.stdout
+    config = run_and_show_config(coi_binary, workspace_dir)
     assert 'limits.cpu: "2"' in config, "CPU limit should persist"
     assert "limits.memory: 2GiB" in config, "Memory limit should persist"
 

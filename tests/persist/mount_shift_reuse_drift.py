@@ -23,7 +23,11 @@ reuse warning on stderr.
 import subprocess
 import uuid
 
-from support.helpers import calculate_container_name, write_trusted_coi_config
+from support.helpers import (
+    calculate_container_name,
+    container_config_get,
+    write_trusted_coi_config,
+)
 
 DRIFT_MARKER = "recreate the container (coi kill + relaunch) to apply the change"
 
@@ -91,13 +95,7 @@ def test_mount_shift_change_warns_on_reuse(coi_binary, tmp_path):
         )
 
         # Which UID-mapping regime did the container land in?
-        raw = subprocess.run(
-            ["incus", "--project", "default", "config", "get", container, "raw.idmap"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        raw_idmap_active = raw.returncode == 0 and raw.stdout.strip() != ""
+        raw_idmap_active = bool(container_config_get(container, "raw.idmap"))
 
         # Run 2: same container, config now requests shift=true. The mount
         # device persists from creation (still shift=false) and is not re-added.
