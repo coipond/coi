@@ -9,16 +9,13 @@ Tests that:
 """
 
 import os
-import subprocess
 from pathlib import Path
 
-from support.helpers import calculate_container_name, write_workspace_container_config
+from support.helpers import run_and_show_config, write_workspace_container_config
 
 
 def test_config_file_limits_loaded(coi_binary, workspace_dir, cleanup_containers):
     """Test that limits from config file are loaded and applied."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Write limits config into the workspace's project config
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -41,25 +38,9 @@ max_processes = 100
     )
 
     # Launch container with coi run (quick test)
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+    config_output = run_and_show_config(coi_binary, workspace_dir)
 
     # Check that limits were applied by inspecting container config
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "2"' in config_output, "CPU limit should be applied"
     assert "limits.memory: 1GiB" in config_output, "Memory limit should be applied"
     assert 'limits.processes: "100"' in config_output, "Process limit should be applied"
@@ -100,71 +81,27 @@ limit = "512MiB"
 """
     )
 
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Launch with profile
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            "limited",
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--profile", "limited"]
     )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
 
     # Check that profile limits were applied (not global limits)
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "1"' in config_output, "Profile CPU limit should override global"
     assert "limits.memory: 512MiB" in config_output, "Profile memory limit should override global"
 
 
 def test_environment_variables_removed(coi_binary, workspace_dir, cleanup_containers):
     """COI_LIMIT_* env vars were removed (0.10) — they must NOT set limits."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     write_workspace_container_config(workspace_dir, persistent=True)
 
     env = os.environ.copy()
     env["COI_LIMIT_CPU"] = "2"
     env["COI_LIMIT_MEMORY"] = "2GiB"
 
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+    config_output = run_and_show_config(coi_binary, workspace_dir, env)
 
     # The env vars must be ignored — no limits applied
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "2"' not in config_output, (
         f"COI_LIMIT_CPU must be ignored (removed in 0.10). Got:\n{config_output}"
     )
@@ -175,30 +112,12 @@ def test_environment_variables_removed(coi_binary, workspace_dir, cleanup_contai
 
 def test_empty_limits_means_unlimited(coi_binary, workspace_dir, cleanup_containers):
     """Test that empty/missing limits result in unlimited (no limits applied)."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     write_workspace_container_config(workspace_dir, persistent=True)
 
     # Launch without any limits configured
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+    config_output = run_and_show_config(coi_binary, workspace_dir)
 
     # Check that no custom limits were applied (Incus defaults)
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     # Should not have custom CPU/memory limits (only Docker security flags)
     # We're checking that we didn't explicitly set limits
     # Note: security.nesting and other Docker flags are OK, we're just checking resource limits
