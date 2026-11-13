@@ -440,6 +440,11 @@ create_code_user() {
     # the image installs, so a mount target never leaves a root-owned parent
     # behind.
     mkdir -p "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state" "/home/$CODE_USER/.opencode"
+    # Ubuntu's ~/.profile puts ~/.local/bin on PATH only if it exists at login.
+    # Agent installers run without a TTY (pi's among them) link into it only
+    # when it is already on PATH, so create it before any of them runs rather
+    # than relying on an earlier installer (claude's) to (#1035).
+    mkdir -p "/home/$CODE_USER/.local/bin"
     populate_known_hosts "/home/$CODE_USER/.ssh/known_hosts" ||
         log "WARNING: could not fill /home/$CODE_USER/.ssh/known_hosts"
     chmod 644 "/home/$CODE_USER/.ssh/known_hosts"
@@ -829,11 +834,15 @@ install_pi() {
         sleep 10
     done
 
-    # Ensure pi is available system-wide
+    # Ensure pi is available system-wide. The installer's managed launcher
+    # lives in ~/.pi/agent/bin; fall back to the login PATH for other layouts
+    # (PI_CODING_AGENT_DIR, PI_LEGACY_INSTALL's npm install).
     local PI_BIN="/home/$CODE_USER/.pi/agent/bin/pi"
     if [[ ! -x "$PI_BIN" ]]; then
-        log "ERROR: pi binary not found at $PI_BIN after installation."
-        log "Installation may have failed or installed to an unexpected location."
+        PI_BIN="$(su - "$CODE_USER" -c 'which pi' 2>/dev/null || true)"
+    fi
+    if [[ -z "$PI_BIN" ]]; then
+        log "ERROR: pi binary not found in /home/$CODE_USER/.pi/agent/bin or on PATH after installation."
         exit 1
     fi
     ln -sf "$PI_BIN" /usr/local/bin/pi

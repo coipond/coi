@@ -22,13 +22,15 @@ on:
     paths:
       - internal/image/build.sh
       - .github/actions/setup-incus/**
+      - .github/actions/setup-go-build/**
       - .github/workflows/agent-installers.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: agent-installers-${{ github.ref }}
+  # Per event, so a manual run doesn't cancel the weekly one on master.
+  group: agent-installers-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:

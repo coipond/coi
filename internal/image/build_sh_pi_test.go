@@ -21,11 +21,18 @@ case ":$PATH:" in
 esac
 `
 
+// fakeLegacyPiInstaller mimics PI_LEGACY_INSTALL=1: an npm install straight
+// into ~/.local/bin, with no ~/.pi/agent/bin launcher.
+const fakeLegacyPiInstaller = `set -e
+printf '#!/bin/sh\necho "pi 1.5.2"\n' > "$HOME/.local/bin/pi"
+chmod +x "$HOME/.local/bin/pi"
+`
+
 // runInstallPi runs the REAL install_pi from build.sh with /home and
 // /usr/local/bin redirected into a temp root. su is faked as a login shell for
 // the code user whose PATH has ~/.local/bin only if it exists, like Ubuntu's
-// ~/.profile; curl serves fakePiInstaller.
-func runInstallPi(t *testing.T, localBin bool) (root, out string, err error) {
+// ~/.profile; curl serves the given installer script.
+func runInstallPi(t *testing.T, script string, localBin bool) (root, out string, err error) {
 	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
@@ -44,7 +51,7 @@ func runInstallPi(t *testing.T, localBin bool) (root, out string, err error) {
 	}
 	fakeBin := t.TempDir()
 	installer := filepath.Join(fakeBin, "install.sh")
-	if err := os.WriteFile(installer, []byte(fakePiInstaller), 0o644); err != nil {
+	if err := os.WriteFile(installer, []byte(script), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(fakeBin, "curl"),
@@ -68,19 +75,21 @@ install_pi
 	return root, string(b), err
 }
 
-// pi lands outside the code user's PATH when nothing created ~/.local/bin
-// first, e.g. agents = ["pi"] without claude (#1035). install_pi must still
-// find it and link it system-wide.
-func TestInstallPi_LinksBinaryNotOnLoginPath(t *testing.T) {
+// install_pi links pi system-wide wherever the installer put it: off the code
+// user's PATH when nothing created ~/.local/bin first, e.g. agents = ["pi"]
+// without claude (#1035), and outside ~/.pi/agent/bin in the legacy layout.
+func TestInstallPi_LinksBinary(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
+		script   string
 		localBin bool
 	}{
-		{"pi alone, no ~/.local/bin", false},
-		{"after claude, ~/.local/bin on PATH", true},
+		{"pi alone, no ~/.local/bin", fakePiInstaller, false},
+		{"~/.local/bin on PATH", fakePiInstaller, true},
+		{"legacy npm install into ~/.local/bin", fakeLegacyPiInstaller, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root, out, err := runInstallPi(t, tc.localBin)
+			root, out, err := runInstallPi(t, tc.script, tc.localBin)
 			if err != nil {
 				t.Fatalf("install_pi failed: %v\n%s", err, out)
 			}
