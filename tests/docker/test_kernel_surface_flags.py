@@ -31,6 +31,8 @@ import subprocess
 
 import pytest
 
+from support.helpers import container_config_get
+
 DENY_SYSCALLS = [
     "io_uring_setup",
     "io_uring_enter",
@@ -73,17 +75,6 @@ def skip_unless_bootable(coi_binary):
         subprocess.run(["incus", "--project", "default", "delete", base, "--force"], timeout=60)
 
 
-def incus_config_get(container_name, key):
-    result = subprocess.run(
-        ["incus", "--project", "default", "config", "get", container_name, key],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"incus config get {key} failed: {result.stderr}"
-    return result.stdout.strip()
-
-
 def launch(coi_binary, name, env=None, cwd=None):
     """coi container launch applies the kernel-surface policy at init, before
     the container start that CI's nested environment may not complete — so the
@@ -114,10 +105,10 @@ def test_docker_disabled_via_project_config(coi_binary, cleanup_containers, work
     try:
         launch(coi_binary, name, cwd=workspace_dir)
         for key in DOCKER_KEYS:
-            assert incus_config_get(name, key) in ("", "false"), (
+            assert container_config_get(name, key) in ("", "false"), (
                 f"{key} should be unset with docker=false"
             )
-        assert incus_config_get(name, "security.syscalls.deny") == "", (
+        assert container_config_get(name, "security.syscalls.deny") == "", (
             "deny list should stay unset without reduce_kernel_surface"
         )
     finally:
@@ -134,10 +125,10 @@ def test_reduce_kernel_surface_hardening(coi_binary, cleanup_containers, tmp_pat
     try:
         launch(coi_binary, name, env=env)
         for key in DOCKER_KEYS:
-            assert incus_config_get(name, key) in ("", "false"), (
+            assert container_config_get(name, key) in ("", "false"), (
                 f"{key} should be unset under reduce_kernel_surface"
             )
-        deny = incus_config_get(name, "security.syscalls.deny").split()
+        deny = container_config_get(name, "security.syscalls.deny").split()
         for syscall in DENY_SYSCALLS:
             assert syscall in deny, f"{syscall} missing from deny list: {deny}"
     finally:
@@ -157,10 +148,10 @@ def test_reduce_kernel_surface_strict_adds_perf_event_open(
     try:
         launch(coi_binary, name, env=env)
         for key in DOCKER_KEYS:
-            assert incus_config_get(name, key) in ("", "false"), (
+            assert container_config_get(name, key) in ("", "false"), (
                 f"{key} should be unset under reduce_kernel_surface_strict"
             )
-        deny = incus_config_get(name, "security.syscalls.deny").split()
+        deny = container_config_get(name, "security.syscalls.deny").split()
         for syscall in DENY_SYSCALLS:
             assert syscall in deny, f"base {syscall} missing under strict tier: {deny}"
         assert "perf_event_open" in deny, (
@@ -232,7 +223,7 @@ def test_reduce_kernel_surface_deny_format(coi_binary, cleanup_containers, tmp_p
     name = "coi-ks-deny-format"
     try:
         launch(coi_binary, name, env=env)
-        raw = incus_config_get(name, "security.syscalls.deny")
+        raw = container_config_get(name, "security.syscalls.deny")
         entries = [ln for ln in raw.splitlines() if ln.strip()]
         # Must be newline-separated: one entry per line, and more than one line
         # (a space-separated value would collapse to a single line).
@@ -265,7 +256,7 @@ def test_untrusted_docker_reenable_ignored(coi_binary, cleanup_containers, works
         assert "container.docker" in result.stderr, (
             f"expected the untrusted-downgrade warning naming container.docker; stderr:\n{result.stderr}"
         )
-        assert incus_config_get(name, "security.nesting") in ("", "false"), (
+        assert container_config_get(name, "security.nesting") in ("", "false"), (
             "untrusted docker=true must not re-enable security.nesting"
         )
     finally:

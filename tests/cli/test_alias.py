@@ -10,6 +10,7 @@ import subprocess
 
 from support.helpers import (
     calculate_container_name,
+    container_config_get,
     get_container_list,
     incus_status,
     write_workspace_container_config,
@@ -71,15 +72,8 @@ class TestAliasStoredOnContainer:
             f"Expected persistent container '{container_name}' to exist for alias verification"
         )
 
-        check = subprocess.run(
-            ["incus", "config", "get", container_name, "user.coi.alias"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert check.stdout.strip() == "testalias", (
-            f"Expected alias 'testalias', got '{check.stdout.strip()}'"
-        )
+        alias = container_config_get(container_name, "user.coi.alias")
+        assert alias == "testalias", f"Expected alias 'testalias', got '{alias}'"
 
 
 class TestAliasInRegistry:
