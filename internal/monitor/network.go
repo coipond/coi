@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 // CollectNetworkStats collects network statistics and flags suspicious connections.
@@ -29,7 +31,6 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 	for i := range connections {
 		reason := checkSuspicious(connections[i], allowedCIDRs, permitted, gateway)
 		if reason != "" && pid > 0 {
-			// Read the routes only once a connection would be flagged.
 			if !localRead {
 				local = containerLocalNets(fmt.Sprintf("/proc/%d/net/route", pid))
 				localRead = true
@@ -146,7 +147,6 @@ func containerLocalNets(path string) []*net.IPNet {
 		return nil
 	}
 
-	const rtfUp, rtfGateway = 0x1, 0x2
 	type route struct {
 		iface string
 		net   *net.IPNet
@@ -159,7 +159,7 @@ func containerLocalNets(path string) []*net.IPNet {
 			continue
 		}
 		flags, err := strconv.ParseUint(fields[3], 16, 32)
-		if err != nil || flags&rtfUp == 0 {
+		if err != nil || flags&unix.RTF_UP == 0 {
 			continue
 		}
 		dest, err := parseHexIP(fields[1])
@@ -175,7 +175,7 @@ func containerLocalNets(path string) []*net.IPNet {
 			uplink[fields[0]] = true
 			continue
 		}
-		if flags&rtfGateway == 0 {
+		if flags&unix.RTF_GATEWAY == 0 {
 			direct = append(direct, route{iface: fields[0], net: ipNet})
 		}
 	}

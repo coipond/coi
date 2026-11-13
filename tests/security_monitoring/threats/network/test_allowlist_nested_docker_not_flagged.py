@@ -7,7 +7,6 @@ leaves the container. A non-local RFC1918 host must still be flagged.
 The allowlist blocks registry pulls, so the nested container runs an image
 imported offline from symlinks, with the container's /usr mounted read-only."""
 
-import subprocess
 import time
 from pathlib import Path
 
@@ -16,6 +15,8 @@ from support.monitoring import (
     cleanup_container,
     get_container_state,
     get_threat_events,
+    hold_script,
+    poll_network_threats,
     start_shell,
 )
 
@@ -58,14 +59,6 @@ time.sleep(60)
 """
 
 
-def _hold(container_name, script, *args):
-    return subprocess.Popen(
-        ["incus", "exec", container_name, "--", "python3", "-c", script, *args],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-
 def test_allowlist_nested_docker_not_flagged(test_workspace, coi_binary):
     config_path = Path.home() / ".coi" / "config.toml"
     backup = config_path.read_text() if config_path.exists() else None
@@ -94,7 +87,7 @@ file_read_rate_mb_per_sec = 1000
         nested_ip = out.strip().splitlines()[-1]
         assert nested_ip.startswith("172."), f"unexpected nested container IP: {out}"
 
-        holders.append(_hold(container_name, HOLD_NESTED, nested_ip))
+        holders.append(hold_script(container_name, HOLD_NESTED, nested_ip))
         time.sleep(15)
         assert holders[0].poll() is None, "connections to the nested container must hold"
         assert get_container_state(container_name) == "Running", (
@@ -105,16 +98,8 @@ file_read_rate_mb_per_sec = 1000
         assert not flagged, f"no nested Docker socket may be flagged, got: {flagged}"
 
         # Positive control: an RFC1918 host off the docker0 bridge is still flagged.
-        holders.append(_hold(container_name, HOLD_LAN))
-        threats = []
-        deadline = time.monotonic() + 45
-        while not threats and time.monotonic() < deadline:
-            threats = [
-                e
-                for e in get_threat_events(container_name)
-                if "192.168.255.1:5432" in e.get("description", "")
-            ]
-            time.sleep(2)
+        holders.append(hold_script(container_name, HOLD_LAN))
+        threats = poll_network_threats(container_name, match="192.168.255.1:5432")
         assert threats, "a socket to a non-local RFC1918 host must still be flagged"
     finally:
         for h in holders:
