@@ -17,37 +17,13 @@ container reuse in the harness is brittle.
 import os
 import subprocess
 
-from support.helpers import container_config_get, write_profile
+from support.helpers import (
+    container_config_get,
+    start_background_shell,
+    write_profile,
+)
 
 MODEL = "coi-test-model-opus"
-
-
-def _start_background_shell(coi_binary, workspace_dir, profile):
-    r = subprocess.run(
-        [
-            coi_binary,
-            "shell",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            profile,
-            "--background",
-            "--debug",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env={**os.environ, "COI_USE_DUMMY": "1"},
-        cwd=workspace_dir,
-    )
-    assert r.returncode == 0, f"background shell should start. stderr: {r.stderr}"
-    name = None
-    for line in r.stderr.split("\n"):
-        if "Container name:" in line:
-            name = line.split("Container name:")[-1].strip()
-            break
-    assert name, f"could not find container name. stderr: {r.stderr}"
-    return name
 
 
 def _printenv(coi_binary, container_name, var):
@@ -83,7 +59,9 @@ effort_level = "high"
 """,
     )
 
-    container_name = _start_background_shell(coi_binary, workspace_dir, "modeltest")
+    container_name, _ = start_background_shell(
+        coi_binary, workspace_dir, {**os.environ, "COI_USE_DUMMY": "1"}, profile="modeltest"
+    )
 
     # The direct reproduction: an external exec inherits the profile's tool env.
     assert _printenv(coi_binary, container_name, "ANTHROPIC_MODEL") == MODEL, (
