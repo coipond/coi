@@ -9,16 +9,13 @@ Tests that:
 """
 
 import os
-import subprocess
 from pathlib import Path
 
-from support.helpers import calculate_container_name, write_workspace_container_config
+from support.helpers import run_and_show_config, write_workspace_container_config
 
 
 def test_config_values_applied(coi_binary, workspace_dir, cleanup_containers):
     """Test that config file limit values are applied correctly."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create project config with limits
     project_config_dir = Path(workspace_dir) / ".coi"
     project_config_dir.mkdir(exist_ok=True)
@@ -36,33 +33,15 @@ limit = "2GiB"
     )
 
     # Launch without any extra flags -- config should be applied
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+    config_output = run_and_show_config(coi_binary, workspace_dir)
 
     # Verify config values were applied
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "2"' in config_output, "Config CPU limit should be applied"
     assert "limits.memory: 2GiB" in config_output, "Config memory limit should be applied"
 
 
 def test_profile_overrides_config(coi_binary, workspace_dir, cleanup_containers):
     """Test that profile settings override global config."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create project config with global limits
     project_config_dir = Path(workspace_dir) / ".coi"
     project_config_dir.mkdir(exist_ok=True)
@@ -96,34 +75,11 @@ limit = "512MiB"
     )
 
     # Launch with profile (no CLI flags)
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            "limited",
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--profile", "limited"]
     )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
 
     # Verify profile limits took precedence over global config
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "1"' in config_output, (
         "Profile CPU limit should override global config (should be 1, not 4)"
     )
@@ -135,8 +91,6 @@ limit = "512MiB"
 def test_limit_env_vars_removed(coi_binary, workspace_dir, cleanup_containers):
     """COI_LIMIT_* env vars were removed (0.10): limits are config-only.
     Setting them must NOT apply any limits."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     write_workspace_container_config(workspace_dir, persistent=True)
 
     env = os.environ.copy()
@@ -144,26 +98,9 @@ def test_limit_env_vars_removed(coi_binary, workspace_dir, cleanup_containers):
     env["COI_LIMIT_MEMORY"] = "512MiB"
 
     # Launch with env vars set and no limits config file
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        env=env,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+    config_output = run_and_show_config(coi_binary, workspace_dir, env)
 
     # The env vars must be ignored — no limits applied
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "1"' not in config_output, (
         f"COI_LIMIT_CPU must be ignored (removed in 0.10). Got:\n{config_output}"
     )
@@ -174,8 +111,6 @@ def test_limit_env_vars_removed(coi_binary, workspace_dir, cleanup_containers):
 
 def test_config_wins_over_removed_env_vars(coi_binary, workspace_dir, cleanup_containers):
     """Config limits apply; COI_LIMIT_* env vars are ignored (removed in 0.10)."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create project config with limits
     project_config_dir = Path(workspace_dir) / ".coi"
     project_config_dir.mkdir(exist_ok=True)
@@ -197,26 +132,9 @@ limit = "4GiB"
     env["COI_LIMIT_MEMORY"] = "512MiB"
 
     # Launch with both config and env vars
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        env=env,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+    config_output = run_and_show_config(coi_binary, workspace_dir, env)
 
     # Env-var overrides were removed: the CONFIG values must win.
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "4"' in config_output, (
         f"Config CPU limit must apply (env var ignored). Got:\n{config_output}"
     )
@@ -227,8 +145,6 @@ limit = "4GiB"
 
 def test_config_with_multiple_limit_sections(coi_binary, workspace_dir, cleanup_containers):
     """Test that config with multiple limit sections is applied correctly."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create project config with multiple limit sections
     project_config_dir = Path(workspace_dir) / ".coi"
     project_config_dir.mkdir(exist_ok=True)
@@ -249,25 +165,9 @@ max_processes = 100
     )
 
     # Launch without any extra flags
-    result = subprocess.run(
-        [coi_binary, "run", "--workspace", workspace_dir, "echo", "test"],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
-    )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
+    config_output = run_and_show_config(coi_binary, workspace_dir)
 
     # Verify all config values
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "4"' in config_output, "CPU should be set from config"
     assert "limits.memory: 4GiB" in config_output, "Memory should be set from config"
     assert 'limits.processes: "100"' in config_output, "Processes should be set from config"
@@ -275,8 +175,6 @@ max_processes = 100
 
 def test_profile_partial_override_of_config(coi_binary, workspace_dir, cleanup_containers):
     """Test that profile can partially override config (only specified values override)."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create project config with multiple limits
     project_config_dir = Path(workspace_dir) / ".coi"
     project_config_dir.mkdir(exist_ok=True)
@@ -310,34 +208,11 @@ count = "2"
     )
 
     # Launch with profile (only CPU should be overridden)
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            "partial",
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--profile", "partial"]
     )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
 
     # Verify partial override
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "2"' in config_output, "CPU should be overridden to 2 by profile"
     assert "limits.memory: 4GiB" in config_output, "Memory should remain from config (4GiB)"
     assert 'limits.processes: "100"' in config_output, "Processes should remain from config (100)"

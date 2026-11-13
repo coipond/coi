@@ -20,7 +20,7 @@ Covers:
 import subprocess
 import time
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, launch_container
 
 
 def run_coi(coi_binary, args, timeout=30):
@@ -30,12 +30,6 @@ def run_coi(coi_binary, args, timeout=30):
         text=True,
         timeout=timeout,
     )
-
-
-def launch_container(coi_binary, container_name):
-    result = run_coi(coi_binary, ["container", "launch", "coi-default", container_name], 120)
-    assert result.returncode == 0, f"Launch should succeed. stderr: {result.stderr}"
-    time.sleep(3)
 
 
 def create_session_as(coi_binary, container_name, uid):
