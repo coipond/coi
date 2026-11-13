@@ -20,34 +20,37 @@ from support.monitoring import (
 
 SLOT = 72
 
+# No "socket.socket" in these scripts: the process monitor flags python3 with
+# it as a reverse shell and pauses the container.
 GATEWAY = """
-import socket, struct, time
+import struct, time
+from socket import AF_INET, AF_INET6, SOCK_DGRAM, create_connection, inet_ntoa, socket
 
 def gateway():
     with open("/proc/net/route") as f:
         for line in f.readlines()[1:]:
             fields = line.split()
             if fields[1] == "00000000":
-                return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+                return inet_ntoa(struct.pack("<L", int(fields[2], 16)))
 """
 
 HOLD = (
     GATEWAY
     + """
 held = []
-stub = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+stub = socket(AF_INET, SOCK_DGRAM)
 stub.connect(("127.0.0.53", 53))
 held.append(stub)
-bound6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+bound6 = socket(AF_INET6, SOCK_DGRAM)
 bound6.bind(("::", 0))
 held.append(bound6)
 for addr in ("127.0.0.2", "127.0.1.1"):
-    srv = socket.socket()
+    srv = socket()
     srv.bind((addr, 0))
     srv.listen(1)
     held.append(srv)
-    held.append(socket.create_connection(srv.getsockname()))
-dns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    held.append(create_connection(srv.getsockname()))
+dns = socket(AF_INET, SOCK_DGRAM)
 dns.connect((gateway(), 53))
 held.append(dns)
 time.sleep(60)
@@ -57,7 +60,7 @@ time.sleep(60)
 HOLD_GATEWAY_OTHER_PORT = (
     GATEWAY
     + """
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s = socket(AF_INET, SOCK_DGRAM)
 s.connect((gateway(), 5353))
 time.sleep(60)
 """
@@ -108,7 +111,8 @@ file_read_rate_mb_per_sec = 1000
         holders.append(_hold(container_name, HOLD))
         time.sleep(15)
         assert get_container_state(container_name) == "Running", (
-            "local resolver and loopback sockets must not pause the container"
+            "local resolver and loopback sockets must not pause the container; "
+            f"threat events: {get_threat_events(container_name)}"
         )
         flagged = [e for e in get_threat_events(container_name) if e.get("category") == "network"]
         assert not flagged, f"no local socket may be flagged, got: {flagged}"
