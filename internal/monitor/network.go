@@ -17,15 +17,27 @@ import (
 // containerIP (best-effort; requires a non-empty containerIP to avoid returning
 // all host connections).
 func CollectNetworkStats(ctx context.Context, containerName, containerIP string, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) (NetworkStats, error) {
-	connections, err := parseConnections(ctx, containerName, containerIP)
+	connections, pid, err := parseConnections(ctx, containerName, containerIP)
 	if err != nil {
 		return NetworkStats{}, err
 	}
 
 	// Flag suspicious connections
 	suspicious := 0
+	var local []*net.IPNet
+	localRead := false
 	for i := range connections {
 		reason := checkSuspicious(connections[i], allowedCIDRs, permitted, gateway)
+		if reason != "" && pid > 0 {
+			// Read the routes only once a connection would be flagged.
+			if !localRead {
+				local = containerLocalNets(fmt.Sprintf("/proc/%d/net/route", pid), containerIP)
+				localRead = true
+			}
+			if inNets(extractIP(connections[i].RemoteAddr), local) {
+				reason = ""
+			}
+		}
 		if reason != "" {
 			connections[i].Suspicious = true
 			connections[i].SuspectReason = reason
@@ -43,11 +55,12 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 // parseConnections reads the container's /proc/net/tcp[6] via the host-side
 // namespaced path /proc/<container-init-pid>/net/tcp[6]. Falls back to the
 // host's /proc/net/tcp + containerIP filter when PID resolution fails or when
-// the namespaced paths cannot be read.
-func parseConnections(ctx context.Context, containerName, containerIP string) ([]Connection, error) {
+// the namespaced paths cannot be read. The returned PID is the one whose
+// namespaced paths were read, or 0 for the host fallback.
+func parseConnections(ctx context.Context, containerName, containerIP string) ([]Connection, int, error) {
 	pid, pidErr := GetContainerInitPID(ctx, containerName)
 	if pidErr != nil && ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, 0, ctx.Err()
 	}
 
 	if pid > 0 {
@@ -80,7 +93,7 @@ func parseConnections(ctx context.Context, containerName, containerIP string) ([
 		}
 
 		if namespacedOK {
-			return connections, nil
+			return connections, pid, nil
 		}
 		// Namespaced paths unreadable — fall through to host fallback below.
 	}
@@ -88,7 +101,7 @@ func parseConnections(ctx context.Context, containerName, containerIP string) ([
 	// Fallback: host /proc/net/tcp[6] filtered by containerIP.
 	// Require containerIP to avoid returning all host connections.
 	if containerIP == "" {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	var connections []Connection
@@ -119,7 +132,76 @@ func parseConnections(ctx context.Context, containerName, containerIP string) ([
 			filtered = append(filtered, conn)
 		}
 	}
-	return filtered, nil
+	return filtered, 0, nil
+}
+
+// containerLocalNets returns the IPv4 networks that a /proc/<pid>/net/route
+// table sends straight to an interface inside the container (a nested Docker
+// bridge), so traffic to them never leaves it. Interfaces with a default route
+// or the container's own address are its uplink and are left out: hosts on the
+// uplink subnet are outside the container. Errors give no networks.
+func containerLocalNets(path, containerIP string) []*net.IPNet {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	const rtfUp, rtfGateway = 0x1, 0x2
+	type route struct {
+		iface string
+		net   *net.IPNet
+	}
+	var direct []route
+	uplink := map[string]bool{"lo": true}
+	ownIP := net.ParseIP(containerIP)
+	for _, line := range strings.Split(string(data), "\n")[1:] {
+		fields := strings.Fields(line)
+		if len(fields) < 8 {
+			continue
+		}
+		flags, err := strconv.ParseUint(fields[3], 16, 32)
+		if err != nil || flags&rtfUp == 0 {
+			continue
+		}
+		dest, err := parseHexIP(fields[1])
+		if err != nil {
+			continue
+		}
+		mask, err := parseHexIP(fields[7])
+		if err != nil {
+			continue
+		}
+		ipNet := &net.IPNet{IP: net.ParseIP(dest).To4(), Mask: net.IPMask(net.ParseIP(mask).To4())}
+		if ones, _ := ipNet.Mask.Size(); ones == 0 || (ownIP != nil && ipNet.Contains(ownIP)) {
+			uplink[fields[0]] = true
+			continue
+		}
+		if flags&rtfGateway == 0 {
+			direct = append(direct, route{iface: fields[0], net: ipNet})
+		}
+	}
+
+	var local []*net.IPNet
+	for _, r := range direct {
+		if !uplink[r.iface] {
+			local = append(local, r.net)
+		}
+	}
+	return local
+}
+
+// inNets reports whether ipStr is in one of nets.
+func inNets(ipStr string, nets []*net.IPNet) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseProcNetTCP parses /proc/net/tcp or /proc/net/tcp6

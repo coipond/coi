@@ -69,7 +69,7 @@ func TestParseConnections_FallbackEmptyContainerIP(t *testing.T) {
 	ctx := context.Background()
 	// Use a syntactically invalid container name so Incus always errors out,
 	// guaranteeing the fallback path is exercised regardless of the environment.
-	conns, err := parseConnections(ctx, "INVALID/CONTAINER/NAME", "")
+	conns, _, err := parseConnections(ctx, "INVALID/CONTAINER/NAME", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -306,5 +306,56 @@ func TestCheckSuspicious_GatewayDNSAndDHCP(t *testing.T) {
 	asked = 0
 	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, nil, nil, gateway); reason != "" || asked != 0 {
 		t.Errorf("without an allowlist, gateway:53 got %q and asked the gateway %d times, want neither", reason, asked)
+	}
+}
+
+// routeTable is a container's /proc/net/route with a nested Docker bridge
+// (docker0, 172.17.0.0/16) and a route through a host on it.
+const routeTable = `Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
+eth0	00000000	01003C0A	0003	0	0	1024	00000000	0	0	0
+eth0	00003C0A	00000000	0001	0	0	1024	00FFFFFF	0	0	0
+eth0	01003C0A	00000000	0005	0	0	1024	FFFFFFFF	0	0	0
+docker0	000011AC	00000000	0001	0	0	0	0000FFFF	0	0	0
+docker0	0001A8C0	020011AC	0003	0	0	0	00FFFFFF	0	0	0
+br-down	000012AC	00000000	0000	0	0	0	0000FFFF	0	0	0
+`
+
+func TestContainerLocalNets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "route")
+	if err := os.WriteFile(path, []byte(routeTable), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	local := containerLocalNets(path, "10.60.0.5")
+
+	for ip, want := range map[string]bool{
+		"172.17.0.2":   true,  // nested Docker container
+		"172.17.0.1":   true,  // docker0 itself (docker-proxy source)
+		"10.60.0.1":    false, // the bridge gateway, on the uplink
+		"10.60.0.7":    false, // another host on the uplink subnet
+		"192.168.1.10": false, // routed through a host, leaves docker0
+		"172.18.0.2":   false, // route on an interface that is down
+		"8.8.8.8":      false,
+	} {
+		if got := inNets(ip, local); got != want {
+			t.Errorf("inNets(%s) = %v, want %v", ip, got, want)
+		}
+	}
+}
+
+func TestContainerLocalNets_NoDefaultRouteKeepsOwnSubnet(t *testing.T) {
+	table := "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+		"eth0\t00003C0A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+	path := filepath.Join(t.TempDir(), "route")
+	if err := os.WriteFile(path, []byte(table), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if local := containerLocalNets(path, "10.60.0.5"); inNets("10.60.0.7", local) {
+		t.Errorf("the container's own subnet must not be local: %v", local)
+	}
+}
+
+func TestContainerLocalNets_MissingFile(t *testing.T) {
+	if local := containerLocalNets(filepath.Join(t.TempDir(), "none"), ""); local != nil {
+		t.Errorf("want no networks, got %v", local)
 	}
 }
