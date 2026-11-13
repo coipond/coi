@@ -1,0 +1,93 @@
+name: Agent Installers
+
+# Builds the image with each agent ALONE, uncached, and checks the agent runs.
+#
+# The main CI lanes can't catch installer drift: their image is cached by a hash
+# of repo files (a change to a remote install script never rebuilds it), and it
+# installs several agents together, so one installer can lean on another's side
+# effects. #1035: pi's installer, run without a TTY, only lands on PATH when
+# ~/.local/bin already exists — which the claude installer creates. A build
+# with agents = ["pi"] failed while CI stayed green. The opt-in agents (codex,
+# omp, goose) are not in the CI image at all.
+#
+# Runs weekly to catch upstream changes, on demand, and on PRs that touch the
+# build script. Not a required check: a red lane here usually means an upstream
+# installer changed, not that the PR broke something.
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - internal/image/build.sh
+      - .github/actions/setup-incus/**
+      - .github/actions/setup-go-build/**
+      - .github/workflows/agent-installers.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per event, so a manual run doesn't cancel the weekly one on master.
+  group: agent-installers-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COI_APT_MIRROR: http://azure.archive.ubuntu.com/ubuntu
+
+jobs:
+  install:
+    name: ${{ matrix.agent }} alone
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [claude, opencode, opencode2, pi, codex, omp, goose]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go build
+        uses: ./.github/actions/setup-go-build
+
+      - name: Set up Incus
+        uses: ./.github/actions/setup-incus
+
+      - name: Build Coi binary
+        run: |
+          go build -o coi ./cmd/coi
+          ./coi version
+
+      - name: Configure Coi
+        env:
+          AGENT: ${{ matrix.agent }}
+        run: |
+          # The tool must match the only installed agent, or coi run refuses
+          # the image.
+          mkdir -p ~/.coi
+          printf '[network]\nmode = "open"\n\n[tool]\nname = "%s"\n\n[container.build]\nagents = ["%s"]\n' \
+            "$AGENT" "$AGENT" > ~/.coi/config.toml
+          cat ~/.coi/config.toml
+
+      - name: Build image with ${{ matrix.agent }} only
+        run: |
+          # Retry only to ride out transient mirror/network resets; a broken
+          # installer fails every attempt.
+          for attempt in 1 2 3; do
+            if ./coi build; then
+              exit 0
+            fi
+            [ "$attempt" -eq 3 ] && exit 1
+            echo "Build failed (attempt $attempt/3), retrying in $((attempt * 30))s..."
+            sleep $((attempt * 30))
+          done
+
+      - name: Check ${{ matrix.agent }} runs
+        env:
+          AGENT: ${{ matrix.agent }}
+        run: |
+          # Non-login exec resolves through the /usr/local/bin link build.sh
+          # makes; the login shell is what an interactive session sees.
+          ./coi run --workspace "$RUNNER_TEMP" -- "$AGENT" --version
+          ./coi run --workspace "$RUNNER_TEMP" -- bash -lc "command -v $AGENT && $AGENT --version"
