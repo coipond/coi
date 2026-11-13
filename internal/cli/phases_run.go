@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/coipond/coi/internal/config"
@@ -170,7 +171,10 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			fmt.Fprintf(os.Stderr, "Launching container %s from image %s...\n", s.containerName, s.img)
 
 			mgr := container.NewManager(s.containerName)
-			mgr.InitConfig = []string{session.WorkspaceConfigKey + "=" + s.absWorkspace}
+			mgr.InitConfig = []string{
+				session.WorkspaceConfigKey + "=" + s.absWorkspace,
+				session.PersistentConfigKey + "=" + strconv.FormatBool(a.persistent),
+			}
 			containerExists, err := mgr.Exists()
 			if err != nil {
 				return nil, fmt.Errorf("failed to check if container exists: %w", err)
@@ -343,9 +347,12 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				if err := session.ReconcileLimits(s.containerName, a.cfg.Incus.Project, &a.cfg.Limits, logFn); err != nil {
 					return err
 				}
-				// A persistent container from an older coi lacks the key.
+				// A persistent container from an older coi lacks the keys.
 				if _, err := container.ConfigSetIfChanged(context.Background(), s.containerName, session.WorkspaceConfigKey, s.absWorkspace); err != nil {
 					logFn(fmt.Sprintf("Warning: Failed to set workspace metadata: %v", err))
+				}
+				if _, err := container.ConfigSetIfChanged(context.Background(), s.containerName, session.PersistentConfigKey, "true"); err != nil {
+					logFn(fmt.Sprintf("Warning: Failed to set persistence metadata: %v", err))
 				}
 				s.containerWorkspace = mgr.GetWorkspacePath()
 				layout, wtErr := session.ResolveGitWorktree(s.absWorkspace)
