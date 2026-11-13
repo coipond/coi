@@ -227,10 +227,8 @@ func loadConfigFileScoped(cfg *Config, path string, trusted bool) error {
 		return err
 	}
 
-	for i, pe := range fileCfg.Ports.Map {
-		if err := validatePortListen(i, pe); err != nil {
-			return err
-		}
+	if err := validatePortEntries(fileCfg.Ports.Map); err != nil {
+		return err
 	}
 
 	if !trusted {

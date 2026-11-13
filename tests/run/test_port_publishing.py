@@ -11,7 +11,8 @@ publish fixed container ports with an auto or pinned host side.
 Genuinely end-to-end: a Node HTTP server inside the container replies with a
 sentinel; the HOST fetches http://127.0.0.1:<published-port>/ and must read
 it back, proving bytes traverse the proxy device. The preflight test proves
-a taken pinned port aborts the session BEFORE any container is created.
+a taken pinned port aborts the session BEFORE any container is created,
+and the config-file test that an out-of-range port in $COI_CONFIG does too.
 """
 
 import hashlib
@@ -28,6 +29,8 @@ from support.helpers import (
     calculate_container_name,
     fetch_host_port,
     free_host_port,
+    workspace_containers,
+    write_trusted_coi_config,
     write_workspace_container_config,
 )
 
@@ -342,3 +345,24 @@ host = {pin}
         )
     finally:
         blocker.close()
+
+
+def test_invalid_port_range_fails_config_file(coi_binary, cleanup_containers, workspace_dir):
+    """An out-of-range `container` or `host` in $COI_CONFIG aborts before any container."""
+    cases = [
+        ("container = 0\n", "'container' must be a TCP port (1-65535), got 0"),
+        ("container = 8000\nhost = 70000\n", "'host' must be a TCP port (1-65535)"),
+    ]
+    for ports, error in cases:
+        env = write_trusted_coi_config(f'[[ports.map]]\nname = "web"\n{ports}')
+        result = subprocess.run(
+            [coi_binary, "run", "--workspace", workspace_dir, "--", "true"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=workspace_dir,
+            env=env,
+        )
+        assert result.returncode != 0, f"coi run must fail on {ports!r}"
+        assert error in result.stderr, f"error should name the bad port. stderr: {result.stderr}"
+        assert not workspace_containers(workspace_dir), "invalid config must abort before launch"
