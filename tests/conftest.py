@@ -5,6 +5,7 @@ Pytest configuration and fixtures for CLI integration tests.
 import os
 import subprocess
 import sys
+import uuid
 
 import pytest
 
@@ -107,6 +108,40 @@ def cleanup_containers(workspace_dir, coi_binary):
         timeout=5,
         check=False,
     )
+
+
+@pytest.fixture
+def foreign_containers():
+    """Non-coi containers from coi-default, created with plain `incus`, as a
+    user running other workloads next to coi would have them: one running, one
+    stopped, and one running whose name holds "coi-" but does not start with
+    it. Yields {"running", "stopped", "lookalike"} names; deletes them after.
+    """
+    tag = uuid.uuid4().hex[:6]
+    names = {
+        "running": f"foreign-{tag}-web",
+        "stopped": f"foreign-{tag}-db",
+        "lookalike": f"web-coi-{tag}",
+    }
+    try:
+        for role, name in names.items():
+            verb = "init" if role == "stopped" else "launch"
+            result = subprocess.run(
+                ["incus", verb, "coi-default", name, "-c", "user.foreign.marker=keep"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            assert result.returncode == 0, f"incus {verb} {name} failed: {result.stderr}"
+        yield names
+    finally:
+        for name in names.values():
+            subprocess.run(
+                ["incus", "delete", "--force", name],
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
 
 
 @pytest.fixture(scope="session")

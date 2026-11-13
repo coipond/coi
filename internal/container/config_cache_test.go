@@ -121,19 +121,23 @@ func TestConfigCache_LoadFailureFallsBack(t *testing.T) {
 
 func TestIncusArgsAreReadOnly(t *testing.T) {
 	for args, want := range map[string]bool{
-		"list":                        true,
-		"exec c1 -- true":             true,
-		"file push a c1/b":            true,
-		"config get c1 k":             true,
-		"config device list c1":       true,
-		"config set c1 k=v":           false,
-		"config device add c1 d disk": false,
-		"config device remove c1 d":   false,
-		"start c1":                    false,
-		"stop c1":                     false,
-		"delete c1":                   false,
-		"image list":                  true,
-		"profile device add p d x":    false,
+		"list":                                  true,
+		"exec c1 -- true":                       true,
+		"file push a c1/b":                      true,
+		"config get c1 k":                       true,
+		"config device list c1":                 true,
+		"config set c1 k=v":                     false,
+		"config device add c1 d disk":           false,
+		"config device remove c1 d":             false,
+		"start c1":                              false,
+		"stop c1":                               false,
+		"delete c1":                             false,
+		"image list":                            true,
+		"profile device add p d x":              false,
+		"query /1.0/instances/c1/state":         true,
+		"query -X GET /1.0/instances":           true,
+		"query -X PATCH /1.0/instances/c1":      false,
+		"query --request=PUT /1.0/instances/c1": false,
 	} {
 		if got := incusArgsAreReadOnly(strings.Fields(args)); got != want {
 			t.Errorf("%q: got %v want %v", args, got, want)
