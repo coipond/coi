@@ -13,7 +13,7 @@ Setup: two containers from coi-default; the second is paused with `incus pause`.
 import json
 import subprocess
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, incus_status
 
 
 def _coi(coi_binary, *args):
@@ -23,16 +23,6 @@ def _coi(coi_binary, *args):
         text=True,
         timeout=60,
     )
-
-
-def _incus_status(name):
-    result = subprocess.run(
-        ["incus", "list", name, "--format=csv", "-c", "s"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return result.stdout.strip().upper()
 
 
 def _frozen_coi_containers():
@@ -79,7 +69,7 @@ def test_unfreeze_all_and_not_frozen(coi_binary, cleanup_containers, workspace_d
         timeout=30,
     )
     assert result.returncode == 0, f"incus pause failed: {result.stderr}"
-    assert _incus_status(frozen_name) == "FROZEN"
+    assert incus_status(frozen_name) == "FROZEN"
 
     # === Phase 2: list --status frozen ===
 
@@ -113,8 +103,8 @@ def test_unfreeze_all_and_not_frozen(coi_binary, cleanup_containers, workspace_d
     assert f"Unfroze {len(frozen)} container(s)" in output, (
         f"expected the count of frozen coi-* containers ({frozen}):\n{output}"
     )
-    assert _incus_status(frozen_name) == "RUNNING"
-    assert _incus_status(running_name) == "RUNNING"
+    assert incus_status(frozen_name) == "RUNNING"
+    assert incus_status(running_name) == "RUNNING"
 
     # === Phase 5: Nothing left to unfreeze ===
 

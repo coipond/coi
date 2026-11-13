@@ -28,6 +28,7 @@ import subprocess
 from support.helpers import (
     container_ipv4,
     fake_lan,
+    start_background_shell,
     wait_for_firewall_rules,
     write_trusted_coi_config,
 )
@@ -66,25 +67,10 @@ def _host_accept_lines(container_ip, host_ip):
     ]
 
 
-def _start_background_shell(coi_binary, workspace_dir, env):
+def _start_firewalled_shell(coi_binary, workspace_dir, env):
     """Start a background coi shell with the given (trusted) env and return the
     container name once its firewall rules are in place."""
-    result = subprocess.run(
-        [coi_binary, "shell", "--workspace", workspace_dir, "--background", "--debug"],
-        capture_output=True,
-        text=True,
-        timeout=90,
-        env=env,
-    )
-    assert result.returncode == 0, f"background shell should start. stderr: {result.stderr}"
-
-    container_name = None
-    for line in result.stderr.split("\n"):
-        if "Container name:" in line:
-            container_name = line.split("Container name:")[-1].strip()
-            break
-    assert container_name is not None, f"could not find container name. stderr: {result.stderr}"
-
+    container_name, _ = start_background_shell(coi_binary, workspace_dir, env, timeout=90)
     assert wait_for_firewall_rules(container_name), (
         f"firewall rules for {container_name} did not appear in time"
     )
@@ -144,7 +130,7 @@ def test_restricted_allowed_ports_blocks_other_ports(coi_binary, workspace_dir, 
     """restricted + allowed_ports=[443]: 443 reachable, 80/22 rejected — to the
     SAME host, so the block is attributable to the port, not host reachability."""
     env = write_trusted_coi_config('[network]\nmode = "restricted"\nallowed_ports = [443]\n')
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
 
     assert _can_connect(coi_binary, name, "1.1.1.1", 443), "allowed port 443 should be reachable"
     assert not _can_connect(coi_binary, name, "1.1.1.1", 80), (
@@ -159,7 +145,7 @@ def test_restricted_dns_pin_blocks_unpinned_resolver(coi_binary, workspace_dir, 
     """restricted + dns_servers=[1.1.1.1]: :53 to the pinned resolver is allowed,
     :53 to any other resolver is rejected, and non-53 traffic is unaffected."""
     env = write_trusted_coi_config('[network]\nmode = "restricted"\ndns_servers = ["1.1.1.1"]\n')
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
 
     assert _can_connect(coi_binary, name, "1.1.1.1", 53), "pinned resolver must be reachable on :53"
     assert not _can_connect(coi_binary, name, "8.8.8.8", 53), (
@@ -184,7 +170,7 @@ def test_allowlist_allowed_ports_constrains_host(coi_binary, workspace_dir, clea
     env = write_trusted_coi_config(
         '[network]\nmode = "allowlist"\nallowed_domains = ["1.1.1.1/32"]\nallowed_ports = [443]\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
 
     assert _can_connect(coi_binary, name, "1.1.1.1", 443), (
         "allowlisted host on the allowed port must be reachable"
@@ -208,7 +194,7 @@ def test_allowlist_per_destination_ports(coi_binary, workspace_dir, cleanup_cont
     env = write_trusted_coi_config(
         '[network]\nmode = "allowlist"\nallowed_domains = ["1.1.1.1:443", "1.0.0.1:80"]\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
 
     assert _can_connect(coi_binary, name, "1.1.1.1", 443), (
         "1.1.1.1 is allowlisted on 443 and must be reachable there"
@@ -232,7 +218,7 @@ def test_restricted_allow_local_respects_port_cap(coi_binary, workspace_dir, cle
     env = write_trusted_coi_config(
         '[network]\nmode = "restricted"\nallow_local_network_access = true\nallowed_ports = [443]\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
     ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
@@ -252,7 +238,7 @@ def test_restricted_allow_local_without_cap_is_blanket(
     env = write_trusted_coi_config(
         '[network]\nmode = "restricted"\nallow_local_network_access = true\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
     ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
@@ -285,7 +271,7 @@ def test_restricted_host_entry_respects_port_cap(coi_binary, workspace_dir, clea
         f'ip = "{host_ip}"\n'
         'hostnames = ["capped-host.internal"]\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
     ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
@@ -311,7 +297,7 @@ def test_restricted_host_entry_without_cap_is_blanket(
         f'ip = "{host_ip}"\n'
         'hostnames = ["blanket-host.internal"]\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
     ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
@@ -344,7 +330,7 @@ def test_restricted_host_entry_per_entry_ports_decouple(
         'hostnames = ["redmine.susanoo.pl"]\n'
         "ports = [443]\n"
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
     ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
 
@@ -384,7 +370,7 @@ def test_allowlist_private_host_entry_scoped(coi_binary, workspace_dir, cleanup_
         'hostnames = ["redmine.susanoo.pl"]\n'
         "ports = [443]\n"
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
     ip = container_ipv4(name)
     assert ip, f"should resolve container IP for {name}"
     lines = _container_rule_lines(ip)
@@ -427,7 +413,7 @@ def test_allowlist_lan_host_real_traffic(coi_binary, workspace_dir, cleanup_cont
     service, BY NAME. Each block is paired with an allowed connection to the same
     host or port, so it can't pass because the target is simply down."""
     with fake_lan("192.168.201") as (redmine, other):
-        name = _start_background_shell(coi_binary, workspace_dir, _allowlist_with_lan_host(redmine))
+        name = _start_firewalled_shell(coi_binary, workspace_dir, _allowlist_with_lan_host(redmine))
 
         assert _can_connect(coi_binary, name, "redmine.lan", 443), (
             "redmine.lan:443 must be reachable by name (/etc/hosts + targeted accept)"
@@ -450,7 +436,7 @@ def test_allowlist_lan_unreachable_without_host_entry(
         env = write_trusted_coi_config(
             '[network]\nmode = "allowlist"\nallowed_domains = ["1.1.1.1/32"]\n'
         )
-        name = _start_background_shell(coi_binary, workspace_dir, env)
+        name = _start_firewalled_shell(coi_binary, workspace_dir, env)
         assert not _can_connect(coi_binary, name, redmine, 443), (
             "allowlist mode must block the LAN when no host entry opens it"
         )
@@ -464,7 +450,7 @@ def test_coi_hosts_add_opens_lan_host_in_allowlist(coi_binary, workspace_dir, cl
         env = write_trusted_coi_config(
             '[network]\nmode = "allowlist"\nallowed_domains = ["1.1.1.1/32"]\n'
         )
-        name = _start_background_shell(coi_binary, workspace_dir, env)
+        name = _start_firewalled_shell(coi_binary, workspace_dir, env)
         assert not _can_connect(coi_binary, name, redmine, 443)
 
         added = subprocess.run(
@@ -548,7 +534,7 @@ def test_context_file_surfaces_network_limitations(coi_binary, workspace_dir, cl
     env = write_trusted_coi_config(
         '[network]\nmode = "restricted"\nallowed_ports = [443]\ndns_servers = ["1.1.1.1"]\n'
     )
-    name = _start_background_shell(coi_binary, workspace_dir, env)
+    name = _start_firewalled_shell(coi_binary, workspace_dir, env)
 
     result = subprocess.run(
         [coi_binary, "container", "exec", name, "--", "cat", "/home/code/SANDBOX_CONTEXT.md"],

@@ -16,7 +16,7 @@ import (
 // namespaced reads fail, it falls back to host /proc/net/tcp[6] filtered by
 // containerIP (best-effort; requires a non-empty containerIP to avoid returning
 // all host connections).
-func CollectNetworkStats(ctx context.Context, containerName, containerIP string, allowedCIDRs []string, permitted PermittedDestinationFunc) (NetworkStats, error) {
+func CollectNetworkStats(ctx context.Context, containerName, containerIP string, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) (NetworkStats, error) {
 	connections, err := parseConnections(ctx, containerName, containerIP)
 	if err != nil {
 		return NetworkStats{}, err
@@ -25,7 +25,7 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 	// Flag suspicious connections
 	suspicious := 0
 	for i := range connections {
-		reason := checkSuspicious(connections[i], allowedCIDRs, permitted)
+		reason := checkSuspicious(connections[i], allowedCIDRs, permitted, gateway)
 		if reason != "" {
 			connections[i].Suspicious = true
 			connections[i].SuspectReason = reason
@@ -278,7 +278,9 @@ func tcpStateFromHex(hexState string) string {
 // checkSuspicious determines if a connection is suspicious. permitted (may be
 // nil) reports destinations the firewall deliberately accepts; those are exempt
 // from the private-network and allowlist checks, but not from the others.
-func checkSuspicious(conn Connection, allowedCIDRs []string, permitted PermittedDestinationFunc) string {
+// gateway (may be nil) returns the container's bridge gateway, asked only for a
+// DNS or DHCP port when allowedCIDRs is set.
+func checkSuspicious(conn Connection, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) string {
 	// Skip local connections (LISTEN state or localhost)
 	if conn.State == "LISTEN" {
 		return ""
@@ -286,11 +288,21 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 
 	// Loopback and unspecified addresses never leave the container.
 	remoteIP := extractIP(conn.RemoteAddr)
-	if ip := net.ParseIP(remoteIP); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+	port := extractPort(conn.RemoteAddr)
+	ip := net.ParseIP(remoteIP)
+	if ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
 		return ""
 	}
+	// The bridge's DNS and DHCP service: a resolver or DHCP client in the
+	// container keeps a socket to it even where the firewall drops the packets.
+	// By port only: any other port on the gateway is still checked. Without an
+	// allowlist nothing below flags these ports, so the gateway is not asked.
+	if len(allowedCIDRs) > 0 && (port == 53 || (port == 67 && strings.HasPrefix(conn.Protocol, "udp"))) && gateway != nil {
+		if gw := net.ParseIP(gateway()); gw != nil && gw.Equal(ip) {
+			return ""
+		}
+	}
 
-	port := extractPort(conn.RemoteAddr)
 	// A destination the firewall accepts on this port (a [[network.hosts]] LAN
 	// service) is neither a private-network leak nor an allowlist violation. The
 	// match is port-aware, so a probe of another port on that host still counts.

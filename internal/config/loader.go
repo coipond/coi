@@ -170,9 +170,15 @@ func load(mode profileLoadMode) (_ *Config, err error) {
 // The workspace .coi/config.toml is always project-scoped and therefore
 // untrusted (it may be supplied by a cloned repo or planted by an in-container
 // agent), so it is loaded with trusted=false and sanitized.
+//
+// A missing file is not an error. Any other failure is a *ConfigError, like a
+// failure of Load.
 func (c *Config) OverlayProjectConfig(workspaceDir string) error {
 	path := filepath.Join(workspaceDir, ".coi", "config.toml")
-	return loadConfigFileScoped(c, path, false)
+	if err := loadConfigFileScoped(c, path, false); err != nil && !os.IsNotExist(err) {
+		return &ConfigError{Err: fmt.Errorf("failed to load project config from %s: %w", workspaceDir, err)}
+	}
+	return nil
 }
 
 // isTrustedConfigPath reports whether a config path is user-controlled and

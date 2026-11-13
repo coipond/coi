@@ -762,6 +762,17 @@ func detectHostTimezone() string {
 	return tz
 }
 
+// monitorGateway returns the container's gateway lookup for the monitor, asked
+// only once it sees a socket to a DNS or DHCP port. Not cached here: the
+// network package keeps successes only, so a failed lookup is retried at the
+// next ask.
+func monitorGateway(containerName string) func() string {
+	return func() string {
+		gw, _ := network.GetContainerGatewayIP(containerName)
+		return gw
+	}
+}
+
 // startMonitoringDaemon starts the background security monitor
 func startMonitoringDaemon(ctx context.Context, containerName, workspacePath string, cfg *config.Config, allowedCIDRs []string, permitted func(proto, ip string, port int) bool, log *logger.SessionLogger, daemon *monitor.MonitorDaemon) error {
 	// Get home directory for audit log
@@ -801,6 +812,7 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 		AllowedCIDRs:               allowedCIDRs,
 		AllowedCIDRsProvider:       allowedCIDRsProvider,
 		PermittedDestination:       permitted,
+		Gateway:                    monitorGateway(containerName),
 		AllowedDomains:             cfg.Network.AllowedDomains,
 		GTFOBinsDir:                cfg.Detection.GTFOBinsDir,
 		SigmaDir:                   cfg.Detection.SigmaDir,

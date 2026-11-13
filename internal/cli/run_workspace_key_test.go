@@ -34,7 +34,7 @@ func TestLaunchContainerRunPhase_FreshLaunchRecordsWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(b), "init coi-default run-wsfresh --ephemeral -c user.coi.managed=true -c user.coi.workspace="+ws+" -c ") {
+	if !strings.Contains(string(b), "init coi-default run-wsfresh --ephemeral -c user.coi.managed=true -c user.coi.workspace="+ws+" -c user.coi.persistent=false -c ") {
 		t.Errorf("want the workspace key on incus init; calls:\n%s", b)
 	}
 }
@@ -52,9 +52,11 @@ func TestLaunchContainerRunPhase_RestartRecordsWorkspace(t *testing.T) {
 	}
 	b, _ := os.ReadFile(logPath)
 	log := string(b)
-	set := strings.Index(log, "config set run-wsrestart user.coi.workspace="+ws)
 	start := strings.Index(log, "start run-wsrestart")
-	if set < 0 || start < 0 || set > start {
-		t.Errorf("want the workspace key set before the start; calls:\n%s", log)
+	for _, kv := range []string{"user.coi.workspace=" + ws, "user.coi.persistent=true"} {
+		set := strings.Index(log, "config set run-wsrestart "+kv)
+		if set < 0 || start < 0 || set > start {
+			t.Errorf("want %s set before the start; calls:\n%s", kv, log)
+		}
 	}
 }

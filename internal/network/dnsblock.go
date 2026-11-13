@@ -108,16 +108,70 @@ const stopResolverCmd = "if systemctl cat systemd-resolved.service >/dev/null 2>
 const restoreResolverCmd = "if [ -L /run/systemd/system/systemd-resolved.service ]; then " +
 	"systemctl unmask --runtime systemd-resolved.service && systemctl start systemd-resolved.service; fi"
 
+// filesOnlyPrefix goes in front of the container's own "hosts:" modules. After
+// "files", any result returns, so no later module (dns, resolve, mdns) runs.
+const filesOnlyPrefix = "files [!SUCCESS=return] "
+
+// filesOnlyHostsCmd makes name lookups in the container read /etc/hosts only,
+// by putting filesOnlyPrefix in front of the "hosts:" line of nsswitch.conf.
+//
+// Without it a name not in /etc/hosts falls through to the dns module and sends
+// a query to the resolver stub on 127.0.0.53. That query cannot leave the
+// container, but its socket is a connection the security monitor sees.
+//
+// The file is edited in place, not covered by a mount, so package scripts and
+// editors can still replace it. The old modules stay on the line, so a package
+// that adds its module next to "dns" edits it as usual, and the restore only
+// removes the prefix. A systemd unit restores at the next boot (before
+// sysinit.target, so before coi's setup), as a persistent container restarted
+// in open mode gets no in-container step.
+const filesOnlyHostsCmd = "if [ -f /etc/nsswitch.conf ] && ! grep -q " + nssPrefixPattern + " /etc/nsswitch.conf; then\n" +
+	"mkdir -p /etc/coi && cat >" + nssRestoreScriptPath + " <<'COI_SCRIPT' && " +
+	"{ [ ! -d /etc/systemd/system ] || { mkdir -p /etc/systemd/system/sysinit.target.wants && " +
+	"cat >/etc/systemd/system/coi-nss-restore.service <<'COI_UNIT' && " +
+	"ln -sf ../coi-nss-restore.service /etc/systemd/system/sysinit.target.wants/coi-nss-restore.service; }; } && " +
+	"if grep -q '^hosts:' /etc/nsswitch.conf; then " +
+	"sed -i 's/^hosts:\\([[:space:]]*\\)/hosts:\\1" + filesOnlyPrefix + "/' /etc/nsswitch.conf; " +
+	// No line means glibc's default, written out after the prefix.
+	"else echo 'hosts: " + filesOnlyPrefix + "dns [!UNAVAIL=return] files' >>/etc/nsswitch.conf; fi\n" +
+	restoreHostsCmd + "\nCOI_SCRIPT\n" +
+	nssRestoreUnit + "COI_UNIT\nfi"
+
+// nssPrefixPattern matches a "hosts:" line that starts with filesOnlyPrefix
+// (a grep and sed basic regex, single-quoted).
+const nssPrefixPattern = `'^\(hosts:[[:space:]]*\)files \[!SUCCESS=return\] '`
+
+// restoreHostsCmd undoes filesOnlyHostsCmd: it removes the prefix and keeps
+// every other change made to the file since.
+const restoreHostsCmd = "if grep -q " + nssPrefixPattern + " /etc/nsswitch.conf 2>/dev/null; then " +
+	"sed -i 's/'" + nssPrefixPattern + "'/\\1/' /etc/nsswitch.conf; fi"
+
+const nssRestoreScriptPath = "/etc/coi/nss-restore.sh"
+
+// nssRestoreUnit runs restoreHostsCmd at boot (a no-op once nothing is left).
+const nssRestoreUnit = "[Unit]\n" +
+	"Description=Undo coi allowlist name lookup (hosts: files)\n" +
+	"DefaultDependencies=no\n" +
+	"After=local-fs.target\n" +
+	"Before=sysinit.target\n" +
+	"\n" +
+	"[Service]\n" +
+	"Type=oneshot\n" +
+	"ExecStart=/bin/sh " + nssRestoreScriptPath + "\n" +
+	"\n" +
+	"[Install]\n" +
+	"WantedBy=sysinit.target\n"
+
 // containerNetCmd is the in-container part of a mode's network setup, as one
 // exec.
 func containerNetCmd(mode config.NetworkMode) string {
 	switch mode {
 	case config.NetworkModeAllowlist:
-		return allSteps(disableIPv6Cmd, stopResolverCmd)
+		return allSteps(disableIPv6Cmd, stopResolverCmd, filesOnlyHostsCmd)
 	case config.NetworkModeRestricted:
-		return allSteps(disableIPv6Cmd, restoreResolverCmd)
+		return allSteps(disableIPv6Cmd, restoreResolverCmd, restoreHostsCmd)
 	default:
-		return restoreResolverCmd
+		return allSteps(restoreResolverCmd, restoreHostsCmd)
 	}
 }
 
@@ -125,7 +179,7 @@ func containerNetCmd(mode config.NetworkMode) string {
 // the firewall is the enforced boundary.
 func (m *Manager) prepareContainer(containerName string) {
 	if err := execInContainer(containerName, containerNetCmd(m.config.Mode)); err != nil {
-		m.logger.Errorf("Warning: failed to prepare the container's network (IPv6, resolver): %v", err)
+		m.logger.Errorf("Warning: failed to prepare the container's network (IPv6, resolver, name lookup): %v", err)
 	}
 }
 
