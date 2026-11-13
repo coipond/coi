@@ -1877,3 +1877,26 @@ def kill_workspace_containers(coi_binary, workspace_dir, env):
             env=env,
         )
         assert result.returncode == 0, f"coi kill {name} failed:\n{result.stderr}"
+
+
+def launch_container(coi_binary, container_name):
+    """`coi container launch coi-default <name>`; assert it succeeds."""
+    result = subprocess.run(
+        [coi_binary, "container", "launch", "coi-default", container_name],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, f"Launch should succeed. stderr: {result.stderr}"
+    time.sleep(3)
+
+
+def run_audit(coi_binary, *args, cwd=None, timeout=60):
+    """Run `coi audit <args>`, capturing output."""
+    return subprocess.run(
+        [coi_binary, "audit", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=cwd,
+    )
