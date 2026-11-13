@@ -325,10 +325,7 @@ func snapshotListCommand(cmd *cobra.Command, args []string) error {
 
 func listAllSnapshots() error {
 	// Get all Coi containers
-	prefix := session.GetContainerPrefix()
-	pattern := fmt.Sprintf("^%s", prefix)
-
-	containers, err := container.ListContainers(pattern)
+	containers, err := container.ListContainers(session.ContainerPattern())
 	if err != nil {
 		return fmt.Errorf("failed to list containers: %v", err)
 	}

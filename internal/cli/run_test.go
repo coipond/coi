@@ -251,6 +251,22 @@ func TestOverlayWorkspaceConfig_ProfileWinsOverWorkspace(t *testing.T) {
 	}
 }
 
+func TestOverlayWorkspaceConfig_BadConfigExitsConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgContent := "[[ports.map]]\nname = \"web\"\ncontainer = 8000\nlisten = \"localhost\"\n"
+	if err := os.WriteFile(filepath.Join(dir, ".coi", "config.toml"), []byte(cfgContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &App{cfg: config.GetDefaultConfig()}
+	if got := ExitCodeFor(a.overlayWorkspaceConfig(dir)); got != ExitConfig {
+		t.Errorf("exit code = %d, want %d (ExitConfig)", got, ExitConfig)
+	}
+}
+
 func TestResumePersistence(t *testing.T) {
 	tr, fa := true, false
 	cases := []struct {
@@ -268,6 +284,32 @@ func TestResumePersistence(t *testing.T) {
 	for _, c := range cases {
 		if got := resumePersistence(c.cfg, c.metadata); got != c.want {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestResumePersistenceNotice(t *testing.T) {
+	const inherited = "Inherited persistent mode from session"
+	cases := []struct {
+		name               string
+		persistent         bool
+		metadataPersistent bool
+		want               string
+	}{
+		{"persistent session inherits", true, true, inherited},
+		{"ephemeral session stays ephemeral", false, false, ""},
+		{
+			"config converts ephemeral session", true, false,
+			"Config [container] persistent = true overrides the session's saved mode",
+		},
+		{
+			"config converts persistent session", false, true,
+			"Config [container] persistent = false overrides the session's saved mode",
+		},
+	}
+	for _, c := range cases {
+		if got := resumePersistenceNotice(c.persistent, c.metadataPersistent); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
 		}
 	}
 }

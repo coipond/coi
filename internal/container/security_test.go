@@ -71,9 +71,10 @@ func TestIsolateUIDNamespace(t *testing.T) {
 	}
 }
 
-// TestDisableGuestAPI verifies that DisableGuestAPI sets security.guestapi=false
-// on a real Incus container. Skipped when Incus prerequisites are unavailable.
-func TestDisableGuestAPI(t *testing.T) {
+// TestInitConfigArgsDisableGuestAPI verifies that an `incus init` with
+// InitConfigArgs sets security.guestapi=false on a real Incus container.
+// Skipped when Incus prerequisites are unavailable.
+func TestInitConfigArgsDisableGuestAPI(t *testing.T) {
 	// Skip if incus is not available
 	if _, err := exec.LookPath("incus"); err != nil {
 		t.Skip("incus not found in PATH, skipping integration test")
@@ -92,18 +93,14 @@ func TestDisableGuestAPI(t *testing.T) {
 
 	name := fmt.Sprintf("coi-test-guestapi-%d", time.Now().UnixNano())
 
-	// Create a stopped container (init, not start)
-	if err := IncusExec("init", "coi-default", name); err != nil {
+	// Create a stopped container (init, not start) with the creation config
+	args := append([]string{"init", "coi-default", name}, InitConfigArgs(DefaultHardeningPolicy())...)
+	if err := IncusExec(args...); err != nil {
 		t.Fatalf("could not init test container %q from image %q: %v", name, "coi-default", err)
 	}
 	defer func() {
 		_ = IncusExecQuiet("delete", name, "--force")
 	}()
-
-	// Call DisableGuestAPI
-	if err := DisableGuestAPI(name); err != nil {
-		t.Fatalf("DisableGuestAPI() returned error: %v", err)
-	}
 
 	// Read back the value
 	output, err := IncusOutput("config", "get", name, "security.guestapi")

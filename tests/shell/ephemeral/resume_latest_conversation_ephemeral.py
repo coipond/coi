@@ -16,16 +16,14 @@ session ID".
 
 import time
 
-from pexpect import EOF, TIMEOUT
-
 from support.helpers import (
     calculate_container_name,
     get_screen_display,
+    poweroff_and_wait,
     send_prompt,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
-    wait_for_specific_container_deletion,
     wait_for_text_in_monitor,
     wait_for_text_on_screen,
     with_live_screen,
@@ -43,21 +41,6 @@ PLANT_DECOYS = (
     f"""printf '%s\\n' '{{"type":"mode","mode":"normal"}}' > $D/{STUB_ID}.jsonl && """
     f"touch $D/{STALE_ID}.jsonl $D/{STUB_ID}.jsonl && echo DECOYS_OK_4c"
 )
-
-
-def _poweroff(child, container_name):
-    child.send("sudo poweroff")
-    time.sleep(0.3)
-    child.send("\x0d")
-    try:
-        child.expect(EOF, timeout=60)
-    except TIMEOUT:
-        pass
-    try:
-        child.close(force=False)
-    except Exception:
-        child.close(force=True)
-    return wait_for_specific_container_deletion(container_name, timeout=60)
 
 
 def _exit_cli_to_bash(child):
@@ -94,7 +77,9 @@ def test_ephemeral_resume_picks_latest_conversation(coi_binary, cleanup_containe
             "planting the decoy transcripts should succeed"
         )
 
-    assert _poweroff(child, container_name), f"container {container_name} should be deleted"
+    assert poweroff_and_wait(child, coi_binary, container_name), (
+        f"container {container_name} should be deleted"
+    )
 
     # === Phase 2: --resume must reopen session 1's conversation ===
     child2 = spawn_coi(coi_binary, ["shell", "--resume"], cwd=workspace_dir, env=env, timeout=120)
@@ -113,7 +98,7 @@ def test_ephemeral_resume_picks_latest_conversation(coi_binary, cleanup_containe
 
     # Clean up before asserting so a failure never leaks the container.
     _exit_cli_to_bash(child2)
-    _poweroff(child2, container_name)
+    poweroff_and_wait(child2, coi_binary, container_name)
 
     assert resumed, f"the tool should be started in resume mode. Screen:\n{screen}"
     assert STUB_ID not in screen and STALE_ID not in screen, (

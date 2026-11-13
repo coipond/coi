@@ -11,13 +11,11 @@ Tests that:
 import subprocess
 from pathlib import Path
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, run_and_show_config
 
 
 def test_profile_with_limits(coi_binary, workspace_dir, cleanup_containers):
     """Test that profile limits are applied when using a profile."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create directory profile with limits
     profile_dir = Path(workspace_dir) / ".coi" / "profiles" / "limited"
     profile_dir.mkdir(parents=True)
@@ -44,34 +42,11 @@ max_processes = 50
     )
 
     # Launch with profile
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            "limited",
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--profile", "limited"]
     )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
 
     # Verify all profile limits were applied
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "2"' in config_output, "Profile CPU count should be applied"
     assert "limits.cpu.allowance: 50%" in config_output, "Profile CPU allowance should be applied"
     assert "limits.memory: 2GiB" in config_output, "Profile memory limit should be applied"
@@ -104,34 +79,9 @@ limit = "{memory}"
 
     # Test small profile
     container_name_1 = calculate_container_name(workspace_dir, 1)
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--slot=1",
-            "--profile",
-            "small",
-            "echo",
-            "small",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--slot=1", "--profile", "small"]
     )
-
-    assert result.returncode == 0, f"Small profile should succeed. stderr: {result.stderr}"
-
-    result = subprocess.run(
-        ["incus", "config", "show", container_name_1],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "1"' in config_output, "Small profile should have 1 CPU"
     assert "limits.memory: 512MiB" in config_output, "Small profile should have 512MiB memory"
 
@@ -178,8 +128,6 @@ limit = "{memory}"
 
 def test_profile_partial_limits(coi_binary, workspace_dir, cleanup_containers):
     """Test that profile can define only some limits (others remain unset)."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create profile with only CPU limit
     profile_dir = Path(workspace_dir) / ".coi" / "profiles" / "cpu_only"
     profile_dir.mkdir(parents=True)
@@ -195,34 +143,11 @@ count = "2"
     )
 
     # Launch with profile
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            "cpu_only",
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--profile", "cpu_only"]
     )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
 
     # Verify only CPU limit is set
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "2"' in config_output, "CPU limit should be set from profile"
     # Memory should not be set (or be empty)
     assert "limits.memory:" not in config_output or 'limits.memory: ""' in config_output, (
@@ -232,8 +157,6 @@ count = "2"
 
 def test_profile_limits_with_global_config(coi_binary, workspace_dir, cleanup_containers):
     """Test interaction between global config limits and profile limits."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create config with global limits
     project_config_dir = Path(workspace_dir) / ".coi"
     project_config_dir.mkdir(exist_ok=True)
@@ -268,34 +191,11 @@ count = "1"
     )
 
     # Launch with profile
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            "override",
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--profile", "override"]
     )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
 
     # Verify profile CPU override but global memory/processes
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "1"' in config_output, "Profile should override CPU (should be 1, not 4)"
     assert "limits.memory: 8GiB" in config_output, (
         "Global memory should apply (profile didn't override)"
@@ -307,8 +207,6 @@ count = "1"
 
 def test_profile_overrides_global_config_limits(coi_binary, workspace_dir, cleanup_containers):
     """Test that profile limits override global config limits."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create global config with limits
     project_config_dir = Path(workspace_dir) / ".coi"
     project_config_dir.mkdir(exist_ok=True)
@@ -340,34 +238,11 @@ limit = "4GiB"
     )
 
     # Launch with profile -- profile limits should override global config
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            "bigger",
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--profile", "bigger"]
     )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
 
     # Verify profile limits overrode global config
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "4"' in config_output, (
         "Profile should override global config CPU (should be 4, not 2)"
     )
@@ -378,8 +253,6 @@ limit = "4GiB"
 
 def test_profile_without_limits_uses_global(coi_binary, workspace_dir, cleanup_containers):
     """Test that profile without limits falls back to global config."""
-    container_name = calculate_container_name(workspace_dir, 1)
-
     # Create config with global limits
     project_config_dir = Path(workspace_dir) / ".coi"
     project_config_dir.mkdir(exist_ok=True)
@@ -406,33 +279,10 @@ persistent = true
     )
 
     # Launch with profile that has no limits
-    result = subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--profile",
-            "nolimits",
-            "echo",
-            "test",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=240,
-        cwd=workspace_dir,
+    config_output = run_and_show_config(
+        coi_binary, workspace_dir, extra_args=["--profile", "nolimits"]
     )
-
-    assert result.returncode == 0, f"Command should succeed. stderr: {result.stderr}"
 
     # Verify global limits were applied
-    result = subprocess.run(
-        ["incus", "config", "show", container_name],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    config_output = result.stdout
     assert 'limits.cpu: "2"' in config_output, "Global CPU limit should apply"
     assert "limits.memory: 2GiB" in config_output, "Global memory limit should apply"

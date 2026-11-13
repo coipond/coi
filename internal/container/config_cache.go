@@ -75,6 +75,9 @@ func incusArgsAreReadOnly(args []string) bool {
 	if readOnlyIncusVerbs[args[0]] {
 		return true
 	}
+	if args[0] == "query" {
+		return queryIsGet(args[1:])
+	}
 	if len(args) >= 2 {
 		switch args[0] {
 		case "config":
@@ -92,6 +95,19 @@ func incusArgsAreReadOnly(args []string) bool {
 		}
 	}
 	return false
+}
+
+// queryIsGet reports whether `incus query` args send a GET (the default).
+func queryIsGet(args []string) bool {
+	for i, a := range args {
+		if a == "-X" || a == "--request" {
+			return i+1 < len(args) && strings.EqualFold(args[i+1], "GET")
+		}
+		if v, ok := strings.CutPrefix(a, "--request="); ok {
+			return strings.EqualFold(v, "GET")
+		}
+	}
+	return true
 }
 
 // noteIncusCommand drops the cache before a command that may change config
