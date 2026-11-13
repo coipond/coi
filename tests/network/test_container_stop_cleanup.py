@@ -29,7 +29,7 @@ import time
 
 import pytest
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, start_background_shell
 
 
 def _skip_unless_ready():
@@ -179,21 +179,6 @@ def _poll_until(fn, timeout=15):
     return val
 
 
-def _start_background(coi_binary, workspace_dir, env):
-    result = subprocess.run(
-        [coi_binary, "shell", "--workspace", workspace_dir, "--background"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    assert result.returncode == 0, f"Failed to start container: {result.stderr}"
-    for line in (result.stdout + result.stderr).split("\n"):
-        if "Container: " in line:
-            return line.split("Container: ")[1].strip()
-    raise AssertionError(f"no container name: {result.stdout + result.stderr}")
-
-
 def test_container_stop_removes_firewall_artifacts_and_start_restores_them(
     coi_binary, workspace_dir, cleanup_containers
 ):
@@ -205,7 +190,7 @@ def test_container_stop_removes_firewall_artifacts_and_start_restores_them(
     try:
         env = os.environ.copy()
         env["COI_CONFIG"] = config_file
-        name = _start_background(coi_binary, workspace_dir, env)
+        name, _ = start_background_shell(coi_binary, workspace_dir, env, debug=False)
 
         ip, count = _wait_for_rules_for_ip(coi_binary, name)
         if not ip:
@@ -224,7 +209,7 @@ def test_container_stop_removes_firewall_artifacts_and_start_restores_them(
         )
 
         # Restart: the same persistent container comes back with its rules re-applied.
-        again = _start_background(coi_binary, workspace_dir, env)
+        again, _ = start_background_shell(coi_binary, workspace_dir, env, debug=False)
         assert again == name, f"expected the persistent container {name} to be reused, got {again}"
         new_ip, new_count = _wait_for_rules_for_ip(coi_binary, name)
         assert new_ip and new_count > 0, f"rules should be re-applied on restart (ip={new_ip!r})"
@@ -245,7 +230,7 @@ def test_container_start_after_stop_reapplies_firewall(
     try:
         env = os.environ.copy()
         env["COI_CONFIG"] = config_file
-        name = _start_background(coi_binary, workspace_dir, env)
+        name, _ = start_background_shell(coi_binary, workspace_dir, env, debug=False)
         ip, count = _wait_for_rules_for_ip(coi_binary, name)
         if not ip:
             pytest.skip("container never got a DHCP IP; cannot assert rule cleanup")
@@ -298,7 +283,7 @@ def test_ip6_block_follows_new_veth_after_unclean_stop(
     try:
         env = os.environ.copy()
         env["COI_CONFIG"] = config_file
-        name = _start_background(coi_binary, workspace_dir, env)
+        name, _ = start_background_shell(coi_binary, workspace_dir, env, debug=False)
         _assert_ip6_block_on_current_veth(name)
         old_veth = _current_veth(name)
 
@@ -312,7 +297,7 @@ def test_ip6_block_follows_new_veth_after_unclean_stop(
             "precondition: the coi6 rule should be left behind on the old veth"
         )
 
-        again = _start_background(coi_binary, workspace_dir, env)
+        again, _ = start_background_shell(coi_binary, workspace_dir, env, debug=False)
         assert again == name, f"expected the persistent container {name} to be reused, got {again}"
         new_veth = _current_veth(name)
         assert new_veth and new_veth != old_veth, (
@@ -375,7 +360,7 @@ def test_container_start_after_stop_restores_open_mode_accept_rule(
     try:
         env = os.environ.copy()
         env["COI_CONFIG"] = config_file
-        name = _start_background(coi_binary, workspace_dir, env)
+        name, _ = start_background_shell(coi_binary, workspace_dir, env, debug=False)
         ip, count = _wait_for_rules_for_ip(coi_binary, name)
         if not ip:
             pytest.skip("container never got a DHCP IP; cannot assert rule cleanup")

@@ -629,13 +629,15 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 }
 
 // containerInitArgs is the `incus init` argv for a fresh container. The
-// workspace key rides on init, so a launch pays no extra Incus call for it.
+// workspace and persistence keys ride on init, so a launch pays no extra Incus
+// call for them.
 func containerInitArgs(image, containerName string, opts *SetupOptions) []string {
 	args := []string{"init", image, containerName}
 	if opts.StoragePool != "" {
 		args = append(args, "-s", opts.StoragePool)
 	}
-	args = append(args, "-c", container.ManagedConfigKey+"=true")
+	args = append(args, "-c", container.ManagedConfigKey+"=true",
+		"-c", PersistentConfigKey+"="+strconv.FormatBool(opts.Persistent))
 	if opts.WorkspacePath != "" {
 		args = append(args, "-c", WorkspaceConfigKey+"="+opts.WorkspacePath)
 	}

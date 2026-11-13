@@ -51,6 +51,7 @@ func TestCreateAndStartContainer_SettingsAtInit(t *testing.T) {
 	}
 	b, _ := os.ReadFile(logPath)
 	want := "init img c1 -s pool1 -c user.coi.managed=true" +
+		" -c user.coi.persistent=false" +
 		" -c security.nesting=true" +
 		" -c security.syscalls.intercept.mknod=true" +
 		" -c security.syscalls.intercept.setxattr=true" +

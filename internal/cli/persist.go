@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -130,6 +131,10 @@ func persistCommand(cmd *cobra.Command, args []string) error {
 		// Update persistent flag in metadata
 		if err := updatePersistentFlag(metadataPath, true); err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: Failed to update metadata: %v\n", err)
+			continue
+		}
+		if _, err := container.ConfigSetIfChanged(context.Background(), name, session.PersistentConfigKey, "true"); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to set persistence metadata: %v\n", err)
 			continue
 		}
 

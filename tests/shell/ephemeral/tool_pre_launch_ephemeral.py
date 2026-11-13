@@ -23,6 +23,7 @@ from pathlib import Path
 from support.helpers import (
     calculate_container_name,
     exec_as_code_user,
+    start_background_shell,
     write_trusted_coi_config,
 )
 
@@ -46,13 +47,10 @@ def _write_fake_agent(workspace_dir):
 
 def _start_shell(coi_binary, workspace_dir, env):
     env.pop("COI_USE_DUMMY", None)
-    return subprocess.run(
-        [coi_binary, "shell", "--background", "--workspace", workspace_dir, "--slot", "1"],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=env,
+    _, result = start_background_shell(
+        coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180
     )
+    return result
 
 
 def _wait_for(path, timeout=90):
@@ -72,8 +70,7 @@ def test_pre_launch_runs_before_tool(coi_binary, cleanup_containers, workspace_d
         f'pre_launch = ["exit 3", "echo ran > /workspace/{PRE_MARKER}"]\n'
     )
 
-    result = _start_shell(coi_binary, workspace_dir, env)
-    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
+    _start_shell(coi_binary, workspace_dir, env)
 
     agent = Path(workspace_dir) / AGENT_MARKER
     assert _wait_for(agent), "the tool never started after the pre-launch commands"
@@ -95,7 +92,6 @@ def test_pre_launch_ignored_from_project_config(coi_binary, cleanup_containers, 
     env = write_trusted_coi_config('[tool]\nbinary = "/workspace/fake-agent.sh"\n')
 
     result = _start_shell(coi_binary, workspace_dir, env)
-    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
     assert "ignoring 'tool.pre_launch' in project config" in result.stderr, (
         f"expected a warning about the ignored project pre_launch:\n{result.stderr}"
     )
@@ -126,8 +122,7 @@ def test_pre_launch_script_alone_with_real_tool(coi_binary, cleanup_containers, 
     script.chmod(0o755)
     env = write_trusted_coi_config('[tool]\npre_launch = ["/workspace/before-agent.sh --quiet"]\n')
 
-    result = _start_shell(coi_binary, workspace_dir, env)
-    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
+    _start_shell(coi_binary, workspace_dir, env)
 
     marker = Path(workspace_dir) / PRE_MARKER
     assert _wait_for(marker), "the pre_launch script did not run"
@@ -159,8 +154,7 @@ def test_pre_launch_ctrl_c_skips_remaining(coi_binary, cleanup_containers, works
         'binary = "/workspace/fake-agent.sh"\n'
         f'pre_launch = ["sleep 120", "touch /workspace/{second.name}"]\n'
     )
-    result = _start_shell(coi_binary, workspace_dir, env)
-    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
+    _start_shell(coi_binary, workspace_dir, env)
 
     container_name = calculate_container_name(workspace_dir, 1)
     deadline = time.monotonic() + 60
@@ -192,8 +186,7 @@ def test_pre_launch_can_set_terminal_modes(coi_binary, cleanup_containers, works
         'binary = "/workspace/fake-agent.sh"\n'
         f'pre_launch = ["stty sane </dev/tty && touch /workspace/{ok.name}"]\n'
     )
-    result = _start_shell(coi_binary, workspace_dir, env)
-    assert result.returncode == 0, f"coi shell --background failed:\n{result.stderr}"
+    _start_shell(coi_binary, workspace_dir, env)
 
     agent = Path(workspace_dir) / AGENT_MARKER
     assert _wait_for(agent, timeout=90), "the tool should start well before the 5-minute timeout"

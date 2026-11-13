@@ -31,13 +31,13 @@ func useTopHome(tb testing.TB) string {
 }
 
 // writeSavedSession writes one saved session's metadata.json.
-func writeSavedSession(tb testing.TB, sessionsDir, id, containerName, workspace string) {
+func writeSavedSession(tb testing.TB, sessionsDir, id, containerName, workspace string, persistent bool) {
 	tb.Helper()
 	dir := filepath.Join(sessionsDir, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		tb.Fatal(err)
 	}
-	data, err := json.Marshal(session.SessionMetadata{SessionID: id, ContainerName: containerName, Workspace: workspace})
+	data, err := json.Marshal(session.SessionMetadata{SessionID: id, ContainerName: containerName, Workspace: workspace, Persistent: persistent})
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func workspacesByName(tb testing.TB) map[string]string {
 func TestSampleContainerRows_WorkspaceFromConfigKey(t *testing.T) {
 	sessionsDir := useTopHome(t)
 	// A stale save must not win over the key on the container.
-	writeSavedSession(t, sessionsDir, "s1", "coi-aaaaaaaa-1", "/old/path")
+	writeSavedSession(t, sessionsDir, "s1", "coi-aaaaaaaa-1", "/old/path", false)
 	stubTopRunning(t, []incusTopEntry{{
 		Name: "coi-aaaaaaaa-1", Status: "Running",
 		Config: map[string]string{session.WorkspaceConfigKey: "/home/u/proj"},
@@ -88,9 +88,9 @@ func TestSampleContainerRows_WorkspaceFallbackWithoutKey(t *testing.T) {
 	sessionsDir := useTopHome(t)
 	// Dirs are read in name order: an unwanted save first must not end the
 	// scan, and the first wanted save ends it before the later one.
-	writeSavedSession(t, sessionsDir, "s1", "coi-cccccccc-1", "/home/u/other")
-	writeSavedSession(t, sessionsDir, "s2", "coi-bbbbbbbb-1", "/home/u/legacy")
-	writeSavedSession(t, sessionsDir, "s3", "coi-bbbbbbbb-1", "/home/u/later")
+	writeSavedSession(t, sessionsDir, "s1", "coi-cccccccc-1", "/home/u/other", false)
+	writeSavedSession(t, sessionsDir, "s2", "coi-bbbbbbbb-1", "/home/u/legacy", false)
+	writeSavedSession(t, sessionsDir, "s3", "coi-bbbbbbbb-1", "/home/u/later", false)
 	stubTopRunning(t, []incusTopEntry{
 		{Name: "coi-aaaaaaaa-1", Status: "Running", Config: map[string]string{session.WorkspaceConfigKey: "/home/u/proj"}},
 		{Name: "coi-bbbbbbbb-1", Status: "Running", Config: map[string]string{}},
@@ -124,7 +124,7 @@ func TestSampleContainerRows_WorkspaceNoSaves(t *testing.T) {
 func TestSampleContainerRows_ManagedWithoutWorkspaceSkipsFallback(t *testing.T) {
 	sessionsDir := useTopHome(t)
 	// Even a matching save is not read: the marker says coi set no workspace.
-	writeSavedSession(t, sessionsDir, "s1", "coi-launched-1", "/home/u/stale")
+	writeSavedSession(t, sessionsDir, "s1", "coi-launched-1", "/home/u/stale", false)
 	stubTopRunning(t, []incusTopEntry{{
 		Name: "coi-launched-1", Status: "Running",
 		Config: map[string]string{container.ManagedConfigKey: "true"},
@@ -143,7 +143,7 @@ func BenchmarkSampleContainerRows_SavedSessions(b *testing.B) {
 		b.Run(fmt.Sprintf("saves=%d", saves), func(b *testing.B) {
 			sessionsDir := useTopHome(b)
 			for i := range saves {
-				writeSavedSession(b, sessionsDir, fmt.Sprintf("s%05d", i), fmt.Sprintf("coi-%08x-1", i), fmt.Sprintf("/home/u/p%d", i))
+				writeSavedSession(b, sessionsDir, fmt.Sprintf("s%05d", i), fmt.Sprintf("coi-%08x-1", i), fmt.Sprintf("/home/u/p%d", i), false)
 			}
 			var running []incusTopEntry
 			for i := range 5 {

@@ -65,8 +65,8 @@ func (a *App) resolveWorkspacePhase(cmd *cobra.Command, s *shellState) session.P
 			if s.aliasArg == "" {
 				if cwd, err := os.Getwd(); err == nil {
 					if absCWD, err := filepath.Abs(cwd); err == nil && absWorkspace != absCWD {
-						if err := a.cfg.OverlayProjectConfig(absWorkspace); err != nil && !os.IsNotExist(err) {
-							return nil, fmt.Errorf("failed to load project config from %s: %w", absWorkspace, err)
+						if err := a.cfg.OverlayProjectConfig(absWorkspace); err != nil {
+							return nil, err
 						}
 						container.Configure(a.cfg.Incus.Project, a.cfg.Incus.CodeUser, a.cfg.Incus.CodeUID)
 					}
@@ -81,8 +81,8 @@ func (a *App) resolveWorkspacePhase(cmd *cobra.Command, s *shellState) session.P
 				}
 				absWorkspace = resolved.Workspace
 
-				if err := a.cfg.OverlayProjectConfig(absWorkspace); err != nil && !os.IsNotExist(err) {
-					return nil, fmt.Errorf("failed to load project config from %s: %w", absWorkspace, err)
+				if err := a.cfg.OverlayProjectConfig(absWorkspace); err != nil {
+					return nil, err
 				}
 
 				if resolved.Profile != "" && !cmd.Flags().Changed("profile") {

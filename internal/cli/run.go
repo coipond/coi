@@ -577,8 +577,8 @@ func (a *App) overlayWorkspaceConfig(absWorkspace string) error {
 	if absWorkspace == absCWD {
 		return nil
 	}
-	if err := a.cfg.OverlayProjectConfig(absWorkspace); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to load project config from %s: %w", absWorkspace, err)
+	if err := a.cfg.OverlayProjectConfig(absWorkspace); err != nil {
+		return err
 	}
 	container.Configure(a.cfg.Incus.Project, a.cfg.Incus.CodeUser, a.cfg.Incus.CodeUID)
 	// An explicitly requested --profile must keep winning over the workspace

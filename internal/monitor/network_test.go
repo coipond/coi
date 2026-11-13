@@ -156,7 +156,7 @@ func TestCheckSuspicious_SuspiciousPort(t *testing.T) {
 		RemoteAddr: "8.8.8.8:4444",
 		State:      "ESTABLISHED",
 	}
-	reason := checkSuspicious(conn, nil, nil)
+	reason := checkSuspicious(conn, nil, nil, nil)
 	if reason == "" {
 		t.Error("expected port 4444 to be flagged as suspicious, got empty reason")
 	}
@@ -169,7 +169,7 @@ func TestCheckSuspicious_MetadataEndpoint(t *testing.T) {
 		RemoteAddr: "169.254.169.254:80",
 		State:      "ESTABLISHED",
 	}
-	reason := checkSuspicious(conn, nil, nil)
+	reason := checkSuspicious(conn, nil, nil, nil)
 	if reason != "Cloud metadata endpoint access" {
 		t.Errorf("want 'Cloud metadata endpoint access' got %q", reason)
 	}
@@ -182,7 +182,7 @@ func TestCheckSuspicious_LISTEN_NotFlagged(t *testing.T) {
 		RemoteAddr: "0.0.0.0:0",
 		State:      "LISTEN",
 	}
-	reason := checkSuspicious(conn, nil, nil)
+	reason := checkSuspicious(conn, nil, nil, nil)
 	if reason != "" {
 		t.Errorf("LISTEN state should not be flagged, got %q", reason)
 	}
@@ -190,9 +190,9 @@ func TestCheckSuspicious_LISTEN_NotFlagged(t *testing.T) {
 
 // An unconnected UDP6 socket reads as :::0.
 func TestCheckSuspicious_Loopback_NotFlagged(t *testing.T) {
-	for _, remote := range []string{"127.0.0.1:8080", "127.0.0.53:53", "::1:53", "0.0.0.0:80", ":::0", "::ffff:127.0.0.1:53"} {
+	for _, remote := range []string{"127.0.0.1:8080", "127.0.0.53:53", "::1:53", "0.0.0.0:80", ":::0", "::ffff:127.0.0.1:53", "127.0.0.2:8080", "127.0.1.1:5432"} {
 		conn := Connection{Protocol: "udp", LocalAddr: "127.0.0.1:39386", RemoteAddr: remote, State: "ESTABLISHED"}
-		if reason := checkSuspicious(conn, []string{"1.1.1.1/32"}, nil); reason != "" {
+		if reason := checkSuspicious(conn, []string{"1.1.1.1/32"}, nil, nil); reason != "" {
 			t.Errorf("%s should not be flagged, got %q", remote, reason)
 		}
 	}
@@ -206,7 +206,7 @@ func TestCheckSuspicious_RFC1918_RestrictedMode(t *testing.T) {
 		State:      "ESTABLISHED",
 	}
 	// With allowedCIDRs set (restricted mode), RFC1918 should be flagged.
-	reason := checkSuspicious(conn, []string{"8.8.8.8/32"}, nil)
+	reason := checkSuspicious(conn, []string{"8.8.8.8/32"}, nil, nil)
 	if reason == "" {
 		t.Error("RFC1918 address should be flagged in restricted mode")
 	}
@@ -220,7 +220,7 @@ func TestCheckSuspicious_FirewallPermittedDestination(t *testing.T) {
 	allowed := []string{"140.82.112.3/32"}
 	permitted := func(_, ip string, port int) bool { return ip == "10.50.0.100" && (port == 443 || port == 4444) }
 	check := func(remote string) string {
-		return checkSuspicious(Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: remote, State: "ESTABLISHED"}, allowed, permitted)
+		return checkSuspicious(Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: remote, State: "ESTABLISHED"}, allowed, permitted, nil)
 	}
 	if reason := check("10.50.0.100:443"); reason != "" {
 		t.Errorf("permitted LAN service should not be flagged, got %q", reason)
@@ -244,8 +244,67 @@ func TestCheckSuspicious_RFC1918_OpenMode(t *testing.T) {
 		State:      "ESTABLISHED",
 	}
 	// With no allowedCIDRs (open mode), RFC1918 should NOT be flagged.
-	reason := checkSuspicious(conn, nil, nil)
+	reason := checkSuspicious(conn, nil, nil, nil)
 	if reason != "" {
 		t.Errorf("RFC1918 should not be flagged in open mode, got %q", reason)
+	}
+}
+
+// Bound, unconnected UDP sockets are local; a connected one to a private host
+// is not.
+func TestCheckSuspicious_UnconnectedUDP(t *testing.T) {
+	allowed := []string{"140.82.112.3/32"}
+	for _, conn := range []Connection{
+		{Protocol: "udp6", LocalAddr: ":::5353", RemoteAddr: ":::0", State: "CLOSE"},
+		{Protocol: "udp", LocalAddr: "10.0.0.2:68", RemoteAddr: "0.0.0.0:0", State: "CLOSE"},
+	} {
+		if reason := checkSuspicious(conn, allowed, nil, nil); reason != "" {
+			t.Errorf("%s %s should not be flagged, got %q", conn.Protocol, conn.RemoteAddr, reason)
+		}
+	}
+	conn := Connection{Protocol: "udp", LocalAddr: "10.0.0.2:41000", RemoteAddr: "10.0.0.5:53", State: "ESTABLISHED"}
+	if reason := checkSuspicious(conn, allowed, nil, nil); !strings.Contains(reason, "RFC1918") {
+		t.Errorf("a connected UDP socket to a private host must still be flagged, got %q", reason)
+	}
+}
+
+// The bridge gateway's DNS and DHCP ports are exempt; another port on the
+// gateway, and any other private host, are still flagged.
+func TestCheckSuspicious_GatewayDNSAndDHCP(t *testing.T) {
+	allowed := []string{"140.82.112.3/32"}
+	asked := 0
+	gateway := func() string { asked++; return "10.250.0.1" }
+	check := func(proto, remote string) string {
+		return checkSuspicious(Connection{Protocol: proto, LocalAddr: "10.250.0.5:41000", RemoteAddr: remote, State: "ESTABLISHED"}, allowed, nil, gateway)
+	}
+	for _, tc := range []struct{ proto, remote string }{
+		{"udp", "10.250.0.1:53"},
+		{"tcp", "10.250.0.1:53"},
+		{"udp", "10.250.0.1:67"},
+	} {
+		if reason := check(tc.proto, tc.remote); reason != "" {
+			t.Errorf("%s %s should not be flagged, got %q", tc.proto, tc.remote, reason)
+		}
+	}
+	asked = 0
+	for _, tc := range []struct{ proto, remote string }{
+		{"tcp", "10.250.0.1:22"},
+		{"tcp", "10.250.0.1:67"},
+		{"udp", "10.250.0.9:53"},
+		{"tcp", "192.168.1.1:53"},
+	} {
+		if reason := check(tc.proto, tc.remote); !strings.Contains(reason, "RFC1918") {
+			t.Errorf("%s %s must still be flagged, got %q", tc.proto, tc.remote, reason)
+		}
+	}
+	if asked != 2 {
+		t.Errorf("gateway asked %d times, want 2 (port 53 only)", asked)
+	}
+	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, allowed, nil, nil); !strings.Contains(reason, "RFC1918") {
+		t.Errorf("without a known gateway, gateway:53 must still be flagged, got %q", reason)
+	}
+	asked = 0
+	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, nil, nil, gateway); reason != "" || asked != 0 {
+		t.Errorf("without an allowlist, gateway:53 got %q and asked the gateway %d times, want neither", reason, asked)
 	}
 }
