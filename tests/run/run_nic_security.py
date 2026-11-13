@@ -9,17 +9,11 @@ could spoof its source IP/MAC to dodge the saddr-keyed nft rules. This asserts
 
 import subprocess
 
-from support.helpers import calculate_container_name, write_workspace_container_config
-
-
-def _device_get(name, device, key):
-    result = subprocess.run(
-        ["incus", "config", "device", "get", name, device, key],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    return result.returncode, result.stdout.strip(), result.stderr
+from support.helpers import (
+    calculate_container_name,
+    container_device_get,
+    write_workspace_container_config,
+)
 
 
 def test_run_enables_nic_security(coi_binary, cleanup_containers, workspace_dir):
@@ -40,8 +34,8 @@ def test_run_enables_nic_security(coi_binary, cleanup_containers, workspace_dir)
 
     try:
         for key in ("security.ipv4_filtering", "security.mac_filtering", "security.port_isolation"):
-            rc, val, err = _device_get(container_name, "eth0", key)
-            assert rc == 0, f"could not read eth0 {key}: {err}"
+            val = container_device_get(container_name, "eth0", key)
+            assert val is not None, f"could not read eth0 {key}"
             assert val == "true", f"eth0 {key} should be 'true' after coi run, got '{val}'"
     finally:
         subprocess.run(

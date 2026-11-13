@@ -29,7 +29,7 @@ import time
 
 import pytest
 
-from support.helpers import calculate_container_name, start_background_shell
+from support.helpers import calculate_container_name, incus_status, start_background_shell
 
 
 def _skip_unless_ready():
@@ -129,7 +129,7 @@ def _coi_stop(coi_binary, name):
         timeout=60,
     )
     assert stop.returncode == 0, f"container stop failed: {stop.stderr}"
-    assert _container_status(name) == "STOPPED", "stop should keep the persistent container"
+    assert incus_status(name) == "STOPPED", "stop should keep the persistent container"
 
 
 def _write_config(mode="restricted"):
@@ -138,22 +138,6 @@ def _write_config(mode="restricted"):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
         f.write(f'[container]\npersistent = true\n[network]\nmode = "{mode}"\n')
         return f.name
-
-
-def _container_status(name):
-    r = subprocess.run(
-        ["incus", "list", name, "--format=csv", "-c", "ns"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    if r.returncode != 0:
-        return None
-    for line in r.stdout.splitlines():
-        parts = line.split(",")
-        if len(parts) >= 2 and parts[0] == name:
-            return parts[1].strip()
-    return None
 
 
 def _wait_for_rules_for_ip(coi_binary, name, timeout=20):
@@ -248,7 +232,7 @@ def test_container_start_after_stop_reapplies_firewall(
             env=env,
         )
         assert start.returncode == 0, f"container start failed: {start.stderr}"
-        assert _container_status(name) == "RUNNING", "start should leave the container running"
+        assert incus_status(name) == "RUNNING", "start should leave the container running"
 
         new_ip, new_count = _wait_for_rules_for_ip(coi_binary, name)
         assert new_ip and new_count > 0, (
@@ -327,7 +311,7 @@ def test_container_launch_applies_firewall(coi_binary, workspace_dir, cleanup_co
             env=env,
         )
         assert launch.returncode == 0, f"container launch failed: {launch.stderr}"
-        assert _container_status(name) == "RUNNING", "launch should leave the container running"
+        assert incus_status(name) == "RUNNING", "launch should leave the container running"
 
         ip, count = _wait_for_rules_for_ip(coi_binary, name)
         assert ip and count > 0, f"coi container launch should apply the coi-<ip> rules (ip={ip!r})"

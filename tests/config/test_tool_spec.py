@@ -28,6 +28,7 @@ from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    container_device_get,
     spawn_coi,
     wait_for_container_ready,
 )
@@ -43,17 +44,6 @@ def _write_config(workspace_dir, tool="claude", model=None, preserve_workspace=F
         body += "\n[paths]\npreserve_workspace_path = true\n"
     with open(os.path.join(config_dir, "config.toml"), "w") as f:
         f.write(body)
-
-
-def _container_workspace_path(container):
-    """The path the workspace disk is actually mounted at inside the container."""
-    r = subprocess.run(
-        ["incus", "config", "device", "get", container, "workspace", "path"],
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
-    return r.stdout.strip() or "/workspace"
 
 
 def _boot_container(coi_binary, workspace_dir):
@@ -272,7 +262,7 @@ def test_tool_spec_env_uses_container_workspace_path(coi_binary, workspace_dir, 
     _write_config(workspace_dir, tool="pi", preserve_workspace=True)
     child, container = _boot_container(coi_binary, workspace_dir)
     try:
-        ws = _container_workspace_path(container)
+        ws = container_device_get(container, "workspace", "path") or "/workspace"
         # Sanity: preserve_workspace_path really did move the mount off the default.
         assert ws != "/workspace", f"expected a preserved non-default mount, got {ws!r}"
 

@@ -14,6 +14,7 @@ import pytest
 from support.helpers import (
     create_storage_pool,
     delete_storage_pool,
+    incus_status,
     is_incus_permission_error,
 )
 
@@ -91,14 +92,9 @@ def test_clean_pools_removes_unreferenced(coi_binary, workspace_dir):
             )
 
             # The container should be gone
-            check = subprocess.run(
-                ["incus", "list", container_name, "--format=csv"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            assert container_name not in check.stdout, (
-                f"Container {container_name} should be deleted. Got:\n{check.stdout}"
+            status = incus_status(container_name)
+            assert status == "", (
+                f"Container {container_name} should be deleted. Got status {status!r}"
             )
 
             # The pool itself should NOT be deleted
