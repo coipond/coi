@@ -60,7 +60,6 @@ def test_restricted_local_network_access_not_flagged(test_workspace, coi_binary)
         ]
         assert not flagged, f"{lan_host}:443 must not be flagged, got: {flagged}"
 
-        # Positive controls (CRITICAL, alert only here).
         holders.append(hold_connect(container_name, lan_host, 4444))
         holders.append(hold_connect(container_name, "169.254.169.254", 80, proto="udp"))
         assert wait_for_threats(container_name, is_c2_port_threat(lan_host)), (

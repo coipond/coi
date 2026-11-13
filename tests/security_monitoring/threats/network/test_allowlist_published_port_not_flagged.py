@@ -87,10 +87,6 @@ def test_allowlist_published_port_not_flagged(test_workspace, coi_binary):
         flagged = [e for e in events if e.get("category") == "network"]
         assert not flagged, f"no published-port connection may be flagged, got: {flagged}"
 
-        # Positive controls, in the same container. The host rejects TCP to the
-        # gateway and the firewall rejects TCP to a blocked LAN host, so those
-        # are held as connected UDP sockets (the nft monitor also sees the TCP
-        # SYN to the LAN host, on the FORWARD path).
         _, route = exec_in(coi_binary, container_name, "ip -4 route show default")
         gateway = route.split()[2]
         controls = {

@@ -118,13 +118,7 @@ def poll_network_threats(container_name, max_wait=45):
     can take several cycles to appear — a single fixed sleep races it. Returns the
     list of network threats (possibly empty if none appeared within the budget).
     """
-    deadline = time.monotonic() + max_wait
-    while time.monotonic() < deadline:
-        net = [e for e in get_threat_events(container_name) if e.get("category") == "network"]
-        if net:
-            return net
-        time.sleep(2)
-    return [e for e in get_threat_events(container_name) if e.get("category") == "network"]
+    return wait_for_threats(container_name, lambda e: e.get("category") == "network", max_wait)
 
 
 def find_container_cgroup_path(container_name: str) -> str | None:
@@ -205,11 +199,20 @@ MALICIOUS_ONELINERS = [
 # ------------------------------------------------------------------ #
 
 
-def start_shell(test_workspace, coi_binary, slot):
+def start_shell(test_workspace, coi_binary, slot, extra_args=()):
     """Start a monitored `coi shell` in the given slot, wait until Running, and
     let the monitoring baseline stabilize. Returns (container_name, proc)."""
     proc = subprocess.Popen(
-        [coi_binary, "shell", "--workspace", test_workspace, "--slot", str(slot), "--debug"],
+        [
+            coi_binary,
+            "shell",
+            "--workspace",
+            test_workspace,
+            "--slot",
+            str(slot),
+            "--debug",
+            *extra_args,
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -614,24 +617,7 @@ def monitored_shell(test_workspace, coi_binary, slot, config, extra_args=()):
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(config)
-        proc = subprocess.Popen(
-            [
-                coi_binary,
-                "shell",
-                "--workspace",
-                test_workspace,
-                "--slot",
-                str(slot),
-                "--debug",
-                *extra_args,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if not wait_for_container_running(container_name):
-            pytest.fail(f"Container {container_name} did not start")
-        time.sleep(10)  # let the monitoring baseline settle
+        _, proc = start_shell(test_workspace, coi_binary, slot, extra_args)
         yield container_name, holders
     finally:
         for h in holders:

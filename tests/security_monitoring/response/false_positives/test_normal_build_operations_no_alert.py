@@ -15,11 +15,19 @@ from support.monitoring import (
 )
 
 
-@pytest.mark.parametrize("monitoring", ["enable_monitoring", "enable_monitoring_defaults"])
-def test_normal_build_operations_no_alert(test_workspace, monitoring, coi_binary, request):
-    """Test that normal development operations don't trigger alerts, at a high
-    read threshold and at the default thresholds."""
-    request.getfixturevalue(monitoring)
+def test_normal_build_operations_no_alert(test_workspace, enable_monitoring, coi_binary):
+    """Test that normal development operations don't trigger alerts."""
+    _run_build_operations(test_workspace, coi_binary)
+
+
+def test_normal_build_operations_no_alert_at_default_thresholds(
+    test_workspace, enable_monitoring_defaults, coi_binary
+):
+    """The same, with every threshold at its default."""
+    _run_build_operations(test_workspace, coi_binary)
+
+
+def _run_build_operations(test_workspace, coi_binary):
     # Create a simple build script
     build_script = Path(test_workspace) / "build.sh"
     build_script.write_text(

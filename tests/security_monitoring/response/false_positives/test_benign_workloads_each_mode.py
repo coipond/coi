@@ -11,13 +11,12 @@ Tests that:
   169.254.169.254 are still flagged, and so is a LAN host that is not
   permitted (allowlist and hardened only: open mode allows the LAN)."""
 
-import subprocess
 import time
 from pathlib import Path
 
 import pytest
 
-from support.helpers import fake_lan
+from support.helpers import exec_in, fake_lan
 from support.monitoring import (
     AGENT_COMMANDS_NOT_REVERSE_SHELLS,
     assert_established,
@@ -91,17 +90,10 @@ def _service(mode, lan_host):
     return lan_host if mode == "open" else "service.lan"
 
 
-def _exec(container_name, *argv):
-    subprocess.run(
-        ["incus", "exec", container_name, "--", *argv],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=30,
-    )
-
-
 @pytest.mark.parametrize("mode,slot", [("open", 92), ("allowlist", 93), ("hardened", 94)])
 def test_benign_workloads_not_flagged(test_workspace, coi_binary, mode, slot):
+    """Pause and kill on: any false HIGH pauses the container, any false
+    CRITICAL kills it, and the audit log names the culprit."""
     workspace = Path(test_workspace)
     (workspace / "build.sh").write_text(BUILD_SCRIPT)
     (workspace / "build.sh").chmod(0o755)
@@ -118,10 +110,13 @@ def test_benign_workloads_not_flagged(test_workspace, coi_binary, mode, slot):
     ):
         holders.append(hold_connect(container_name, _service(mode, lan_host), 443))
         assert_established(container_name, holders[-1], lan_host, 443)
-        _exec(container_name, "bash", "/workspace/build.sh")
-        _exec(container_name, "cat", "/workspace/data.txt")
-        _exec(container_name, "python3", "/workspace/benign.py")
-        _exec(container_name, "bash", "-c", "which nc || echo 'nc not found'")
+        for cmd in (
+            "bash /workspace/build.sh",
+            "cat /workspace/data.txt",
+            "python3 /workspace/benign.py",
+            "which nc || echo 'nc not found'",
+        ):
+            exec_in(coi_binary, container_name, cmd, timeout=30)
         for cmdline in AGENT_COMMANDS_NOT_REVERSE_SHELLS:
             inject_literal_process(container_name, cmdline)
 
@@ -148,8 +143,6 @@ def _unpermitted_lan_host(other):
 
 
 # name -> (sockets to hold as (host index or address, port, proto), matcher).
-# A blocked TCP connect is reset at once, so the process monitor sees a blocked
-# destination only through a UDP socket; the nft monitor sees the TCP SYN.
 CONTROLS = {
     "c2_port_same_host": lambda hosts: ([(hosts[0], 4444, "tcp")], is_c2_port_threat(hosts[0])),
     "metadata": lambda hosts: ([("169.254.169.254", 80, "udp")], is_metadata_threat),
