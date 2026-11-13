@@ -325,7 +325,7 @@ func TestContainerLocalNets(t *testing.T) {
 	if err := os.WriteFile(path, []byte(routeTable), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	local := containerLocalNets(path, "10.60.0.5")
+	local := containerLocalNets(path)
 
 	for ip, want := range map[string]bool{
 		"172.17.0.2":   true,  // nested Docker container
@@ -342,20 +342,39 @@ func TestContainerLocalNets(t *testing.T) {
 	}
 }
 
-func TestContainerLocalNets_NoDefaultRouteKeepsOwnSubnet(t *testing.T) {
+func TestContainerLocalNets_NoDefaultRouteKeepsIncusNIC(t *testing.T) {
 	table := "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
 		"eth0\t00003C0A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
 	path := filepath.Join(t.TempDir(), "route")
 	if err := os.WriteFile(path, []byte(table), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if local := containerLocalNets(path, "10.60.0.5"); inNets("10.60.0.7", local) {
-		t.Errorf("the container's own subnet must not be local: %v", local)
+	if local := containerLocalNets(path); inNets("10.60.0.7", local) {
+		t.Errorf("the Incus NIC's subnet must not be local: %v", local)
+	}
+}
+
+func TestContainerLocalNets_DefaultRouteInterfaceIsUplink(t *testing.T) {
+	// eth0 enslaved to a bridge in the container: the uplink is br0.
+	table := "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+		"br0\t00000000\t01003C0A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n" +
+		"br0\t00003C0A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n" +
+		"docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+	path := filepath.Join(t.TempDir(), "route")
+	if err := os.WriteFile(path, []byte(table), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	local := containerLocalNets(path)
+	if inNets("10.60.0.7", local) {
+		t.Errorf("the default route's interface subnet must not be local: %v", local)
+	}
+	if !inNets("172.17.0.2", local) {
+		t.Errorf("docker0 must be local: %v", local)
 	}
 }
 
 func TestContainerLocalNets_MissingFile(t *testing.T) {
-	if local := containerLocalNets(filepath.Join(t.TempDir(), "none"), ""); local != nil {
+	if local := containerLocalNets(filepath.Join(t.TempDir(), "none")); local != nil {
 		t.Errorf("want no networks, got %v", local)
 	}
 }

@@ -31,7 +31,7 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 		if reason != "" && pid > 0 {
 			// Read the routes only once a connection would be flagged.
 			if !localRead {
-				local = containerLocalNets(fmt.Sprintf("/proc/%d/net/route", pid), containerIP)
+				local = containerLocalNets(fmt.Sprintf("/proc/%d/net/route", pid))
 				localRead = true
 			}
 			if inNets(extractIP(connections[i].RemoteAddr), local) {
@@ -137,10 +137,10 @@ func parseConnections(ctx context.Context, containerName, containerIP string) ([
 
 // containerLocalNets returns the IPv4 networks that a /proc/<pid>/net/route
 // table sends straight to an interface inside the container (a nested Docker
-// bridge), so traffic to them never leaves it. Interfaces with a default route
-// or the container's own address are its uplink and are left out: hosts on the
+// bridge), so traffic to them never leaves it. The Incus NIC (eth0) and any
+// interface with a default route are its uplink and are left out: hosts on the
 // uplink subnet are outside the container. Errors give no networks.
-func containerLocalNets(path, containerIP string) []*net.IPNet {
+func containerLocalNets(path string) []*net.IPNet {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -152,8 +152,7 @@ func containerLocalNets(path, containerIP string) []*net.IPNet {
 		net   *net.IPNet
 	}
 	var direct []route
-	uplink := map[string]bool{"lo": true}
-	ownIP := net.ParseIP(containerIP)
+	uplink := map[string]bool{"lo": true, "eth0": true}
 	for _, line := range strings.Split(string(data), "\n")[1:] {
 		fields := strings.Fields(line)
 		if len(fields) < 8 {
@@ -172,7 +171,7 @@ func containerLocalNets(path, containerIP string) []*net.IPNet {
 			continue
 		}
 		ipNet := &net.IPNet{IP: net.ParseIP(dest).To4(), Mask: net.IPMask(net.ParseIP(mask).To4())}
-		if ones, _ := ipNet.Mask.Size(); ones == 0 || (ownIP != nil && ipNet.Contains(ownIP)) {
+		if ones, _ := ipNet.Mask.Size(); ones == 0 {
 			uplink[fields[0]] = true
 			continue
 		}
