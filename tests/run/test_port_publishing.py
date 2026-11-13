@@ -14,9 +14,7 @@ it back, proving bytes traverse the proxy device. The preflight test proves
 a taken pinned port aborts the session BEFORE any container is created.
 """
 
-import hashlib
 import json
-import os
 import re
 import socket
 import subprocess
@@ -26,21 +24,11 @@ from support.helpers import (
     NODE_PORT_SERVER,
     PORT_SENTINEL,
     calculate_container_name,
+    expected_pool_port,
     fetch_host_port,
     free_host_port,
     write_workspace_container_config,
 )
-
-
-def expected_pool_port(workspace_dir, slot=1, index=0):
-    """Replicate session.AllocateHostPort: 20000 + (hash%400)*100 + (slot-1)*10 + index.
-
-    The hash is the first 4 hex chars of sha256(abs workspace path) — the same
-    identity container names use (support.helpers.calculate_container_name).
-    """
-    abs_path = os.path.abspath(workspace_dir)
-    h = hashlib.sha256(abs_path.encode()).hexdigest()[:4]
-    return 20000 + (int(h, 16) % 400) * 100 + (slot - 1) * 10 + index
 
 
 def write_ports_config(workspace_dir, toml):

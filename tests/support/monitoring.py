@@ -519,3 +519,56 @@ def coi_session_logs(container_name, tail=4000):
         except OSError:
             pass
     return out or "\n(no coi session logs)"
+
+
+# No "socket.socket" in this script: the process monitor flags python3 with it
+# as a reverse shell. A non-blocking connect keeps the socket in the table
+# whether the firewall accepts it (ESTABLISHED) or drops it (SYN_SENT).
+_HOLD_CONNECT = """
+import sys, time
+from socket import socket
+s = socket()
+s.setblocking(False)
+s.connect_ex((sys.argv[1], int(sys.argv[2])))
+time.sleep(int(sys.argv[3]))
+"""
+
+
+def hold_connect(container_name, host, port, seconds=60):
+    """Keep one TCP connection to host:port open from inside the container, so
+    the monitor (which samples the container's socket table) is sure to see it."""
+    return subprocess.Popen(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--",
+            "python3",
+            "-c",
+            _HOLD_CONNECT,
+            host,
+            str(port),
+            str(seconds),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def is_metadata_threat(event):
+    """A threat about 169.254.169.254, from either network monitor (the nft one
+    does not name the address)."""
+    return "169.254.169.254" in event.get("description", "") or "metadata" in (
+        event.get("title", "").lower()
+    )
+
+
+def wait_for_threats(container_name, match, max_wait=45):
+    """Poll the audit log until a threat event satisfies match; return those."""
+    deadline = time.monotonic() + max_wait
+    while time.monotonic() < deadline:
+        found = [e for e in get_threat_events(container_name) if match(e)]
+        if found:
+            return found
+        time.sleep(2)
+    return [e for e in get_threat_events(container_name) if match(e)]
