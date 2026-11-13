@@ -10,30 +10,23 @@ Tests that:
   LAN host control."""
 
 import time
-from pathlib import Path
 
 from support.helpers import fake_lan
 from support.monitoring import (
-    cleanup_container,
+    assert_established,
     get_container_state,
     get_threat_events,
     hold_connect,
+    is_c2_port_threat,
     is_metadata_threat,
-    start_shell,
+    monitored_shell,
     wait_for_threats,
 )
 
 SLOT = 74
 
 
-def test_restricted_local_network_access_not_flagged(test_workspace, coi_binary):
-    config_path = Path.home() / ".coi" / "config.toml"
-    backup = config_path.read_text() if config_path.exists() else None
-
-    with fake_lan("192.168.206", hosts=(20,), ports=(443, 4444)) as (lan_host,):
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
-            """
+CONFIG = """
 [network]
 mode = "restricted"
 allow_local_network_access = true
@@ -46,38 +39,35 @@ auto_kill_on_critical = false
 [monitoring.nft]
 enabled = true
 """
-        )
-        container_name, proc = start_shell(test_workspace, coi_binary, SLOT)
-        holders = []
-        try:
-            holders.append(hold_connect(container_name, lan_host, 443))
-            time.sleep(15)
-            assert get_container_state(container_name) == "Running", (
-                "LAN traffic under allow_local_network_access must not pause the container; "
-                f"threat events: {get_threat_events(container_name)}"
-            )
-            flagged = [e for e in get_threat_events(container_name) if f"{lan_host}:443" in str(e)]
-            assert not flagged, f"{lan_host}:443 must not be flagged, got: {flagged}"
 
-            # Positive controls (CRITICAL, alert only here).
-            holders.append(hold_connect(container_name, lan_host, 4444))
-            holders.append(hold_connect(container_name, "169.254.169.254", 80))
-            assert wait_for_threats(
-                container_name, lambda e: lan_host in str(e) and "4444" in str(e)
-            ), (
-                f"port 4444 on the LAN host must still be flagged; "
-                f"threat events: {get_threat_events(container_name)}"
-            )
-            assert wait_for_threats(container_name, is_metadata_threat), (
-                f"169.254.169.254 must still be flagged; "
-                f"threat events: {get_threat_events(container_name)}"
-            )
-        finally:
-            for h in holders:
-                h.terminate()
-            proc.terminate()
-            cleanup_container(container_name, coi_binary)
-            if backup is not None:
-                config_path.write_text(backup)
-            elif config_path.exists():
-                config_path.unlink()
+
+def test_restricted_local_network_access_not_flagged(test_workspace, coi_binary):
+    with (
+        fake_lan("192.168.206", hosts=(20,), ports=(443, 4444)) as (lan_host,),
+        monitored_shell(test_workspace, coi_binary, SLOT, CONFIG) as (container_name, holders),
+    ):
+        holders.append(hold_connect(container_name, lan_host, 443))
+        assert_established(container_name, holders[-1], lan_host, 443)
+        time.sleep(15)
+        assert get_container_state(container_name) == "Running", (
+            "LAN traffic under allow_local_network_access must not pause the container; "
+            f"threat events: {get_threat_events(container_name)}"
+        )
+        flagged = [
+            e
+            for e in get_threat_events(container_name)
+            if f"{lan_host}:443" in e.get("description", "")
+        ]
+        assert not flagged, f"{lan_host}:443 must not be flagged, got: {flagged}"
+
+        # Positive controls (CRITICAL, alert only here).
+        holders.append(hold_connect(container_name, lan_host, 4444))
+        holders.append(hold_connect(container_name, "169.254.169.254", 80, proto="udp"))
+        assert wait_for_threats(container_name, is_c2_port_threat(lan_host)), (
+            f"port 4444 on the LAN host must still be flagged; "
+            f"threat events: {get_threat_events(container_name)}"
+        )
+        assert wait_for_threats(container_name, is_metadata_threat), (
+            f"169.254.169.254 must still be flagged; "
+            f"threat events: {get_threat_events(container_name)}"
+        )

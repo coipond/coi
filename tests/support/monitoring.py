@@ -2,6 +2,7 @@
 (tests/security_monitoring): container state, audit-log threat events,
 process injection, and shared test inputs."""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -522,21 +523,32 @@ def coi_session_logs(container_name, tail=4000):
 
 
 # No "socket.socket" in this script: the process monitor flags python3 with it
-# as a reverse shell. A non-blocking connect keeps the socket in the table
-# whether the firewall accepts it (ESTABLISHED) or drops it (SYN_SENT).
+# as a reverse shell. A TCP connection stays in the socket table only while it
+# is ESTABLISHED: one the firewall rejects (a blocked LAN host, the gateway) is
+# reset at once, and only the nft monitor sees its SYN, on the FORWARD path. A
+# connected UDP socket stays whatever the firewall does, and sends a datagram
+# every second.
 _HOLD_CONNECT = """
 import sys, time
-from socket import socket
-s = socket()
+from socket import SOCK_DGRAM, SOCK_STREAM, socket
+udp = sys.argv[4] == "udp"
+s = socket(type=SOCK_DGRAM if udp else SOCK_STREAM)
 s.setblocking(False)
 s.connect_ex((sys.argv[1], int(sys.argv[2])))
-time.sleep(int(sys.argv[3]))
+for _ in range(int(sys.argv[3])):
+    if udp:
+        try:
+            s.send(b"x")
+        except OSError:
+            pass
+    time.sleep(1)
 """
 
 
-def hold_connect(container_name, host, port, seconds=60):
-    """Keep one TCP connection to host:port open from inside the container, so
-    the monitor (which samples the container's socket table) is sure to see it."""
+def hold_connect(container_name, host, port, seconds=60, proto="tcp"):
+    """Keep one TCP (or connected UDP) socket to host:port open from inside the
+    container for the monitors to see. See _HOLD_CONNECT for when a TCP socket
+    stays in the table."""
     return subprocess.Popen(
         [
             "incus",
@@ -549,10 +561,88 @@ def hold_connect(container_name, host, port, seconds=60):
             host,
             str(port),
             str(seconds),
+            proto,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def assert_established(container_name, holder, ip, port, timeout=15):
+    """Fail unless holder is alive and its TCP connection to ip:port is
+    ESTABLISHED in the container, so a "no threat" assertion has real traffic
+    behind it."""
+    out = ""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        assert holder.poll() is None, f"the connection to {ip}:{port} exited ({holder.returncode})"
+        out = subprocess.run(
+            ["incus", "exec", container_name, "--", "ss", "-tnH", "state", "established"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+        if f"{ip}:{port}" in out.split():
+            return
+        time.sleep(1)
+    raise AssertionError(f"no ESTABLISHED connection to {ip}:{port}; sockets:\n{out}")
+
+
+def is_c2_port_threat(host, port=4444):
+    """A threat about host:port, from the process monitor ("<ip>:<port>") or
+    the nft monitor ("C2/backdoor port <port> to <ip>")."""
+    return lambda e: (
+        f"{host}:{port}" in e.get("description", "")
+        or f"port {port} to {host}" in e.get("description", "")
+    )
+
+
+@contextlib.contextmanager
+def monitored_shell(test_workspace, coi_binary, slot, config, extra_args=()):
+    """Write config to ~/.coi/config.toml, start a monitored `coi shell` in
+    slot, wait until Running and let the baseline settle. Yields
+    (container_name, holders): processes appended to holders are terminated on
+    exit. The container is deleted and the config restored on every path,
+    including a start failure."""
+    config_path = Path.home() / ".coi" / "config.toml"
+    backup = config_path.read_text() if config_path.exists() else None
+    container_name = (
+        get_container_name_from_workspace(test_workspace).rsplit("-", 1)[0] + f"-{slot}"
+    )
+    holders = []
+    proc = None
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(config)
+        proc = subprocess.Popen(
+            [
+                coi_binary,
+                "shell",
+                "--workspace",
+                test_workspace,
+                "--slot",
+                str(slot),
+                "--debug",
+                *extra_args,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if not wait_for_container_running(container_name):
+            pytest.fail(f"Container {container_name} did not start")
+        time.sleep(10)  # let the monitoring baseline settle
+        yield container_name, holders
+    finally:
+        for h in holders:
+            h.terminate()
+        if proc is not None:
+            proc.terminate()
+        cleanup_container(container_name, coi_binary)
+        if backup is not None:
+            config_path.write_text(backup)
+        elif config_path.exists():
+            config_path.unlink()
 
 
 def is_metadata_threat(event):

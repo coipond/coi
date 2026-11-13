@@ -20,12 +20,12 @@ from support.helpers import (
     fetch_host_port,
 )
 from support.monitoring import (
-    cleanup_container,
     get_container_state,
     get_threat_events,
     hold_connect,
+    is_c2_port_threat,
     is_metadata_threat,
-    start_shell,
+    monitored_shell,
     wait_for_threats,
 )
 
@@ -33,11 +33,9 @@ SLOT = 73
 UNPERMITTED_LAN_HOST = "192.168.254.254"
 
 
-def _write_config(config_path):
-    # Pause and kill off, so that one positive control does not hide the next;
-    # a threat is audited either way.
-    config_path.write_text(
-        """
+# Pause and kill off, so that one positive control does not hide the next; a
+# threat is audited either way.
+CONFIG = """
 [network]
 mode = "allowlist"
 allowed_domains = ["1.1.1.1/32"]
@@ -50,22 +48,15 @@ auto_kill_on_critical = false
 [monitoring.nft]
 enabled = true
 """
-    )
 
 
 def test_allowlist_published_port_not_flagged(test_workspace, coi_binary):
-    config_path = Path.home() / ".coi" / "config.toml"
-    backup = config_path.read_text() if config_path.exists() else None
-    config_path.parent.mkdir(parents=True, exist_ok=True)
     workspace_config = Path(test_workspace) / ".coi" / "config.toml"
     workspace_config.parent.mkdir(exist_ok=True)
     workspace_config.write_text("[ports]\npool = 1\n")
     port = expected_pool_port(test_workspace, slot=SLOT)
 
-    _write_config(config_path)
-    container_name, proc = start_shell(test_workspace, coi_binary, SLOT)
-    holders = []
-    try:
+    with monitored_shell(test_workspace, coi_binary, SLOT, CONFIG) as (container_name, holders):
         holders.append(
             subprocess.Popen(
                 [
@@ -96,32 +87,24 @@ def test_allowlist_published_port_not_flagged(test_workspace, coi_binary):
         flagged = [e for e in events if e.get("category") == "network"]
         assert not flagged, f"no published-port connection may be flagged, got: {flagged}"
 
-        # Positive controls, in the same container.
+        # Positive controls, in the same container. The host rejects TCP to the
+        # gateway and the firewall rejects TCP to a blocked LAN host, so those
+        # are held as connected UDP sockets (the nft monitor also sees the TCP
+        # SYN to the LAN host, on the FORWARD path).
         _, route = exec_in(coi_binary, container_name, "ip -4 route show default")
         gateway = route.split()[2]
         controls = {
-            "c2_port_same_host": (
-                (gateway, 4444),
-                lambda e: gateway in str(e) and "4444" in str(e),
-            ),
-            "metadata": (("169.254.169.254", 80), is_metadata_threat),
+            "c2_port_same_host": ([(gateway, 4444, "udp")], is_c2_port_threat(gateway)),
+            "metadata": ([("169.254.169.254", 80, "udp")], is_metadata_threat),
             "unpermitted_lan_host": (
-                (UNPERMITTED_LAN_HOST, 443),
+                [(UNPERMITTED_LAN_HOST, 443, "udp"), (UNPERMITTED_LAN_HOST, 443, "tcp")],
                 lambda e: UNPERMITTED_LAN_HOST in e.get("description", ""),
             ),
         }
-        for (host, dport), _ in controls.values():
-            holders.append(hold_connect(container_name, host, dport))
+        for sockets, _ in controls.values():
+            for host, dport, proto in sockets:
+                holders.append(hold_connect(container_name, host, dport, proto=proto))
         for name, (_, match) in controls.items():
             assert wait_for_threats(container_name, match), (
                 f"control {name} was not flagged; threat events: {get_threat_events(container_name)}"
             )
-    finally:
-        for h in holders:
-            h.terminate()
-        proc.terminate()
-        cleanup_container(container_name, coi_binary)
-        if backup is not None:
-            config_path.write_text(backup)
-        elif config_path.exists():
-            config_path.unlink()
