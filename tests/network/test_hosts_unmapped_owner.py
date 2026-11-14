@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, exec_in
 
 HOST_HOSTS = "127.0.0.1\tlocalhost\n"
 
@@ -25,13 +25,12 @@ def _sudo(*args):
     return subprocess.run(["sudo", "-n", *args], capture_output=True, text=True, timeout=30)
 
 
-def _getent(coi_binary, container_name, name):
-    return subprocess.run(
-        [coi_binary, "container", "exec", container_name, "--", "getent", "hosts", name],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    ).stdout
+def _resolves(coi_binary, container_name, name, ip):
+    """Whether name resolves to ip in the container. getent exits 2 when the
+    name is not found; any other failure fails the test."""
+    rc, out = exec_in(coi_binary, container_name, f"getent hosts {name}")
+    assert rc in (0, 2), f"getent hosts {name} failed (exit {rc}): {out}"
+    return rc == 0 and ip in out
 
 
 def _coi_hosts(coi_binary, *args):
@@ -45,7 +44,8 @@ def _coi_hosts(coi_binary, *args):
 
 def test_hosts_written_when_container_root_cannot(coi_binary, cleanup_containers, workspace_dir):
     """`coi hosts add/remove` work on a container whose /etc/hosts is owned by
-    unmapped host root; the host file is not changed."""
+    unmapped host root, entries survive a restart, and the host file is not
+    changed."""
     if _sudo("true").returncode != 0:
         pytest.skip("needs passwordless sudo to create a root-owned file")
 
@@ -82,28 +82,32 @@ def test_hosts_written_when_container_root_cannot(coi_binary, cleanup_containers
         assert add_device.returncode == 0, f"device add failed: {add_device.stderr}"
 
         # Precondition: container root cannot write /etc/hosts.
-        probe = subprocess.run(
-            ["incus", "exec", container_name, "--", "sh", "-c", "true >> /etc/hosts"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        assert probe.returncode != 0, "container root should not be able to write /etc/hosts"
+        rc, out = exec_in(coi_binary, container_name, "true >> /etc/hosts")
+        assert rc != 0, f"container root should not be able to write /etc/hosts: {out}"
 
         _coi_hosts(coi_binary, "add", container_name, "8.8.8.8", "dns.test")
-        assert "8.8.8.8" in _getent(coi_binary, container_name, "dns.test"), (
-            "dns.test should resolve to 8.8.8.8 in the container"
-        )
-        assert "127.0.0.1" in _getent(coi_binary, container_name, "localhost"), (
+        assert _resolves(coi_binary, container_name, "dns.test", "8.8.8.8")
+        assert _resolves(coi_binary, container_name, "localhost", "127.0.0.1"), (
             "the entries of the original file should be kept"
         )
 
         # Later writes go to the mounted copy.
         _coi_hosts(coi_binary, "add", container_name, "8.8.4.4", "dns2.test")
         _coi_hosts(coi_binary, "remove", container_name, "dns.test")
-        assert "8.8.4.4" in _getent(coi_binary, container_name, "dns2.test")
-        assert "8.8.8.8" not in _getent(coi_binary, container_name, "dns.test"), (
+        assert _resolves(coi_binary, container_name, "dns2.test", "8.8.4.4")
+        assert not _resolves(coi_binary, container_name, "dns.test", "8.8.8.8"), (
             "a removed entry should no longer resolve"
+        )
+
+        # A restart mounts the host file again; the next write keeps dns2.test.
+        restart = subprocess.run(
+            ["incus", "restart", container_name], capture_output=True, text=True, timeout=120
+        )
+        assert restart.returncode == 0, f"restart failed: {restart.stderr}"
+        _coi_hosts(coi_binary, "add", container_name, "1.1.1.1", "dns3.test")
+        assert _resolves(coi_binary, container_name, "dns3.test", "1.1.1.1")
+        assert _resolves(coi_binary, container_name, "dns2.test", "8.8.4.4"), (
+            "an entry added before the restart should be kept"
         )
 
         assert _sudo("cat", str(host_file)).stdout == HOST_HOSTS, (

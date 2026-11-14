@@ -113,13 +113,18 @@ func WriteUserHosts(containerName string, entries []config.HostEntry) error {
 	return replaceManagedHostsBlock(containerName, userHostsBeginMarker, userHostsEndMarker, renderUserHostsBlock(entries))
 }
 
+// hostsCopyPath is the writable copy of /etc/hosts that coi bind-mounts over a
+// hosts file container root cannot write (see hostsRewriteScript).
+const hostsCopyPath = "/etc/coi/hosts"
+
 // replaceManagedHostsBlock rewrites the container's /etc/hosts in place, replacing
 // the block delimited by beginMarker/endMarker with `block` and leaving everything
 // outside those markers (localhost, the container's own name, OTHER managed
 // blocks) untouched.
 func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block string) error {
 	mgr := container.NewManager(containerName)
-	if _, err := mgr.ExecCommand(hostsRewriteScript("/etc/hosts", beginMarker, endMarker, block), container.ExecCommandOptions{Capture: true}); err != nil {
+	script := hostsRewriteScript("/etc/hosts", hostsCopyPath, beginMarker, endMarker, block)
+	if _, err := mgr.ExecCommand(script, container.ExecCommandOptions{Capture: true}); err != nil {
 		return fmt.Errorf("failed to write hosts entries: %w", err)
 	}
 	return nil
@@ -133,15 +138,18 @@ func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block strin
 // swapping the inode under them is how you get a container that resolves nothing
 // until it is restarted.
 //
-// When container root cannot write the file, the script writes a copy next to
-// it (.coi-hosts) and bind-mounts the copy over it (#977). That is the normal
-// state for a container from an OCI registry image: Incus bind-mounts
-// /etc/hosts from the instance directory, owned by host root, which the
-// container's idmap does not map, so neither container root nor
-// `incus file push` can write it. The mount lives in the container's mount
-// namespace, so later writes go to the copy; after a restart Incus mounts its
-// file again and the next write covers it again.
-func hostsRewriteScript(path, beginMarker, endMarker, block string) string {
+// When container root cannot write the file, the script writes the new content
+// to copyPath and bind-mounts it over the file (#977). That is the normal state
+// for a container from an OCI registry image: Incus bind-mounts /etc/hosts from
+// the instance directory, owned by host root, which the container's idmap does
+// not map, so neither container root nor `incus file push` can write it. The
+// mount lives in the container's mount namespace, so later writes go to the
+// copy in place. Only the first write swaps the file under a process that
+// holds it open; glibc opens it on each lookup, and systemd-resolved notices
+// the change. After a restart Incus mounts its own file again: the copy is then
+// the base of the rewrite, so blocks written before (`coi hosts add`) survive
+// the restart, as they do on other images.
+func hostsRewriteScript(path, copyPath, beginMarker, endMarker, block string) string {
 	// Strip the previous Coi-managed block, then append a fresh one. awk is used
 	// deliberately instead of a sed '/BEGIN/,/END/d' range: a sed range deletes
 	// through to end-of-file when the END marker is missing, so a truncated or
@@ -156,26 +164,28 @@ func hostsRewriteScript(path, beginMarker, endMarker, block string) string {
 	// on the content — a domain is not a shell word and must not be treated as one.
 	return fmt.Sprintf(`set -e
 f=%s
+copy=%s
+src="$f"
+if [ ! -w "$f" ] && [ -f "$copy" ]; then src="$copy"; fi
 tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
 awk -v b=%s -v e=%s '
   index($0, b) == 1 { inblock = 1; buf = $0 ORS; next }
   inblock && index($0, e) == 1 { inblock = 0; buf = ""; next }
   inblock { buf = buf $0 ORS; next }
   { print }
   END { if (inblock) printf "%%s", buf }
-' "$f" > "$tmp"
+' "$src" > "$tmp"
 cat >> "$tmp" <<'COI_HOSTS_EOF'
 %s
 COI_HOSTS_EOF
-if ! { cat "$tmp" > "$f"; } 2>/dev/null; then
-  copy="$(dirname "$f")/.coi-hosts"
+if ! err=$( { cat "$tmp" > "$f"; } 2>&1 ); then
+  mkdir -p "$(dirname "$copy")"
   cat "$tmp" > "$copy"
   chmod 644 "$copy"
-  rm -f "$tmp"
-  mount --bind "$copy" "$f"
+  mount --bind "$copy" "$f" || { echo "$err" >&2; exit 1; }
 fi
-rm -f "$tmp"
-`, shellSingleQuote(path), shellSingleQuote(beginMarker), shellSingleQuote(endMarker), block)
+`, shellSingleQuote(path), shellSingleQuote(copyPath), shellSingleQuote(beginMarker), shellSingleQuote(endMarker), block)
 }
 
 // shellSingleQuote wraps s in single quotes for safe use as a single shell word,
