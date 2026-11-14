@@ -1,9 +1,10 @@
 """Minimal OpenAI-compatible chat completions server. Lets opencode run a full
 agent step with no real model/token.
 
-Usage: fake_openai.py [port] [shell command]. Every reply is a short text,
-except with a shell command: a request that offers tools and has no tool
-result yet then gets a `shell` tool call running that command."""
+Usage: fake_openai.py [port] [shell command] [tool name]. Every reply is a
+short text, except with a shell command: a request that offers tools and has
+no tool result yet then gets a tool call running that command. The tool name
+defaults to `shell` (OpenCode v2); OpenCode v1 calls it `bash`."""
 
 import json
 import sys
@@ -43,7 +44,7 @@ class H(BaseHTTPRequestHandler):
                 "id": "call_1",
                 "type": "function",
                 "function": {
-                    "name": "shell",
+                    "name": self.server.shell_tool,
                     "arguments": json.dumps(
                         {"command": self.server.shell_command, "description": "coi test"}
                     ),
@@ -101,4 +102,5 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("0.0.0.0", int(sys.argv[1]) if len(sys.argv) > 1 else 18080), H)
     server.shell_command = sys.argv[2] if len(sys.argv) > 2 else None
+    server.shell_tool = sys.argv[3] if len(sys.argv) > 3 else "shell"
     server.serve_forever()

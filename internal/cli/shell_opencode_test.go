@@ -11,8 +11,8 @@ import (
 func TestBuildCLICommand_Opencode_NewSession(t *testing.T) {
 	oc := tool.NewOpencode()
 	cmd := buildCLICommand("session-1", false, false, "/tmp/sessions", "", oc)
-	if cmd != "opencode" {
-		t.Errorf("buildCLICommand(new session) = %q, want %q", cmd, "opencode")
+	if cmd != "opencode --auto" {
+		t.Errorf("buildCLICommand(new session) = %q, want %q", cmd, "opencode --auto")
 	}
 }
 
@@ -21,8 +21,8 @@ func TestBuildCLICommand_Opencode_NewSession(t *testing.T) {
 func TestBuildCLICommand_Opencode_Resume(t *testing.T) {
 	oc := tool.NewOpencode()
 	cmd := buildCLICommand("", true, false, "/tmp/sessions", "prev-session", oc)
-	if cmd != "opencode --continue" {
-		t.Errorf("buildCLICommand(resume) = %q, want %q", cmd, "opencode --continue")
+	if cmd != "opencode --auto --continue" {
+		t.Errorf("buildCLICommand(resume) = %q, want %q", cmd, "opencode --auto --continue")
 	}
 }
 
@@ -31,8 +31,8 @@ func TestBuildCLICommand_Opencode_Resume(t *testing.T) {
 func TestBuildCLICommand_Opencode_RestoreOnly(t *testing.T) {
 	oc := tool.NewOpencode()
 	cmd := buildCLICommand("", false, true, "/tmp/sessions", "prev-session", oc)
-	if cmd != "opencode --continue" {
-		t.Errorf("buildCLICommand(restoreOnly) = %q, want %q", cmd, "opencode --continue")
+	if cmd != "opencode --auto --continue" {
+		t.Errorf("buildCLICommand(restoreOnly) = %q, want %q", cmd, "opencode --auto --continue")
 	}
 }
 
@@ -43,8 +43,8 @@ func TestBuildCLICommand_Opencode_DummyMode(t *testing.T) {
 
 	oc := tool.NewOpencode()
 	cmd := buildCLICommand("session-1", false, false, "/tmp/sessions", "", oc)
-	if cmd != "dummy" {
-		t.Errorf("buildCLICommand(dummy) = %q, want %q", cmd, "dummy")
+	if cmd != "dummy --auto" {
+		t.Errorf("buildCLICommand(dummy) = %q, want %q", cmd, "dummy --auto")
 	}
 }
 
@@ -55,8 +55,8 @@ func TestBuildCLICommand_Opencode_DummyModeResume(t *testing.T) {
 
 	oc := tool.NewOpencode()
 	cmd := buildCLICommand("", true, false, "/tmp/sessions", "prev-session", oc)
-	if cmd != "dummy --continue" {
-		t.Errorf("buildCLICommand(dummy resume) = %q, want %q", cmd, "dummy --continue")
+	if cmd != "dummy --auto --continue" {
+		t.Errorf("buildCLICommand(dummy resume) = %q, want %q", cmd, "dummy --auto --continue")
 	}
 }
 

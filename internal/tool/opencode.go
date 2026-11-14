@@ -52,8 +52,16 @@ func (c *OpencodeTool) SessionsDirName() string { return "sessions-opencode" }
 // BuildCommand builds the opencode launch command.
 // When resume is true, passes --session <id> if a session ID is known (see
 // DiscoverSessionID), else --continue to resume opencode's last session.
+// In bypass mode it passes --auto (OpenCode v1.18+): the `"*": "allow"` rule
+// of GetSandboxSettings loses to any later, more specific `ask` rule (from the
+// host or workspace opencode.json, an agent's permission, or
+// OPENCODE_PERMISSION), as OpenCode applies the last matching rule. --auto
+// approves every request that is not explicitly denied.
 func (c *OpencodeTool) BuildCommand(sessionID string, resume bool, resumeSessionID string) []string {
 	cmd := []string{c.Binary()}
+	if c.permissionMode != "interactive" {
+		cmd = append(cmd, "--auto")
+	}
 	if resume {
 		if resumeSessionID != "" {
 			cmd = append(cmd, "--session", resumeSessionID)
@@ -66,8 +74,8 @@ func (c *OpencodeTool) BuildCommand(sessionID string, resume bool, resumeSession
 
 // BuildHeadlessCommand implements ToolWithHeadlessPrompt. `opencode run`
 // runs to completion and exits with a status code; it takes the same
-// --session/--continue resume flags as the TUI and works in OpenCode v1 and
-// v2. The prompt goes in on stdin (`< <file>`), which both versions read as
+// --auto/--session/--continue flags as the TUI and works in OpenCode v1 and
+// v2. Without --auto, run rejects every permission request. The prompt goes in on stdin (`< <file>`), which both versions read as
 // the message when no positional is given: a positional prompt starting with
 // "-" is parsed as flags, and v2 repeats any args after "--". Stdin is always
 // redirected, so an open stdin inherited from the caller can't block the run.
