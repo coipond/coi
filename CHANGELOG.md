@@ -8,6 +8,7 @@
 
 ### Breaking
 
+- [Breaking] **The image no longer includes snapd** — snapd in the Ubuntu base image contacted the Snap Store as soon as a container started, so in `restricted` and `allowlist` modes the security monitor could flag it and pause the container. `snap` is no longer available, and apt will not install snapd or packages that need it (such as Ubuntu's `firefox` and `chromium` packages). Takes effect after `coi build --force`.
 - [Breaking] **`coi kill` is stricter** — `--slot` and `--all <name>` are now rejected instead of silently doing something else (`--slot` was ignored; `--all <name>` killed every container). When some of the named containers can't be killed, `coi kill` exits 1 and lists them. To target a slot, use `<alias>-<N>` or the container name.
 - [Breaking] **`coi file pull` refuses symlinks on every Incus version** — with Incus 6.23+, pulling a symlink used to copy its target. It now fails, as with older Incus. Pull the target path instead.
 - [Breaking] **A non-IP `listen` in a config file is an error** — `[[ports.map]] listen` must be an IP address (e.g. `"127.0.0.1"`) in config files too, not only in profiles. Commands fail to load such a config until it is fixed.
