@@ -92,22 +92,27 @@ def wait_for_container_running(name, timeout=60):
     return False
 
 
-def get_threat_events(container_name):
-    """Get threat events from audit log."""
-    log_path = Path.home() / ".coi" / "audit" / f"{container_name}.jsonl"
-    if not log_path.exists():
-        return []
+def get_threat_events(container_name, nft=False):
+    """Get threat events from audit log. With nft, also from the nft monitor's
+    log (<container>-nft.jsonl), which sees a packet the firewall rejects."""
+    audit_dir = Path.home() / ".coi" / "audit"
+    log_paths = [audit_dir / f"{container_name}.jsonl"]
+    if nft:
+        log_paths.append(audit_dir / f"{container_name}-nft.jsonl")
 
     events = []
-    with open(log_path) as f:
-        for line in f:
-            if line.strip():
-                try:
-                    event = json.loads(line)
-                    if "level" in event:  # ThreatEvent
-                        events.append(event)
-                except json.JSONDecodeError:
-                    pass
+    for log_path in log_paths:
+        if not log_path.exists():
+            continue
+        with open(log_path) as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        event = json.loads(line)
+                        if "level" in event:  # ThreatEvent
+                            events.append(event)
+                    except json.JSONDecodeError:
+                        pass
     return events
 
 
@@ -647,12 +652,13 @@ def is_metadata_threat(event):
     )
 
 
-def wait_for_threats(container_name, match, max_wait=45):
-    """Poll the audit log until a threat event satisfies match; return those."""
+def wait_for_threats(container_name, match, max_wait=45, nft=False):
+    """Poll the audit log until a threat event satisfies match; return those.
+    nft as in get_threat_events."""
     deadline = time.monotonic() + max_wait
     while time.monotonic() < deadline:
-        found = [e for e in get_threat_events(container_name) if match(e)]
+        found = [e for e in get_threat_events(container_name, nft) if match(e)]
         if found:
             return found
         time.sleep(2)
-    return [e for e in get_threat_events(container_name) if match(e)]
+    return [e for e in get_threat_events(container_name, nft) if match(e)]

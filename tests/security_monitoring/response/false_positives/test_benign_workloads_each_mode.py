@@ -174,13 +174,13 @@ def test_positive_controls(test_workspace, coi_binary, mode, slot):
                 holders.append(hold_connect(container_name, host, port, proto=proto))
             checks[name] = match
         for name, match in checks.items():
-            assert wait_for_threats(container_name, match), (
+            assert wait_for_threats(container_name, match, nft=True), (
                 f"{mode}: control {name} was not flagged; "
-                f"threat events: {get_threat_events(container_name)}"
+                f"threat events: {get_threat_events(container_name, nft=True)}"
             )
         benign = [
             e
-            for e in get_threat_events(container_name)
+            for e in get_threat_events(container_name, nft=True)
             if f"{hosts[0]}:443" in e.get("description", "")
         ]
         assert not benign, f"{mode}: the LAN service was flagged: {benign}"
@@ -192,7 +192,8 @@ def test_positive_controls(test_workspace, coi_binary, mode, slot):
 )
 def test_positive_controls_hardened(test_workspace, coi_binary, control, slot):
     """The hardened profile always pauses or kills on the first threat, so each
-    control gets its own container."""
+    control gets its own container. The nft monitor may respond first, so its
+    log counts too."""
     with (
         fake_lan(SUBNET, hosts=(20, 21), ports=(443, 4444)) as hosts,
         _shell(test_workspace, coi_binary, "hardened", slot, hosts[0], respond=True) as (
@@ -203,7 +204,7 @@ def test_positive_controls_hardened(test_workspace, coi_binary, control, slot):
         sockets, match = CONTROLS[control](hosts)
         for host, port, proto in sockets:
             holders.append(hold_connect(container_name, host, port, proto=proto))
-        assert wait_for_threats(container_name, match), (
+        assert wait_for_threats(container_name, match, nft=True), (
             f"hardened: control {control} was not flagged; "
-            f"threat events: {get_threat_events(container_name)}"
+            f"threat events: {get_threat_events(container_name, nft=True)}"
         )
