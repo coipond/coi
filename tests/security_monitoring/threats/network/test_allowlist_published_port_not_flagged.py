@@ -29,6 +29,7 @@ from support.monitoring import (
     wait_for_threats,
 )
 
+# [ports] needs a slot from 1 to 10.
 SLOT = 3
 UNPERMITTED_LAN_HOST = "192.168.254.254"
 

@@ -129,13 +129,22 @@ def poll_network_threats(container_name, max_wait=45, match=None):
 
 
 def hold_script(container_name, script, *args):
-    """Run `python3 -c script args...` in the container in the background, to
-    hold sockets open while the monitor polls. Returns the Popen; terminate it."""
-    return subprocess.Popen(
-        ["incus", "exec", container_name, "--", "python3", "-c", script, *args],
+    """Run python3 script args... in the container in the background, to hold
+    sockets open while the monitor polls. Returns the Popen; terminate it.
+
+    The script goes in on stdin, not as `python3 -c`: the process monitor flags
+    a `python3 -c` command line that names a socket or tcp/udp as a reverse
+    shell (critical, auto-kill)."""
+    holder = subprocess.Popen(
+        ["incus", "exec", container_name, "--", "python3", "-", *args],
+        stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        text=True,
     )
+    holder.stdin.write(script)
+    holder.stdin.close()
+    return holder
 
 
 def find_container_cgroup_path(container_name: str) -> str | None:
@@ -542,13 +551,12 @@ def coi_session_logs(container_name, tail=4000):
     return out or "\n(no coi session logs)"
 
 
-# Fed on stdin, not as `python3 -c`: the process monitor flags a `python3 -c`
-# command line that names a socket or tcp/udp as a reverse shell (critical,
-# auto-kill). For the same reason no "socket.socket" in the script. A TCP
-# connection stays in the socket table only while it is ESTABLISHED: one the
-# firewall rejects (a blocked LAN host, the gateway) is reset at once, and only
-# the nft monitor sees its SYN, on the FORWARD path. A connected UDP socket
-# stays whatever the firewall does, and sends a datagram every second.
+# No "socket.socket" in this script: the process monitor flags python3 with it
+# as a reverse shell. A TCP connection stays in the socket table only while it
+# is ESTABLISHED: one the firewall rejects (a blocked LAN host, the gateway) is
+# reset at once, and only the nft monitor sees its SYN, on the FORWARD path. A
+# connected UDP socket stays whatever the firewall does, and sends a datagram
+# every second.
 _HOLD_CONNECT = """
 import sys, time
 from socket import SOCK_DGRAM, SOCK_STREAM, socket
@@ -570,27 +578,7 @@ def hold_connect(container_name, host, port, seconds=60, proto="tcp"):
     """Keep one TCP (or connected UDP) socket to host:port open from inside the
     container for the monitors to see. See _HOLD_CONNECT for when a TCP socket
     stays in the table."""
-    holder = subprocess.Popen(
-        [
-            "incus",
-            "exec",
-            container_name,
-            "--",
-            "python3",
-            "-",
-            host,
-            str(port),
-            str(seconds),
-            proto,
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    holder.stdin.write(_HOLD_CONNECT)
-    holder.stdin.close()
-    return holder
+    return hold_script(container_name, _HOLD_CONNECT, host, str(port), str(seconds), proto)
 
 
 def assert_established(container_name, holder, ip, port, timeout=15):
