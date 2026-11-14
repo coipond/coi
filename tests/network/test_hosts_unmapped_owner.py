@@ -26,11 +26,18 @@ def _sudo(*args):
 
 
 def _resolves(coi_binary, container_name, name, ip):
-    """Whether name resolves to ip in the container. getent exits 2 when the
-    name is not found; any other failure fails the test."""
+    """Whether name resolves to ip in the container."""
     rc, out = exec_in(coi_binary, container_name, f"getent hosts {name}")
-    assert rc in (0, 2), f"getent hosts {name} failed (exit {rc}): {out}"
     return rc == 0 and ip in out
+
+
+def _hosts_file(coi_binary, container_name):
+    """The container's /etc/hosts. Checks that an entry is gone read the file:
+    systemd-resolved keeps its own copy of /etc/hosts and rereads it at most
+    every 2 s, so getent can still return a removed name."""
+    rc, out = exec_in(coi_binary, container_name, "cat /etc/hosts")
+    assert rc == 0, f"cat /etc/hosts failed (exit {rc}): {out}"
+    return out
 
 
 def _coi_hosts(coi_binary, *args):
@@ -88,8 +95,8 @@ def test_hosts_written_when_container_root_cannot(coi_binary, cleanup_containers
         _coi_hosts(coi_binary, "add", container_name, "8.8.8.8", "dns.test")
         assert _resolves(coi_binary, container_name, "dns.test", "8.8.8.8")
         # Not getent: it asks for IPv6 first, and nss-myhostname answers ::1.
-        rc, hosts = exec_in(coi_binary, container_name, "cat /etc/hosts")
-        assert rc == 0 and "127.0.0.1\tlocalhost" in hosts, (
+        hosts = _hosts_file(coi_binary, container_name)
+        assert "127.0.0.1\tlocalhost" in hosts, (
             f"the entries of the original file should be kept: {hosts}"
         )
 
@@ -97,9 +104,8 @@ def test_hosts_written_when_container_root_cannot(coi_binary, cleanup_containers
         _coi_hosts(coi_binary, "add", container_name, "8.8.4.4", "dns2.test")
         _coi_hosts(coi_binary, "remove", container_name, "dns.test")
         assert _resolves(coi_binary, container_name, "dns2.test", "8.8.4.4")
-        assert not _resolves(coi_binary, container_name, "dns.test", "8.8.8.8"), (
-            "a removed entry should no longer resolve"
-        )
+        hosts = _hosts_file(coi_binary, container_name)
+        assert "dns.test" not in hosts, f"a removed entry should be gone: {hosts}"
 
         # A restart mounts the host file again; the next write keeps dns2.test.
         restart = subprocess.run(
