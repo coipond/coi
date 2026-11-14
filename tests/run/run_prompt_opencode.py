@@ -69,7 +69,9 @@ def test_run_prompt_opencode(coi_binary, cleanup_containers, workspace_dir, dumm
         f"the agent's exit code should propagate (7). Got {proc.returncode}. output:\n{output}"
     )
     args = (Path(workspace_dir) / ".opencode-args").read_text().splitlines()
-    assert args == ["run"], f"expected `opencode run` with no positional prompt, got {args}"
+    assert args == ["run", "--auto"], (
+        f"expected `opencode run --auto` with no positional prompt, got {args}"
+    )
     received = (Path(workspace_dir) / ".opencode-stdin").read_text()
     assert received == PROMPT, f"the prompt should reach stdin verbatim, got {received!r}"
 
