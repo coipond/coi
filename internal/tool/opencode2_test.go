@@ -97,16 +97,27 @@ func TestOpencode2Tool_BuildHeadlessCommand_Resume(t *testing.T) {
 	}
 }
 
-// OpenCode v1 has no --standalone or --auto flag: only opencode2 gets them.
-func TestOpencodeTool_NoV2Flags(t *testing.T) {
-	for _, flag := range []string{"--standalone", "--auto"} {
-		if got := NewOpencode().BuildCommand("", true, ""); slices.Contains(got, flag) {
-			t.Errorf("opencode BuildCommand() = %v, want no %s", got, flag)
-		}
-		got, err := NewOpencode().(ToolWithHeadlessPrompt).BuildHeadlessCommand(LaunchSpec{})
-		if err != nil || slices.Contains(got, flag) {
-			t.Errorf("opencode BuildHeadlessCommand() = %v, %v; want no %s", got, err, flag)
-		}
+// OpenCode v1 has no --standalone flag: only opencode2 gets it.
+func TestOpencodeTool_NoStandalone(t *testing.T) {
+	if got := NewOpencode().BuildCommand("", true, ""); slices.Contains(got, "--standalone") {
+		t.Errorf("opencode BuildCommand() = %v, want no --standalone", got)
+	}
+	got, err := NewOpencode().(ToolWithHeadlessPrompt).BuildHeadlessCommand(LaunchSpec{})
+	if err != nil || slices.Contains(got, "--standalone") {
+		t.Errorf("opencode BuildHeadlessCommand() = %v, %v; want no --standalone", got, err)
+	}
+}
+
+// Interactive mode keeps v1's prompts: no --auto.
+func TestOpencodeTool_InteractiveNoAuto(t *testing.T) {
+	oc := NewOpencode()
+	oc.(ToolWithPermissionMode).SetPermissionMode("interactive")
+	if got, want := oc.BuildCommand("", true, ""), []string{"opencode", "--continue"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildCommand() = %v, want %v", got, want)
+	}
+	got, err := oc.(ToolWithHeadlessPrompt).BuildHeadlessCommand(LaunchSpec{})
+	if want := []string{"opencode", "run", "</dev/null"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildHeadlessCommand() = %v, %v; want %v", got, err, want)
 	}
 }
 
