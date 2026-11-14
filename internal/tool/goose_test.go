@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"maps"
 	"reflect"
 	"slices"
 	"testing"
@@ -98,6 +99,34 @@ func TestGooseTool_PermissionModeStored(t *testing.T) {
 	twp.SetPermissionMode("interactive")
 	if got := goose.(*GooseTool).permissionMode; got != "interactive" {
 		t.Errorf("permissionMode = %q, want %q", got, "interactive")
+	}
+}
+
+func TestGooseTool_GetContainerEnv_GooseMode(t *testing.T) {
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{"", "auto"},
+		{"bypass", "auto"},
+		{"interactive", "approve"},
+	}
+	for _, tt := range tests {
+		t.Run("mode="+tt.mode, func(t *testing.T) {
+			goose := NewGoose()
+			if tt.mode != "" {
+				goose.(ToolWithPermissionMode).SetPermissionMode(tt.mode)
+			}
+			twce, ok := goose.(ToolWithContainerEnv)
+			if !ok {
+				t.Fatal("GooseTool does not implement ToolWithContainerEnv")
+			}
+			env := twce.GetContainerEnv("/workspace")
+			want := map[string]string{"GOOSE_MODE": tt.want}
+			if !maps.Equal(env, want) {
+				t.Errorf("GetContainerEnv() = %v, want %v", env, want)
+			}
+		})
 	}
 }
 

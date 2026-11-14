@@ -105,10 +105,22 @@ func (g *GooseTool) GetSandboxSettings() map[string]interface{} {
 	return map[string]interface{}{}
 }
 
-// SetPermissionMode implements ToolWithPermissionMode. The mode is stored but
-// currently has no effect on BuildCommand or GetSandboxSettings.
+// SetPermissionMode implements ToolWithPermissionMode: "bypass" (default) or
+// "interactive". GetContainerEnv maps it to GOOSE_MODE.
 func (g *GooseTool) SetPermissionMode(mode string) {
 	g.permissionMode = mode
+}
+
+// GetContainerEnv implements ToolWithContainerEnv. It sets GOOSE_MODE from the
+// permission mode: "approve" (ask before every tool call) for interactive,
+// else "auto". An env var beats the user's config.yaml, and goose re-reads the
+// mode when it resumes a session.
+func (g *GooseTool) GetContainerEnv(_ string) map[string]string {
+	mode := "auto"
+	if g.permissionMode == "interactive" {
+		mode = "approve"
+	}
+	return map[string]string{"GOOSE_MODE": mode}
 }
 
 // EssentialConfigFiles implements ToolWithConfigDirFiles, returning the files
