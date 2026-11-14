@@ -8,6 +8,7 @@
 
 ### Breaking
 
+- [Breaking] **The image no longer includes snapd** — snapd in the Ubuntu base image contacted the Snap Store as soon as a container started, so in `restricted` and `allowlist` modes the security monitor could flag it and pause the container. `snap` is no longer available, and apt will not install snapd or packages that need it (such as Ubuntu's `firefox` and `chromium` packages). Takes effect after `coi build --force`.
 - [Breaking] **`coi kill` is stricter** — `--slot` and `--all <name>` are now rejected instead of silently doing something else (`--slot` was ignored; `--all <name>` killed every container). When some of the named containers can't be killed, `coi kill` exits 1 and lists them. To target a slot, use `<alias>-<N>` or the container name.
 - [Breaking] **`coi file pull` refuses symlinks on every Incus version** — with Incus 6.23+, pulling a symlink used to copy its target. It now fails, as with older Incus. Pull the target path instead.
 - [Breaking] **A non-IP `listen` in a config file is an error** — `[[ports.map]] listen` must be an IP address (e.g. `"127.0.0.1"`) in config files too, not only in profiles. Commands fail to load such a config until it is fixed.
@@ -32,6 +33,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Containers from OCI registry images start with network rules and host entries (#977)** — on such containers `/etc/hosts` is read-only even for container root, so `coi shell` and `coi run` failed in `allowlist` mode or with `[[network.hosts]]`, and `coi hosts add` failed. coi now keeps its own writable copy of `/etc/hosts` in the container. It needs no host sudo.
 - [Bug Fix] **OpenCode no longer asks for confirmation in bypass mode (#1045)** — permission rules in your host or project OpenCode config could still make it ask before some actions, and `coi run --prompt` then refused those actions. In bypass mode OpenCode now approves everything not explicitly denied. `deny` rules and interactive mode work as before. Needs OpenCode 1.18 or later.
 - [Bug Fix] **The security monitor no longer pauses containers for harmless traffic** — traffic to a Docker container running inside the container, name lookups in allowlist mode (#995), and DNS through systemd-resolved's local stub are no longer reported as threats.
 - [Bug Fix] **Blocked DNS lookups in allowlist mode fail at once** — instead of hanging until a timeout (15 s for `nslookup`). Names in `/etc/hosts` still resolve. `resolvectl` does not work during an allowlist session.

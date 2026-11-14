@@ -199,7 +199,7 @@ func ApplyUserHosts(containerName string, mode config.NetworkMode, allowLocalNet
 // to read-modify-write the block on a running container.
 func ReadUserHosts(containerName string) ([]config.HostEntry, error) {
 	mgr := container.NewManager(containerName)
-	out, err := mgr.ExecCommand("cat /etc/hosts", container.ExecCommandOptions{Capture: true})
+	out, err := mgr.ExecCommand(readHostsScript, container.ExecCommandOptions{Capture: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read /etc/hosts: %w", err)
 	}
