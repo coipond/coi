@@ -87,8 +87,10 @@ def test_hosts_written_when_container_root_cannot(coi_binary, cleanup_containers
 
         _coi_hosts(coi_binary, "add", container_name, "8.8.8.8", "dns.test")
         assert _resolves(coi_binary, container_name, "dns.test", "8.8.8.8")
-        assert _resolves(coi_binary, container_name, "localhost", "127.0.0.1"), (
-            "the entries of the original file should be kept"
+        # Not getent: it asks for IPv6 first, and nss-myhostname answers ::1.
+        rc, hosts = exec_in(coi_binary, container_name, "cat /etc/hosts")
+        assert rc == 0 and "127.0.0.1\tlocalhost" in hosts, (
+            f"the entries of the original file should be kept: {hosts}"
         )
 
         # Later writes go to the mounted copy.
