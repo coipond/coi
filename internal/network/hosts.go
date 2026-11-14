@@ -117,12 +117,31 @@ func WriteUserHosts(containerName string, entries []config.HostEntry) error {
 // the block delimited by beginMarker/endMarker with `block` and leaving everything
 // outside those markers (localhost, the container's own name, OTHER managed
 // blocks) untouched.
+func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block string) error {
+	mgr := container.NewManager(containerName)
+	if _, err := mgr.ExecCommand(hostsRewriteScript("/etc/hosts", beginMarker, endMarker, block), container.ExecCommandOptions{Capture: true}); err != nil {
+		return fmt.Errorf("failed to write hosts entries: %w", err)
+	}
+	return nil
+}
+
+// hostsRewriteScript returns the shell script that rewrites the hosts file at
+// path.
 //
 // The file is rewritten in place via `cat >` rather than `mv` so the inode,
 // ownership and permissions survive — some resolvers hold the file open, and
 // swapping the inode under them is how you get a container that resolves nothing
 // until it is restarted.
-func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block string) error {
+//
+// When container root cannot write the file, the script writes a copy next to
+// it (.coi-hosts) and bind-mounts the copy over it (#977). That is the normal
+// state for a container from an OCI registry image: Incus bind-mounts
+// /etc/hosts from the instance directory, owned by host root, which the
+// container's idmap does not map, so neither container root nor
+// `incus file push` can write it. The mount lives in the container's mount
+// namespace, so later writes go to the copy; after a restart Incus mounts its
+// file again and the next write covers it again.
+func hostsRewriteScript(path, beginMarker, endMarker, block string) string {
 	// Strip the previous Coi-managed block, then append a fresh one. awk is used
 	// deliberately instead of a sed '/BEGIN/,/END/d' range: a sed range deletes
 	// through to end-of-file when the END marker is missing, so a truncated or
@@ -135,7 +154,8 @@ func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block strin
 	//
 	// The heredoc is quoted ('COI_HOSTS_EOF') so the shell performs no expansion
 	// on the content — a domain is not a shell word and must not be treated as one.
-	script := fmt.Sprintf(`set -e
+	return fmt.Sprintf(`set -e
+f=%s
 tmp=$(mktemp)
 awk -v b=%s -v e=%s '
   index($0, b) == 1 { inblock = 1; buf = $0 ORS; next }
@@ -143,19 +163,19 @@ awk -v b=%s -v e=%s '
   inblock { buf = buf $0 ORS; next }
   { print }
   END { if (inblock) printf "%%s", buf }
-' /etc/hosts > "$tmp"
+' "$f" > "$tmp"
 cat >> "$tmp" <<'COI_HOSTS_EOF'
 %s
 COI_HOSTS_EOF
-cat "$tmp" > /etc/hosts
+if ! { cat "$tmp" > "$f"; } 2>/dev/null; then
+  copy="$(dirname "$f")/.coi-hosts"
+  cat "$tmp" > "$copy"
+  chmod 644 "$copy"
+  rm -f "$tmp"
+  mount --bind "$copy" "$f"
+fi
 rm -f "$tmp"
-`, shellSingleQuote(beginMarker), shellSingleQuote(endMarker), block)
-
-	mgr := container.NewManager(containerName)
-	if _, err := mgr.ExecCommand(script, container.ExecCommandOptions{Capture: true}); err != nil {
-		return fmt.Errorf("failed to write hosts entries: %w", err)
-	}
-	return nil
+`, shellSingleQuote(path), shellSingleQuote(beginMarker), shellSingleQuote(endMarker), block)
 }
 
 // shellSingleQuote wraps s in single quotes for safe use as a single shell word,
