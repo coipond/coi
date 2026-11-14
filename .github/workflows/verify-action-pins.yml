@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/**'
+      - '.github/actions/**'
 jobs:
   verify_action_pins:
     runs-on: ubuntu-latest
@@ -13,7 +14,7 @@ jobs:
           # Every remote action must be pinned to a full 40-character commit SHA. Local actions
           # (./) and docker:// images are not checked.
           unpinned=$(grep -E -rn --include="*.yml" --include="*.yaml" \
-            "^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*['\"]?[^.'\"[:space:]]" .github/workflows/ \
+            "^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*['\"]?[^.'\"[:space:]]" .github/workflows/ .github/actions/ \
             | grep -Ev "uses:[[:space:]]*['\"]?docker://" \
             | grep -Ev "@[0-9a-f]{40}['\"]?([[:space:]]|$)" || true)
           if [ -n "$unpinned" ]; then

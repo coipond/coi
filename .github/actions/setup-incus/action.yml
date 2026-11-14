@@ -1,0 +1,168 @@
+name: Set up Incus
+description: >-
+  Install Incus and nftables, initialise Incus (btrfs pool, incusbr0 bridge with
+  NAT), open container networking, and import the Ubuntu 24.04 base image as
+  coi-ubuntu-24.04 (cached). Shared by the integration lanes in ci.yml and
+  agent-installers.yml.
+runs:
+  using: composite
+  steps:
+    - name: Install Incus and nftables
+      shell: bash
+      run: |
+        # Try Zabbly repo first (latest Incus), fall back to Ubuntu's native package
+        sudo mkdir -p /etc/apt/keyrings/
+        ZABBLY_SOURCES=/etc/apt/sources.list.d/zabbly-incus-stable.sources
+
+        # Attempt to set up Zabbly repo
+        if sudo curl -fsSL --connect-timeout 10 --retry 2 --retry-delay 5 https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc 2>/dev/null; then
+          sudo sh -c "cat <<SOURCES > $ZABBLY_SOURCES
+        Enabled: yes
+        Types: deb
+        URIs: https://pkgs.zabbly.com/incus/stable
+        Suites: \$(. /etc/os-release && echo \${VERSION_CODENAME})
+        Components: main
+        Architectures: \$(dpkg --print-architecture)
+        Signed-By: /etc/apt/keyrings/zabbly.asc
+        SOURCES"
+          echo "Zabbly repo configured"
+        else
+          echo "WARNING: Zabbly repo unreachable"
+        fi
+
+        # nftables is pre-installed on Ubuntu 24.04 runners; install incus only
+        # Install with fallback: try with Zabbly, if it fails remove Zabbly and use Ubuntu native
+        sudo apt-get update
+        if ! sudo apt-get install -y incus nftables; then
+          echo "WARNING: Install failed, removing Zabbly repo and falling back to Ubuntu native Incus"
+          sudo rm -f "$ZABBLY_SOURCES"
+          sudo apt-get update
+          sudo apt-get install -y incus nftables
+        fi
+        incus version || incus --version || true
+
+        # Configure passwordless sudo for nft (masquerade is handled by Incus ipv4.nat=true)
+        echo "$USER ALL=(ALL) NOPASSWD: /usr/sbin/nft *" | sudo tee /etc/sudoers.d/coi-nft-incus
+        sudo chmod 0440 /etc/sudoers.d/coi-nft-incus
+        sudo -n nft list ruleset || echo "nft access configured"
+        echo "nftables ready for network isolation tests"
+
+    - name: Initialize Incus
+      shell: bash
+      run: |
+        # Wait for Incus service to be ready
+        sudo systemctl start incus.socket || true
+        sleep 5
+
+        # Configure subuid/subgid for UID mapping (needed for raw.idmap)
+        # Map runner UID 1001 to be available for container remapping
+        echo "root:1001:1" | sudo tee -a /etc/subuid
+        echo "root:1001:1" | sudo tee -a /etc/subgid
+
+        # Restart Incus to pick up subuid/subgid changes
+        sudo systemctl restart incus || true
+        sleep 5
+
+        # Initialize Incus with btrfs storage and standard bridge networking
+        cat <<EOF | sudo incus admin init --preseed
+        config:
+          images.compression_algorithm: none
+        networks:
+        - config:
+            ipv4.address: 10.47.62.1/24
+            ipv4.nat: "true"
+            ipv6.address: none
+          name: incusbr0
+          type: bridge
+        storage_pools:
+        - config:
+            size: 25GiB
+          name: default
+          driver: btrfs
+        profiles:
+        - config: {}
+          devices:
+            eth0:
+              name: eth0
+              network: incusbr0
+              type: nic
+            root:
+              path: /
+              pool: default
+              type: disk
+          name: default
+        EOF
+
+        # Allow access without re-login by changing socket permissions
+        sudo chmod 666 /var/lib/incus/unix.socket
+
+        # Add current user to incus-admin group
+        sudo usermod -aG incus-admin $USER
+
+        echo "Bridge network configured successfully"
+        incus network list
+
+    - name: Configure networking for Incus
+      shell: bash
+      run: |
+        # Enable IP forwarding (required for ALL container networking)
+        echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward > /dev/null
+        echo 1 | sudo tee /proc/sys/net/ipv6/conf/all/forwarding > /dev/null
+
+        # Set FORWARD chain policy to ACCEPT
+        # This allows containers without explicit firewall rules to have full network access
+        # Coi's firewall rules use REJECT (not DROP) so they explicitly block traffic
+        # regardless of the default policy
+        sudo iptables -P FORWARD ACCEPT
+
+        # Ensure NAT/masquerade is working for container internet access
+        # Masquerade is handled by Incus (ipv4.nat=true), but add an explicit rule for reliability
+        DEFAULT_IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+        sudo iptables -t nat -A POSTROUTING -s 10.47.62.0/24 -o $DEFAULT_IFACE -j MASQUERADE
+
+        echo "Network configuration complete"
+        echo "FORWARD chain:"
+        sudo iptables -L FORWARD -n --line-numbers | head -10
+        echo "NAT POSTROUTING:"
+        sudo iptables -t nat -L POSTROUTING -n
+
+    - name: Restore base Ubuntu image from cache
+      id: cache-ubuntu-image
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /tmp/ubuntu-base-image.tar.gz
+        key: ${{ runner.os }}-ubuntu-24.04-base-image
+
+    - name: Import or download base Ubuntu image
+      shell: bash
+      run: |
+        # Import with alias coi-ubuntu-24.04 so EnsureLocalUbuntuImage finds it
+        # without downloading 500 MB from Canonical's CDN on every CI run.
+        if [ -f /tmp/ubuntu-base-image.tar.gz ]; then
+          echo "Restoring Ubuntu 24.04 base image from cache..."
+          incus image import /tmp/ubuntu-base-image.tar.gz --alias coi-ubuntu-24.04
+        else
+          echo "Downloading Ubuntu 24.04 base image from remote..."
+          for attempt in 1 2 3; do
+            if incus image copy images:ubuntu/24.04 local: --alias coi-ubuntu-24.04 --auto-update=false; then
+              echo "Image downloaded on attempt $attempt"
+              # Export for caching
+              incus image export coi-ubuntu-24.04 /tmp/ubuntu-base-image
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "WARNING: Failed to download base image after 3 attempts"
+            else
+              echo "Download failed (attempt $attempt/3), retrying in 15s..."
+              sleep 15
+            fi
+          done
+        fi
+        incus image list
+
+    - name: Save base Ubuntu image to cache
+      if: steps.cache-ubuntu-image.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /tmp/ubuntu-base-image.tar.gz
+        key: ${{ runner.os }}-ubuntu-24.04-base-image
