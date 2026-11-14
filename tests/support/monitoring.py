@@ -551,12 +551,10 @@ def coi_session_logs(container_name, tail=4000):
     return out or "\n(no coi session logs)"
 
 
-# No "socket.socket" in this script: the process monitor flags python3 with it
-# as a reverse shell. A TCP connection stays in the socket table only while it
-# is ESTABLISHED: one the firewall rejects (a blocked LAN host, the gateway) is
-# reset at once, and only the nft monitor sees its SYN, on the FORWARD path. A
-# connected UDP socket stays whatever the firewall does, and sends a datagram
-# every second.
+# A TCP connection stays in the socket table only while it is ESTABLISHED: one
+# the firewall rejects (a blocked LAN host, the gateway) is reset at once, and
+# only the nft monitor sees its SYN, on the FORWARD path. A connected UDP socket
+# stays whatever the firewall does, and sends a datagram every second.
 _HOLD_CONNECT = """
 import sys, time
 from socket import SOCK_DGRAM, SOCK_STREAM, socket
