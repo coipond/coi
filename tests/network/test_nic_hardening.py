@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from support.helpers import container_ipv4
+from support.helpers import container_device_get, container_ipv4
 
 
 def _start_background_container(coi_binary, workspace_dir, network_mode, config_extra=""):
@@ -62,18 +62,6 @@ def _exec(coi_binary, container_name, argv, timeout=20):
     )
 
 
-def _device_key(container_name, key):
-    """Read an eth0 device config key (e.g. security.ipv4_filtering)."""
-    result = subprocess.run(
-        ["incus", "config", "device", "get", container_name, "eth0", key],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    return result.stdout.strip()
-
-
 def test_nic_anti_spoof_keys_set_in_restricted_mode(coi_binary, workspace_dir, cleanup_containers):
     """eth0 must have ipv4_filtering, mac_filtering and port_isolation enabled."""
     container_name, config_file = _start_background_container(
@@ -85,7 +73,7 @@ def test_nic_anti_spoof_keys_set_in_restricted_mode(coi_binary, workspace_dir, c
             "security.mac_filtering",
             "security.port_isolation",
         ):
-            value = _device_key(container_name, key)
+            value = container_device_get(container_name, "eth0", key)
             assert value == "true", f"eth0 {key} should be 'true', got {value!r}"
     finally:
         os.unlink(config_file)

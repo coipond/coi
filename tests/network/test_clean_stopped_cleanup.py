@@ -23,6 +23,8 @@ import time
 
 import pytest
 
+from support.helpers import incus_status
+
 
 def _skip_unless_ready():
     if subprocess.run(["which", "incus"], capture_output=True).returncode != 0:
@@ -42,22 +44,6 @@ def _ip6_chain():
         timeout=10,
     )
     return r.stdout if r.returncode == 0 else ""
-
-
-def _container_status(name):
-    r = subprocess.run(
-        ["incus", "list", name, "--format=csv", "-c", "ns"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    if r.returncode != 0:
-        return None
-    for line in r.stdout.splitlines():
-        parts = line.split(",")
-        if len(parts) >= 2 and parts[0] == name:
-            return parts[1].strip()
-    return None
 
 
 def _poll_until(fn, timeout=20):
@@ -108,7 +94,7 @@ def test_default_clean_reclaims_stopped_container_ipv6_block(
             ["incus", "stop", name, "--force"], capture_output=True, timeout=60, check=False
         )
 
-        status = _container_status(name)
+        status = incus_status(name)
         if status != "STOPPED":
             pytest.skip(
                 f"container not in STOPPED state after stop (got {status!r}); cannot exercise reap path"

@@ -28,6 +28,7 @@ from support.helpers import (
     calculate_container_name,
     fetch_host_port,
     free_host_port,
+    incus_status,
     write_workspace_container_config,
 )
 
@@ -331,13 +332,7 @@ host = {pin}
         )
         # Preflight runs before launch: no container may exist for this workspace
         container_name = calculate_container_name(workspace_dir, 1)
-        check = subprocess.run(
-            ["incus", "list", container_name, "--format=csv"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        assert container_name not in check.stdout, (
+        assert incus_status(container_name) == "", (
             "preflight failure must abort BEFORE the container is created"
         )
     finally:

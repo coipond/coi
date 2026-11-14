@@ -10,6 +10,7 @@ import pytest
 from support.helpers import (
     create_storage_pool,
     delete_storage_pool,
+    incus_status,
     is_incus_permission_error,
 )
 
@@ -73,15 +74,7 @@ def test_clean_pools_dry_run(coi_binary, workspace_dir):
             )
 
             # Container should still exist
-            check = subprocess.run(
-                ["incus", "list", container_name, "--format=csv"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            assert container_name in check.stdout, (
-                f"Container should still exist after dry-run. Got:\n{check.stdout}"
-            )
+            assert incus_status(container_name) != "", "Container should still exist after dry-run."
         finally:
             _delete_container(container_name)
     finally:
