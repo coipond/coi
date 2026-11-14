@@ -60,18 +60,27 @@ func TestCollector_KeepPermittedFlows(t *testing.T) {
 		t.Fatalf("want only the new flow flagged, got %+v", got.Connections)
 	}
 
-	// Closing states keep the exemption: the flow is the same.
+	// Closing states keep the exemption: the flow is the same. The new flow,
+	// flagged on the previous poll too, never becomes permitted.
 	held.State = "TIME_WAIT"
-	if got := poll(c, expired, held); got.SuspiciousCount != 0 {
-		t.Errorf("closing permitted flow flagged: %+v", got.Connections)
+	if got := poll(c, expired, held, fresh); got.SuspiciousCount != 1 || got.Connections[0].Suspicious {
+		t.Errorf("want only the new flow flagged, got %+v", got.Connections)
 	}
 
-	// A flagged flow never becomes permitted.
-	if got := poll(c, expired, fresh); got.SuspiciousCount != 1 {
-		t.Errorf("flagged flow must stay flagged: %+v", got.Connections)
+	// Only the allowlist flag is waived: a permitted flow flagged for another
+	// reason on a later poll (its nested Docker route went away) stays flagged.
+	docker := Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:40003", RemoteAddr: "172.17.0.2:5432", State: "ESTABLISHED"}
+	c.keepPermittedFlows(&NetworkStats{Connections: []Connection{docker}})
+	flagged := docker
+	flagged.Suspicious = true
+	flagged.SuspectReason = "RFC1918 private address (should be blocked by firewall)"
+	stats := NetworkStats{Connections: []Connection{flagged}, SuspiciousCount: 1}
+	c.keepPermittedFlows(&stats)
+	if stats.SuspiciousCount != 1 || !stats.Connections[0].Suspicious {
+		t.Errorf("RFC1918 flag on a permitted flow must stay: %+v", stats.Connections)
 	}
 
-	// Only the allowlist check is waived: a C2 port is still flagged.
+	// A C2 port is still flagged.
 	c2 := Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:40002", RemoteAddr: "2.2.2.2:4444", State: "ESTABLISHED"}
 	poll(c, []string{"2.2.2.2/32"}, c2)
 	if got := poll(c, expired, c2); got.SuspiciousCount != 1 {
