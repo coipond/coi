@@ -76,11 +76,11 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Attaching to %s (slot %d)...\n", targetContainer, attachSlot)
 	} else {
-		containers, err := listAttachContainers()
+		names, err := container.ListRunningContainerNames(session.ContainerPattern())
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}
-		target, running := selectAttachTarget(containers)
+		target, running := selectAttachTarget(names)
 
 		// If container name provided, use it (with alias resolution)
 		if len(args) > 0 {
@@ -127,32 +127,14 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 	return attachToContainer(container.NewManager(targetContainer), targetContainer)
 }
 
-// listAttachContainers lists the names and statuses of the containers whose
-// name starts with the container prefix, in one Incus call that needs no
-// instance state.
-func listAttachContainers() ([]ContainerInfo, error) {
-	output, err := container.IncusOutput("list", session.ContainerPattern(), "--format=csv", "--columns=ns")
-	if err != nil {
-		return nil, err
-	}
-	var containers []ContainerInfo
-	for _, line := range strings.Split(output, "\n") {
-		name, status, ok := strings.Cut(strings.TrimSpace(line), ",")
-		if ok {
-			containers = append(containers, ContainerInfo{Name: name, Status: status})
-		}
-	}
-	return containers, nil
-}
-
-// selectAttachTarget returns the names of the running containers whose name
-// starts with the container prefix, and the one `coi attach` without a name
-// attaches to: the only running one, or "" when none or several run.
-func selectAttachTarget(containers []ContainerInfo) (target string, running []string) {
+// selectAttachTarget returns the running container names that start with the
+// container prefix, and the one `coi attach` without a name attaches to: the
+// only such container, or "" when there are none or several.
+func selectAttachTarget(names []string) (target string, running []string) {
 	prefix := session.GetContainerPrefix()
-	for _, c := range containers {
-		if strings.HasPrefix(c.Name, prefix) && container.StatusIsRunning(c.Status) {
-			running = append(running, c.Name)
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			running = append(running, name)
 		}
 	}
 	if len(running) == 1 {
@@ -162,8 +144,6 @@ func selectAttachTarget(containers []ContainerInfo) (target string, running []st
 }
 
 func attachToContainer(mgr container.ContainerManager, containerName string) error {
-	// Direct command execution without bash -c wrapper for better terminal handling
-
 	// Get TERM with fallback (same as shell command)
 	termEnv := terminal.SanitizeTerm(os.Getenv("TERM"))
 

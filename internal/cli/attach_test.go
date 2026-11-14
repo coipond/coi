@@ -12,43 +12,23 @@ import (
 	"github.com/coipond/coi/internal/container"
 )
 
-func TestSelectAttachTarget_IgnoresStopped(t *testing.T) {
-	target, running := selectAttachTarget([]ContainerInfo{
-		{Name: "coi-abc12345-1", Status: "STOPPED"},
-		{Name: "coi-abc12345-2", Status: "RUNNING"},
-	})
-	if target != "coi-abc12345-2" {
-		t.Errorf("target = %q, want coi-abc12345-2", target)
-	}
-	if !slices.Equal(running, []string{"coi-abc12345-2"}) {
-		t.Errorf("running = %v, want [coi-abc12345-2]", running)
-	}
-}
-
 func TestSelectAttachTarget(t *testing.T) {
 	tests := []struct {
 		name        string
-		containers  []ContainerInfo
+		names       []string
 		wantTarget  string
 		wantRunning []string
 	}{
 		{"none", nil, "", nil},
-		{"only stopped", []ContainerInfo{
-			{Name: "coi-abc12345-1", Status: "STOPPED"},
-			{Name: "coi-abc12345-2", Status: "STOPPED"},
-		}, "", nil},
-		{"several running", []ContainerInfo{
-			{Name: "coi-abc12345-1", Status: "RUNNING"},
-			{Name: "coi-abc12345-2", Status: "STOPPED"},
-			{Name: "coi-abc12345-3", Status: "RUNNING"},
-		}, "", []string{"coi-abc12345-1", "coi-abc12345-3"}},
-		{"prefix not at start", []ContainerInfo{
-			{Name: "xcoi-aaaa", Status: "RUNNING"},
-		}, "", nil},
+		{"one", []string{"coi-abc12345-2"}, "coi-abc12345-2", []string{"coi-abc12345-2"}},
+		{"several", []string{"coi-abc12345-1", "coi-abc12345-3"}, "", []string{"coi-abc12345-1", "coi-abc12345-3"}},
+		{"prefix not at start", []string{"xcoi-aaaa"}, "", nil},
+		{"one with a foreign one", []string{"xcoi-aaaa", "coi-abc12345-1"}, "coi-abc12345-1", []string{"coi-abc12345-1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			target, running := selectAttachTarget(tt.containers)
+			t.Setenv("COI_CONTAINER_PREFIX", "")
+			target, running := selectAttachTarget(tt.names)
 			if target != tt.wantTarget {
 				t.Errorf("target = %q, want %q", target, tt.wantTarget)
 			}
@@ -104,6 +84,7 @@ func TestAttach_RejectsExtraArgs(t *testing.T) {
 // running container has an alias. It logs every call and returns the log path.
 func fakeAttachIncus(t *testing.T, rows string) string {
 	t.Helper()
+	t.Setenv("COI_CONTAINER_PREFIX", "")
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls")
 	script := `#!/bin/sh
@@ -156,7 +137,7 @@ func tmuxAttachCalls(t *testing.T, logPath string) []string {
 
 const stoppedAndRunningRows = `coi-abc12345-1,STOPPED\ncoi-abc12345-2,RUNNING\n`
 
-func TestAttach_NoNameAttachesToTheOnlyRunning(t *testing.T) {
+func TestAttach_IgnoresStopped(t *testing.T) {
 	logPath := fakeAttachIncus(t, stoppedAndRunningRows)
 
 	if err := executeWithProfiles(t, nil, "", "attach"); err != nil {
