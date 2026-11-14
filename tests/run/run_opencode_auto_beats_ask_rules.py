@@ -9,7 +9,8 @@ now passes --auto, which approves every request that is not explicitly denied.
 
 Each test runs the real `opencode run` from the default image against a fake
 OpenAI-compatible model in the container, which answers with a `bash` tool
-call that writes a marker file.
+call that writes a marker file. Interactive mode is not covered here:
+`coi run --prompt` refuses it before the launch.
 """
 
 import json
@@ -57,7 +58,7 @@ FAKE_MODEL_CONFIG = {
 }
 
 
-def _run_opencode(coi_binary, workspace_dir, tmp_path, rule_in, permission_mode=None):
+def _run_opencode(coi_binary, workspace_dir, tmp_path, rule_in):
     """Run `coi run --prompt-file` with the ask rule in the host config
     ("host") or the workspace ("workspace"). Returns (result, opencode args)."""
     ws = Path(workspace_dir)
@@ -78,11 +79,9 @@ def _run_opencode(coi_binary, workspace_dir, tmp_path, rule_in, permission_mode=
     prompt = tmp_path / "task.md"
     prompt.write_text("run the shell command\n")
 
-    tool = '[tool]\nname = "opencode"\nbinary = "/workspace/opencode-wrapper.sh"\n'
-    if permission_mode:
-        tool += f'permission_mode = "{permission_mode}"\n'
     env = write_trusted_coi_config(
-        tool + "\n[defaults.environment]\n"
+        '[tool]\nname = "opencode"\nbinary = "/workspace/opencode-wrapper.sh"\n\n'
+        "[defaults.environment]\n"
         f"OPENCODE_CONFIG_CONTENT = '{json.dumps(FAKE_MODEL_CONFIG)}'\n"
     )
     env.pop("COI_USE_DUMMY", None)
@@ -115,20 +114,4 @@ def test_opencode_auto_beats_ask_rule(
     assert result.returncode == 0, f"opencode run failed. output:\n{output}"
     assert (Path(workspace_dir) / SHELL_MARKER).exists(), (
         f"the {rule_in} ask rule blocked the shell call despite --auto. output:\n{output}"
-    )
-
-
-def test_opencode_interactive_keeps_ask_rule(
-    coi_binary, cleanup_containers, workspace_dir, tmp_path
-):
-    """Interactive mode passes no --auto, so the ask rule applies: a headless
-    `opencode run` rejects the shell call and the marker is never written."""
-    result, args = _run_opencode(
-        coi_binary, workspace_dir, tmp_path, "workspace", permission_mode="interactive"
-    )
-    output = result.stdout + result.stderr
-
-    assert "--auto" not in args, f"interactive mode must not pass --auto: {args}"
-    assert not (Path(workspace_dir) / SHELL_MARKER).exists(), (
-        f"interactive mode should not approve the ask rule. output:\n{output}"
     )
