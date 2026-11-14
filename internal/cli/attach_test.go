@@ -2,7 +2,9 @@ package cli
 
 import (
 	"errors"
+	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -97,6 +99,105 @@ func TestAttach_RejectsExtraArgs(t *testing.T) {
 	}
 }
 
+// fakeAttachIncus puts an incus script on PATH whose `incus list --format=csv
+// --columns=ns` prints rows, on which the code user has UID 1000 and no
+// running container has an alias. It logs every call and returns the log path.
+func fakeAttachIncus(t *testing.T, rows string) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	script := `#!/bin/sh
+echo "$*" >> ` + logPath + `
+case "$*" in
+  *"--format=csv --columns=ns"*) printf '` + rows + `' ;;
+  *"--format=json"*) echo '[]' ;;
+  *"id -u"*) echo 1000 ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+// captureOutput returns what fn writes to *f (os.Stdout or os.Stderr).
+func captureOutput(t *testing.T, f **os.File, fn func()) string {
+	t.Helper()
+	old := *f
+	rp, wp, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	*f = wp
+	defer func() { *f = old }()
+
+	fn()
+
+	_ = wp.Close()
+	*f = old
+	data, _ := io.ReadAll(rp)
+	return string(data)
+}
+
+// tmuxAttachCalls returns the logged `tmux attach` execs.
+func tmuxAttachCalls(t *testing.T, logPath string) []string {
+	t.Helper()
+	b, _ := os.ReadFile(logPath)
+	var calls []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, "tmux attach") {
+			calls = append(calls, line)
+		}
+	}
+	return calls
+}
+
+const stoppedAndRunningRows = `coi-abc12345-1,STOPPED\ncoi-abc12345-2,RUNNING\n`
+
+func TestAttach_NoNameAttachesToTheOnlyRunning(t *testing.T) {
+	logPath := fakeAttachIncus(t, stoppedAndRunningRows)
+
+	if err := executeWithProfiles(t, nil, "", "attach"); err != nil {
+		t.Fatalf("coi attach = %v", err)
+	}
+	calls := tmuxAttachCalls(t, logPath)
+	if len(calls) != 1 || !strings.Contains(calls[0], "exec coi-abc12345-2 ") {
+		t.Errorf("tmux attach execs = %q, want one in coi-abc12345-2", calls)
+	}
+}
+
+func TestAttach_StoppedNameIsNotRunning(t *testing.T) {
+	logPath := fakeAttachIncus(t, stoppedAndRunningRows)
+
+	err := executeWithProfiles(t, nil, "", "attach", "coi-abc12345-1")
+	if err == nil || !strings.Contains(err.Error(), "not found or not running") {
+		t.Fatalf("coi attach coi-abc12345-1 = %v, want not found or not running", err)
+	}
+	if calls := tmuxAttachCalls(t, logPath); len(calls) > 0 {
+		t.Errorf("tmux attach exec on a stopped container: %q", calls)
+	}
+}
+
+func TestAttach_OnlyStoppedHasNoActiveSessions(t *testing.T) {
+	logPath := fakeAttachIncus(t, `coi-abc12345-1,STOPPED\ncoi-abc12345-2,STOPPED\n`)
+
+	var err error
+	out := captureOutput(t, &os.Stdout, func() {
+		err = executeWithProfiles(t, nil, "", "attach")
+	})
+	if err != nil {
+		t.Fatalf("coi attach = %v", err)
+	}
+	if !strings.Contains(out, "No active sessions") || strings.Contains(out, "Active sessions:") {
+		t.Errorf("stdout = %q, want No active sessions", out)
+	}
+	if calls := tmuxAttachCalls(t, logPath); len(calls) > 0 {
+		t.Errorf("tmux attach exec with no running container: %q", calls)
+	}
+}
+
 // fakeAttachManager is a container.ContainerManager double whose tmux attach
 // fails with execErr.
 type fakeAttachManager struct {
@@ -120,10 +221,20 @@ func (f *fakeAttachManager) Running() (bool, error) { return f.running, nil }
 func TestAttachToContainer_TmuxAttachFailureExitsNonZero(t *testing.T) {
 	for _, running := range []bool{true, false} {
 		mgr := &fakeAttachManager{execErr: errors.New("exit status 1"), running: running}
-		err := attachToContainer(mgr, "coi-abc12345-1")
+		var err error
+		stderr := captureOutput(t, &os.Stderr, func() {
+			err = attachToContainer(mgr, "coi-abc12345-1")
+		})
 		var ece *ExitCodeError
 		if !errors.As(err, &ece) || ece.Code != ExitGeneric {
 			t.Errorf("running=%v: attachToContainer = %v, want an ExitCodeError with code %d", running, err, ExitGeneric)
+		}
+		if !strings.Contains(stderr, "No tmux session found") {
+			t.Errorf("running=%v: stderr = %q, want the no-session hint", running, stderr)
+		}
+		hint := strings.Contains(stderr, "still running") && strings.Contains(stderr, "coi attach coi-abc12345-1 --bash")
+		if hint != running {
+			t.Errorf("running=%v: stderr = %q, want the still-running --bash hint only when running", running, stderr)
 		}
 	}
 }
