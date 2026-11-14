@@ -95,8 +95,11 @@ def _run_opencode(coi_binary, workspace_dir, tmp_path, rule_in):
         stdin=subprocess.DEVNULL,
         env=env,
     )
-    args = (ws / ".opencode-args").read_text().splitlines()
-    return result, args
+    args_file = ws / ".opencode-args"
+    assert args_file.exists(), (
+        f"coi did not launch opencode. output:\n{result.stdout + result.stderr}"
+    )
+    return result, args_file.read_text().splitlines()
 
 
 @pytest.mark.parametrize("rule_in", ["host", "workspace"])

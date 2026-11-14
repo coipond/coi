@@ -75,9 +75,10 @@ func (c *OpencodeTool) BuildCommand(sessionID string, resume bool, resumeSession
 // BuildHeadlessCommand implements ToolWithHeadlessPrompt. `opencode run`
 // runs to completion and exits with a status code; it takes the same
 // --auto/--session/--continue flags as the TUI and works in OpenCode v1 and
-// v2. Without --auto, run rejects every permission request. The prompt goes in on stdin (`< <file>`), which both versions read as
-// the message when no positional is given: a positional prompt starting with
-// "-" is parsed as flags, and v2 repeats any args after "--". Stdin is always
+// v2. Without --auto, run rejects every permission request. The prompt goes
+// in on stdin (`< <file>`), which both versions read as the message when no
+// positional is given: a positional prompt starting with "-" is parsed as
+// flags, and v2 repeats any args after "--". Stdin is always
 // redirected, so an open stdin inherited from the caller can't block the run.
 // It has no system-prompt flag, so a SystemPromptFile is rejected.
 func (c *OpencodeTool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
