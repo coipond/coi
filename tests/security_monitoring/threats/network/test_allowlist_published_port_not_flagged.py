@@ -29,7 +29,7 @@ from support.monitoring import (
     wait_for_threats,
 )
 
-SLOT = 73
+SLOT = 3
 UNPERMITTED_LAN_HOST = "192.168.254.254"
 
 
