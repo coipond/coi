@@ -117,6 +117,17 @@ func WriteUserHosts(containerName string, entries []config.HostEntry) error {
 // hosts file container root cannot write (see hostsRewriteScript).
 const hostsCopyPath = "/etc/coi/hosts"
 
+// coverHostsScript puts the copy back over the hosts file at "$f" when the
+// file is not writable but a copy at "$copy" exists: after a restart Incus
+// mounts its own file again, without the entries coi wrote. Best effort: if
+// the mount fails, the file stays as it is.
+const coverHostsScript = `if [ ! -w "$f" ] && [ -f "$copy" ]; then mount --bind "$copy" "$f" 2>/dev/null || true; fi
+`
+
+// readHostsScript prints the container's /etc/hosts, with the copy put back
+// over it first (see coverHostsScript).
+var readHostsScript = fmt.Sprintf("f=/etc/hosts\ncopy=%s\n%scat \"$f\"\n", hostsCopyPath, coverHostsScript)
+
 // replaceManagedHostsBlock rewrites the container's /etc/hosts in place, replacing
 // the block delimited by beginMarker/endMarker with `block` and leaving everything
 // outside those markers (localhost, the container's own name, OTHER managed
@@ -146,9 +157,10 @@ func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block strin
 // mount lives in the container's mount namespace, so later writes go to the
 // copy in place. Only the first write swaps the file under a process that
 // holds it open; glibc opens it on each lookup, and systemd-resolved notices
-// the change. After a restart Incus mounts its own file again: the copy is then
-// the base of the rewrite, so blocks written before (`coi hosts add`) survive
-// the restart, as they do on other images.
+// the change. After a restart Incus mounts its own file again: the script (and
+// readHostsScript) first puts the copy back over it, so entries written before
+// (`coi hosts add`) survive the restart, as they do on other images. When that
+// mount fails, the copy is still the base of the rewrite.
 func hostsRewriteScript(path, copyPath, beginMarker, endMarker, block string) string {
 	// Strip the previous Coi-managed block, then append a fresh one. awk is used
 	// deliberately instead of a sed '/BEGIN/,/END/d' range: a sed range deletes
@@ -165,7 +177,7 @@ func hostsRewriteScript(path, copyPath, beginMarker, endMarker, block string) st
 	return fmt.Sprintf(`set -e
 f=%s
 copy=%s
-src="$f"
+%ssrc="$f"
 if [ ! -w "$f" ] && [ -f "$copy" ]; then src="$copy"; fi
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
@@ -185,7 +197,7 @@ if ! err=$( { cat "$tmp" > "$f"; } 2>&1 ); then
   chmod 644 "$copy"
   mount --bind "$copy" "$f" || { echo "$err" >&2; exit 1; }
 fi
-`, shellSingleQuote(path), shellSingleQuote(copyPath), shellSingleQuote(beginMarker), shellSingleQuote(endMarker), block)
+`, shellSingleQuote(path), shellSingleQuote(copyPath), coverHostsScript, shellSingleQuote(beginMarker), shellSingleQuote(endMarker), block)
 }
 
 // shellSingleQuote wraps s in single quotes for safe use as a single shell word,
