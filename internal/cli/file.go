@@ -85,6 +85,8 @@ var filePullCmd = &cobra.Command{
 	Short: "Pull a file or directory from a container",
 	Long: `Pull a file or directory from a container to the host.
 
+A relative container path is read from the container's root (/).
+
 Examples:
   # Pull a file into the current directory
   coi file pull my-container:/tmp/results.txt .

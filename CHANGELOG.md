@@ -33,6 +33,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`coi file pull -r` with a relative container path reads from the named container** — `coi file pull -r c1:workspace/x ./out` used to read from a container named `c1workspace`, or fail with `Instance not found`. A relative path is now read from `/`, as without `-r`.
 - [Bug Fix] **Containers from OCI registry images start with network rules and host entries (#977)** — on such containers `/etc/hosts` is read-only even for container root, so `coi shell` and `coi run` failed in `allowlist` mode or with `[[network.hosts]]`, and `coi hosts add` failed. coi now keeps its own writable copy of `/etc/hosts` in the container. It needs no host sudo.
 - [Bug Fix] **OpenCode no longer asks for confirmation in bypass mode (#1045)** — permission rules in your host or project OpenCode config could still make it ask before some actions, and `coi run --prompt` then refused those actions. In bypass mode OpenCode now approves everything not explicitly denied. `deny` rules and interactive mode work as before. Needs OpenCode 1.18 or later.
 - [Bug Fix] **The security monitor no longer pauses containers for harmless traffic** — traffic to a Docker container running inside the container, name lookups in allowlist mode (#995), and DNS through systemd-resolved's local stub are no longer reported as threats.
