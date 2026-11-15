@@ -772,6 +772,9 @@ func (m *Manager) PullDirectory(containerPath, localPath string) error {
 	// bare "exit status 1" and callers like session.saveSessionData cannot
 	// tell "no config yet" apart from a real failure, turning benign
 	// first-run cleanups into "Warning: Failed to save session data" noise.
+	if !strings.HasPrefix(containerPath, "/") {
+		containerPath = "/" + containerPath
+	}
 	source := m.ContainerName + containerPath
 	cmdArgs := buildIncusCommand("file", "pull", "-r", source, tempDir)
 	cmd := execIncusCommand(cmdArgs)
