@@ -253,6 +253,35 @@ disable_host_only_services() {
 }
 
 #######################################
+# Remove snapd
+# The Ubuntu cloud image ships snapd, which seeds and checks for
+# refreshes against api.snapcraft.io as soon as the container boots,
+# before coi sets up the firewall. In restricted and allowlist modes
+# the security monitor then flags that connection and pauses the
+# container. Nothing in the image uses snaps; a package that depends
+# on snapd (Ubuntu's firefox and chromium transitional packages) no
+# longer installs.
+#######################################
+remove_snapd() {
+    log "Removing snapd..."
+    systemctl stop snapd.socket snapd.service 2>/dev/null || true
+    if dpkg -s snapd >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq snapd
+    fi
+    rm -rf /snap /var/snap /var/lib/snapd /var/cache/snapd
+    cat > /etc/apt/preferences.d/no-snapd <<'EOF_PREF'
+Package: snapd
+Pin: release *
+Pin-Priority: -10
+EOF_PREF
+    if dpkg -s snapd >/dev/null 2>&1; then
+        log "ERROR: snapd is still installed"
+        exit 1
+    fi
+    log "snapd removed"
+}
+
+#######################################
 # Install Node.js LTS
 #######################################
 install_nodejs() {
@@ -1315,6 +1344,7 @@ main() {
     configure_dns_if_needed
     install_base_dependencies
     disable_host_only_services
+    remove_snapd
     install_nodejs
     create_code_user
     install_mise
