@@ -45,17 +45,11 @@ func (c *Opencode2Tool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) 
 // --standalone: without it the v2 TUI is a client of a detached
 // `opencode serve --service` that outlives it, keeps the DB open and writes
 // service.json (with its password); --standalone runs a private server that
-// exits with the TUI.
-// --auto (bypass mode only): v2 applies the V1 `permission` rules of
-// opencode.json before any V2 `permissions` rule, from the host or the
-// workspace, so a V2 `ask` rule would beat coi's bypass. --auto approves all
-// that is not explicitly denied. The V2 rule cannot go in opencode.json:
-// OpenCode v1 reads the same file and rejects the `permissions` key.
+// exits with the TUI. --auto comes from opencode's command (bypass mode
+// only); in v2 it also beats a V2 `permissions` ask rule, which cannot go in
+// opencode.json: OpenCode v1 reads the same file and rejects that key.
 func (c *Opencode2Tool) v2Flags() []string {
-	if c.permissionMode == "interactive" {
-		return []string{"--standalone"}
-	}
-	return []string{"--standalone", "--auto"}
+	return []string{"--standalone"}
 }
 
 // insertFlags inserts flags into cmd at index at.

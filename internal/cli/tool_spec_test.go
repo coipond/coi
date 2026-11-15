@@ -66,7 +66,7 @@ func TestBuildToolLaunchArgv_OpencodePrint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(argv, " "); got != `opencode run </run/p` {
+	if got := strings.Join(argv, " "); got != `opencode run --auto </run/p` {
 		t.Errorf("opencode print launch = %q", got)
 	}
 	if prompt != "" {

@@ -113,16 +113,55 @@ func WriteUserHosts(containerName string, entries []config.HostEntry) error {
 	return replaceManagedHostsBlock(containerName, userHostsBeginMarker, userHostsEndMarker, renderUserHostsBlock(entries))
 }
 
+// hostsCopyPath is the writable copy of /etc/hosts that coi bind-mounts over a
+// hosts file container root cannot write (see hostsRewriteScript).
+const hostsCopyPath = "/etc/coi/hosts"
+
+// coverHostsScript puts the copy back over the hosts file at "$f" when the
+// file is not writable but a copy at "$copy" exists: after a restart Incus
+// mounts its own file again, without the entries coi wrote. Best effort: if
+// the mount fails, the file stays as it is.
+const coverHostsScript = `if [ ! -w "$f" ] && [ -f "$copy" ]; then mount --bind "$copy" "$f" 2>/dev/null || true; fi
+`
+
+// readHostsScript prints the container's /etc/hosts, with the copy put back
+// over it first (see coverHostsScript).
+var readHostsScript = fmt.Sprintf("f=/etc/hosts\ncopy=%s\n%scat \"$f\"\n", hostsCopyPath, coverHostsScript)
+
 // replaceManagedHostsBlock rewrites the container's /etc/hosts in place, replacing
 // the block delimited by beginMarker/endMarker with `block` and leaving everything
 // outside those markers (localhost, the container's own name, OTHER managed
 // blocks) untouched.
+func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block string) error {
+	mgr := container.NewManager(containerName)
+	script := hostsRewriteScript("/etc/hosts", hostsCopyPath, beginMarker, endMarker, block)
+	if _, err := mgr.ExecCommand(script, container.ExecCommandOptions{Capture: true}); err != nil {
+		return fmt.Errorf("failed to write hosts entries: %w", err)
+	}
+	return nil
+}
+
+// hostsRewriteScript returns the shell script that rewrites the hosts file at
+// path.
 //
 // The file is rewritten in place via `cat >` rather than `mv` so the inode,
 // ownership and permissions survive — some resolvers hold the file open, and
 // swapping the inode under them is how you get a container that resolves nothing
 // until it is restarted.
-func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block string) error {
+//
+// When container root cannot write the file, the script writes the new content
+// to copyPath and bind-mounts it over the file (#977). That is the normal state
+// for a container from an OCI registry image: Incus bind-mounts /etc/hosts from
+// the instance directory, owned by host root, which the container's idmap does
+// not map, so neither container root nor `incus file push` can write it. The
+// mount lives in the container's mount namespace, so later writes go to the
+// copy in place. Only the first write swaps the file under a process that
+// holds it open; glibc opens it on each lookup, and systemd-resolved notices
+// the change. After a restart Incus mounts its own file again: the script (and
+// readHostsScript) first puts the copy back over it, so entries written before
+// (`coi hosts add`) survive the restart, as they do on other images. When that
+// mount fails, the copy is still the base of the rewrite.
+func hostsRewriteScript(path, copyPath, beginMarker, endMarker, block string) string {
 	// Strip the previous Coi-managed block, then append a fresh one. awk is used
 	// deliberately instead of a sed '/BEGIN/,/END/d' range: a sed range deletes
 	// through to end-of-file when the END marker is missing, so a truncated or
@@ -135,27 +174,30 @@ func replaceManagedHostsBlock(containerName, beginMarker, endMarker, block strin
 	//
 	// The heredoc is quoted ('COI_HOSTS_EOF') so the shell performs no expansion
 	// on the content — a domain is not a shell word and must not be treated as one.
-	script := fmt.Sprintf(`set -e
+	return fmt.Sprintf(`set -e
+f=%s
+copy=%s
+%ssrc="$f"
+if [ ! -w "$f" ] && [ -f "$copy" ]; then src="$copy"; fi
 tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
 awk -v b=%s -v e=%s '
   index($0, b) == 1 { inblock = 1; buf = $0 ORS; next }
   inblock && index($0, e) == 1 { inblock = 0; buf = ""; next }
   inblock { buf = buf $0 ORS; next }
   { print }
   END { if (inblock) printf "%%s", buf }
-' /etc/hosts > "$tmp"
+' "$src" > "$tmp"
 cat >> "$tmp" <<'COI_HOSTS_EOF'
 %s
 COI_HOSTS_EOF
-cat "$tmp" > /etc/hosts
-rm -f "$tmp"
-`, shellSingleQuote(beginMarker), shellSingleQuote(endMarker), block)
-
-	mgr := container.NewManager(containerName)
-	if _, err := mgr.ExecCommand(script, container.ExecCommandOptions{Capture: true}); err != nil {
-		return fmt.Errorf("failed to write hosts entries: %w", err)
-	}
-	return nil
+if ! err=$( { cat "$tmp" > "$f"; } 2>&1 ); then
+  mkdir -p "$(dirname "$copy")"
+  cat "$tmp" > "$copy"
+  chmod 644 "$copy"
+  mount --bind "$copy" "$f" || { echo "$err" >&2; exit 1; }
+fi
+`, shellSingleQuote(path), shellSingleQuote(copyPath), coverHostsScript, shellSingleQuote(beginMarker), shellSingleQuote(endMarker), block)
 }
 
 // shellSingleQuote wraps s in single quotes for safe use as a single shell word,
