@@ -34,8 +34,9 @@ func GetDefault() Tool {
 // DefaultBuildAgents returns the agents installed into the image when no
 // explicit selection is made — it must stay in sync with build.sh's
 // ${COI_AGENTS:-...} default (enforced by TestBuildScriptDispatchMatchesRegistry).
-// OpenCode v2 (opencode2) is the default; codex (issue #698), omp and OpenCode
-// v1 (opencode) are supported but opt-in only, so they are not in this set.
+// OpenCode v2 (opencode2) is the default; codex (issue #698), omp, goose and
+// OpenCode v1 (opencode) are supported but opt-in only, so they are not in
+// this set.
 func DefaultBuildAgents() []string {
 	return []string{"claude", "opencode2", "pi"}
 }
