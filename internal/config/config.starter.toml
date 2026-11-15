@@ -25,8 +25,8 @@
 # [container.build]              # how `coi build` builds the base image
 # base = "ubuntu:26.04"          # base image to build from
 # compression = ""              # image compression: none | gzip | xz ("" = Incus default)
-# agents = ["claude", "opencode2", "pi"]  # AI agents to install (any of claude/opencode/opencode2/pi/codex/omp);
-#                                #   omit to install this default set — codex, omp and opencode
+# agents = ["claude", "opencode2", "pi"]  # AI agents to install (any of claude/opencode/opencode2/pi/codex/omp/goose);
+#                                #   omit to install this default set — codex, omp, goose and opencode
 #                                #   (OpenCode v1) are opt-in and must be listed explicitly (#698)
 
 [defaults]
