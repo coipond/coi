@@ -525,12 +525,12 @@ install_mise() {
 # sudo looks up the current hostname for logging; if it is not in /etc/hosts
 # the lookup fails and prints "unable to resolve host" on every invocation.
 #
-# A oneshot unit appends it before sysinit.target. coi runs its first
-# command once sysinit.target is active (readyProbeScript,
-# internal/session/setup.go); with default dependencies the unit ran only
-# after basic.target, so that command could still miss the name.
+# coi runs its first command once sysinit.target is active
+# (readyProbeScript, internal/session/setup.go). Default dependencies order
+# a unit after sysinit.target, so the unit needs DefaultDependencies=no.
 #######################################
 configure_hostname_fix() {
+    log "Configuring hostname fix..."
     cat > /etc/systemd/system/coi-fix-hostname.service << 'UNIT_EOF'
 [Unit]
 Description=Add container hostname to /etc/hosts

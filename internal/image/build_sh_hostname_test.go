@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// coi runs its first command once sysinit.target is active (readyProbeScript
-// in internal/session/setup.go), so the hostname unit must finish before it.
-// With default dependencies it ran after basic.target and that command could
-// miss the name in /etc/hosts.
 func TestConfigureHostnameFix_RunsBeforeSysinit(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
