@@ -138,8 +138,8 @@ type inotifyRawEvent struct {
 // The inotify approach watches each log file for IN_MODIFY events and the
 // parent directory for IN_CREATE so log rotation (mv + new file) is handled
 // transparently. A 30-second backstop ticker covers missed events and
-// container restarts. If inotify is unavailable the watcher falls back to
-// 5-second polling.
+// container restarts. If inotify is unavailable, or reading it fails, the
+// watcher falls back to 5-second polling.
 //
 // Note: unlike kernel-maintained sources (network, process, cgroup), auth.log
 // and syslog are regular writable files. A root attacker inside the container
@@ -204,7 +204,14 @@ func (lw *LogWatcher) Run(ctx context.Context) {
 			return
 		case ev, ok := <-events:
 			if !ok {
-				return // ifd closed (ctx cancelled or unrecoverable read error)
+				if ctx.Err() == nil {
+					// Unrecoverable read error: keep watching by polling.
+					if lw.onError != nil {
+						lw.onError(fmt.Errorf("logwatcher: inotify read failed, falling back to 5-second polling"))
+					}
+					lw.runPolling(ctx, states)
+				}
+				return
 			}
 			switch {
 			case ev.mask&unix.IN_IGNORED != 0:
@@ -316,7 +323,7 @@ const inotifyBufSize = (unix.SizeofInotifyEvent + unix.NAME_MAX + 1) * 16
 
 // inotifyReader spawns a goroutine that polls ifd (non-blocking) and forwards
 // parsed events to the returned channel. The channel is closed when ifd is
-// closed or an unrecoverable read error occurs.
+// closed or an unrecoverable read error occurs; EINTR and EAGAIN are retried.
 func inotifyReader(ifd int) <-chan inotifyRawEvent {
 	ch := make(chan inotifyRawEvent, 64)
 	go func() {
@@ -325,6 +332,11 @@ func inotifyReader(ifd int) <-chan inotifyRawEvent {
 		fds := []unix.PollFd{{Fd: int32(ifd), Events: unix.POLLIN}} //nolint:gosec // G115: fd values are small non-negative ints
 		for {
 			n, err := unix.Poll(fds, 200) // 200 ms so ctx cancellation is noticed promptly
+			if err == unix.EINTR {
+				// poll(2) is never restarted after a signal (SIGCHLD from
+				// the monitor's incus subprocesses).
+				continue
+			}
 			if err != nil || n < 0 {
 				return
 			}
@@ -332,6 +344,9 @@ func inotifyReader(ifd int) <-chan inotifyRawEvent {
 				continue
 			}
 			nr, err := unix.Read(ifd, buf)
+			if err == unix.EINTR || err == unix.EAGAIN {
+				continue
+			}
 			if err != nil || nr < 16 {
 				return
 			}

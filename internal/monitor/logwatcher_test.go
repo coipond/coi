@@ -4,8 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestParseAuthLogLine_FailedPassword(t *testing.T) {
@@ -458,5 +462,63 @@ func TestPollFile_DetectsRotationViaProcRoot(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("post-rotation attacker line not detected; threats=%d", len(threats))
+	}
+}
+
+// signalAllThreads sends SIGURG (handled and ignored by the Go runtime) to
+// every thread of this process, so a thread blocked in poll(2) gets EINTR.
+func signalAllThreads(t *testing.T) {
+	t.Helper()
+	tasks, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range tasks {
+		tid, err := strconv.Atoi(task.Name())
+		if err != nil {
+			continue
+		}
+		_ = unix.Tgkill(os.Getpid(), tid, unix.SIGURG)
+	}
+}
+
+// TestInotifyReader_SurvivesSignals guards against a signal (SIGCHLD from the
+// monitor's incus subprocesses) interrupting poll(2): poll never restarts, so
+// an EINTR treated as fatal closed the channel and ended LogWatcher.Run for
+// the rest of the session.
+func TestInotifyReader_SurvivesSignals(t *testing.T) {
+	ifd, err := unix.InotifyInit1(unix.IN_CLOEXEC | unix.IN_NONBLOCK)
+	if err != nil {
+		t.Skipf("inotify unavailable: %v", err)
+	}
+	defer unix.Close(ifd)
+
+	logPath := filepath.Join(t.TempDir(), "auth.log")
+	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unix.InotifyAddWatch(ifd, logPath, unix.IN_MODIFY); err != nil {
+		t.Fatal(err)
+	}
+
+	events := inotifyReader(ifd)
+	for range 50 {
+		signalAllThreads(t)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := os.WriteFile(logPath, []byte("line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev, ok := <-events:
+		if !ok {
+			t.Fatal("inotify reader stopped after a signal interrupted poll")
+		}
+		if ev.mask&unix.IN_MODIFY == 0 {
+			t.Fatalf("want IN_MODIFY, got mask %#x", ev.mask)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no inotify event after the write")
 	}
 }
