@@ -15,14 +15,30 @@ Note: This test requires nested Incus support and takes longer to run.
 """
 
 import os
+import re
 import shlex
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
-# Cap for one apt try; three tries plus pauses stay under the old 600 s.
-APT_TRY_TIMEOUT_SEC = 180
+BUILD_SH = Path(__file__).resolve().parents[2] / "internal" / "image" / "build.sh"
+
+# Cap for one apt try: a healthy try without a mirror takes about 3 minutes on
+# a slow machine.
+APT_TRY_TIMEOUT_SEC = 240
+# Shorter than build.sh's default so a mirror fallback fits in one try.
+APT_MIRROR_TIMEOUT_SEC = 60
+
+
+def build_sh_functions(*names):
+    """Return the named shell functions from the image build script."""
+    text = BUILD_SH.read_text()
+    return "\n".join(
+        re.search(rf"^{name}\(\) {{\n.*?^}}$", text, re.MULTILINE | re.DOTALL).group(0)
+        for name in names
+    )
 
 
 @pytest.fixture(scope="module")
@@ -107,63 +123,58 @@ def test_full_installation_process(meta_container, coi_binary):
 
     # Phase 1: Install system dependencies
     # Retry apt-get operations to handle transient network issues in CI. A
-    # stalled apt hangs instead of failing, so each try is killed inside the
-    # container after APT_TRY_TIMEOUT_SEC and counts as a failed try.
+    # stalled apt hangs instead of failing.
     max_retries = 3
     last_error = None
-    mirror = os.environ.get("COI_APT_MIRROR", "")
+    apt_env = ""
+    if os.environ.get("COI_APT_MIRROR"):
+        apt_env = (
+            f"COI_APT_MIRROR={shlex.quote(os.environ['COI_APT_MIRROR'])} "
+            f"COI_APT_MIRROR_TIMEOUT={APT_MIRROR_TIMEOUT_SEC} "
+        )
+    apt_functions = build_sh_functions(
+        "configure_network_ipv4",
+        "configure_apt_mirror",
+        "restore_default_apt_sources",
+        "apt_get",
+    )
+    script = f"""
+        set -e
+        log() {{ echo "$*"; }}
+        {apt_functions}
+        configure_network_ipv4
+        configure_apt_mirror
+
+        # dpkg runs in its own session, so killing an earlier try leaves it
+        # running with the lock held, or half-configured if it died.
+        while pgrep -x dpkg >/dev/null; do sleep 1; done
+        dpkg --configure -a
+
+        # Wait for network and DNS to be ready
+        for i in {{1..30}}; do
+            if ping -c 1 archive.ubuntu.com >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+
+        apt_get update -qq
+
+        # Install packages
+        # pkg-config is required by the Makefile's check-deps preflight
+        # (coi links libsystemd via cgo, which needs pkg-config + libsystemd-dev).
+        apt_get install -y -qq \\
+            curl wget git ca-certificates gnupg build-essential pkg-config libsystemd-dev
+
+        echo "System dependencies installed"
+        """
+    command = f"{apt_env}timeout -k 10 {APT_TRY_TIMEOUT_SEC} bash -c {shlex.quote(script)}"
 
     for attempt in range(max_retries):
-        # The mirror is a speed-up, not a dependency: later tries use the
-        # stock Ubuntu archive.
-        try_mirror = mirror if attempt == 0 else ""
-        script = f"""
-            set -e
-            # Same apt settings as the image build (internal/image/build.sh
-            # configure_network_ipv4).
-            cat > /etc/apt/apt.conf.d/99coi-force-ipv4 <<'APTCONF'
-Acquire::ForceIPv4 "true";
-Acquire::http::Timeout "30";
-Acquire::https::Timeout "30";
-Acquire::Retries "3";
-APTCONF
-            for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
-                [ -f "$f" ] || continue
-                orig="/root/$(echo "$f" | tr / _).orig"
-                [ -f "$orig" ] || cp -p "$f" "$orig"
-                cp -p "$orig" "$f"
-                [ -n "{try_mirror}" ] || continue
-                sed -i -E \\
-                    -e "s#https?://[a-z0-9.-]*archive\\.ubuntu\\.com/ubuntu#{try_mirror}#g" \\
-                    -e "s#https?://security\\.ubuntu\\.com/ubuntu#{try_mirror}#g" \\
-                    "$f"
-            done
-
-            # A killed earlier try can leave dpkg half-configured.
-            dpkg --configure -a
-
-            # Wait for network and DNS to be ready
-            for i in {{1..30}}; do
-                if ping -c 1 archive.ubuntu.com >/dev/null 2>&1; then
-                    break
-                fi
-                sleep 1
-            done
-
-            apt-get update -qq
-
-            # Install packages
-            # pkg-config is required by the Makefile's check-deps preflight
-            # (coi links libsystemd via cgo, which needs pkg-config + libsystemd-dev).
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \\
-                curl wget git ca-certificates gnupg build-essential pkg-config libsystemd-dev
-
-            echo "System dependencies installed"
-            """
         try:
             result = exec_in_container(
                 container_name,
-                f"timeout -k 10 {APT_TRY_TIMEOUT_SEC} bash -c {shlex.quote(script)}",
+                command,
                 timeout=APT_TRY_TIMEOUT_SEC + 30,
                 check=False,
             )
