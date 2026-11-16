@@ -130,10 +130,12 @@ def test_guest_apparmor_masked_and_docker_confined(coi_binary, cleanup_container
 # takes ~35s in CI.
 PLAYWRIGHT_VERSION = "1.64.0"
 
-# Each download step is capped inside the container, the root install-deps
-# under its own sudo, so a stalled attempt leaves nothing running under the
-# next one.
+# Each download step has its own cap, so a stalled attempt cannot run on under
+# the next one. install-deps puts timeout inside sudo: one around sudo cannot
+# kill the root apt-get, which then holds the dpkg lock against the retry.
 PLAYWRIGHT_STEP_TIMEOUT_SEC = 90
+PLAYWRIGHT_STEP_KILL_AFTER_SEC = 10
+PLAYWRIGHT_SETUP_STEPS = 3
 PLAYWRIGHT_SETUP_ATTEMPTS = 2
 
 # A killed install-deps can leave dpkg's work half done, so an attempt first
@@ -148,7 +150,7 @@ CAP npm install --no-audit --no-fund --loglevel=error playwright@PLAYWRIGHT_VERS
 sudo CAP env "PATH=$PATH" npx playwright install-deps chromium >/dev/null
 CAP npx playwright install --only-shell chromium >/dev/null
 """.replace("PLAYWRIGHT_VERSION", PLAYWRIGHT_VERSION).replace(
-    "CAP", f"timeout --kill-after=10 {PLAYWRIGHT_STEP_TIMEOUT_SEC}"
+    "CAP", f"timeout --kill-after={PLAYWRIGHT_STEP_KILL_AFTER_SEC} {PLAYWRIGHT_STEP_TIMEOUT_SEC}"
 )
 
 # npm, apt and Playwright download errors. A setup failing any other way fails
@@ -200,7 +202,9 @@ def test_playwright_headless_chromium_works(coi_binary, cleanup_containers, work
                 container_name,
                 PLAYWRIGHT_SETUP_SCRIPT,
                 user=1000,
-                timeout=3 * (PLAYWRIGHT_STEP_TIMEOUT_SEC + 10) + 60,
+                timeout=PLAYWRIGHT_SETUP_STEPS
+                * (PLAYWRIGHT_STEP_TIMEOUT_SEC + PLAYWRIGHT_STEP_KILL_AFTER_SEC)
+                + 60,
             )
         except subprocess.TimeoutExpired as e:
             rc, output = 124, str(e)
