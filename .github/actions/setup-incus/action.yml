@@ -4,11 +4,19 @@ description: >-
   NAT), open container networking, and import the Ubuntu 24.04 base image as
   coi-ubuntu-24.04 (cached). Shared by the integration lanes in ci.yml and
   agent-installers.yml.
+inputs:
+  channel:
+    description: >-
+      Zabbly Incus channel (stable, lts-7.0, ...). Only stable falls back to
+      Ubuntu's native package when the install fails.
+    default: stable
 runs:
   using: composite
   steps:
     - name: Install Incus and nftables
       shell: bash
+      env:
+        INCUS_CHANNEL: ${{ inputs.channel }}
       run: |
         # Try Zabbly repo first (latest Incus), fall back to Ubuntu's native package
         sudo mkdir -p /etc/apt/keyrings/
@@ -19,7 +27,7 @@ runs:
           sudo sh -c "cat <<SOURCES > $ZABBLY_SOURCES
         Enabled: yes
         Types: deb
-        URIs: https://pkgs.zabbly.com/incus/stable
+        URIs: https://pkgs.zabbly.com/incus/${INCUS_CHANNEL}
         Suites: \$(. /etc/os-release && echo \${VERSION_CODENAME})
         Components: main
         Architectures: \$(dpkg --print-architecture)
@@ -34,6 +42,10 @@ runs:
         # Install with fallback: try with Zabbly, if it fails remove Zabbly and use Ubuntu native
         sudo apt-get update
         if ! sudo apt-get install -y incus nftables; then
+          if [ "$INCUS_CHANNEL" != "stable" ]; then
+            echo "ERROR: Incus from the Zabbly $INCUS_CHANNEL channel failed to install"
+            exit 1
+          fi
           echo "WARNING: Install failed, removing Zabbly repo and falling back to Ubuntu native Incus"
           sudo rm -f "$ZABBLY_SOURCES"
           sudo apt-get update
