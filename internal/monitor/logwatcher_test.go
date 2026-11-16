@@ -491,7 +491,6 @@ func TestInotifyReader_SurvivesSignals(t *testing.T) {
 	if err != nil {
 		t.Skipf("inotify unavailable: %v", err)
 	}
-	defer unix.Close(ifd)
 
 	logPath := filepath.Join(t.TempDir(), "auth.log")
 	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
@@ -501,7 +500,16 @@ func TestInotifyReader_SurvivesSignals(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	events := inotifyReader(ifd)
+	ctx, cancel := context.WithCancel(context.Background())
+	events := inotifyReader(ctx, ifd)
+	t.Cleanup(func() {
+		// Close ifd only after the reader stops, so it can't read the next
+		// test's inotify fd once the number is reused.
+		cancel()
+		for range events {
+		}
+		unix.Close(ifd)
+	})
 	for range 50 {
 		signalAllThreads(t)
 		time.Sleep(10 * time.Millisecond)
@@ -520,5 +528,73 @@ func TestInotifyReader_SurvivesSignals(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no inotify event after the write")
+	}
+}
+
+// TestLogWatcherRun_FallsBackToPollingWhenReaderStops checks that Run keeps
+// watching by polling, and reports it, when the inotify reader stops while the
+// session is still live.
+func TestLogWatcherRun_FallsBackToPollingWhenReaderStops(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "auth.log")
+	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// incus info reports this process, so /proc/<pid>/root/<rel> is logPath.
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho \"PID: " + strconv.Itoa(os.Getpid()) + "\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldCandidates, oldInterval, oldReader := logCandidates, logPollInterval, newInotifyReader
+	t.Cleanup(func() {
+		logCandidates, logPollInterval, newInotifyReader = oldCandidates, oldInterval, oldReader
+	})
+	logCandidates = []string{strings.TrimPrefix(logPath, "/")}
+	logPollInterval = 50 * time.Millisecond
+	newInotifyReader = func(context.Context, int) <-chan inotifyRawEvent {
+		ch := make(chan inotifyRawEvent)
+		close(ch)
+		return ch
+	}
+
+	threats := make(chan ThreatEvent, 4)
+	errs := make(chan error, 4)
+	lw := NewLogWatcher("coi-logwatcher-fallback-test",
+		func(e ThreatEvent) { threats <- e },
+		func(err error) {
+			select {
+			case errs <- err:
+			default:
+			}
+		})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { lw.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	select {
+	case err := <-errs:
+		if !strings.Contains(err.Error(), "falling back to") {
+			t.Fatalf("want the fallback message, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no fallback message after the reader stopped")
+	}
+
+	line := "Jun  5 12:00:00 coi sshd[1]: Failed password for a from 1.1.1.1 port 22 ssh2\n"
+	if err := os.WriteFile(logPath, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-threats:
+		if e.Evidence.AuthLog == nil || e.Evidence.AuthLog.Pattern != "ssh_failed_password" {
+			t.Fatalf("want ssh_failed_password, got %+v", e.Evidence)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("line written after the fallback was not detected")
 	}
 }
