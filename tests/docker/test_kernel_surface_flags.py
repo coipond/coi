@@ -31,7 +31,7 @@ import subprocess
 
 import pytest
 
-from support.helpers import container_config_get
+from support.helpers import container_config_get, incus_status
 
 DENY_SYSCALLS = [
     "io_uring_setup",
@@ -52,16 +52,6 @@ DOCKER_KEYS = [
 ]
 
 
-def incus_state(container_name):
-    result = subprocess.run(
-        ["incus", "--project", "default", "list", container_name, "-c", "s", "-f", "csv"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    return result.stdout.strip()
-
-
 def skip_unless_bootable(coi_binary):
     """Launch coi-default bare; skip the calling test if this environment can't
     boot it at all (CI's nested lane sometimes can't complete a container START
@@ -69,7 +59,7 @@ def skip_unless_bootable(coi_binary):
     base = "coi-ks-boot-base"
     try:
         launch(coi_binary, base)
-        if incus_state(base) != "RUNNING":
+        if incus_status(base) != "RUNNING":
             pytest.skip("environment cannot boot coi-default bare; skipping boot assertion")
     finally:
         subprocess.run(["incus", "--project", "default", "delete", base, "--force"], timeout=60)
@@ -182,7 +172,7 @@ def test_reduce_kernel_surface_container_boots(coi_binary, cleanup_containers, t
     name = "coi-ks-boot-hardened"
     try:
         launch(coi_binary, name, env=env)
-        state = incus_state(name)
+        state = incus_status(name)
         assert state == "RUNNING", (
             f"hardened container did not boot (state={state!r}); the deny list is "
             "likely killing init (missing 'errno' action) or malformed (separator)"
@@ -203,7 +193,7 @@ def test_reduce_kernel_surface_strict_container_boots(coi_binary, cleanup_contai
     name = "coi-ks-boot-strict"
     try:
         launch(coi_binary, name, env=env)
-        state = incus_state(name)
+        state = incus_status(name)
         assert state == "RUNNING", (
             f"strict-hardened container did not boot (state={state!r}); "
             "perf_event_open denial may be killing init instead of returning EPERM"
