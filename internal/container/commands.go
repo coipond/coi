@@ -1156,11 +1156,15 @@ func parseNamesCSV(output string) []string {
 	return names
 }
 
-// ListRunningContainerNames lists the names of running containers. Like
-// ListContainerNames, it asks for the name and status columns only (CSV),
-// which need no instance state.
-func ListRunningContainerNames() ([]string, error) {
-	output, err := IncusOutput("list", "--format=csv", "--columns=ns")
+// ListRunningContainerNames lists the names of running containers, optionally
+// narrowed by an Incus name filter. Like ListContainerNames, it asks for the
+// name and status columns only (CSV), which need no instance state.
+func ListRunningContainerNames(filter string) ([]string, error) {
+	args := []string{"list"}
+	if filter != "" {
+		args = append(args, filter)
+	}
+	output, err := IncusOutput(append(args, "--format=csv", "--columns=ns")...)
 	if err != nil {
 		return nil, err
 	}

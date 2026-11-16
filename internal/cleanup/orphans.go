@@ -170,7 +170,7 @@ func instanceHostVeths() (map[string]bool, error) {
 
 // getRunningContainerNames returns the names of all running containers.
 func getRunningContainerNames() ([]string, error) {
-	return container.ListRunningContainerNames()
+	return container.ListRunningContainerNames("")
 }
 
 // getRunningContainerIPs returns IPs of all running containers

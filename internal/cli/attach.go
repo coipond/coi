@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/coipond/coi/internal/alias"
 	"github.com/coipond/coi/internal/container"
@@ -31,6 +32,7 @@ Examples:
   coi attach --slot=1           # Attach to slot 1 for current workspace
   coi attach --bash             # Attach to bash shell instead of tmux session
   coi attach coi-123 --bash     # Attach to specific container with bash`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: app.attachCommand,
 }
 
@@ -40,6 +42,12 @@ func init() {
 }
 
 func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
+	if err := validateSlotFlag(attachSlot); err != nil {
+		return err
+	}
+	if attachSlot > 0 && len(args) > 0 {
+		return &ExitCodeError{Code: ExitUsage, Message: "give a container name or --slot, not both"}
+	}
 	// A profile-carried session_name changes which container this workspace
 	// resolves to, so the operational commands apply the same [defaults]
 	// profile fallback the launch used (error-tolerantly, per #607).
@@ -68,11 +76,11 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Attaching to %s (slot %d)...\n", targetContainer, attachSlot)
 	} else {
-		// List all running containers with configured prefix
-		containers, err := container.ListContainers(session.ContainerPattern())
+		names, err := container.ListRunningContainerNames(session.ContainerPattern())
 		if err != nil {
 			return fmt.Errorf("failed to list containers: %w", err)
 		}
+		target, running := selectAttachTarget(names)
 
 		// If container name provided, use it (with alias resolution)
 		if len(args) > 0 {
@@ -84,7 +92,7 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 			}
 			// Verify it exists and is running
 			found := false
-			for _, c := range containers {
+			for _, c := range running {
 				if c == targetContainer {
 					found = true
 					break
@@ -93,23 +101,18 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 			if !found {
 				return fmt.Errorf("container %s not found or not running", targetContainer)
 			}
-		} else if len(containers) == 0 {
+		} else if target != "" {
+			// Auto-attach if only one session
+			targetContainer = target
+			fmt.Printf("Attaching to %s...\n", targetContainer)
+		} else if len(running) == 0 {
 			// No container name provided and no sessions running
 			fmt.Println("No active sessions")
 			return nil
-		} else if len(containers) == 1 {
-			// Auto-attach if only one session
-			targetContainer = containers[0]
-			fmt.Printf("Attaching to %s...\n", targetContainer)
 		} else {
 			// Multiple sessions - show list
 			fmt.Println("Active sessions:")
-			for i, c := range containers {
-				mgr := container.NewManager(c)
-				running, err := mgr.Running()
-				if err != nil || !running {
-					continue
-				}
+			for i, c := range running {
 				fmt.Printf("  %d. %s\n", i+1, c)
 			}
 			fmt.Printf("\nUse: coi attach <container-name>\n")
@@ -121,14 +124,26 @@ func (a *App) attachCommand(cmd *cobra.Command, args []string) error {
 	if attachWithBash {
 		return attachToContainerWithBash(targetContainer)
 	}
-	return attachToContainer(targetContainer)
+	return attachToContainer(container.NewManager(targetContainer), targetContainer)
 }
 
-func attachToContainer(containerName string) error {
-	// Use container manager for proper user/environment handling
-	// Direct command execution without bash -c wrapper for better terminal handling
-	mgr := container.NewManager(containerName)
+// selectAttachTarget returns the running container names that start with the
+// container prefix, and the one `coi attach` without a name attaches to: the
+// only such container, or "" when there are none or several.
+func selectAttachTarget(names []string) (target string, running []string) {
+	prefix := session.GetContainerPrefix()
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			running = append(running, name)
+		}
+	}
+	if len(running) == 1 {
+		return running[0], running
+	}
+	return "", running
+}
 
+func attachToContainer(mgr container.ContainerManager, containerName string) error {
 	// Get TERM with fallback (same as shell command)
 	termEnv := terminal.SanitizeTerm(os.Getenv("TERM"))
 
@@ -165,11 +180,12 @@ func attachToContainer(containerName string) error {
 			return nil
 		}
 		// tmux attach failed - likely no session exists
-		// Suggest using --bash to get a shell
 		fmt.Fprintf(os.Stderr, "\nNo tmux session found in container.\n")
-		fmt.Fprintf(os.Stderr, "The container is still running. To get a shell, use:\n")
-		fmt.Fprintf(os.Stderr, "  coi attach %s --bash\n", containerName)
-		return nil
+		if running, err := mgr.Running(); err == nil && running {
+			fmt.Fprintf(os.Stderr, "The container is still running. To get a shell, use:\n")
+			fmt.Fprintf(os.Stderr, "  coi attach %s --bash\n", containerName)
+		}
+		return &ExitCodeError{Code: ExitGeneric}
 	}
 
 	return nil
