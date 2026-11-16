@@ -482,10 +482,9 @@ func signalAllThreads(t *testing.T) {
 	}
 }
 
-// TestInotifyReader_SurvivesSignals guards against a signal (SIGCHLD from the
-// monitor's incus subprocesses) interrupting poll(2): poll never restarts, so
-// an EINTR treated as fatal closed the channel and ended LogWatcher.Run for
-// the rest of the session.
+// TestInotifyReader_SurvivesSignals checks that the reader keeps running when
+// a signal (SIGCHLD from the monitor's incus subprocesses) interrupts poll(2):
+// poll is never restarted after a signal, so EINTR must not stop the reader.
 func TestInotifyReader_SurvivesSignals(t *testing.T) {
 	ifd, err := unix.InotifyInit1(unix.IN_CLOEXEC | unix.IN_NONBLOCK)
 	if err != nil {
@@ -607,8 +606,7 @@ func TestLogWatcherRun_FallsBackToPollingWhenReaderStops(t *testing.T) {
 
 // TestLogWatcherRun_StopsReaderBeforeClosingFd checks that when Run returns
 // its inotify reader has stopped, and that the reader stopped while the fd was
-// still open: a reader left polling a closed fd number would read from
-// whatever reuses it.
+// still open.
 func TestLogWatcherRun_StopsReaderBeforeClosingFd(t *testing.T) {
 	fakeIncusInfoSelf(t)
 	oldCandidates, oldReader := logCandidates, newInotifyReader
