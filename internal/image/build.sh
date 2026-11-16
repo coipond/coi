@@ -519,6 +519,37 @@ install_mise() {
 }
 
 #######################################
+# Add the runtime hostname to /etc/hosts at boot
+# Incus assigns the container hostname at boot (from the UTS namespace), but
+# /etc/hosts is baked into the image at build time with a different name.
+# sudo looks up the current hostname for logging; if it is not in /etc/hosts
+# the lookup fails and prints "unable to resolve host" on every invocation.
+#
+# A oneshot unit appends it before sysinit.target. coi runs its first
+# command once sysinit.target is active (readyProbeScript,
+# internal/session/setup.go); with default dependencies the unit ran only
+# after basic.target, so that command could still miss the name.
+#######################################
+configure_hostname_fix() {
+    cat > /etc/systemd/system/coi-fix-hostname.service << 'UNIT_EOF'
+[Unit]
+Description=Add container hostname to /etc/hosts
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'h=$(hostname); grep -qF "$h" /etc/hosts || echo "127.0.0.1 $h" >> /etc/hosts'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
+UNIT_EOF
+    systemctl enable coi-fix-hostname.service
+}
+
+#######################################
 # Configure power management wrappers
 #######################################
 configure_power_wrappers() {
@@ -527,29 +558,6 @@ configure_power_wrappers() {
     # Create wrapper scripts that use sudo automatically
     # This allows users to type "poweroff" instead of "sudo poweroff"
     # while working around the lack of login sessions in containers
-
-    # Incus assigns the container hostname at boot (from the UTS namespace), but
-    # /etc/hosts is baked into the image at build time with a different name.
-    # sudo looks up the current hostname for logging; if it is not in /etc/hosts
-    # the lookup fails and prints "unable to resolve host" on every invocation.
-    #
-    # Fix: a oneshot systemd service that appends the runtime hostname to
-    # /etc/hosts before multi-user.target is reached (i.e. before any shell).
-    cat > /etc/systemd/system/coi-fix-hostname.service << 'UNIT_EOF'
-[Unit]
-Description=Add container hostname to /etc/hosts
-After=local-fs.target
-Before=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash -c 'h=$(hostname); grep -qF "$h" /etc/hosts || echo "127.0.0.1 $h" >> /etc/hosts'
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-UNIT_EOF
-    systemctl enable coi-fix-hostname.service
 
     # Shared power helper. It touches /run/coi-shutdown-requested right before
     # asking systemd to power off, so coi's session cleanup can tell a `close`
@@ -1349,6 +1357,7 @@ main() {
     create_code_user
     install_mise
     configure_mise_tools
+    configure_hostname_fix
     configure_power_wrappers
     configure_tmp_cleanup
     configure_tmux
