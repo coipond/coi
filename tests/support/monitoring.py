@@ -2,6 +2,7 @@
 (tests/security_monitoring): container state, audit-log threat events,
 process injection, and shared test inputs."""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -91,22 +92,27 @@ def wait_for_container_running(name, timeout=60):
     return False
 
 
-def get_threat_events(container_name):
-    """Get threat events from audit log."""
-    log_path = Path.home() / ".coi" / "audit" / f"{container_name}.jsonl"
-    if not log_path.exists():
-        return []
+def get_threat_events(container_name, nft=False):
+    """Get threat events from audit log. With nft, also from the nft monitor's
+    log (<container>-nft.jsonl), which sees a packet the firewall rejects."""
+    audit_dir = Path.home() / ".coi" / "audit"
+    log_paths = [audit_dir / f"{container_name}.jsonl"]
+    if nft:
+        log_paths.append(audit_dir / f"{container_name}-nft.jsonl")
 
     events = []
-    with open(log_path) as f:
-        for line in f:
-            if line.strip():
-                try:
-                    event = json.loads(line)
-                    if "level" in event:  # ThreatEvent
-                        events.append(event)
-                except json.JSONDecodeError:
-                    pass
+    for log_path in log_paths:
+        if not log_path.exists():
+            continue
+        with open(log_path) as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        event = json.loads(line)
+                        if "level" in event:  # ThreatEvent
+                            events.append(event)
+                    except json.JSONDecodeError:
+                        pass
     return events
 
 
@@ -118,32 +124,32 @@ def poll_network_threats(container_name, max_wait=45, match=None):
     only threats whose description contains it count. Returns the list of network
     threats (possibly empty if none appeared within the budget).
     """
-
-    def network_threats():
-        return [
-            e
-            for e in get_threat_events(container_name)
-            if e.get("category") == "network"
-            and (match is None or match in e.get("description", ""))
-        ]
-
-    deadline = time.monotonic() + max_wait
-    while time.monotonic() < deadline:
-        net = network_threats()
-        if net:
-            return net
-        time.sleep(2)
-    return network_threats()
+    return wait_for_threats(
+        container_name,
+        lambda e: (
+            e.get("category") == "network" and (match is None or match in e.get("description", ""))
+        ),
+        max_wait,
+    )
 
 
 def hold_script(container_name, script, *args):
-    """Run `python3 -c script args...` in the container in the background, to
-    hold sockets open while the monitor polls. Returns the Popen; terminate it."""
-    return subprocess.Popen(
-        ["incus", "exec", container_name, "--", "python3", "-c", script, *args],
+    """Run python3 script args... in the container in the background, to hold
+    sockets open while the monitor polls. Returns the Popen; terminate it.
+
+    The script goes in on stdin, not as `python3 -c`: the process monitor flags
+    a `python3 -c` command line that names a socket or tcp/udp as a reverse
+    shell (critical, auto-kill)."""
+    holder = subprocess.Popen(
+        ["incus", "exec", container_name, "--", "python3", "-", *args],
+        stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        text=True,
     )
+    holder.stdin.write(script)
+    holder.stdin.close()
+    return holder
 
 
 def find_container_cgroup_path(container_name: str) -> str | None:
@@ -224,11 +230,20 @@ MALICIOUS_ONELINERS = [
 # ------------------------------------------------------------------ #
 
 
-def start_shell(test_workspace, coi_binary, slot):
+def start_shell(test_workspace, coi_binary, slot, extra_args=()):
     """Start a monitored `coi shell` in the given slot, wait until Running, and
     let the monitoring baseline stabilize. Returns (container_name, proc)."""
     proc = subprocess.Popen(
-        [coi_binary, "shell", "--workspace", test_workspace, "--slot", str(slot), "--debug"],
+        [
+            coi_binary,
+            "shell",
+            "--workspace",
+            test_workspace,
+            "--slot",
+            str(slot),
+            "--debug",
+            *extra_args,
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -539,3 +554,111 @@ def coi_session_logs(container_name, tail=4000):
         except OSError:
             pass
     return out or "\n(no coi session logs)"
+
+
+# A TCP connection stays in the socket table only while it is ESTABLISHED: one
+# the firewall rejects (a blocked LAN host, the gateway) is reset at once, and
+# only the nft monitor sees its SYN, on the FORWARD path. A connected UDP socket
+# stays whatever the firewall does, and sends a datagram every second.
+_HOLD_CONNECT = """
+import sys, time
+from socket import SOCK_DGRAM, SOCK_STREAM, socket
+udp = sys.argv[4] == "udp"
+s = socket(type=SOCK_DGRAM if udp else SOCK_STREAM)
+s.setblocking(False)
+s.connect_ex((sys.argv[1], int(sys.argv[2])))
+for _ in range(int(sys.argv[3])):
+    if udp:
+        try:
+            s.send(b"x")
+        except OSError:
+            pass
+    time.sleep(1)
+"""
+
+
+def hold_connect(container_name, host, port, seconds=60, proto="tcp"):
+    """Keep one TCP (or connected UDP) socket to host:port open from inside the
+    container for the monitors to see. See _HOLD_CONNECT for when a TCP socket
+    stays in the table."""
+    return hold_script(container_name, _HOLD_CONNECT, host, str(port), str(seconds), proto)
+
+
+def assert_established(container_name, holder, ip, port, timeout=15):
+    """Fail unless holder is alive and its TCP connection to ip:port is
+    ESTABLISHED in the container, so a "no threat" assertion has real traffic
+    behind it."""
+    out = ""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        assert holder.poll() is None, f"the connection to {ip}:{port} exited ({holder.returncode})"
+        out = subprocess.run(
+            ["incus", "exec", container_name, "--", "ss", "-tnH", "state", "established"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+        if f"{ip}:{port}" in out.split():
+            return
+        time.sleep(1)
+    raise AssertionError(f"no ESTABLISHED connection to {ip}:{port}; sockets:\n{out}")
+
+
+def is_c2_port_threat(host, port=4444):
+    """A threat about host:port, from the process monitor ("<ip>:<port>") or
+    the nft monitor ("C2/backdoor port <port> to <ip>")."""
+    return lambda e: (
+        f"{host}:{port}" in e.get("description", "")
+        or f"port {port} to {host}" in e.get("description", "")
+    )
+
+
+@contextlib.contextmanager
+def monitored_shell(test_workspace, coi_binary, slot, config, extra_args=()):
+    """Write config to ~/.coi/config.toml, start a monitored `coi shell` in
+    slot, wait until Running and let the baseline settle. Yields
+    (container_name, holders): processes appended to holders are terminated on
+    exit. The container is deleted and the config restored on every path,
+    including a start failure."""
+    config_path = Path.home() / ".coi" / "config.toml"
+    backup = config_path.read_text() if config_path.exists() else None
+    container_name = (
+        get_container_name_from_workspace(test_workspace).rsplit("-", 1)[0] + f"-{slot}"
+    )
+    holders = []
+    proc = None
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(config)
+        _, proc = start_shell(test_workspace, coi_binary, slot, extra_args)
+        yield container_name, holders
+    finally:
+        for h in holders:
+            h.terminate()
+        if proc is not None:
+            proc.terminate()
+        cleanup_container(container_name, coi_binary)
+        if backup is not None:
+            config_path.write_text(backup)
+        elif config_path.exists():
+            config_path.unlink()
+
+
+def is_metadata_threat(event):
+    """A threat about 169.254.169.254, from either network monitor (the nft one
+    does not name the address)."""
+    return "169.254.169.254" in event.get("description", "") or "metadata" in (
+        event.get("title", "").lower()
+    )
+
+
+def wait_for_threats(container_name, match, max_wait=45, nft=False):
+    """Poll the audit log until a threat event satisfies match; return those.
+    nft as in get_threat_events."""
+    deadline = time.monotonic() + max_wait
+    while time.monotonic() < deadline:
+        found = [e for e in get_threat_events(container_name, nft) if match(e)]
+        if found:
+            return found
+        time.sleep(2)
+    return [e for e in get_threat_events(container_name, nft) if match(e)]
