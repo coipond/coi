@@ -4,8 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestParseAuthLogLine_FailedPassword(t *testing.T) {
@@ -458,5 +462,198 @@ func TestPollFile_DetectsRotationViaProcRoot(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("post-rotation attacker line not detected; threats=%d", len(threats))
+	}
+}
+
+// signalAllThreads sends SIGURG (handled and ignored by the Go runtime) to
+// every thread of this process, so a thread blocked in poll(2) gets EINTR.
+func signalAllThreads(t *testing.T) {
+	t.Helper()
+	tasks, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range tasks {
+		tid, err := strconv.Atoi(task.Name())
+		if err != nil {
+			continue
+		}
+		_ = unix.Tgkill(os.Getpid(), tid, unix.SIGURG)
+	}
+}
+
+// TestInotifyReader_SurvivesSignals checks that the reader keeps running when
+// a signal (SIGCHLD from the monitor's incus subprocesses) interrupts poll(2):
+// poll is never restarted after a signal, so EINTR must not stop the reader.
+func TestInotifyReader_SurvivesSignals(t *testing.T) {
+	ifd, err := unix.InotifyInit1(unix.IN_CLOEXEC | unix.IN_NONBLOCK)
+	if err != nil {
+		t.Skipf("inotify unavailable: %v", err)
+	}
+
+	logPath := filepath.Join(t.TempDir(), "auth.log")
+	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unix.InotifyAddWatch(ifd, logPath, unix.IN_MODIFY); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events := inotifyReader(ctx, ifd)
+	t.Cleanup(func() {
+		// Close ifd only after the reader stops, so it can't read the next
+		// test's inotify fd once the number is reused.
+		cancel()
+		for range events {
+		}
+		unix.Close(ifd)
+	})
+	for range 50 {
+		signalAllThreads(t)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := os.WriteFile(logPath, []byte("line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev, ok := <-events:
+		if !ok {
+			t.Fatal("inotify reader stopped after a signal interrupted poll")
+		}
+		if ev.mask&unix.IN_MODIFY == 0 {
+			t.Fatalf("want IN_MODIFY, got mask %#x", ev.mask)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no inotify event after the write")
+	}
+}
+
+// fakeIncusInfoSelf puts an incus on PATH whose `incus info` reports this
+// process, so /proc/<pid>/root/<rel> is the host path /<rel>.
+func fakeIncusInfoSelf(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho \"PID: " + strconv.Itoa(os.Getpid()) + "\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestLogWatcherRun_FallsBackToPollingWhenReaderStops checks that Run keeps
+// watching by polling, and reports it, when the inotify reader stops while the
+// session is still live.
+func TestLogWatcherRun_FallsBackToPollingWhenReaderStops(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "auth.log")
+	if err := os.WriteFile(logPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeIncusInfoSelf(t)
+
+	oldCandidates, oldInterval, oldReader := logCandidates, logPollInterval, newInotifyReader
+	t.Cleanup(func() {
+		logCandidates, logPollInterval, newInotifyReader = oldCandidates, oldInterval, oldReader
+	})
+	logCandidates = []string{strings.TrimPrefix(logPath, "/")}
+	logPollInterval = 50 * time.Millisecond
+	newInotifyReader = func(context.Context, int) <-chan inotifyRawEvent {
+		ch := make(chan inotifyRawEvent)
+		close(ch)
+		return ch
+	}
+
+	threats := make(chan ThreatEvent, 4)
+	errs := make(chan error, 4)
+	lw := NewLogWatcher("coi-logwatcher-fallback-test",
+		func(e ThreatEvent) { threats <- e },
+		func(err error) {
+			select {
+			case errs <- err:
+			default:
+			}
+		})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { lw.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	select {
+	case err := <-errs:
+		if !strings.Contains(err.Error(), "falling back to") {
+			t.Fatalf("want the fallback message, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no fallback message after the reader stopped")
+	}
+
+	line := "Jun  5 12:00:00 coi sshd[1]: Failed password for a from 1.1.1.1 port 22 ssh2\n"
+	if err := os.WriteFile(logPath, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-threats:
+		if e.Evidence.AuthLog == nil || e.Evidence.AuthLog.Pattern != "ssh_failed_password" {
+			t.Fatalf("want ssh_failed_password, got %+v", e.Evidence)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("line written after the fallback was not detected")
+	}
+}
+
+// TestLogWatcherRun_StopsReaderBeforeClosingFd checks that when Run returns
+// its inotify reader has stopped, and that the reader stopped while the fd was
+// still open.
+func TestLogWatcherRun_StopsReaderBeforeClosingFd(t *testing.T) {
+	fakeIncusInfoSelf(t)
+	oldCandidates, oldReader := logCandidates, newInotifyReader
+	t.Cleanup(func() { logCandidates, newInotifyReader = oldCandidates, oldReader })
+	logCandidates = []string{strings.TrimPrefix(filepath.Join(t.TempDir(), "auth.log"), "/")}
+
+	var events <-chan inotifyRawEvent
+	fdOpenAtReaderStop := make(chan bool, 1)
+	newInotifyReader = func(ctx context.Context, ifd int) <-chan inotifyRawEvent {
+		inner := inotifyReader(ctx, ifd)
+		out := make(chan inotifyRawEvent)
+		go func() {
+			defer close(out)
+			for ev := range inner {
+				out <- ev
+			}
+			_, err := unix.FcntlInt(uintptr(ifd), unix.F_GETFD, 0)
+			fdOpenAtReaderStop <- err == nil
+		}()
+		events = out
+		return out
+	}
+
+	lw := NewLogWatcher("coi-logwatcher-stop-test", nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { lw.Run(ctx); close(done) }()
+	time.Sleep(100 * time.Millisecond) // let Run start the reader
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+
+	if events == nil {
+		t.Fatal("Run did not start the inotify reader")
+	}
+	select {
+	case _, ok := <-events:
+		if ok {
+			t.Fatal("unexpected event after Run returned")
+		}
+	default:
+		t.Fatal("inotify reader still running after Run returned")
+	}
+	if !<-fdOpenAtReaderStop {
+		t.Fatal("Run closed the inotify fd before its reader stopped")
 	}
 }
