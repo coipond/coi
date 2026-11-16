@@ -125,18 +125,35 @@ def test_guest_apparmor_masked_and_docker_confined(coi_binary, cleanup_container
     delete(coi_binary, container_name)
 
 
-# Pinned so a new Playwright release can't break this test. The script downloads
+# Pinned so a new Playwright release can't break this test. The setup downloads
 # Chromium's headless shell and its apt dependencies, so it needs network; it
 # takes ~35s in CI.
 PLAYWRIGHT_VERSION = "1.64.0"
 
-PLAYWRIGHT_SCRIPT = r"""
-set -e
+# Each download attempt is capped inside the container, so a stalled one stops
+# there instead of running on under the next attempt.
+PLAYWRIGHT_SETUP_TIMEOUT_SEC = 120
+PLAYWRIGHT_SETUP_ATTEMPTS = 2
+
+# A timed-out install-deps can leave dpkg running and holding apt's lock, so an
+# attempt first waits for it and finishes its half-done work.
+PLAYWRIGHT_SETUP_SCRIPT = r"""
+while pgrep -x dpkg >/dev/null; do sleep 1; done
+sudo dpkg --configure -a
+timeout --kill-after=10 SETUP_TIMEOUT_SEC bash -ec '
 mkdir -p ~/pw && cd ~/pw
 npm init -y >/dev/null
 npm install --silent playwright@PLAYWRIGHT_VERSION >/dev/null
 sudo -E env "PATH=$PATH" npx playwright install-deps chromium >/dev/null
 npx playwright install --only-shell chromium >/dev/null
+'
+""".replace("PLAYWRIGHT_VERSION", PLAYWRIGHT_VERSION).replace(
+    "SETUP_TIMEOUT_SEC", str(PLAYWRIGHT_SETUP_TIMEOUT_SEC)
+)
+
+PLAYWRIGHT_CHECK_SCRIPT = r"""
+set -e
+cd ~/pw
 cat > check.js <<'EOF'
 const { chromium } = require('playwright');
 (async () => {
@@ -148,17 +165,40 @@ const { chromium } = require('playwright');
 })().catch((e) => { console.error(e); process.exit(1); });
 EOF
 node check.js
-""".replace("PLAYWRIGHT_VERSION", PLAYWRIGHT_VERSION)
+"""
 
 
-# No reruns: the test is download-bound, so a retry rarely helps and the CI-wide
-# --reruns 2 would triple a timeout.
+# No reruns: a failed download skips, so only a Chromium launch failure fails
+# the test, and a retry would only hide it.
 @pytest.mark.flaky(reruns=0)
 def test_playwright_headless_chromium_works(coi_binary, cleanup_containers, workspace_dir):
-    """Playwright launches headless Chromium as the code user, with default options."""
+    """Playwright launches headless Chromium as the code user, with default options.
+
+    Skips when the npm, apt or Playwright CDN downloads fail on every attempt.
+    """
     container_name = launch(coi_binary, workspace_dir)
 
-    rc, output = exec_in(coi_binary, container_name, PLAYWRIGHT_SCRIPT, user=1000, timeout=300)
+    for _ in range(PLAYWRIGHT_SETUP_ATTEMPTS):
+        try:
+            rc, output = exec_in(
+                coi_binary,
+                container_name,
+                PLAYWRIGHT_SETUP_SCRIPT,
+                user=1000,
+                timeout=PLAYWRIGHT_SETUP_TIMEOUT_SEC + 60,
+            )
+        except subprocess.TimeoutExpired as e:
+            rc, output = 124, str(e)
+        if rc == 0:
+            break
+    else:
+        delete(coi_binary, container_name)
+        pytest.skip(
+            f"Playwright download failed {PLAYWRIGHT_SETUP_ATTEMPTS} times "
+            f"(last rc {rc}, 124 = timed out). output: {output[-1000:]}"
+        )
+
+    rc, output = exec_in(coi_binary, container_name, PLAYWRIGHT_CHECK_SCRIPT, user=1000)
     assert rc == 0 and "Playwright works!" in output, (
         f"Playwright should launch headless Chromium. output: {output[-3000:]}"
     )
