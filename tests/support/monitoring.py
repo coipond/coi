@@ -390,6 +390,31 @@ def disk_space_warnings(container_name):
     ]
 
 
+def disk_space_snapshots(container_name):
+    """/tmp usage and collection errors of each monitor snapshot in the audit log."""
+    log_path = Path.home() / ".coi" / "audit" / f"{container_name}.jsonl"
+    if not log_path.exists():
+        return []
+    snapshots = []
+    for line in log_path.read_text().splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "filesystem" not in event:
+            continue
+        fs = event["filesystem"]
+        snapshots.append(
+            {
+                "timestamp": event.get("timestamp"),
+                "tmp_used_percent": fs.get("tmp_used_percent"),
+                "tmp_total_mb": fs.get("tmp_total_mb"),
+                "errors": event.get("errors"),
+            }
+        )
+    return snapshots
+
+
 def fill_tmp(container_name, name, size_mb):
     result = subprocess.run(
         [

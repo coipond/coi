@@ -176,6 +176,9 @@ type FilesystemStats struct {
 	TmpUsedMB      float64 `json:"tmp_used_mb,omitempty"`
 	TmpTotalMB     float64 `json:"tmp_total_mb,omitempty"`
 	TmpUsedPercent float64 `json:"tmp_used_percent,omitempty"`
+	// diskSpaceErr is set on the poll where disk space collection starts
+	// failing; the collector reports it as a snapshot error.
+	diskSpaceErr error
 }
 
 // NetworkStats represents network connection information

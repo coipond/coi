@@ -1,6 +1,14 @@
 package monitor
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
 
 // counterDelta must clamp a backwards-going cumulative counter to 0 instead of
 // underflowing. A cgroup io counter reads lower than the prior sample when
@@ -86,5 +94,121 @@ func TestParseDfBMOutput(t *testing.T) {
 				t.Errorf("percent: got %v want %v", pct, tt.wantPercent)
 			}
 		})
+	}
+}
+
+// fakeDfIncus puts an `incus` script on PATH that runs body.
+func fakeDfIncus(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" + body + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestCollectDiskSpaceViaIncusExec(t *testing.T) {
+	fakeDfIncus(t, `printf 'Filesystem 1M-blocks Used Available Use%% Mounted on\ntmpfs 64M 58M 6M 91%% /tmp\n'`)
+
+	used, total, pct, err := collectDiskSpaceViaIncusExec(t.Context(), "c1")
+	if err != nil {
+		t.Fatalf("collectDiskSpaceViaIncusExec: %v", err)
+	}
+	if used != 58 || total != 64 || pct != 91 {
+		t.Errorf("got used=%v total=%v pct=%v, want 58/64/91", used, total, pct)
+	}
+}
+
+// A df that prints nothing parseable must fail, not report an empty /tmp.
+func TestCollectDiskSpaceViaIncusExecUnparseable(t *testing.T) {
+	fakeDfIncus(t, `echo garbage`)
+
+	if _, _, _, err := collectDiskSpaceViaIncusExec(t.Context(), "c1"); err == nil {
+		t.Fatal("want an error for unparseable df output")
+	}
+}
+
+func TestCollectDiskSpaceViaIncusExecTimesOut(t *testing.T) {
+	fakeDfIncus(t, `exec sleep 30`)
+	old := diskSpaceExecTimeout
+	diskSpaceExecTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { diskSpaceExecTimeout = old })
+
+	start := time.Now()
+	_, _, _, err := collectDiskSpaceViaIncusExec(t.Context(), "c1")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want context.DeadlineExceeded, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("df fallback took %v, want it bounded by the timeout", elapsed)
+	}
+}
+
+func TestDiskSpaceTransition(t *testing.T) {
+	fm := NewFilesystemMonitor()
+	boom := errors.New("boom")
+
+	steps := []struct {
+		in   error
+		want error
+	}{
+		{nil, nil},
+		{boom, boom},
+		{boom, nil},
+		{nil, nil},
+		{boom, boom},
+	}
+	for i, s := range steps {
+		if got := fm.diskSpaceTransition(s.in); !errors.Is(got, s.want) || (got == nil) != (s.want == nil) {
+			t.Errorf("step %d: diskSpaceTransition(%v) = %v, want %v", i, s.in, got, s.want)
+		}
+	}
+}
+
+func TestCollectorReportsDiskSpaceFailureOnce(t *testing.T) {
+	fakeDfIncus(t, `exit 1`)
+	oldStats, oldDisk := filesystemResourceStats, collectDiskSpace
+	t.Cleanup(func() { filesystemResourceStats, collectDiskSpace = oldStats, oldDisk })
+	filesystemResourceStats = func(context.Context, string) (ResourceStats, error) {
+		return ResourceStats{}, nil
+	}
+	diskErr := errors.New("df failed")
+	collectDiskSpace = func(context.Context, string) (float64, float64, float64, error) {
+		if diskErr != nil {
+			return 0, 0, 0, diskErr
+		}
+		return 10, 64, 15.6, nil
+	}
+
+	c := NewCollector("c1", "", "/workspace", nil)
+	diskErrors := func() []string {
+		t.Helper()
+		snapshot, err := c.Collect(t.Context())
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		var got []string
+		for _, e := range snapshot.Errors {
+			if strings.HasPrefix(e, "disk space: ") {
+				got = append(got, e)
+			}
+		}
+		return got
+	}
+
+	if got := diskErrors(); len(got) != 1 || got[0] != "disk space: df failed" {
+		t.Fatalf("first failing poll: got %q, want one disk space error", got)
+	}
+	if got := diskErrors(); len(got) != 0 {
+		t.Fatalf("second failing poll: got %q, want none", got)
+	}
+	diskErr = nil
+	if got := diskErrors(); len(got) != 0 {
+		t.Fatalf("recovered poll: got %q, want none", got)
+	}
+	diskErr = errors.New("df failed again")
+	if got := diskErrors(); len(got) != 1 {
+		t.Fatalf("failing again: got %q, want one disk space error", got)
 	}
 }
