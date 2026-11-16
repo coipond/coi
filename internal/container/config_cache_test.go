@@ -186,6 +186,9 @@ func TestContainerRunningAndStopped(t *testing.T) {
 	}
 
 	fakeIncusScript(t, "exit 1")
+	if running, err := ContainerRunning("c1"); err == nil || running {
+		t.Errorf("an incus error must be returned, got (%v, %v)", running, err)
+	}
 	if stopped, err := ContainerStopped("c1"); err == nil || stopped {
 		t.Errorf("an incus error must not read as stopped, got (%v, %v)", stopped, err)
 	}
