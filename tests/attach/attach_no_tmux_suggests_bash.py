@@ -57,6 +57,8 @@ def test_attach_no_tmux_suggests_bash(coi_binary, cleanup_containers, workspace_
 
     # Check output suggests using --bash
     combined_output = result.stdout + result.stderr
+    # Failed tmux attach: exit code 1 (generic failure)
+    assert result.returncode == 1, f"Failed attach should exit 1. Got:\n{combined_output}"
     assert "--bash" in combined_output or "No tmux session" in combined_output, (
         f"Should suggest using --bash. Got:\n{combined_output}"
     )

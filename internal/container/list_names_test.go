@@ -109,11 +109,18 @@ func TestParseRunningNamesCSV(t *testing.T) {
 func TestListRunningContainerNames(t *testing.T) {
 	logPath := fakeListIncus(t, "c1,RUNNING\nc2,FROZEN\nc3,RUNNING\n")
 
-	names, err := ListRunningContainerNames()
+	names, err := ListRunningContainerNames("")
 	if err != nil || !reflect.DeepEqual(names, []string{"c1", "c3"}) {
 		t.Fatalf("names = %q, %v", names, err)
 	}
-	if got := calls(t, logPath); !reflect.DeepEqual(got, []string{"--project default list --format=csv --columns=ns"}) {
-		t.Errorf("calls = %q", got)
+	if _, err := ListRunningContainerNames("^coi-"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"--project default list --format=csv --columns=ns",
+		"--project default list ^coi- --format=csv --columns=ns",
+	}
+	if got := calls(t, logPath); !reflect.DeepEqual(got, want) {
+		t.Errorf("calls = %q, want %q", got, want)
 	}
 }
