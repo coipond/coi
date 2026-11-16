@@ -145,22 +145,48 @@ func TestIncusArgsAreReadOnly(t *testing.T) {
 	}
 }
 
-func TestRunningFromCSV(t *testing.T) {
-	if !runningFromCSV("c1,RUNNING\n", "c1") {
-		t.Error("running")
-	}
-	if runningFromCSV("c1,STOPPED\n", "c1") || runningFromCSV("c10,RUNNING\n", "c1") || runningFromCSV("", "c1") {
-		t.Error("not running")
+func TestStatusFromCSV(t *testing.T) {
+	for _, tc := range []struct {
+		output, status string
+		listed         bool
+	}{
+		{"c1,RUNNING\n", "RUNNING", true},
+		{"c1,STOPPING\n", "STOPPING", true},
+		{"c10,RUNNING\n", "", false},
+		{"", "", false},
+	} {
+		status, listed := statusFromCSV(tc.output, "c1")
+		if status != tc.status || listed != tc.listed {
+			t.Errorf("%q: got (%q, %v), want (%q, %v)", tc.output, status, listed, tc.status, tc.listed)
+		}
 	}
 }
 
-func TestStoppedFromCSV(t *testing.T) {
-	if !stoppedFromCSV("c1,STOPPED\n", "c1") || !stoppedFromCSV("c10,RUNNING\n", "c1") || !stoppedFromCSV("", "c1") {
-		t.Error("stopped or gone")
-	}
-	for _, status := range []string{"RUNNING", "STOPPING", "ERROR", "FROZEN"} {
-		if stoppedFromCSV("c1,"+status+"\n", "c1") {
-			t.Errorf("%s is not stopped", status)
+func TestContainerRunningAndStopped(t *testing.T) {
+	for _, tc := range []struct {
+		output           string
+		running, stopped bool
+	}{
+		{"c1,RUNNING", true, false},
+		{"c1,STOPPED", false, true},
+		{"c1,STOPPING", false, false},
+		{"c1,ERROR", false, false},
+		{"c1,FROZEN", false, false},
+		{"", false, true},
+	} {
+		fakeIncusScript(t, "echo '"+tc.output+"'")
+		running, err := ContainerRunning("c1")
+		if err != nil || running != tc.running {
+			t.Errorf("%q: ContainerRunning = (%v, %v), want %v", tc.output, running, err, tc.running)
 		}
+		stopped, err := ContainerStopped("c1")
+		if err != nil || stopped != tc.stopped {
+			t.Errorf("%q: ContainerStopped = (%v, %v), want %v", tc.output, stopped, err, tc.stopped)
+		}
+	}
+
+	fakeIncusScript(t, "exit 1")
+	if stopped, err := ContainerStopped("c1"); err == nil || stopped {
+		t.Errorf("an incus error must not read as stopped, got (%v, %v)", stopped, err)
 	}
 }
