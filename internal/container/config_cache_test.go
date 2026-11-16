@@ -153,3 +153,14 @@ func TestRunningFromCSV(t *testing.T) {
 		t.Error("not running")
 	}
 }
+
+func TestStoppedFromCSV(t *testing.T) {
+	if !stoppedFromCSV("c1,STOPPED\n", "c1") || !stoppedFromCSV("c10,RUNNING\n", "c1") || !stoppedFromCSV("", "c1") {
+		t.Error("stopped or gone")
+	}
+	for _, status := range []string{"RUNNING", "STOPPING", "ERROR", "FROZEN"} {
+		if stoppedFromCSV("c1,"+status+"\n", "c1") {
+			t.Errorf("%s is not stopped", status)
+		}
+	}
+}

@@ -34,6 +34,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **A slow `poweroff` no longer leaves an ephemeral container running** — while a container shuts down, Incus can briefly report it as `Stopping` or `Error` and then as `Running` again. Cleanup took the first of these answers as stopped, then saw `Running`, printed "Container kept running" and kept the container. It now waits until Incus reports the container as stopped, then removes it.
 - [Bug Fix] **`coi attach` ignores stopped containers** — with one running session it attaches even when stopped containers exist, the session list numbers running sessions only, and with none running it says `No active sessions`. `coi attach <stopped container>` says the container is not running instead of a code-user error.
 - [Bug Fix] **`coi file pull -r` with a relative container path reads from the named container** — `coi file pull -r c1:workspace/x ./out` used to read from a container named `c1workspace`, or fail with `Instance not found`. A relative path is now read from `/`, as without `-r`.
 - [Bug Fix] **Containers from OCI registry images start with network rules and host entries (#977)** — on such containers `/etc/hosts` is read-only even for container root, so `coi shell` and `coi run` failed in `allowlist` mode or with `[[network.hosts]]`, and `coi hosts add` failed. coi now keeps its own writable copy of `/etc/hosts` in the container. It needs no host sudo.

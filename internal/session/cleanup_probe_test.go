@@ -9,14 +9,16 @@ import (
 	"github.com/coipond/coi/internal/container"
 )
 
-// fakeProber scripts successive probe answers; Running answers come from a
-// function of the call index so tests can flip state mid-flight.
+// fakeProber scripts successive probe answers; Running and Stopped answers
+// come from a function of the call index so tests can flip state mid-flight.
 type fakeProber struct {
-	outs     []string
-	errs     []error
-	execs    int
-	running  func(call int) (bool, error)
-	runCalls int
+	outs      []string
+	errs      []error
+	execs     int
+	running   func(call int) (bool, error)
+	runCalls  int
+	stopped   func(call int) (bool, error)
+	stopCalls int
 }
 
 func (f *fakeProber) ExecCommand(_ string, _ container.ExecCommandOptions) (string, error) {
@@ -40,6 +42,15 @@ func (f *fakeProber) Running() (bool, error) {
 		return true, nil
 	}
 	return f.running(i)
+}
+
+func (f *fakeProber) Stopped() (bool, error) {
+	i := f.stopCalls
+	f.stopCalls++
+	if f.stopped == nil {
+		return false, nil
+	}
+	return f.stopped(i)
 }
 
 func busDownErr() error {
@@ -164,17 +175,38 @@ func TestContainerRunning_ErrorIsUnknownNotStopped(t *testing.T) {
 
 func TestWaitForStopped(t *testing.T) {
 	// Stops on the second poll.
-	f := &fakeProber{running: func(call int) (bool, error) { return call < 1, nil }}
+	f := &fakeProber{stopped: func(call int) (bool, error) { return call >= 1, nil }}
 	stopped, interrupted := waitForStopped(f, 5*time.Second)
 	if !stopped || interrupted {
 		t.Errorf("expected (stopped=true, interrupted=false), got (%v, %v)", stopped, interrupted)
 	}
 
 	// Never stops: times out, and daemon errors are not "stopped".
-	f2 := &fakeProber{running: func(int) (bool, error) { return false, errors.New("err") }}
+	f2 := &fakeProber{stopped: func(int) (bool, error) { return true, errors.New("err") }}
 	stopped, _ = waitForStopped(f2, time.Second)
 	if stopped {
-		t.Error("Running() errors must not satisfy the stopped condition")
+		t.Error("Stopped() errors must not satisfy the stopped condition")
+	}
+}
+
+// A slow guest poweroff reads Running, then Stopping/Error, then Running
+// again while Incus runs its stop hook, then Stopped. A "not running" answer
+// mid-shutdown must not end the wait: the re-read would then see Running and
+// cleanup would keep the ephemeral container.
+func TestWaitForStopped_IgnoresNotRunningUntilStopped(t *testing.T) {
+	f := &fakeProber{
+		running: func(int) (bool, error) { return false, nil },
+		stopped: func(call int) (bool, error) { return call >= 3, nil },
+	}
+	stopped, interrupted := waitForStopped(f, 5*time.Second)
+	if !stopped || interrupted {
+		t.Fatalf("expected (stopped=true, interrupted=false), got (%v, %v)", stopped, interrupted)
+	}
+	if f.runCalls != 0 {
+		t.Errorf("waitForStopped must not trust Running(), got %d calls", f.runCalls)
+	}
+	if f.stopCalls != 4 {
+		t.Errorf("expected to wait for the 4th answer (Stopped), got %d calls", f.stopCalls)
 	}
 }
 

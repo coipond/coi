@@ -1012,6 +1012,30 @@ func runningFromCSV(output, containerName string) bool {
 	return false
 }
 
+// ContainerStopped reports whether Incus positively lists the container as
+// stopped, or no longer lists it. Not the inverse of ContainerRunning: during
+// a guest poweroff Incus answers Stopping or Error (unresponsive LXC
+// monitor) and then Running again while its stop hook runs.
+func ContainerStopped(containerName string) (bool, error) {
+	output, err := IncusOutput("list", "^"+regexp.QuoteMeta(containerName)+"$", "--format=csv", "--columns=ns")
+	if err != nil {
+		return false, err
+	}
+	return stoppedFromCSV(output, containerName), nil
+}
+
+// stoppedFromCSV reports whether `incus list --format=csv --columns=ns`
+// output lists containerName as stopped or does not list it.
+func stoppedFromCSV(output, containerName string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		name, status, ok := strings.Cut(strings.TrimSpace(line), ",")
+		if ok && name == containerName {
+			return StatusIsStopped(status)
+		}
+	}
+	return true
+}
+
 // PublishContainer publishes a stopped container as an image
 func PublishContainer(containerName, aliasName, description, compression string) (string, error) {
 	// Stop container if running (ignore error if already stopped)
