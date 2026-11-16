@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/coipond/coi/internal/container"
@@ -54,6 +55,10 @@ func init() {
 }
 
 func shutdownCommand(cmd *cobra.Command, args []string) error {
+	if err := checkContainerArgsUsage(cmd, args, shutdownAll, "shuts down"); err != nil {
+		return err
+	}
+
 	containerNames, err := resolveContainerArgs(args, shutdownAll, shutdownForce, "Shutdown")
 	if err != nil {
 		return err
@@ -61,6 +66,7 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 	if containerNames == nil {
 		return nil
 	}
+	containerNames = uniqueNames(containerNames)
 
 	// Graceful-shutdown window is config-driven: [container] shutdown_timeout
 	// (settable globally, per project, or per profile).
@@ -68,6 +74,7 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 
 	// Shutdown each container
 	shutdown := 0
+	var notShutdown []string
 	for _, name := range containerNames {
 		fmt.Printf("Shutting down container %s (timeout: %ds)...\n", name, shutdownTimeout)
 		mgr := container.NewManager(name)
@@ -75,10 +82,12 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 		state, containerIP, err := stateAndFirewallIP(mgr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: Failed to check if %s exists: %v\n", name, err)
+			notShutdown = append(notShutdown, name)
 			continue
 		}
 		if !state.Exists {
 			fmt.Fprintf(os.Stderr, "  Warning: Container %s does not exist\n", name)
+			notShutdown = append(notShutdown, name)
 			continue
 		}
 
@@ -122,6 +131,7 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  ✓ Shutdown %s (already removed)\n", name)
 			} else {
 				fmt.Fprintf(os.Stderr, "  Warning: Failed to delete %s: %v\n", name, err)
+				notShutdown = append(notShutdown, name)
 			}
 		} else {
 			shutdown++
@@ -133,10 +143,13 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nShutdown %d container(s)\n", shutdown)
 	} else {
 		fmt.Println("\nNo containers were shutdown")
-		if len(containerNames) > 0 {
-			// User specified containers but none were shutdown - this is an error
-			return fmt.Errorf("failed to shutdown specified containers")
-		}
+	}
+
+	// With --all, a container gone since the list is not an error unless
+	// nothing was shut down; every named target must be shut down.
+	if len(notShutdown) > 0 && (!shutdownAll || shutdown == 0) {
+		return fmt.Errorf("failed to shut down %d of %d container(s): %s",
+			len(notShutdown), len(containerNames), strings.Join(notShutdown, ", "))
 	}
 
 	return nil
