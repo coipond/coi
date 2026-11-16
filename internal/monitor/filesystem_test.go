@@ -1,6 +1,13 @@
 package monitor
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 // counterDelta must clamp a backwards-going cumulative counter to 0 instead of
 // underflowing. A cgroup io counter reads lower than the prior sample when
@@ -86,5 +93,76 @@ func TestParseDfBMOutput(t *testing.T) {
 				t.Errorf("percent: got %v want %v", pct, tt.wantPercent)
 			}
 		})
+	}
+}
+
+// fakeDfIncus puts an `incus` script on PATH that runs body.
+func fakeDfIncus(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" + body + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestCollectDiskSpaceViaIncusExec(t *testing.T) {
+	fakeDfIncus(t, `printf 'Filesystem 1M-blocks Used Available Use%% Mounted on\ntmpfs 64M 58M 6M 91%% /tmp\n'`)
+
+	used, total, pct, err := collectDiskSpaceViaIncusExec(t.Context(), "c1")
+	if err != nil {
+		t.Fatalf("collectDiskSpaceViaIncusExec: %v", err)
+	}
+	if used != 58 || total != 64 || pct != 91 {
+		t.Errorf("got used=%v total=%v pct=%v, want 58/64/91", used, total, pct)
+	}
+}
+
+// A df that prints nothing parseable must fail, not report an empty /tmp.
+func TestCollectDiskSpaceViaIncusExecUnparseable(t *testing.T) {
+	fakeDfIncus(t, `echo garbage`)
+
+	if _, _, _, err := collectDiskSpaceViaIncusExec(t.Context(), "c1"); err == nil {
+		t.Fatal("want an error for unparseable df output")
+	}
+}
+
+// A hung incus exec must not block the poll: the collector waits for every
+// source, so one stuck df would stop all detection for the container.
+func TestCollectDiskSpaceViaIncusExecTimesOut(t *testing.T) {
+	fakeDfIncus(t, `exec sleep 30`)
+	old := diskSpaceExecTimeout
+	diskSpaceExecTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { diskSpaceExecTimeout = old })
+
+	start := time.Now()
+	_, _, _, err := collectDiskSpaceViaIncusExec(t.Context(), "c1")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want context.DeadlineExceeded, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("df fallback took %v, want it bounded by the timeout", elapsed)
+	}
+}
+
+func TestDiskSpaceTransition(t *testing.T) {
+	fm := NewFilesystemMonitor()
+	boom := errors.New("boom")
+
+	steps := []struct {
+		in   error
+		want error
+	}{
+		{nil, nil},
+		{boom, boom},
+		{boom, nil},
+		{nil, nil},
+		{boom, boom},
+	}
+	for i, s := range steps {
+		if got := fm.diskSpaceTransition(s.in); !errors.Is(got, s.want) || (got == nil) != (s.want == nil) {
+			t.Errorf("step %d: diskSpaceTransition(%v) = %v, want %v", i, s.in, got, s.want)
+		}
 	}
 }

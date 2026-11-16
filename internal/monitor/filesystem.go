@@ -17,6 +17,7 @@ type FilesystemMonitor struct {
 	mu               sync.Mutex
 	previousSnapshot ioSnapshot
 	previousTime     time.Time
+	diskSpaceFailing bool
 }
 
 type ioSnapshot struct {
@@ -45,7 +46,8 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 	currentWriteBytes := uint64(resourceStats.IOWriteMB * 1024 * 1024)
 
 	// Collect disk space stats (non-fatal if fails)
-	tmpUsed, tmpTotal, tmpPercent, _ := CollectDiskSpace(ctx, containerName)
+	tmpUsed, tmpTotal, tmpPercent, diskErr := CollectDiskSpace(ctx, containerName)
+	diskSpaceErr := fm.diskSpaceTransition(diskErr)
 
 	// Calculate delta and rate
 	if !fm.previousTime.IsZero() {
@@ -66,6 +68,7 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 				TmpUsedMB:         tmpUsed,
 				TmpTotalMB:        tmpTotal,
 				TmpUsedPercent:    tmpPercent,
+				diskSpaceErr:      diskSpaceErr,
 			}
 
 			// Update snapshot
@@ -91,7 +94,19 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 		TmpUsedMB:         tmpUsed,
 		TmpTotalMB:        tmpTotal,
 		TmpUsedPercent:    tmpPercent,
+		diskSpaceErr:      diskSpaceErr,
 	}, nil
+}
+
+// diskSpaceTransition returns err only when disk space collection starts
+// failing, so a persistent failure is reported once, not on every poll.
+func (fm *FilesystemMonitor) diskSpaceTransition(err error) error {
+	wasFailing := fm.diskSpaceFailing
+	fm.diskSpaceFailing = err != nil
+	if err == nil || wasFailing {
+		return nil
+	}
+	return err
 }
 
 // counterDelta returns current - previous for a monotonic cumulative counter,
@@ -217,13 +232,25 @@ func collectDiskSpaceViaStatfs(ctx context.Context, containerName string) (tmpUs
 	return used, total, pct, nil
 }
 
+// diskSpaceExecTimeout bounds the df fallback: the collector waits for every
+// source, so a hung incus exec would stall all detection for the container.
+var diskSpaceExecTimeout = 10 * time.Second
+
 // collectDiskSpaceViaIncusExec falls back to running df inside the container.
 func collectDiskSpaceViaIncusExec(ctx context.Context, containerName string) (tmpUsedMB, tmpTotalMB, tmpUsedPercent float64, err error) {
+	ctx, cancel := context.WithTimeout(ctx, diskSpaceExecTimeout)
+	defer cancel()
 	output, err := container.IncusOutputContext(ctx, "exec", containerName, "--", "df", "-BM", "/tmp")
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0, 0, 0, fmt.Errorf("df /tmp: %w", ctx.Err())
+		}
 		return 0, 0, 0, err
 	}
 	used, total, pct := parseDfBMOutput(output)
+	if total <= 0 {
+		return 0, 0, 0, fmt.Errorf("df /tmp: unexpected output %q", output)
+	}
 	return used, total, pct, nil
 }
 
