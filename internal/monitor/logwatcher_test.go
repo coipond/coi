@@ -531,6 +531,18 @@ func TestInotifyReader_SurvivesSignals(t *testing.T) {
 	}
 }
 
+// fakeIncusInfoSelf puts an incus on PATH whose `incus info` reports this
+// process, so /proc/<pid>/root/<rel> is the host path /<rel>.
+func fakeIncusInfoSelf(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho \"PID: " + strconv.Itoa(os.Getpid()) + "\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // TestLogWatcherRun_FallsBackToPollingWhenReaderStops checks that Run keeps
 // watching by polling, and reports it, when the inotify reader stops while the
 // session is still live.
@@ -540,13 +552,7 @@ func TestLogWatcherRun_FallsBackToPollingWhenReaderStops(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// incus info reports this process, so /proc/<pid>/root/<rel> is logPath.
-	bin := t.TempDir()
-	script := "#!/bin/sh\necho \"PID: " + strconv.Itoa(os.Getpid()) + "\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeIncusInfoSelf(t)
 
 	oldCandidates, oldInterval, oldReader := logCandidates, logPollInterval, newInotifyReader
 	t.Cleanup(func() {
@@ -596,5 +602,60 @@ func TestLogWatcherRun_FallsBackToPollingWhenReaderStops(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("line written after the fallback was not detected")
+	}
+}
+
+// TestLogWatcherRun_StopsReaderBeforeClosingFd checks that when Run returns
+// its inotify reader has stopped, and that the reader stopped while the fd was
+// still open: a reader left polling a closed fd number would read from
+// whatever reuses it.
+func TestLogWatcherRun_StopsReaderBeforeClosingFd(t *testing.T) {
+	fakeIncusInfoSelf(t)
+	oldCandidates, oldReader := logCandidates, newInotifyReader
+	t.Cleanup(func() { logCandidates, newInotifyReader = oldCandidates, oldReader })
+	logCandidates = []string{strings.TrimPrefix(filepath.Join(t.TempDir(), "auth.log"), "/")}
+
+	var events <-chan inotifyRawEvent
+	fdOpenAtReaderStop := make(chan bool, 1)
+	newInotifyReader = func(ctx context.Context, ifd int) <-chan inotifyRawEvent {
+		inner := inotifyReader(ctx, ifd)
+		out := make(chan inotifyRawEvent)
+		go func() {
+			defer close(out)
+			for ev := range inner {
+				out <- ev
+			}
+			_, err := unix.FcntlInt(uintptr(ifd), unix.F_GETFD, 0)
+			fdOpenAtReaderStop <- err == nil
+		}()
+		events = out
+		return out
+	}
+
+	lw := NewLogWatcher("coi-logwatcher-stop-test", nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { lw.Run(ctx); close(done) }()
+	time.Sleep(100 * time.Millisecond) // let Run start the reader
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+
+	if events == nil {
+		t.Fatal("Run did not start the inotify reader")
+	}
+	select {
+	case _, ok := <-events:
+		if ok {
+			t.Fatal("unexpected event after Run returned")
+		}
+	default:
+		t.Fatal("inotify reader still running after Run returned")
+	}
+	if !<-fdOpenAtReaderStop {
+		t.Fatal("Run closed the inotify fd before its reader stopped")
 	}
 }
