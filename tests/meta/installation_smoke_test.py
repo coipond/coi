@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-BUILD_SH = Path(__file__).resolve().parents[2] / "internal" / "image" / "build.sh"
+BUILD_SH = Path(__file__).resolve().parents[2] / "profiles" / "default" / "build.sh"
 
 # Cap for one apt try: a healthy try without a mirror takes about 3 minutes on
 # a slow machine.
@@ -133,6 +133,7 @@ def test_full_installation_process(meta_container, coi_binary):
             f"COI_APT_MIRROR_TIMEOUT={APT_MIRROR_TIMEOUT_SEC} "
         )
     apt_functions = build_sh_functions(
+        "log",
         "configure_network_ipv4",
         "configure_apt_mirror",
         "restore_default_apt_sources",
@@ -140,14 +141,14 @@ def test_full_installation_process(meta_container, coi_binary):
     )
     script = f"""
         set -e
-        log() {{ echo "$*"; }}
         {apt_functions}
         configure_network_ipv4
         configure_apt_mirror
 
-        # dpkg runs in its own session, so killing an earlier try leaves it
-        # running with the lock held, or half-configured if it died.
-        while pgrep -x dpkg >/dev/null; do sleep 1; done
+        # dpkg and apt_get's own timeout run outside this try's process group,
+        # so killing an earlier try can leave them running with the apt lock
+        # held, or dpkg half-configured if it died.
+        while pgrep -x 'dpkg|apt-get' >/dev/null; do sleep 1; done
         dpkg --configure -a
 
         # Wait for network and DNS to be ready
