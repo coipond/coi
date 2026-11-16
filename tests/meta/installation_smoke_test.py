@@ -15,10 +15,14 @@ Note: This test requires nested Incus support and takes longer to run.
 """
 
 import os
+import shlex
 import subprocess
 import time
 
 import pytest
+
+# Cap for one apt try; three tries plus pauses stay under the old 600 s.
+APT_TRY_TIMEOUT_SEC = 180
 
 
 @pytest.fixture(scope="module")
@@ -102,47 +106,81 @@ def test_full_installation_process(meta_container, coi_binary):
     container_name = meta_container
 
     # Phase 1: Install system dependencies
-    # Retry apt-get operations to handle transient network issues in CI
+    # Retry apt-get operations to handle transient network issues in CI. A
+    # stalled apt hangs instead of failing, so each try is killed inside the
+    # container after APT_TRY_TIMEOUT_SEC and counts as a failed try.
     max_retries = 3
     last_error = None
+    mirror = os.environ.get("COI_APT_MIRROR", "")
 
     for attempt in range(max_retries):
-        result = exec_in_container(
-            container_name,
-            """
+        # The mirror is a speed-up, not a dependency: later tries use the
+        # stock Ubuntu archive.
+        try_mirror = mirror if attempt == 0 else ""
+        script = f"""
             set -e
+            # Same apt settings as the image build (internal/image/build.sh
+            # configure_network_ipv4).
+            cat > /etc/apt/apt.conf.d/99coi-force-ipv4 <<'APTCONF'
+Acquire::ForceIPv4 "true";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+Acquire::Retries "3";
+APTCONF
+            for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+                [ -f "$f" ] || continue
+                orig="/root/$(echo "$f" | tr / _).orig"
+                [ -f "$orig" ] || cp -p "$f" "$orig"
+                cp -p "$orig" "$f"
+                [ -n "{try_mirror}" ] || continue
+                sed -i -E \\
+                    -e "s#https?://[a-z0-9.-]*archive\\.ubuntu\\.com/ubuntu#{try_mirror}#g" \\
+                    -e "s#https?://security\\.ubuntu\\.com/ubuntu#{try_mirror}#g" \\
+                    "$f"
+            done
+
+            # A killed earlier try can leave dpkg half-configured.
+            dpkg --configure -a
+
             # Wait for network and DNS to be ready
-            for i in {1..30}; do
+            for i in {{1..30}}; do
                 if ping -c 1 archive.ubuntu.com >/dev/null 2>&1; then
                     break
                 fi
                 sleep 1
             done
 
-            # Update package lists with retry
-            apt-get update -qq || sleep 5 && apt-get update -qq
+            apt-get update -qq
 
             # Install packages
             # pkg-config is required by the Makefile's check-deps preflight
             # (coi links libsystemd via cgo, which needs pkg-config + libsystemd-dev).
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \\
                 curl wget git ca-certificates gnupg build-essential pkg-config libsystemd-dev
 
             echo "System dependencies installed"
-            """,
-            timeout=600,
-            check=False,
-        )
+            """
+        try:
+            result = exec_in_container(
+                container_name,
+                f"timeout -k 10 {APT_TRY_TIMEOUT_SEC} bash -c {shlex.quote(script)}",
+                timeout=APT_TRY_TIMEOUT_SEC + 30,
+                check=False,
+            )
+            if result.returncode == 0:
+                break
+            last_error = result.stderr
+            if result.returncode == 124:
+                last_error = f"timed out after {APT_TRY_TIMEOUT_SEC}s: {last_error}"
+        except subprocess.TimeoutExpired as e:
+            result = None
+            last_error = f"incus exec timed out after {e.timeout}s"
 
-        if result.returncode == 0:
-            break
-
-        last_error = result.stderr
         if attempt < max_retries - 1:
-            print(f"apt-get attempt {attempt + 1} failed, retrying...")
+            print(f"apt-get attempt {attempt + 1} failed, retrying: {last_error}")
             time.sleep(10)  # Wait before retry
 
-    assert result.returncode == 0, (
+    assert result is not None and result.returncode == 0, (
         f"Failed to install dependencies after {max_retries} attempts: {last_error}"
     )
 
