@@ -25,6 +25,12 @@ type ioSnapshot struct {
 	totalWriteBytes uint64
 }
 
+// Collect's sources, replaced by tests.
+var (
+	filesystemResourceStats = CollectResourceStats
+	collectDiskSpace        = CollectDiskSpace
+)
+
 // NewFilesystemMonitor creates a new filesystem monitor
 func NewFilesystemMonitor() *FilesystemMonitor {
 	return &FilesystemMonitor{}
@@ -36,7 +42,7 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 	defer fm.mu.Unlock()
 
 	// Get current resource stats (includes I/O)
-	resourceStats, err := CollectResourceStats(ctx, containerName)
+	resourceStats, err := filesystemResourceStats(ctx, containerName)
 	if err != nil {
 		return FilesystemStats{Available: false}, err
 	}
@@ -46,7 +52,7 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 	currentWriteBytes := uint64(resourceStats.IOWriteMB * 1024 * 1024)
 
 	// Collect disk space stats (non-fatal if fails)
-	tmpUsed, tmpTotal, tmpPercent, diskErr := CollectDiskSpace(ctx, containerName)
+	tmpUsed, tmpTotal, tmpPercent, diskErr := collectDiskSpace(ctx, containerName)
 	diskSpaceErr := fm.diskSpaceTransition(diskErr)
 
 	// Calculate delta and rate

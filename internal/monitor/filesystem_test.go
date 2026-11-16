@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -164,5 +165,54 @@ func TestDiskSpaceTransition(t *testing.T) {
 		if got := fm.diskSpaceTransition(s.in); !errors.Is(got, s.want) || (got == nil) != (s.want == nil) {
 			t.Errorf("step %d: diskSpaceTransition(%v) = %v, want %v", i, s.in, got, s.want)
 		}
+	}
+}
+
+// A failing disk-space read is a snapshot error on the first failing poll
+// only, and a recovered read reports again on the next failure.
+func TestCollectorReportsDiskSpaceFailureOnce(t *testing.T) {
+	fakeDfIncus(t, `exit 1`)
+	oldStats, oldDisk := filesystemResourceStats, collectDiskSpace
+	t.Cleanup(func() { filesystemResourceStats, collectDiskSpace = oldStats, oldDisk })
+	filesystemResourceStats = func(context.Context, string) (ResourceStats, error) {
+		return ResourceStats{}, nil
+	}
+	diskErr := errors.New("df failed")
+	collectDiskSpace = func(context.Context, string) (float64, float64, float64, error) {
+		if diskErr != nil {
+			return 0, 0, 0, diskErr
+		}
+		return 10, 64, 15.6, nil
+	}
+
+	c := NewCollector("c1", "", "/workspace", nil)
+	diskErrors := func() []string {
+		t.Helper()
+		snapshot, err := c.Collect(t.Context())
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		var got []string
+		for _, e := range snapshot.Errors {
+			if strings.HasPrefix(e, "disk space: ") {
+				got = append(got, e)
+			}
+		}
+		return got
+	}
+
+	if got := diskErrors(); len(got) != 1 || got[0] != "disk space: df failed" {
+		t.Fatalf("first failing poll: got %q, want one disk space error", got)
+	}
+	if got := diskErrors(); len(got) != 0 {
+		t.Fatalf("second failing poll: got %q, want none", got)
+	}
+	diskErr = nil
+	if got := diskErrors(); len(got) != 0 {
+		t.Fatalf("recovered poll: got %q, want none", got)
+	}
+	diskErr = errors.New("df failed again")
+	if got := diskErrors(); len(got) != 1 {
+		t.Fatalf("failing again: got %q, want one disk space error", got)
 	}
 }
