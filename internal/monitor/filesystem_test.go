@@ -129,8 +129,6 @@ func TestCollectDiskSpaceViaIncusExecUnparseable(t *testing.T) {
 	}
 }
 
-// A hung incus exec must not block the poll: the collector waits for every
-// source, so one stuck df would stop all detection for the container.
 func TestCollectDiskSpaceViaIncusExecTimesOut(t *testing.T) {
 	fakeDfIncus(t, `exec sleep 30`)
 	old := diskSpaceExecTimeout
@@ -168,8 +166,6 @@ func TestDiskSpaceTransition(t *testing.T) {
 	}
 }
 
-// A failing disk-space read is a snapshot error on the first failing poll
-// only, and a recovered read reports again on the next failure.
 func TestCollectorReportsDiskSpaceFailureOnce(t *testing.T) {
 	fakeDfIncus(t, `exit 1`)
 	oldStats, oldDisk := filesystemResourceStats, collectDiskSpace
