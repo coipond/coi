@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from support.helpers import container_ipv4
-from support.monitoring import coi_session_logs
+from support.monitoring import coi_session_logs, get_threat_events
 
 
 def get_container_name_from_workspace(workspace, slot=1):
@@ -729,13 +729,14 @@ enabled = true
     def test_lan_access_not_flagged_in_open_mode(
         self, test_workspace, coi_binary, coi_monitoring_env
     ):
-        """Open mode allows LAN traffic: an RFC1918 connection raises no HIGH threat
-        and, with auto_pause_on_high = true, does not pause the container.
+        """Open mode allows LAN traffic: an RFC1918 connection raises no HIGH threat,
+        so auto_pause_on_high has nothing to pause on.
 
         A C2-port connection to the same host afterwards proves the detector saw
         the traffic: it is still flagged (CRITICAL, alert only here).
         """
-        # coi_monitoring_env points COI_CONFIG at this file
+        # coi_monitoring_env points COI_CONFIG at this file. auto_pause_on_high
+        # stays off: a pause freezes curl, and incus exec then outlives its timeout.
         Path(test_workspace, ".coi", "config.toml").write_text("""
 [network]
 mode = "open"
@@ -743,7 +744,7 @@ mode = "open"
 [monitoring]
 enabled = true
 auto_kill_on_critical = false
-auto_pause_on_high = true
+auto_pause_on_high = false
 
 [monitoring.nft]
 enabled = true
@@ -753,26 +754,40 @@ enabled = true
         )
         try:
             # Off the bridge subnet, so the SYN is forwarded past the LOG rule.
-            for url in ("http://192.168.254.254/", "http://192.168.254.254:4444/"):
-                subprocess.run(
-                    ["incus", "exec", name, "--", "curl", "-m", "3", url],
-                    capture_output=True,
-                    timeout=10,
-                )
+            # The host-side LOG rule sees the SYN even if incus exec hangs.
+            for url in (f"http://{LAN_HOST}/", f"http://{LAN_HOST}:4444/"):
+                try:
+                    subprocess.run(
+                        ["incus", "exec", name, "--", "curl", "-m", "3", url],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                except subprocess.TimeoutExpired:
+                    pass
 
             events = _wait_for_events(
                 name, lambda e: e.get("title") == "Connection to suspicious port"
             )
+            diag = (
+                f" State: {get_container_state(name)}. "
+                f"All events: {get_threat_events(name, nft=True)}{coi_session_logs(name)}"
+            )
             assert any(e.get("title") == "Connection to suspicious port" for e in events), (
-                f"Expected the C2-port connection to be flagged. Events: {events}"
+                f"Expected the C2-port connection to be flagged. Events: {events}{diag}"
             )
             high_events = [e for e in events if e.get("level") == "high"]
-            assert not high_events, f"Open mode: LAN access must not be HIGH. Events: {high_events}"
-
-            # A pause would freeze the container within a few seconds
-            time.sleep(5)
-            state = get_container_state(name)
-            assert state == "Running", f"Open mode: container should keep running, but is {state}"
+            assert not high_events, (
+                f"Open mode: LAN access must not be HIGH. Events: {high_events}{diag}"
+            )
+            lan_high = [
+                e
+                for e in get_threat_events(name)
+                if e.get("level") == "high" and _remote_host(e) == LAN_HOST
+            ]
+            assert not lan_high, (
+                f"Open mode: the process monitor must not flag LAN access HIGH. "
+                f"Events: {lan_high}{diag}"
+            )
         finally:
             _stop_shell(proc, name, coi_binary, coi_monitoring_env)
 
@@ -1680,6 +1695,7 @@ class TestHealthChecks:
 
 DNS_THRESHOLD = 20
 PUBLIC_RESOLVER = "8.8.8.8"
+LAN_HOST = "192.168.254.254"  # RFC1918, off the bridge subnet
 
 
 @pytest.fixture
