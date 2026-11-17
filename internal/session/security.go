@@ -842,9 +842,9 @@ func isNestedGitPath(rel string) bool {
 
 // ensureProtectedExists materializes hostPath so it has a real inode
 // to read-only-mount over. Known default directory-type entries are
-// created via a symlink-safe walk. The known file-type entry
-// (.git/config) gets an empty placeholder, but only when its parent
-// directory already exists. User-added paths that do not exist on
+// created via a symlink-safe walk. Known file-type entries get a
+// placeholder (createProtectedFilePlaceholder), but only when their parent
+// directory already exists or is in fileTypeParentAutoCreate. User-added paths that do not exist on
 // disk return os.ErrNotExist and are silently skipped by the caller
 // — the user is responsible for creating them beforehand.
 func ensureProtectedExists(workspacePath, hostPath, relPath string) error {

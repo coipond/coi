@@ -273,17 +273,18 @@ func commonDirProtectedPaths(commonDir string, writableHooks bool, sec *config.S
 // dir (no ".git/" prefix, because the common dir IS the git dir). Because the layout
 // is mounted preserve-path, the container path equals the host path.
 //
-// The common dir is mounted read-write (so commits work), so an ABSENT sink would
-// otherwise be plantable by a contained agent (a #474 regression). To match the
-// workspace side — which synthesizes empty read-only placeholders for absent sinks —
-// each sink is covered by mounting the real path read-only, first synthesizing an
-// EMPTY, host-user-owned placeholder on the host when it is absent (like the workspace's
-// ensureProtectedExists). The placeholder is created as the host user (correct ownership,
-// readable/deletable) before the read-only mount blocks writes. config.worktree is
-// covered for EVERY worktree admin dir, since the host may have
-// extensions.worktreeConfig=true and the dir is read-write. The sinks and
-// their parent pins are mounted in one batch, as their number grows with the
-// worktrees.
+// The common dir is mounted read-write (so commits work), so an ABSENT sink
+// would otherwise be plantable by a contained agent (a #474 regression). To
+// match the workspace side — which synthesizes read-only placeholders for
+// absent sinks — each sink is covered by mounting the real path read-only,
+// first synthesizing a host-user-owned placeholder on the host when it is
+// absent (createProtectedFilePlaceholder: empty, or commonDirPlaceholder for
+// commondir; like the workspace's ensureProtectedExists). The placeholder is
+// created as the host user (correct ownership, readable/deletable) before the
+// read-only mount blocks writes. config.worktree is covered for EVERY worktree
+// admin dir, since the host may have extensions.worktreeConfig=true and the
+// dir is read-write. The sinks and their parent pins are mounted in one batch,
+// as their number grows with the worktrees.
 //
 // writableHooks mirrors the workspace `git.writable_hooks` opt-out. Returns the list of
 // protected relative paths (for logging) and an aggregated warning error.
@@ -317,8 +318,9 @@ func SetupCommonDirProtection(mgr container.ContainerDevices, commonDir string, 
 
 // prepareCommonDirSink returns the read-only disk device of one common-dir
 // sink at its (preserve-path) host==container path. When the sink is absent
-// it is first synthesized as an empty, host-user-owned placeholder
-// (symlink-safe, via the same primitives the workspace path uses) so the
+// it is first synthesized as a host-user-owned placeholder (empty, or
+// commonDirPlaceholder for commondir; symlink-safe, via the same primitives
+// the workspace path uses) so the
 // read-write common-dir mount cannot be used to create it. A symlinked or
 // wrong-type sink is refused rather than mounted.
 func prepareCommonDirSink(commonDir string, s commonDirSink, useShift bool) (container.DiskMount, error) {
