@@ -320,9 +320,9 @@ func SetupCommonDirProtection(mgr container.ContainerDevices, commonDir string, 
 // sink at its (preserve-path) host==container path. When the sink is absent
 // it is first synthesized as a host-user-owned placeholder (empty, or
 // commonDirPlaceholder for commondir; symlink-safe, via the same primitives
-// the workspace path uses) so the
-// read-write common-dir mount cannot be used to create it. A symlinked or
-// wrong-type sink is refused rather than mounted.
+// the workspace path uses) so the read-write common-dir mount cannot be used
+// to create it. A symlinked or wrong-type sink is refused rather than
+// mounted.
 func prepareCommonDirSink(commonDir string, s commonDirSink, useShift bool) (container.DiskMount, error) {
 	var none container.DiskMount
 	path := filepath.Join(commonDir, s.rel)
