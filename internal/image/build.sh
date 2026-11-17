@@ -767,10 +767,12 @@ install_opencode() {
 
 #######################################
 # Print the newest stable OpenCode v2.x version (MAJOR.MINOR.PATCH) of the
-# npm package @opencode/cli-linux-<arch>. v2 has no GitHub release assets:
-# it ships only through npm. The abbreviated registry document lists every
-# version. If the lookup fails or finds nothing from OPENCODE2_MIN_VERSION
-# on, prints OPENCODE2_FALLBACK_VERSION.
+# npm package @opencode/cli-linux-<arch>. coi installs v2 from npm: GitHub
+# release assets (with SHA256SUMS) exist only from 2.2.0 on, not for
+# OPENCODE2_FALLBACK_VERSION, and the repo's latest release is v1. The
+# abbreviated registry document lists every version. If the lookup fails or
+# finds nothing from OPENCODE2_MIN_VERSION on, prints
+# OPENCODE2_FALLBACK_VERSION.
 #######################################
 opencode2_npm_version() {
     local arch="$1" version
