@@ -32,8 +32,6 @@ docker run -d --name srv -p 15432:5432 -v /usr:/usr:ro coi-usr python3 -m http.s
 docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' srv
 """
 
-# No "socket.socket" in these scripts: the process monitor flags python3 with
-# it as a reverse shell and pauses the container.
 HOLD_NESTED = """
 import sys, time
 from socket import create_connection
