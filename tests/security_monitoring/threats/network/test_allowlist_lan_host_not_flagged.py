@@ -2,7 +2,6 @@
 configured LAN service as a private-network threat (which auto-pauses the
 container), while still seeing other threats on that same host."""
 
-import subprocess
 import time
 from pathlib import Path
 
@@ -11,34 +10,13 @@ from support.monitoring import (
     cleanup_container,
     get_container_state,
     get_threat_events,
+    hold_connect,
+    is_c2_port_threat,
     start_shell,
+    wait_for_threats,
 )
 
 SLOT = 71
-
-
-def _hold_connection(container_name, host, port, seconds=60):
-    """Keep one ESTABLISHED TCP connection open from inside the container, so the
-    monitor (which samples the container's socket table) is sure to see it."""
-    return subprocess.Popen(
-        [
-            "incus",
-            "exec",
-            container_name,
-            "--",
-            "python3",
-            "-c",
-            "import socket, time; "
-            f"s = socket.create_connection(({host!r}, {port}), timeout=5); "
-            f"time.sleep({seconds})",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-
-def _threats_about(container_name, ip):
-    return [e for e in get_threat_events(container_name) if ip in e.get("description", "")]
 
 
 def test_allowlist_lan_host_not_flagged(test_workspace, coi_binary):
@@ -72,24 +50,22 @@ file_read_rate_mb_per_sec = 1000
         try:
             # The configured service: held open across many poll cycles, it must
             # raise nothing, and the container must keep running (not be paused).
-            holders.append(_hold_connection(container_name, "redmine.lan", 443))
+            holders.append(hold_connect(container_name, "redmine.lan", 443))
             time.sleep(15)
             assert get_container_state(container_name) == "Running", (
                 "a connection to the configured LAN service must not pause the container; "
                 f"threat events: {get_threat_events(container_name)}"
             )
-            flagged = _threats_about(container_name, redmine)
+            flagged = [
+                e for e in get_threat_events(container_name) if redmine in e.get("description", "")
+            ]
             assert not flagged, f"redmine.lan:443 must not be flagged, got: {flagged}"
 
             # Positive control on the SAME host: a known C2 port must still be
             # flagged, proving the monitor sees this traffic and that exempting the
             # host from the private-network check did not blind the other checks.
-            holders.append(_hold_connection(container_name, "redmine.lan", 4444))
-            threats = []
-            deadline = time.monotonic() + 45
-            while not threats and time.monotonic() < deadline:
-                threats = _threats_about(container_name, f"{redmine}:4444")
-                time.sleep(2)
+            holders.append(hold_connect(container_name, "redmine.lan", 4444))
+            threats = wait_for_threats(container_name, is_c2_port_threat(redmine))
             assert threats, "a C2-port connection to the LAN host must still be flagged"
             assert all("RFC1918" not in t.get("description", "") for t in threats), (
                 f"the LAN host must not be reported as an RFC1918 threat: {threats}"
