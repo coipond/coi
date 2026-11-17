@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/coipond/coi/internal/config"
@@ -246,7 +247,10 @@ func TestSetupSecurityMounts_NestedLinkedWorktrees(t *testing.T) {
 		gitCmd(t, d, "config", "extensions.worktreeConfig", "true")
 	}
 	gitCmd(t, subWt, "config", "--worktree", "core.bare", "false")
-	gitCmd(t, nestedWt, "config", "--worktree", "core.bare", "false")
+	nestedConfigWt := filepath.Join(nested, ".git", "worktrees", "nested-wt", "config.worktree")
+	if _, err := os.Lstat(nestedConfigWt); !os.IsNotExist(err) {
+		t.Fatalf("git created %s (%v); the test needs it absent", nestedConfigWt, err)
+	}
 
 	var want []string
 	for _, gitDir := range []string{".git/modules/lib/worktrees/sub-wt", "nested/.git/worktrees/nested-wt"} {
@@ -267,9 +271,39 @@ func TestSetupSecurityMounts_NestedLinkedWorktrees(t *testing.T) {
 			t.Errorf("expected a read-only batched mount at %s", path)
 		}
 	}
+	if !isRegularFile(nestedConfigWt) {
+		t.Errorf("absent %s not materialized", nestedConfigWt)
+	}
 	for _, wt := range []string{subWt, nestedWt} {
 		gitCmd(t, wt, "status")
 		gitCmd(t, wt, "commit", "-q", "--allow-empty", "-m", "wt")
+	}
+}
+
+// A symlinked worktrees dir of a nested git dir is not followed out of the
+// workspace, and nothing is created through it.
+func TestExpandNestedGit_SymlinkedWorktreesDir(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, "nested/.git")
+	if err := os.MkdirAll(filepath.Join(outside, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "x", "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws, "nested", ".git", "worktrees")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false) {
+		if strings.Contains(filepath.ToSlash(p), "/worktrees/") {
+			t.Errorf("entry through a symlinked worktrees dir: %s", p)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "x", "config.worktree")); !os.IsNotExist(err) {
+		t.Errorf("config.worktree created outside the workspace: %v", err)
 	}
 }
 
@@ -289,12 +323,26 @@ func TestExpandNestedGit_LinkedWorktreeOptOutsAndSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(ws, "elsewhere"), filepath.Join(wt, "config.worktree")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(ws, ".git", "modules", "lib", "worktrees", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	commonDir := filepath.Join(".git", "modules", "lib", "worktrees", "a", "commondir")
 	configWt := filepath.Join(".git", "modules", "lib", "worktrees", "a", "config.worktree")
+	bCommonDir := filepath.Join(".git", "modules", "lib", "worktrees", "b", "commondir")
+	bConfigWt := filepath.Join(".git", "modules", "lib", "worktrees", "b", "config.worktree")
 
 	got := expandNestedGit(ws, nil, nil, NestedGitScan{}, false)
 	if !slices.Contains(got, commonDir) || slices.Contains(got, configWt) {
 		t.Errorf("got %v, want %s and not the symlinked %s", got, commonDir, configWt)
+	}
+	if !slices.Contains(got, bConfigWt) || slices.Contains(got, bCommonDir) {
+		t.Errorf("got %v, want the materialized %s and not the absent %s", got, bConfigWt, bCommonDir)
+	}
+	if data, err := os.ReadFile(filepath.Join(ws, bConfigWt)); err != nil || len(data) != 0 {
+		t.Errorf("%s = %q, %v; want an empty placeholder", bConfigWt, data, err)
+	}
+	if _, err := os.Lstat(filepath.Join(ws, bCommonDir)); !os.IsNotExist(err) {
+		t.Errorf("%s must not be created: %v", bCommonDir, err)
 	}
 	sec := &config.SecurityConfig{WritablePaths: []string{commonDir}}
 	if got := expandNestedGit(ws, nil, sec, NestedGitScan{}, false); slices.Contains(got, commonDir) {

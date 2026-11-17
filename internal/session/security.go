@@ -516,7 +516,7 @@ func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *
 	if sec != nil && sec.DisableProtection {
 		return paths // protection disabled — do not resurrect worktree configs
 	}
-	found := linkedWorktreeEntries(workspacePath, ".git")
+	found := linkedWorktreeEntries(workspacePath, ".git", false)
 	if len(found) == 0 {
 		return paths // no worktrees, or .git is a file/symlink — nothing to add
 	}
@@ -539,11 +539,19 @@ func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *
 	return out
 }
 
-// linkedWorktreeEntries returns the existing config.worktree and commondir
-// files of the linked worktrees of the git dir at gitDirRel
-// (<gitDirRel>/worktrees/<name>/...); symlinks and directories are skipped.
-func linkedWorktreeEntries(workspacePath, gitDirRel string) []string {
-	entries, err := os.ReadDir(filepath.Join(workspacePath, gitDirRel, "worktrees"))
+// linkedWorktreeEntries returns the config.worktree and commondir files of the
+// linked worktrees of the git dir at gitDirRel
+// (<gitDirRel>/worktrees/<name>/...) that exist as regular files; symlinks,
+// directories and a symlinked worktrees dir are skipped. With
+// materializeConfig, an absent config.worktree is created as a placeholder so
+// it cannot be planted; commondir never is, since a placeholder would point
+// the worktree at its own admin dir.
+func linkedWorktreeEntries(workspacePath, gitDirRel string, materializeConfig bool) []string {
+	wtRoot := filepath.Join(workspacePath, gitDirRel, "worktrees")
+	if !isRealDir(wtRoot) {
+		return nil
+	}
+	entries, err := os.ReadDir(wtRoot)
 	if err != nil {
 		return nil
 	}
@@ -554,7 +562,16 @@ func linkedWorktreeEntries(workspacePath, gitDirRel string) []string {
 		}
 		for _, name := range []string{"config.worktree", "commondir"} {
 			rel := filepath.Join(gitDirRel, "worktrees", e.Name(), name)
-			if validateRelPath(rel) == nil && isRegularFile(filepath.Join(workspacePath, rel)) {
+			if validateRelPath(rel) != nil {
+				continue
+			}
+			if name == "config.worktree" && materializeConfig {
+				if materializeNestedGitEntry(workspacePath, rel, false) {
+					out = append(out, rel)
+				}
+				continue
+			}
+			if isRegularFile(filepath.Join(workspacePath, rel)) {
 				out = append(out, rel)
 			}
 		}
@@ -611,9 +628,9 @@ func (s NestedGitScan) resultFor(workspacePath string) nestedGitFound {
 // modules included) and nested repositories (<dir>/.git, up to
 // nestedGitSearchDepth). For each such git dir its hooks, config,
 // config.worktree, info/attributes and commondir are added, materialized like
-// the root .git defaults so they cannot be planted, and so are its existing
-// linked worktree entries (worktrees/<name>/config.worktree and commondir),
-// as ExpandGitWorktreeProtectedPaths adds the root ones. A .git file
+// the root .git defaults so they cannot be planted, and so are its linked
+// worktree entries (worktrees/<name>/config.worktree, materialized, and an
+// existing commondir). A .git file
 // (submodule or worktree checkout) is protected itself, so its gitdir pointer
 // cannot be redirected.
 //
@@ -656,7 +673,7 @@ func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityC
 				add(rel)
 			}
 		}
-		for _, rel := range linkedWorktreeEntries(workspacePath, gitDir) {
+		for _, rel := range linkedWorktreeEntries(workspacePath, gitDir, true) {
 			add(rel)
 		}
 	}
