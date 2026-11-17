@@ -759,28 +759,31 @@ enabled = true
             coi_binary, test_workspace, coi_monitoring_env, slot=59
         )
         holders = []
+
+        def diag():
+            return (
+                f" State: {get_container_state(name)}. "
+                f"All events: {get_threat_events(name, nft=True)}{coi_session_logs(name)}"
+            )
+
         try:
             # Off the bridge subnet, so the datagrams are forwarded past the LOG
             # rule. Connected UDP stays in /proc/net/udp for the process monitor.
             holders.append(hold_connect(name, LAN_HOST, 80, proto="udp"))
             holders.append(hold_connect(name, LAN_HOST, 4444, proto="udp"))
-            # The TCP leg the old pause hit on AWS runners: a HIGH it raises now
-            # fails below with its name.
-            subprocess.run(
-                ["incus", "exec", name, "--", "curl", "-m", "3", f"http://{LAN_HOST}/"],
-                capture_output=True,
-                timeout=10,
-            )
+            # The TCP leg that hung incus exec on AWS runners.
+            try:
+                subprocess.run(
+                    ["incus", "exec", name, "--", "curl", "-m", "3", f"http://{LAN_HOST}/"],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except subprocess.TimeoutExpired:
+                pytest.fail(f"incus exec curl -m 3 to {LAN_HOST} hung for 10 s.{diag()}")
 
             c2 = is_c2_port_threat(LAN_HOST)
             nft_c2 = _wait_for_events(name, c2)
             proc_c2 = wait_for_threats(name, c2)
-
-            def diag():
-                return (
-                    f" State: {get_container_state(name)}. "
-                    f"All events: {get_threat_events(name, nft=True)}{coi_session_logs(name)}"
-                )
 
             assert any(c2(e) for e in nft_c2), (
                 f"Expected the nft monitor to flag the C2-port flow.{diag()}"
