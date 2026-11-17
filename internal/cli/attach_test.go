@@ -50,7 +50,7 @@ func TestAttach_RejectsUsageErrorsBeforeIncus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logPath := fakeKillIncus(t, "", "coi-abc12345-1")
+			logPath := fakeDeleteIncus(t, "", "coi-abc12345-1")
 
 			err := executeWithProfiles(t, nil, "", tt.args...)
 			var ece *ExitCodeError
@@ -68,7 +68,7 @@ func TestAttach_RejectsUsageErrorsBeforeIncus(t *testing.T) {
 }
 
 func TestAttach_RejectsExtraArgs(t *testing.T) {
-	logPath := fakeKillIncus(t, "", "coi-abc12345-1")
+	logPath := fakeDeleteIncus(t, "", "coi-abc12345-1")
 
 	err := executeWithProfiles(t, nil, "", "attach", "coi-abc12345-1", "coi-abc12345-2")
 	if err == nil || !strings.Contains(err.Error(), "accepts at most 1 arg") {

@@ -167,7 +167,7 @@
 
 [security]
 # Paths mounted read-only so the container can't tamper with host-executed files.
-# protected_paths = [".git/hooks", ".git/config", ".git/config.worktree", ".git/info/attributes", ".husky", ".vscode", ".coi", ".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml"]
+# protected_paths = [".git/hooks", ".git/config", ".git/config.worktree", ".git/info/attributes", ".git/commondir", ".husky", ".vscode", ".coi", ".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml"]
 # additional_protected_paths = []   # add to (not replace) the defaults above
 # host_immutable = true             # also set chattr +i on protected paths
 # disable_protection = false        # turn protection off entirely (NOT recommended)

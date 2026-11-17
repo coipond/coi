@@ -227,13 +227,14 @@ type commonDirSink struct {
 }
 
 // commonDirSinks lists the common-dir paths SetupCommonDirProtection covers
-// read-only: hooks (unless writable), config, info/attributes and each
-// linked worktree's config.worktree, less writable_paths.
+// read-only: hooks (unless writable), config, info/attributes, commondir,
+// each linked worktree's config.worktree and its existing commondir, less
+// writable_paths.
 func commonDirSinks(commonDir string, writableHooks bool, sec *config.SecurityConfig) []commonDirSink {
 	if sec != nil && sec.DisableProtection {
 		return nil
 	}
-	sinks := []commonDirSink{{"config", false}, {filepath.Join("info", "attributes"), false}}
+	sinks := []commonDirSink{{"config", false}, {filepath.Join("info", "attributes"), false}, {"commondir", false}}
 	if !writableHooks {
 		sinks = append([]commonDirSink{{"hooks", true}}, sinks...)
 	}
@@ -241,6 +242,10 @@ func commonDirSinks(commonDir string, writableHooks bool, sec *config.SecurityCo
 		for _, en := range entries {
 			if en.IsDir() {
 				sinks = append(sinks, commonDirSink{filepath.Join("worktrees", en.Name(), "config.worktree"), false})
+				// A placeholder would point the worktree at its own admin dir.
+				if rel := filepath.Join("worktrees", en.Name(), "commondir"); isRegularFile(filepath.Join(commonDir, rel)) {
+					sinks = append(sinks, commonDirSink{rel, false})
+				}
 			}
 		}
 	}
@@ -268,15 +273,18 @@ func commonDirProtectedPaths(commonDir string, writableHooks bool, sec *config.S
 // dir (no ".git/" prefix, because the common dir IS the git dir). Because the layout
 // is mounted preserve-path, the container path equals the host path.
 //
-// The common dir is mounted read-write (so commits work), so an ABSENT sink would
-// otherwise be plantable by a contained agent (a #474 regression). To match the
-// workspace side — which synthesizes empty read-only placeholders for absent sinks —
-// each sink is covered by mounting the real path read-only, first synthesizing an
-// EMPTY, host-user-owned placeholder on the host when it is absent (like the workspace's
-// ensureProtectedExists). The placeholder is created as the host user (correct ownership,
-// readable/deletable) before the read-only mount blocks writes. config.worktree is
-// covered for EVERY worktree admin dir, since the host may have
-// extensions.worktreeConfig=true and the dir is read-write.
+// The common dir is mounted read-write (so commits work), so an ABSENT sink
+// would otherwise be plantable by a contained agent (a #474 regression). To
+// match the workspace side — which synthesizes read-only placeholders for
+// absent sinks — each sink is covered by mounting the real path read-only,
+// first synthesizing a host-user-owned placeholder on the host when it is
+// absent (createProtectedFilePlaceholder: empty, or commonDirPlaceholder for
+// commondir; like the workspace's ensureProtectedExists). The placeholder is
+// created as the host user (correct ownership, readable/deletable) before the
+// read-only mount blocks writes. config.worktree is covered for EVERY worktree
+// admin dir, since the host may have extensions.worktreeConfig=true and the
+// dir is read-write. The sinks and their parent pins are mounted in one batch,
+// as their number grows with the worktrees.
 //
 // writableHooks mirrors the workspace `git.writable_hooks` opt-out. Returns the list of
 // protected relative paths (for logging) and an aggregated warning error.
@@ -286,14 +294,21 @@ func SetupCommonDirProtection(mgr container.ContainerDevices, commonDir string, 
 	}
 
 	var protected, warnings []string
+	var mounts []container.DiskMount
 	for _, s := range commonDirSinks(commonDir, writableHooks, sec) {
-		if err := protectCommonDirSink(mgr, commonDir, s, useShift); err != nil {
+		d, err := prepareCommonDirSink(commonDir, s, useShift)
+		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %v", s.rel, err))
 			continue
 		}
+		mounts = append(mounts, d)
 		protected = append(protected, s.rel)
 	}
-	pinWarnings, _ := mountNestedAndPins(mgr, nil, parentPinMounts(commonDir, commonDir, protected, nil, useShift))
+	pinWarnings, err := mountNestedAndPins(mgr, mounts, parentPinMounts(commonDir, commonDir, protected, nil, useShift))
+	if err != nil {
+		warnings = append([]string{fmt.Sprintf("mount git common-dir sinks: %v", err)}, warnings...)
+		return nil, errors.New(strings.Join(warnings, "; "))
+	}
 	warnings = append(warnings, pinWarnings...)
 	if len(warnings) > 0 {
 		return protected, errors.New(strings.Join(warnings, "; "))
@@ -301,39 +316,42 @@ func SetupCommonDirProtection(mgr container.ContainerDevices, commonDir string, 
 	return protected, nil
 }
 
-// protectCommonDirSink read-only-mounts one common-dir sink at its (preserve-path)
-// host==container path. When the sink is absent it is first synthesized as an empty,
-// host-user-owned placeholder (symlink-safe, via the same primitives the workspace path
-// uses) so the read-write common-dir mount cannot be used to create it. A symlinked or
-// wrong-type sink is refused rather than mounted.
-func protectCommonDirSink(mgr container.ContainerDevices, commonDir string, s commonDirSink, useShift bool) error {
+// prepareCommonDirSink returns the read-only disk device of one common-dir
+// sink at its (preserve-path) host==container path. When the sink is absent
+// it is first synthesized as a host-user-owned placeholder (empty, or
+// commonDirPlaceholder for commondir; symlink-safe, via the same primitives
+// the workspace path uses) so the read-write common-dir mount cannot be used
+// to create it. A symlinked or wrong-type sink is refused rather than
+// mounted.
+func prepareCommonDirSink(commonDir string, s commonDirSink, useShift bool) (container.DiskMount, error) {
+	var none container.DiskMount
 	path := filepath.Join(commonDir, s.rel)
 	info, err := os.Lstat(path)
 	switch {
 	case err == nil:
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s is a symlink; refusing to mount for security reasons", s.rel)
+			return none, fmt.Errorf("%s is a symlink; refusing to mount for security reasons", s.rel)
 		}
 		if info.IsDir() != s.isDir {
-			return fmt.Errorf("%s exists but is not the expected type", s.rel)
+			return none, fmt.Errorf("%s exists but is not the expected type", s.rel)
 		}
 	case os.IsNotExist(err):
 		if s.isDir {
 			if e := safeMkdirAll(commonDir, path, s.rel); e != nil {
-				return e
+				return none, e
 			}
 		} else {
 			if e := safeMkdirAll(commonDir, filepath.Dir(path), filepath.Dir(s.rel)); e != nil {
-				return e
+				return none, e
 			}
 			if e := createProtectedFilePlaceholder(path, s.rel); e != nil {
-				return e
+				return none, e
 			}
 		}
 	default:
-		return fmt.Errorf("stat %s: %w", s.rel, err)
+		return none, fmt.Errorf("stat %s: %w", s.rel, err)
 	}
-	return mgr.MountDisk(commonDirDeviceName(s.rel), path, path, useShift, true)
+	return container.DiskMount{Name: commonDirDeviceName(s.rel), Source: path, Path: path, Shift: useShift, Readonly: true}, nil
 }
 
 // commonDirDeviceName derives a unique, valid Incus device name for a common-dir sink.

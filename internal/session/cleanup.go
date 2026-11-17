@@ -47,6 +47,7 @@ type CleanupOptions struct {
 type guestProber interface {
 	ExecCommand(command string, opts container.ExecCommandOptions) (string, error)
 	Running() (bool, error)
+	Stopped() (bool, error)
 }
 
 // probeExecTimeout bounds one guest probe: cleanup must never hang, and the
@@ -261,17 +262,19 @@ func containerRunning(mgr guestProber) (running, ok bool) {
 }
 
 // waitForStopped polls until the container verifiably stops (an error-free
-// "not running" answer — daemon errors don't count), the timeout elapses, or
-// the user interrupts. Ctrl+C must not be a no-op here: this wait can hold
-// the terminal for the whole graceful-shutdown window, and the shell's own
-// signal plumbing is already disarmed by the time the deferred teardown runs.
+// "stopped" or "gone" answer — daemon errors and transient states such as
+// Stopping or Error don't count: Incus reports Running again while its stop
+// hook runs), the timeout elapses, or the user interrupts. Ctrl+C must not
+// be a no-op here: this wait can hold the terminal for the whole
+// graceful-shutdown window, and the shell's own signal plumbing is already
+// disarmed by the time the deferred teardown runs.
 func waitForStopped(mgr guestProber, timeout time.Duration) (stopped, interrupted bool) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if running, err := mgr.Running(); err == nil && !running {
+		if stopped, err := mgr.Stopped(); err == nil && stopped {
 			return true, false
 		}
 		select {

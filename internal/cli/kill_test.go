@@ -8,13 +8,14 @@ import (
 	"testing"
 )
 
-// noSudoConfig keeps kill's firewall cleanup from running sudo nft.
+// noSudoConfig keeps the firewall cleanup of kill and shutdown from running
+// sudo nft.
 const noSudoConfig = "[network]\nuse_sudo = false\n"
 
-// fakeKillIncus puts an incus script on PATH on which only coi-abc12345-1
+// fakeDeleteIncus puts an incus script on PATH on which only coi-abc12345-1
 // exists, and `incus list --format=json` lists listed. cases, a shell case
 // body, is matched first. It logs every call and returns the log path.
-func fakeKillIncus(t *testing.T, cases string, listed ...string) string {
+func fakeDeleteIncus(t *testing.T, cases string, listed ...string) string {
 	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls")
@@ -62,7 +63,7 @@ func TestKill_RejectsUsageErrorsBeforeIncus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logPath := fakeKillIncus(t, "", "coi-abc12345-1")
+			logPath := fakeDeleteIncus(t, "", "coi-abc12345-1")
 
 			err := executeWithProfiles(t, nil, noSudoConfig, tt.args...)
 			var ece *ExitCodeError
@@ -80,7 +81,7 @@ func TestKill_RejectsUsageErrorsBeforeIncus(t *testing.T) {
 }
 
 func TestKill_MissingNamedTargetFailsAfterKillingTheRest(t *testing.T) {
-	logPath := fakeKillIncus(t, "")
+	logPath := fakeDeleteIncus(t, "")
 
 	err := executeWithProfiles(t, nil, noSudoConfig, "kill", "--force", "coi-abc12345-1", "coi-abc12345-9")
 	if err == nil || ExitCodeFor(err) != ExitGeneric {
@@ -96,7 +97,7 @@ func TestKill_MissingNamedTargetFailsAfterKillingTheRest(t *testing.T) {
 
 // With --all, a listed container that is gone by the kill is no failure.
 func TestKill_AllToleratesContainerGoneSinceList(t *testing.T) {
-	logPath := fakeKillIncus(t, "", "coi-abc12345-1", "coi-abc12345-9")
+	logPath := fakeDeleteIncus(t, "", "coi-abc12345-1", "coi-abc12345-9")
 
 	if err := executeWithProfiles(t, nil, noSudoConfig, "kill", "--all", "--force"); err != nil {
 		t.Fatalf("coi kill --all --force = %v, want nil", err)
@@ -135,7 +136,7 @@ func TestKill_TargetNotKilledFails(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fakeKillIncus(t, tt.cases, "coi-abc12345-9")
+			fakeDeleteIncus(t, tt.cases, "coi-abc12345-9")
 
 			err := executeWithProfiles(t, nil, noSudoConfig, tt.args...)
 			if err == nil || err.Error() != tt.want {
@@ -146,7 +147,7 @@ func TestKill_TargetNotKilledFails(t *testing.T) {
 }
 
 func TestKill_DuplicateTargetKilledOnce(t *testing.T) {
-	logPath := fakeKillIncus(t, "")
+	logPath := fakeDeleteIncus(t, "")
 
 	if err := executeWithProfiles(t, nil, noSudoConfig, "kill", "--force", "coi-abc12345-1", "coi-abc12345-1"); err != nil {
 		t.Fatalf("err = %v, want nil", err)

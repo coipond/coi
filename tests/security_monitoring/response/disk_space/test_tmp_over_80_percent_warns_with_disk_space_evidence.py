@@ -8,6 +8,7 @@ import time
 from support.monitoring import (
     cleanup_container,
     coi_session_logs,
+    disk_space_snapshots,
     disk_space_warnings,
     fill_tmp,
     get_container_name_from_workspace,
@@ -35,6 +36,18 @@ def test_tmp_over_80_percent_warns_with_disk_space_evidence(
         total_mb = tmp_size_mb(container_name)
         assert 0 < total_mb <= 64, f"/tmp should be the 64MiB tmpfs, got {total_mb}MB"
 
+        # The monitor measures /tmp before any fill, so the checks below
+        # cover polls that saw the disk space.
+        measured = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not measured:
+            time.sleep(1)
+            measured = [s for s in disk_space_snapshots(container_name) if s["tmp_total_mb"]]
+        assert measured, (
+            "the monitor never measured /tmp; snapshots: "
+            f"{disk_space_snapshots(container_name)[-5:]}{coi_session_logs(container_name)}"
+        )
+
         # Half full: below the 80% threshold, no warning across several polls.
         fill_tmp(container_name, "fill_half", total_mb // 2)
         time.sleep(8)
@@ -52,7 +65,9 @@ def test_tmp_over_80_percent_warns_with_disk_space_evidence(
 
         assert warnings, (
             "expected a disk-space WARNING once /tmp is ~90% full; "
-            f"events: {get_threat_events(container_name)}{coi_session_logs(container_name)}"
+            f"events: {get_threat_events(container_name)}; "
+            f"snapshots: {disk_space_snapshots(container_name)[-5:]}"
+            f"{coi_session_logs(container_name)}"
         )
         warning = warnings[0]
         disk = warning["evidence"]["disk_space"]

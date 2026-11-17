@@ -3,6 +3,7 @@ Helper utilities for pexpect-based CLI tests.
 """
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -52,6 +53,17 @@ NODE_PORT_SERVER = (
     'node -e \'require("http").createServer((q,s)=>s.end("' + PORT_SENTINEL + '"))'
     '.listen(process.env.PORT,"0.0.0.0");setTimeout(()=>process.exit(0),60000)\''
 )
+
+
+def expected_pool_port(workspace_dir, slot=1, index=0):
+    """Replicate session.AllocateHostPort: 20000 + (hash%400)*100 + (slot-1)*10 + index.
+
+    The hash is the first 4 hex chars of sha256(abs workspace path) — the same
+    identity container names use (support.helpers.calculate_container_name).
+    """
+    abs_path = os.path.abspath(workspace_dir)
+    h = hashlib.sha256(abs_path.encode()).hexdigest()[:4]
+    return 20000 + (int(h, 16) % 400) * 100 + (slot - 1) * 10 + index
 
 
 def free_host_port(addr="127.0.0.1"):
@@ -454,8 +466,10 @@ def wait_for_container_ready(child, timeout=60):
     Automatically uses terminal emulator if available, otherwise falls back to raw expect().
     """
     if isinstance(child.logfile_read, TerminalEmulator):
+        # tmux can clear "Starting session..." off the screen within the same
+        # read that delivered it, so match the raw output too.
         try:
-            wait_for_text_on_screen(child, "Starting session", timeout=timeout)
+            wait_for_text_on_screen(child, "Starting session", timeout=timeout, include_raw=True)
             return True
         except TimeoutError:
             display = child.logfile_read.get_display_stripped()
@@ -631,13 +645,23 @@ def wait_for_specific_container_deletion(container_name, timeout=30, poll_interv
         True if container deleted, False if timeout
     """
     start_time = time.time()
+    transitions = []
 
     while time.time() - start_time < timeout:
-        containers = get_container_list()
-        if container_name not in containers:
+        state = incus_status(container_name)
+        if not state:
             return True
+        if not transitions or transitions[-1][1] != state:
+            transitions.append((time.time() - start_time, state))
         time.sleep(poll_interval)
 
+    # Shows whether the delete was late (still Stopping/Stopped) or never
+    # started (Running again).
+    print(
+        f"{container_name} not deleted after {timeout}s, incus states: "
+        + ", ".join(f"{t:.1f}s {state}" for t, state in transitions),
+        file=sys.stderr,
+    )
     return False
 
 
@@ -931,9 +955,10 @@ def expect_and_show(child, pattern, timeout=30, description=None):
     return index
 
 
-def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1):
+def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1, include_raw=False):
     """
-    Wait for text to appear on the rendered terminal screen (not raw output).
+    Wait for text to appear on the rendered terminal screen (not raw output,
+    unless include_raw is set).
 
     This function works with TerminalEmulator to check the actual displayed text,
     properly handling ANSI codes, cursor movements, etc.
@@ -943,6 +968,8 @@ def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1):
         text: Text to search for in the rendered display
         timeout: Timeout in seconds
         poll_interval: How often to check the screen (seconds)
+        include_raw: Also match the raw output read since the call, for text
+                     that is cleared off the screen in the read that delivered it
 
     Returns:
         True when text is found
@@ -957,6 +984,7 @@ def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1):
         )
 
     verbose = child.logfile_read.verbose
+    raw_start = len(child.logfile_read.raw_output)
     start_time = time.time()
 
     if verbose:
@@ -983,7 +1011,9 @@ def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1):
         # Get the rendered screen display
         display = child.logfile_read.get_display_stripped()
 
-        if text in display:
+        if text in display or (
+            include_raw and text in "".join(child.logfile_read.raw_output[raw_start:])
+        ):
             if verbose:
                 print(f"\n{'=' * 60}")
                 print(">>> TEXT FOUND ON SCREEN!")

@@ -35,6 +35,7 @@ func gitDirEntries(gitDir string) []string {
 		filepath.Join(gitDir, "config"),
 		filepath.Join(gitDir, "config.worktree"),
 		filepath.Join(gitDir, "info", "attributes"),
+		filepath.Join(gitDir, "commondir"),
 	}
 }
 
@@ -71,10 +72,13 @@ func TestExpandNestedGit_Submodules(t *testing.T) {
 	if len(out) != 1+len(want) {
 		t.Errorf("expected exactly %d added paths, got %v", len(want), out)
 	}
-	for _, rel := range []string{"config.worktree", "info/attributes"} {
+	for _, rel := range []string{"config.worktree", "info/attributes", "commondir"} {
 		if _, err := os.Lstat(filepath.Join(tmp, ".git/modules/lib", rel)); err != nil {
 			t.Errorf("expected %s placeholder to be materialized: %v", rel, err)
 		}
+	}
+	if data, err := os.ReadFile(filepath.Join(tmp, ".git/modules/lib/commondir")); err != nil || string(data) != commonDirPlaceholder {
+		t.Errorf("commondir placeholder = %q, %v; want %q", data, err, commonDirPlaceholder)
 	}
 }
 
@@ -251,10 +255,10 @@ func TestSetupSecurityMounts_NestedGitInOneBatch(t *testing.T) {
 		if _, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", ".git/config"}, false, nil, NestedGitScan{}, false); err != nil {
 			t.Fatal(err)
 		}
-		// Per submodule: 4 entries plus pins of its git dir and info/; plus
+		// Per submodule: 5 entries plus pins of its git dir and info/; plus
 		// pins of .git and .git/modules.
-		if len(dev.mounts) != 2 || len(dev.batches) != 1 || len(dev.batches[0]) != 6*n+2 {
-			t.Errorf("n=%d: want 2 single mounts and 1 batch of %d, got %d mounts, batches %d", n, 6*n+2, len(dev.mounts), len(dev.batches))
+		if len(dev.mounts) != 2 || len(dev.batches) != 1 || len(dev.batches[0]) != 7*n+2 {
+			t.Errorf("n=%d: want 2 single mounts and 1 batch of %d, got %d mounts, batches %d", n, 7*n+2, len(dev.mounts), len(dev.batches))
 		}
 	}
 }
@@ -274,7 +278,7 @@ func TestSetupSecurityMounts_PrefetchedScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(sync, pre) || len(pre) != 8 {
+	if !slices.Equal(sync, pre) || len(pre) != 10 {
 		t.Errorf("prefetched scan %v differs from sync scan %v", pre, sync)
 	}
 }
@@ -319,15 +323,18 @@ func TestSetupSecurityMounts(t *testing.T) {
 	}
 }
 
-// gitCmd runs git in dir with an isolated config, allowing file:// submodules.
-func gitCmd(t *testing.T, dir string, args ...string) {
+// gitCmd runs git in dir with an isolated config, allowing file:// submodules,
+// and returns its trimmed output.
+func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "protocol.file.allow=always", "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
+	return strings.TrimSpace(string(out))
 }
 
 // A submodule checkout below nestedGitSearchDepth still gets its .git file

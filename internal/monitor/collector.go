@@ -121,6 +121,9 @@ func (c *Collector) Collect(ctx context.Context) (MonitorSnapshot, error) {
 		} else {
 			snapshot.Filesystem = filesystemStats
 			snapshot.Filesystem.WorkspacePath = c.workspacePath
+			if filesystemStats.diskSpaceErr != nil {
+				snapshot.Errors = append(snapshot.Errors, fmt.Sprintf("disk space: %v", filesystemStats.diskSpaceErr))
+			}
 		}
 	}()
 
