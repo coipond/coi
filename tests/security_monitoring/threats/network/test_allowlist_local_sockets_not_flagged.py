@@ -21,8 +21,6 @@ from support.monitoring import (
 
 SLOT = 72
 
-# No "socket.socket" in these scripts: the process monitor flags python3 with
-# it as a reverse shell and pauses the container.
 GATEWAY = """
 import struct, time
 from socket import AF_INET, AF_INET6, SOCK_DGRAM, create_connection, inet_ntoa, socket
