@@ -145,11 +145,35 @@ func TestIncusArgsAreReadOnly(t *testing.T) {
 	}
 }
 
-func TestRunningFromCSV(t *testing.T) {
-	if !runningFromCSV("c1,RUNNING\n", "c1") {
-		t.Error("running")
+func TestContainerRunningAndStopped(t *testing.T) {
+	for _, tc := range []struct {
+		output           string
+		running, stopped bool
+	}{
+		{"c1,RUNNING", true, false},
+		{"c1,STOPPED", false, true},
+		{"c1,STOPPING", false, false},
+		{"c1,ERROR", false, false},
+		{"c1,FROZEN", false, false},
+		{"c10,RUNNING", false, true},
+		{"", false, true},
+	} {
+		fakeIncusScript(t, "echo '"+tc.output+"'")
+		running, err := ContainerRunning("c1")
+		if err != nil || running != tc.running {
+			t.Errorf("%q: ContainerRunning = (%v, %v), want %v", tc.output, running, err, tc.running)
+		}
+		stopped, err := ContainerStopped("c1")
+		if err != nil || stopped != tc.stopped {
+			t.Errorf("%q: ContainerStopped = (%v, %v), want %v", tc.output, stopped, err, tc.stopped)
+		}
 	}
-	if runningFromCSV("c1,STOPPED\n", "c1") || runningFromCSV("c10,RUNNING\n", "c1") || runningFromCSV("", "c1") {
-		t.Error("not running")
+
+	fakeIncusScript(t, "exit 1")
+	if running, err := ContainerRunning("c1"); err == nil || running {
+		t.Errorf("an incus error must be returned, got (%v, %v)", running, err)
+	}
+	if stopped, err := ContainerStopped("c1"); err == nil || stopped {
+		t.Errorf("an incus error must not read as stopped, got (%v, %v)", stopped, err)
 	}
 }

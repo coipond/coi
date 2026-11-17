@@ -993,22 +993,35 @@ func DeleteContainer(containerName string) error {
 // the full instance state (disk usage, network counters, processes), which
 // was a measurable part of every launch and exit for a yes/no answer.
 func ContainerRunning(containerName string) (bool, error) {
-	output, err := IncusOutput("list", "^"+regexp.QuoteMeta(containerName)+"$", "--format=csv", "--columns=ns")
+	status, listed, err := listedStatus(containerName)
+	return listed && StatusIsRunning(status), err
+}
+
+// ContainerStopped reports whether Incus positively lists the container as
+// stopped, or no longer lists it. Not the inverse of ContainerRunning: during
+// a guest poweroff Incus answers Stopping or Error (unresponsive LXC
+// monitor) and then Running again while its stop hook runs.
+func ContainerStopped(containerName string) (bool, error) {
+	status, listed, err := listedStatus(containerName)
 	if err != nil {
 		return false, err
 	}
-	return runningFromCSV(output, containerName), nil
+	return !listed || StatusIsStopped(status), nil
 }
 
-// runningFromCSV reports whether `incus list --format=csv --columns=ns`
-// output lists containerName as running.
-func runningFromCSV(output, containerName string) bool {
-	for _, c := range parseStatusesCSV(output) {
-		if c.Name == containerName && StatusIsRunning(c.Status) {
-			return true
+// listedStatus returns the container's Incus status and whether Incus lists
+// the container at all.
+func listedStatus(containerName string) (status string, listed bool, err error) {
+	statuses, err := ListContainerStatuses("^" + regexp.QuoteMeta(containerName) + "$")
+	if err != nil {
+		return "", false, err
+	}
+	for _, c := range statuses {
+		if c.Name == containerName {
+			return c.Status, true, nil
 		}
 	}
-	return false
+	return "", false, nil
 }
 
 // PublishContainer publishes a stopped container as an image

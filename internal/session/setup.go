@@ -285,12 +285,16 @@ type startLogReader interface {
 }
 
 // readyProbeScript succeeds once the container can run a command AND, when
-// systemd is PID 1, boot has reached sysinit.target. systemd-tmpfiles-setup
-// (--remove --boot, `D /tmp`) runs before that target, so a command started
-// earlier can have its /tmp files deleted under it. Images without systemd
-// need only the exec; a manager that answers it is out of early boot
-// (emergency mode, shutdown) is ready too, so the wait cannot hang there.
-const readyProbeScript = `read -r pid1 </proc/1/comm 2>/dev/null; [ "$pid1" = systemd ] || exit 0
+// the image boots systemd, boot has reached sysinit.target.
+// systemd-tmpfiles-setup (--remove --boot, `D /tmp`) runs before that target,
+// so a command started earlier can have its /tmp files deleted under it.
+// The image is told by its /sbin/init, not by PID 1's name: PID 1 is not
+// systemd until the container execs it, and is "init" until systemd renames
+// itself. Images without systemd need only the exec; a manager that
+// answers it is out of early boot (emergency mode, shutdown) is ready too, so
+// the wait cannot hang there.
+const readyProbeScript = `case "$(readlink -f /sbin/init 2>/dev/null)" in */systemd) ;; *) exit 0 ;; esac
+read -r pid1 </proc/1/comm 2>/dev/null; [ "$pid1" = systemd ] || exit 1
 command -v systemctl >/dev/null 2>&1 || exit 0
 systemctl is-active --quiet sysinit.target && exit 0
 systemctl is-system-running 2>/dev/null | grep -qxE 'running|degraded|maintenance|stopping'`
