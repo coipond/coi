@@ -601,9 +601,10 @@ func (s NestedGitScan) resultFor(workspacePath string) nestedGitFound {
 // dirs below the workspace root: submodule git dirs (.git/modules/**, nested
 // modules included) and nested repositories (<dir>/.git, up to
 // nestedGitSearchDepth). For each such git dir its hooks, config,
-// config.worktree, info/attributes and commondir are added, materialized like the root
-// .git defaults so they cannot be planted. A .git file (submodule or worktree
-// checkout) is protected itself, so its gitdir pointer cannot be redirected.
+// config.worktree, info/attributes and commondir are added, materialized like
+// the root .git defaults so they cannot be planted. A .git file (submodule or
+// worktree checkout) is protected itself, so its gitdir pointer cannot be
+// redirected.
 //
 // Host git reads these on a plain `git status` in the superproject (it recurses
 // into submodules), so a writable submodule config is host code execution
@@ -818,8 +819,13 @@ func isRegularFile(path string) bool {
 // isBatchedGitPath reports whether rel is mounted in the batch: a nested git
 // path, a linked worktree entry (one per worktree) or .git/commondir.
 func isBatchedGitPath(rel string) bool {
-	slash := filepath.ToSlash(rel)
-	return isNestedGitPath(rel) || slash == ".git/commondir" || strings.HasPrefix(slash, ".git/worktrees/")
+	return isNestedGitPath(rel) || isWorktreeGitPath(rel) || filepath.ToSlash(rel) == ".git/commondir"
+}
+
+// isWorktreeGitPath reports whether rel lies in a linked worktree's admin dir
+// (.git/worktrees/<name>/...), whose name is repo-controlled.
+func isWorktreeGitPath(rel string) bool {
+	return strings.HasPrefix(filepath.ToSlash(rel), ".git/worktrees/")
 }
 
 // isNestedGitPath reports whether rel lies in or is a git dir below the
@@ -947,7 +953,7 @@ func pathToDeviceName(path string) string {
 	// Nested git and linked worktree paths come from repo-controlled names:
 	// hash them so they cannot collide with each other or exceed the device
 	// name limit.
-	if isNestedGitPath(path) || strings.HasPrefix(filepath.ToSlash(path), ".git/worktrees/") {
+	if isNestedGitPath(path) || isWorktreeGitPath(path) {
 		sum := sha256.Sum256([]byte(path))
 		return protectDevicePrefix + hex.EncodeToString(sum[:])[:16]
 	}
