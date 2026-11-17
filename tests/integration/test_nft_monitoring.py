@@ -24,7 +24,13 @@ from pathlib import Path
 import pytest
 
 from support.helpers import container_ipv4
-from support.monitoring import coi_session_logs
+from support.monitoring import (
+    coi_session_logs,
+    get_threat_events,
+    hold_connect,
+    is_c2_port_threat,
+    wait_for_threats,
+)
 
 
 def get_container_name_from_workspace(workspace, slot=1):
@@ -461,6 +467,9 @@ class TestNFTRuleManagement:
             cleanup_container(container_name, coi_binary, env=coi_monitoring_env)
 
 
+LAN_HOST = "192.168.254.254"  # RFC1918, off the bridge subnet
+
+
 class TestNetworkThreatDetection:
     """Test network threat detection scenarios."""
 
@@ -729,13 +738,14 @@ enabled = true
     def test_lan_access_not_flagged_in_open_mode(
         self, test_workspace, coi_binary, coi_monitoring_env
     ):
-        """Open mode allows LAN traffic: an RFC1918 connection raises no HIGH threat
-        and, with auto_pause_on_high = true, does not pause the container.
+        """Open mode allows LAN traffic: an RFC1918 flow raises no HIGH threat in
+        either monitor, so auto_pause_on_high has nothing to pause on.
 
-        A C2-port connection to the same host afterwards proves the detector saw
-        the traffic: it is still flagged (CRITICAL, alert only here).
+        A C2-port flow to the same host proves both monitors saw the traffic: it
+        is still flagged (CRITICAL, alert only here).
         """
-        # coi_monitoring_env points COI_CONFIG at this file
+        # coi_monitoring_env points COI_CONFIG at this file. auto_pause_on_high
+        # stays off, so a HIGH is reported by the assertions, not by a freeze.
         Path(test_workspace, ".coi", "config.toml").write_text("""
 [network]
 mode = "open"
@@ -743,7 +753,7 @@ mode = "open"
 [monitoring]
 enabled = true
 auto_kill_on_critical = false
-auto_pause_on_high = true
+auto_pause_on_high = false
 
 [monitoring.nft]
 enabled = true
@@ -751,29 +761,46 @@ enabled = true
         proc, name, _ = _start_monitored_shell(
             coi_binary, test_workspace, coi_monitoring_env, slot=59
         )
+        holders = []
+
+        def diag():
+            return (
+                f" State: {get_container_state(name)}. "
+                f"All events: {get_threat_events(name, nft=True)}{coi_session_logs(name)}"
+            )
+
         try:
-            # Off the bridge subnet, so the SYN is forwarded past the LOG rule.
-            for url in ("http://192.168.254.254/", "http://192.168.254.254:4444/"):
+            # Off the bridge subnet, so the datagrams are forwarded past the LOG
+            # rule. Connected UDP stays in /proc/net/udp for the process monitor.
+            holders.append(hold_connect(name, LAN_HOST, 80, proto="udp"))
+            holders.append(hold_connect(name, LAN_HOST, 4444, proto="udp"))
+            # Also TCP, the path a plain curl takes; a hung exec fails with diagnostics.
+            try:
                 subprocess.run(
-                    ["incus", "exec", name, "--", "curl", "-m", "3", url],
+                    ["incus", "exec", name, "--", "curl", "-m", "3", f"http://{LAN_HOST}/"],
                     capture_output=True,
                     timeout=10,
                 )
+            except subprocess.TimeoutExpired:
+                pytest.fail(f"incus exec curl -m 3 to {LAN_HOST} hung for 10 s.{diag()}")
 
-            events = _wait_for_events(
-                name, lambda e: e.get("title") == "Connection to suspicious port"
-            )
-            assert any(e.get("title") == "Connection to suspicious port" for e in events), (
-                f"Expected the C2-port connection to be flagged. Events: {events}"
-            )
-            high_events = [e for e in events if e.get("level") == "high"]
-            assert not high_events, f"Open mode: LAN access must not be HIGH. Events: {high_events}"
+            c2 = is_c2_port_threat(LAN_HOST)
+            nft_c2 = _wait_for_events(name, c2)
+            proc_c2 = wait_for_threats(name, c2)
 
-            # A pause would freeze the container within a few seconds
-            time.sleep(5)
+            assert any(c2(e) for e in nft_c2), (
+                f"Expected the nft monitor to flag the C2-port flow.{diag()}"
+            )
+            assert proc_c2, f"Expected the process monitor to flag the C2-port flow.{diag()}"
+            high_events = [e for e in get_threat_events(name, nft=True) if e.get("level") == "high"]
+            assert not high_events, (
+                f"Open mode: LAN access must not be HIGH: {high_events}.{diag()}"
+            )
             state = get_container_state(name)
-            assert state == "Running", f"Open mode: container should keep running, but is {state}"
+            assert state == "Running", f"Open mode: container should keep running.{diag()}"
         finally:
+            for holder in holders:
+                holder.terminate()
             _stop_shell(proc, name, coi_binary, coi_monitoring_env)
 
     def test_lan_access_flagged_in_restricted_mode(
@@ -801,7 +828,7 @@ enabled = true
         )
         try:
             subprocess.run(
-                ["incus", "exec", name, "--", "curl", "-m", "3", "http://192.168.254.254/"],
+                ["incus", "exec", name, "--", "curl", "-m", "3", f"http://{LAN_HOST}/"],
                 capture_output=True,
                 timeout=10,
             )
