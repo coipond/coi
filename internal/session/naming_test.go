@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/container"
 )
 
 func TestWorkspaceHash(t *testing.T) {
@@ -259,10 +261,10 @@ func TestAllocateSlotFrom(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			orig := listSlotInstances
 			t.Cleanup(func() { listSlotInstances = orig })
-			listSlotInstances = func() ([]slotInstance, error) {
-				out := []slotInstance{{Name: ContainerName("/other", "", 1), Status: "RUNNING"}}
+			listSlotInstances = func() ([]container.ContainerStatus, error) {
+				out := []container.ContainerStatus{{Name: ContainerName("/other", "", 1), Status: "RUNNING"}}
 				for _, n := range tt.used {
-					out = append(out, slotInstance{Name: ContainerName(workspace, "", n), Status: "RUNNING"})
+					out = append(out, container.ContainerStatus{Name: ContainerName(workspace, "", n), Status: "RUNNING"})
 				}
 				return out, nil
 			}
@@ -306,6 +308,28 @@ func TestListWorkspaceSessions(t *testing.T) {
 	}
 	b, _ := os.ReadFile(logPath)
 	if call := strings.TrimSpace(string(b)); call != "--project default list ^"+prefix+" --format=csv --columns=n" {
+		t.Errorf("incus call = %q", call)
+	}
+}
+
+func TestFindReusablePersistentSlot(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	prefix := "coi-" + IdentityHash("/home/u/proj", "") + "-"
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nprintf '" +
+		prefix + "1,RUNNING\\n" + prefix + "3,STOPPED\\n" + prefix + "2,STOPPED\\n" +
+		"coi-other-1,STOPPED\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if slot, ok := FindReusablePersistentSlot("/home/u/proj", "", MaxSlots); !ok || slot != 2 {
+		t.Errorf("FindReusablePersistentSlot() = %d, %v; want 2, true", slot, ok)
+	}
+	b, _ := os.ReadFile(logPath)
+	if call := strings.TrimSpace(string(b)); call != "--project default list --format=csv --columns=ns" {
 		t.Errorf("incus call = %q", call)
 	}
 }
