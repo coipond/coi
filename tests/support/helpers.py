@@ -466,12 +466,28 @@ def wait_for_container_ready(child, timeout=60):
     Automatically uses terminal emulator if available, otherwise falls back to raw expect().
     """
     if isinstance(child.logfile_read, TerminalEmulator):
-        try:
-            wait_for_text_on_screen(child, "Starting session", timeout=timeout)
+        # tmux can clear "Starting session..." off the screen within the same
+        # read that delivered it, so match the raw output read since entry too.
+        emulator = child.logfile_read
+        start = len(emulator.raw_output)
+
+        def started():
+            return "Starting session" in emulator.get_display_stripped() or (
+                "Starting session" in "".join(emulator.raw_output[start:])
+            )
+
+        deadline = time.time() + timeout
+        while time.time() < deadline and not started():
+            try:
+                child.read_nonblocking(size=4096, timeout=0.1)
+            except TIMEOUT:
+                pass
+            except EOF:
+                break
+        if started():
             return True
-        except TimeoutError:
-            display = child.logfile_read.get_display_stripped()
-            raise TimeoutError(f"Container setup timeout.\n\nScreen display:\n{display}") from None
+        display = emulator.get_display_stripped()
+        raise TimeoutError(f"Container setup timeout.\n\nScreen display:\n{display}")
     else:
         # Fallback to raw expect()
         try:
@@ -643,13 +659,23 @@ def wait_for_specific_container_deletion(container_name, timeout=30, poll_interv
         True if container deleted, False if timeout
     """
     start_time = time.time()
+    transitions = []
 
     while time.time() - start_time < timeout:
-        containers = get_container_list()
-        if container_name not in containers:
+        state = incus_status(container_name)
+        if not state:
             return True
+        if not transitions or transitions[-1][1] != state:
+            transitions.append((time.time() - start_time, state))
         time.sleep(poll_interval)
 
+    # Shows whether the delete was late (still Stopping/Stopped) or never
+    # started (Running again).
+    print(
+        f"{container_name} not deleted after {timeout}s, incus states: "
+        + ", ".join(f"{t:.1f}s {state}" for t, state in transitions),
+        file=sys.stderr,
+    )
     return False
 
 
