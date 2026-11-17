@@ -15,6 +15,7 @@ from support.monitoring import (
     cleanup_container,
     get_container_state,
     get_threat_events,
+    hold_connect,
     hold_script,
     poll_network_threats,
     start_shell,
@@ -34,14 +35,6 @@ while time.monotonic() < end:
     conn.request("HEAD", "/", headers={"Connection": "keep-alive"})
     conn.getresponse().read()
     time.sleep(2)
-"""
-
-HOLD_UDP = """
-import sys, time
-from socket import AF_INET, SOCK_DGRAM, socket
-s = socket(AF_INET, SOCK_DGRAM)
-s.connect((sys.argv[1], 80))
-time.sleep(60)
 """
 
 
@@ -101,7 +94,7 @@ file_read_rate_mb_per_sec = 1000
         assert not flagged, f"the held flow to {peer} must not be flagged, got: {flagged}"
 
         # Positive control: a new socket to the expired address is flagged.
-        holders.append(hold_script(container_name, HOLD_UDP, peer))
+        holders.append(hold_connect(container_name, peer, 80, proto="udp"))
         threats = poll_network_threats(container_name, match=f"{peer}:80")
         assert threats, "a new socket to an expired address must still be flagged"
     finally:
