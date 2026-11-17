@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
 )
 
@@ -217,5 +218,90 @@ func TestSetupSecurityMounts_WorktreeNamesGiveValidDistinctDevices(t *testing.T)
 		if !mounted[w] {
 			t.Errorf("%s not mounted; devices: %v", w, dev.byName)
 		}
+	}
+}
+
+// The linked worktree entries of a submodule git dir and of a nested repo are
+// mounted read-only in the batch, and git still works in those worktrees.
+func TestSetupSecurityMounts_NestedLinkedWorktrees(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "lib")
+	ws := filepath.Join(dir, "ws")
+	for _, d := range []string{lib, ws} {
+		gitCmd(t, dir, "init", "-q", d)
+		gitCmd(t, d, "commit", "-q", "--allow-empty", "-m", "init")
+	}
+	gitCmd(t, ws, "submodule", "add", "-q", lib, "lib")
+	nested := filepath.Join(ws, "nested")
+	gitCmd(t, ws, "init", "-q", nested)
+	gitCmd(t, nested, "commit", "-q", "--allow-empty", "-m", "init")
+	subWt := filepath.Join(dir, "sub-wt")
+	nestedWt := filepath.Join(dir, "nested-wt")
+	gitCmd(t, filepath.Join(ws, "lib"), "worktree", "add", "-q", subWt)
+	gitCmd(t, nested, "worktree", "add", "-q", nestedWt)
+	for _, d := range []string{filepath.Join(ws, ".git", "modules", "lib"), filepath.Join(nested, ".git")} {
+		gitCmd(t, d, "config", "extensions.worktreeConfig", "true")
+	}
+	gitCmd(t, subWt, "config", "--worktree", "core.bare", "false")
+	gitCmd(t, nestedWt, "config", "--worktree", "core.bare", "false")
+
+	var want []string
+	for _, gitDir := range []string{".git/modules/lib/worktrees/sub-wt", "nested/.git/worktrees/nested-wt"} {
+		want = append(want, filepath.Join(gitDir, "commondir"), filepath.Join(gitDir, "config.worktree"))
+	}
+	dev := &batchDevices{}
+	effective, err := SetupSecurityMounts(dev, ws, "/workspace", []string{".git/config"}, false, nil, NestedGitScan{}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertContainsAll(t, effective, want)
+	if len(dev.batches) != 1 {
+		t.Fatalf("want 1 batch, got %d", len(dev.batches))
+	}
+	for _, rel := range want {
+		path := filepath.Join("/workspace", rel)
+		if !slices.ContainsFunc(dev.batches[0], func(m container.DiskMount) bool { return m.Path == path && m.Readonly }) {
+			t.Errorf("expected a read-only batched mount at %s", path)
+		}
+	}
+	for _, wt := range []string{subWt, nestedWt} {
+		gitCmd(t, wt, "status")
+		gitCmd(t, wt, "commit", "-q", "--allow-empty", "-m", "wt")
+	}
+}
+
+// A writable_paths opt-out and a symlinked entry are honored for nested
+// linked worktrees as for the root ones.
+func TestExpandNestedGit_LinkedWorktreeOptOutsAndSymlinks(t *testing.T) {
+	ws := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, ".git/modules/lib")
+	wt := filepath.Join(ws, ".git", "modules", "lib", "worktrees", "a")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(ws, "elsewhere"), filepath.Join(wt, "config.worktree")); err != nil {
+		t.Fatal(err)
+	}
+	commonDir := filepath.Join(".git", "modules", "lib", "worktrees", "a", "commondir")
+	configWt := filepath.Join(".git", "modules", "lib", "worktrees", "a", "config.worktree")
+
+	got := expandNestedGit(ws, nil, nil, NestedGitScan{}, false)
+	if !slices.Contains(got, commonDir) || slices.Contains(got, configWt) {
+		t.Errorf("got %v, want %s and not the symlinked %s", got, commonDir, configWt)
+	}
+	sec := &config.SecurityConfig{WritablePaths: []string{commonDir}}
+	if got := expandNestedGit(ws, nil, sec, NestedGitScan{}, false); slices.Contains(got, commonDir) {
+		t.Errorf("writable_paths opt-out ignored: %v", got)
+	}
+	again := expandNestedGit(ws, got, nil, NestedGitScan{}, false)
+	if len(again) != len(got) {
+		t.Errorf("re-expanding must be a no-op, got %v then %v", got, again)
 	}
 }
