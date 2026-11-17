@@ -944,9 +944,10 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 
 // pathToDeviceName converts a path to a valid Incus device name
 func pathToDeviceName(path string) string {
-	// Nested git paths come from repo-controlled names: hash them so they
-	// cannot collide with each other or exceed the device name limit.
-	if isNestedGitPath(path) {
+	// Nested git and linked worktree paths come from repo-controlled names:
+	// hash them so they cannot collide with each other or exceed the device
+	// name limit.
+	if isNestedGitPath(path) || strings.HasPrefix(filepath.ToSlash(path), ".git/worktrees/") {
 		sum := sha256.Sum256([]byte(path))
 		return protectDevicePrefix + hex.EncodeToString(sum[:])[:16]
 	}

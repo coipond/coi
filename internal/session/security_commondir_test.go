@@ -1,12 +1,16 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"testing"
+
+	"github.com/coipond/coi/internal/container"
 )
 
 // An absent .git/commondir is materialized with a placeholder git accepts as
@@ -141,6 +145,77 @@ func TestCommonDir_WorktreeEntriesInOneBatch(t *testing.T) {
 		}
 		if len(dev.mounts) != 0 || len(dev.batches) != 1 {
 			t.Errorf("common dir n=%d: want 1 batch, got %d mounts, %d batches", n, len(dev.mounts), len(dev.batches))
+		}
+	}
+}
+
+// incusNameDevices applies the Incus device name rule (at most 64 chars of
+// [A-Za-z0-9._-]) and keys devices by name, as one PATCH does.
+type incusNameDevices struct {
+	recordingDevices
+	byName map[string]string
+}
+
+var incusDeviceName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+func (d *incusNameDevices) add(name, path string) error {
+	if !incusDeviceName.MatchString(name) {
+		return fmt.Errorf("invalid device name %q", name)
+	}
+	d.byName[name] = path
+	return nil
+}
+
+func (d *incusNameDevices) MountDisk(name, _, path string, _, _ bool) error {
+	return d.add(name, path)
+}
+
+func (d *incusNameDevices) MountDisks(mounts []container.DiskMount) error {
+	for _, m := range mounts {
+		if !incusDeviceName.MatchString(m.Name) {
+			return fmt.Errorf("invalid device name %q", m.Name)
+		}
+	}
+	for _, m := range mounts {
+		_ = d.add(m.Name, m.Path)
+	}
+	return nil
+}
+
+// Linked worktree names are repo-controlled: a long name, a name with "+"
+// and names that differ only in dots must each get a valid, distinct device,
+// and must not cost the other entries of the batch.
+func TestSetupSecurityMounts_WorktreeNamesGiveValidDistinctDevices(t *testing.T) {
+	ws := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, ".git/modules/lib")
+	names := []string{"feature-branch-with-a-very-long-descriptive-name", "a+b", "v1.2", "v12"}
+	for _, n := range names {
+		wt := filepath.Join(ws, ".git", "worktrees", n)
+		if err := os.MkdirAll(wt, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wt, "commondir"), []byte("../..\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dev := &incusNameDevices{byName: map[string]string{}}
+	if _, err := SetupSecurityMounts(dev, ws, "/workspace", []string{".git/config", ".git/commondir"}, false, nil, NestedGitScan{}, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mounted := map[string]bool{}
+	for _, p := range dev.byName {
+		mounted[p] = true
+	}
+	want := []string{"/workspace/.git/commondir", "/workspace/.git/modules/lib/config"}
+	for _, n := range names {
+		want = append(want, filepath.Join("/workspace/.git/worktrees", n, "commondir"))
+	}
+	for _, w := range want {
+		if !mounted[w] {
+			t.Errorf("%s not mounted; devices: %v", w, dev.byName)
 		}
 	}
 }
