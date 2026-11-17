@@ -169,8 +169,8 @@ func TestSetupSecurityMounts_PinCollisionKeepsNestedGit(t *testing.T) {
 		t.Fatalf("want a warning for the /workspace/.claude pin, got %v", err)
 	}
 
-	if len(dev.batches) == 0 || len(dev.batches[0]) != 4 {
-		t.Fatalf("want the 4 nested git entries in one batch, got %v", dev.batches)
+	if len(dev.batches) == 0 || len(dev.batches[0]) != 5 {
+		t.Fatalf("want the 5 nested git entries in one batch, got %v", dev.batches)
 	}
 	var got []string
 	for _, b := range dev.batches[1:] {

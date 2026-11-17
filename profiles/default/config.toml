@@ -80,7 +80,7 @@ writable_hooks = false
 forward_agent = false
 
 [security]
-protected_paths = [".git/hooks", ".git/config", ".git/config.worktree", ".git/info/attributes", ".husky", ".vscode", ".coi", ".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml"]
+protected_paths = [".git/hooks", ".git/config", ".git/config.worktree", ".git/info/attributes", ".git/commondir", ".husky", ".vscode", ".coi", ".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml"]
 host_immutable = true
 # In-workspace agent tool config (.claude/settings.json,
 # .claude/settings.local.json, .codex/config.toml) is in protected_paths, so it
