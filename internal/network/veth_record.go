@@ -15,7 +15,6 @@ import (
 // it sees for its own containers, one empty file per interface name, and
 // `coi clean --orphans` only ever deletes recorded ones.
 
-// hostVethRecordsDir is where the records live.
 func hostVethRecordsDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

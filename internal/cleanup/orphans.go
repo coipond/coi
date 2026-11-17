@@ -48,7 +48,7 @@ func DetectOrphanedVeths() ([]string, error) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(netClassDir, name)); err != nil {
-			continue // gone: nothing to remove
+			continue
 		}
 		// No master symlink = no bridge
 		if _, err := os.Stat(filepath.Join(netClassDir, name, "master")); os.IsNotExist(err) {

@@ -41,7 +41,6 @@ func TestHostVethRecords(t *testing.T) {
 	}
 }
 
-// Every veth lookup for a coi container records the veth it finds.
 func TestGetContainerVethName_RecordsVeth(t *testing.T) {
 	if _, err := os.Stat("/sys/class/net/lo"); err != nil {
 		t.Skip("no /sys/class/net/lo")
