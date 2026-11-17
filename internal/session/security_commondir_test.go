@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -105,6 +106,41 @@ func TestSetupCommonDirProtection_CommonDir(t *testing.T) {
 		path := filepath.Join(common, rel)
 		if !slices.ContainsFunc(rec.mounts, func(m mountedDevice) bool { return m.path == path && m.readonly }) {
 			t.Errorf("expected a read-only mount at %s, got %v", path, rec.mounts)
+		}
+	}
+}
+
+// The Incus call count must not grow with the number of linked worktrees:
+// their entries go in one MountDisks batch, in a normal repo and in the
+// common dir of a worktree checkout.
+func TestCommonDir_WorktreeEntriesInOneBatch(t *testing.T) {
+	for _, n := range []int{1, 10, 100} {
+		ws := t.TempDir()
+		mkGitDir(t, ws, ".git")
+		for i := range n {
+			wt := filepath.Join(ws, ".git", "worktrees", "w"+strconv.Itoa(i))
+			if err := os.MkdirAll(wt, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(wt, "commondir"), []byte("../..\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		dev := &batchDevices{}
+		if _, err := SetupSecurityMounts(dev, ws, "/workspace", []string{".git/hooks", ".git/config", ".git/commondir"}, false, nil, NestedGitScan{}, false); err != nil {
+			t.Fatal(err)
+		}
+		if len(dev.mounts) != 2 || len(dev.batches) != 1 {
+			t.Errorf("workspace n=%d: want 2 single mounts and 1 batch, got %d mounts, %d batches", n, len(dev.mounts), len(dev.batches))
+		}
+
+		dev = &batchDevices{}
+		if _, err := SetupCommonDirProtection(dev, filepath.Join(ws, ".git"), false, false, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(dev.mounts) != 0 || len(dev.batches) != 1 {
+			t.Errorf("common dir n=%d: want 1 batch, got %d mounts, %d batches", n, len(dev.mounts), len(dev.batches))
 		}
 	}
 }

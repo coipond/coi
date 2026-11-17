@@ -34,7 +34,8 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // here too (expandNestedGit), from scan: a scan started early with
 // StartNestedGitScan so the walk overlaps the caller's Incus calls, or the zero
 // value to scan now. Their entries, whose number grows with the submodules,
-// are mounted in one batch. writableHooks ([git] writable_hooks) leaves their
+// are mounted in one batch, with .git/commondir and the linked worktree
+// entries (one per worktree). writableHooks ([git] writable_hooks) leaves their
 // hooks dirs writable, as it does the root one.
 //
 // The dirs between the workspace root and each protected path are pinned
@@ -57,7 +58,7 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift)
 		if err == nil {
 			prepared = append(prepared, filepath.Clean(relPath))
-			if isNestedGitPath(relPath) {
+			if isBatchedGitPath(relPath) {
 				batch = append(batch, d)
 				continue
 			}
@@ -812,6 +813,13 @@ func isRealDir(path string) bool {
 func isRegularFile(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+// isBatchedGitPath reports whether rel is mounted in the batch: a nested git
+// path, a linked worktree entry (one per worktree) or .git/commondir.
+func isBatchedGitPath(rel string) bool {
+	slash := filepath.ToSlash(rel)
+	return isNestedGitPath(rel) || slash == ".git/commondir" || strings.HasPrefix(slash, ".git/worktrees/")
 }
 
 // isNestedGitPath reports whether rel lies in or is a git dir below the
