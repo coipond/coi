@@ -467,27 +467,13 @@ def wait_for_container_ready(child, timeout=60):
     """
     if isinstance(child.logfile_read, TerminalEmulator):
         # tmux can clear "Starting session..." off the screen within the same
-        # read that delivered it, so match the raw output read since entry too.
-        emulator = child.logfile_read
-        start = len(emulator.raw_output)
-
-        def started():
-            return "Starting session" in emulator.get_display_stripped() or (
-                "Starting session" in "".join(emulator.raw_output[start:])
-            )
-
-        deadline = time.time() + timeout
-        while time.time() < deadline and not started():
-            try:
-                child.read_nonblocking(size=4096, timeout=0.1)
-            except TIMEOUT:
-                pass
-            except EOF:
-                break
-        if started():
+        # read that delivered it, so match the raw output too.
+        try:
+            wait_for_text_on_screen(child, "Starting session", timeout=timeout, include_raw=True)
             return True
-        display = emulator.get_display_stripped()
-        raise TimeoutError(f"Container setup timeout.\n\nScreen display:\n{display}")
+        except TimeoutError:
+            display = child.logfile_read.get_display_stripped()
+            raise TimeoutError(f"Container setup timeout.\n\nScreen display:\n{display}") from None
     else:
         # Fallback to raw expect()
         try:
@@ -969,9 +955,10 @@ def expect_and_show(child, pattern, timeout=30, description=None):
     return index
 
 
-def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1):
+def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1, include_raw=False):
     """
-    Wait for text to appear on the rendered terminal screen (not raw output).
+    Wait for text to appear on the rendered terminal screen (not raw output,
+    unless include_raw is set).
 
     This function works with TerminalEmulator to check the actual displayed text,
     properly handling ANSI codes, cursor movements, etc.
@@ -981,6 +968,8 @@ def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1):
         text: Text to search for in the rendered display
         timeout: Timeout in seconds
         poll_interval: How often to check the screen (seconds)
+        include_raw: Also match the raw output read since the call, for text
+                     that is cleared off the screen in the read that delivered it
 
     Returns:
         True when text is found
@@ -995,6 +984,7 @@ def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1):
         )
 
     verbose = child.logfile_read.verbose
+    raw_start = len(child.logfile_read.raw_output)
     start_time = time.time()
 
     if verbose:
@@ -1021,7 +1011,9 @@ def wait_for_text_on_screen(child, text, timeout=30, poll_interval=0.1):
         # Get the rendered screen display
         display = child.logfile_read.get_display_stripped()
 
-        if text in display:
+        if text in display or (
+            include_raw and text in "".join(child.logfile_read.raw_output[raw_start:])
+        ):
             if verbose:
                 print(f"\n{'=' * 60}")
                 print(">>> TEXT FOUND ON SCREEN!")
