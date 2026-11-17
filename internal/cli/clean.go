@@ -30,7 +30,8 @@ var cleanCmd = &cobra.Command{
 By default, cleans only stopped containers. Use flags to control what gets cleaned.
 
 Orphaned resources include:
-- Orphaned veth interfaces (network pairs with no master bridge)
+- Orphaned veth interfaces (host veths coi recorded for its containers, with
+  no master bridge and not used by any Incus instance)
 - Orphaned nft rules (ip coi forward chain rules for container IPs that no longer exist)
 - Orphaned iptables bridge rules (coi-bridge-forward rules with no containers running)
 

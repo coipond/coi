@@ -282,10 +282,11 @@ func TestIsContainerName(t *testing.T) {
 		{"other-a1b2c3d4-1", false},
 	}
 
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+
 	for _, tt := range tests {
-		// Override pattern for test (since COI_CONTAINER_PREFIX might be set)
 		got := IsContainerName(tt.name)
-		if os.Getenv("COI_CONTAINER_PREFIX") == "" && got != tt.want {
+		if got != tt.want {
 			t.Errorf("IsContainerName(%q) = %v, want %v", tt.name, got, tt.want)
 		}
 	}
