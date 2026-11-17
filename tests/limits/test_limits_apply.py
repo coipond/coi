@@ -255,6 +255,46 @@ count = "2"
     assert "limits.processes" not in config, "Removed process limit should be unset"
 
 
+def test_process_limit_follows_config_on_persistent_restart(
+    coi_binary, workspace_dir, cleanup_containers
+):
+    """Test that a restarted persistent container gets the current max_processes.
+
+    100, then 200: the raised limit is set. Then an explicit 0: the limit is unset.
+    """
+    config_file = Path(workspace_dir) / ".coi" / "config.toml"
+    config_file.parent.mkdir(exist_ok=True)
+
+    for max_processes in (100, 200):
+        config_file.write_text(
+            f"""
+[container]
+persistent = true
+
+[limits.runtime]
+max_processes = {max_processes}
+"""
+        )
+        config = run_and_show_config(coi_binary, workspace_dir)
+        assert f'limits.processes: "{max_processes}"' in config, (
+            f"Process limit {max_processes} should apply. Config: {config}"
+        )
+
+    config_file.write_text(
+        """
+[container]
+persistent = true
+
+[limits.runtime]
+max_processes = 0
+"""
+    )
+    config = run_and_show_config(coi_binary, workspace_dir)
+    assert "limits.processes" not in config, (
+        f"max_processes = 0 should unset the process limit. Config: {config}"
+    )
+
+
 def _default_root_pool_driver():
     """Resolve the storage driver backing the default profile's root disk.
 
