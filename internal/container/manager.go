@@ -747,6 +747,10 @@ func (m *Manager) PushFile(source, destination string) error {
 
 // PullDirectory pulls a directory from the container recursively
 func (m *Manager) PullDirectory(containerPath, localPath string) error {
+	if !strings.HasPrefix(containerPath, "/") {
+		containerPath = "/" + containerPath
+	}
+
 	// Fail fast, before anything is transferred. This function used to clear
 	// the way for the final rename with os.RemoveAll(localPath),
 	// which recursively deleted whole host trees when a caller passed

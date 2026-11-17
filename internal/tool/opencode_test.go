@@ -26,15 +26,15 @@ func TestOpencodeTool_Basics(t *testing.T) {
 func TestOpencodeTool_BuildCommand_NewSession(t *testing.T) {
 	oc := NewOpencode()
 	cmd := oc.BuildCommand("some-session-id", false, "")
-	if len(cmd) != 1 || cmd[0] != "opencode" {
-		t.Errorf("BuildCommand(new) = %v, want [opencode]", cmd)
+	if len(cmd) != 2 || cmd[0] != "opencode" || cmd[1] != "--auto" {
+		t.Errorf("BuildCommand(new) = %v, want [opencode --auto]", cmd)
 	}
 }
 
 func TestOpencodeTool_BuildCommand_Resume(t *testing.T) {
 	oc := NewOpencode()
 	cmd := oc.BuildCommand("", true, "")
-	expected := []string{"opencode", "--continue"}
+	expected := []string{"opencode", "--auto", "--continue"}
 	if len(cmd) != len(expected) {
 		t.Fatalf("BuildCommand(resume) = %v, want %v", cmd, expected)
 	}
@@ -48,7 +48,7 @@ func TestOpencodeTool_BuildCommand_Resume(t *testing.T) {
 func TestOpencodeTool_BuildCommand_ResumeWithID(t *testing.T) {
 	oc := NewOpencode()
 	cmd := oc.BuildCommand("", true, "some-id")
-	expected := []string{"opencode", "--session", "some-id"}
+	expected := []string{"opencode", "--auto", "--session", "some-id"}
 	if len(cmd) != len(expected) {
 		t.Fatalf("BuildCommand(resume with ID) = %v, want %v", cmd, expected)
 	}
@@ -66,10 +66,10 @@ func TestOpencodeTool_BuildHeadlessCommand(t *testing.T) {
 		spec LaunchSpec
 		want string
 	}{
-		{"no prompt", LaunchSpec{SessionID: "sid", Print: true}, `opencode run </dev/null`},
-		{"fresh", LaunchSpec{SessionID: "sid", PromptFile: "/run/p", Print: true}, `opencode run </run/p`},
-		{"continue", LaunchSpec{Resume: true, PromptFile: "/run/p", Print: true}, `opencode run --continue </run/p`},
-		{"session", LaunchSpec{Resume: true, ResumeSessionID: "ses_1", PromptFile: "/run/p", Print: true}, `opencode run --session ses_1 </run/p`},
+		{"no prompt", LaunchSpec{SessionID: "sid", Print: true}, `opencode run --auto </dev/null`},
+		{"fresh", LaunchSpec{SessionID: "sid", PromptFile: "/run/p", Print: true}, `opencode run --auto </run/p`},
+		{"continue", LaunchSpec{Resume: true, PromptFile: "/run/p", Print: true}, `opencode run --auto --continue </run/p`},
+		{"session", LaunchSpec{Resume: true, ResumeSessionID: "ses_1", PromptFile: "/run/p", Print: true}, `opencode run --auto --session ses_1 </run/p`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,7 +151,7 @@ func TestOpencodeTool_SetSessionDiscoveryOutput(t *testing.T) {
 			if got := oc.DiscoverSessionID("/ignored"); got != tt.want {
 				t.Errorf("DiscoverSessionID() = %q, want %q", got, tt.want)
 			}
-			if got := strings.Join(oc.BuildCommand("", true, oc.DiscoverSessionID("")), " "); tt.want != "" && got != "opencode --session "+tt.want {
+			if got := strings.Join(oc.BuildCommand("", true, oc.DiscoverSessionID("")), " "); tt.want != "" && got != "opencode --auto --session "+tt.want {
 				t.Errorf("BuildCommand(resume) = %q, want --session %s", got, tt.want)
 			}
 		})

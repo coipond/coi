@@ -11,13 +11,13 @@ while `close` was powering it off, telling the user their instance was still
 up when it was going (or already) down.
 """
 
-import subprocess
 import time
 
 from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    incus_status,
     send_prompt,
     spawn_coi,
     wait_for_container_ready,
@@ -26,21 +26,6 @@ from support.helpers import (
     with_live_screen,
     write_workspace_container_config,
 )
-
-
-def container_status(name):
-    """Return the container's status string ("" if it does not exist)."""
-    result = subprocess.run(
-        ["incus", "list", name, "--format=csv", "-c", "ns"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    for line in result.stdout.strip().split("\n"):
-        parts = line.split(",")
-        if len(parts) >= 2 and parts[0] == name:
-            return parts[1].strip()
-    return ""
 
 
 def test_close_stops_and_keeps_persistent(coi_binary, cleanup_containers, workspace_dir):
@@ -118,7 +103,7 @@ def test_close_stops_and_keeps_persistent(coi_binary, cleanup_containers, worksp
     status = ""
     deadline = time.time() + 60
     while time.time() < deadline:
-        status = container_status(container_name)
+        status = incus_status(container_name)
         if status.lower() == "stopped":
             break
         time.sleep(1)
