@@ -227,13 +227,14 @@ type commonDirSink struct {
 }
 
 // commonDirSinks lists the common-dir paths SetupCommonDirProtection covers
-// read-only: hooks (unless writable), config, info/attributes and each
-// linked worktree's config.worktree, less writable_paths.
+// read-only: hooks (unless writable), config, info/attributes, commondir,
+// each linked worktree's config.worktree and its existing commondir, less
+// writable_paths.
 func commonDirSinks(commonDir string, writableHooks bool, sec *config.SecurityConfig) []commonDirSink {
 	if sec != nil && sec.DisableProtection {
 		return nil
 	}
-	sinks := []commonDirSink{{"config", false}, {filepath.Join("info", "attributes"), false}}
+	sinks := []commonDirSink{{"config", false}, {filepath.Join("info", "attributes"), false}, {"commondir", false}}
 	if !writableHooks {
 		sinks = append([]commonDirSink{{"hooks", true}}, sinks...)
 	}
@@ -241,6 +242,10 @@ func commonDirSinks(commonDir string, writableHooks bool, sec *config.SecurityCo
 		for _, en := range entries {
 			if en.IsDir() {
 				sinks = append(sinks, commonDirSink{filepath.Join("worktrees", en.Name(), "config.worktree"), false})
+				// A placeholder would point the worktree at its own admin dir.
+				if rel := filepath.Join("worktrees", en.Name(), "commondir"); isRegularFile(filepath.Join(commonDir, rel)) {
+					sinks = append(sinks, commonDirSink{rel, false})
+				}
 			}
 		}
 	}

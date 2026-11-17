@@ -430,6 +430,11 @@ var fileTypeProtectedPaths = map[string]bool{
 	// (info/attributes) that runs on the host at the next git operation.
 	".git/config.worktree": true,
 	".git/info/attributes": true,
+	// git reads $GIT_DIR/commondir in every git dir, not only in linked
+	// worktrees, and then reads config and hooks from the dir it names. An
+	// absent one is materialized as commonDirPlaceholder, not empty: git
+	// refuses an empty commondir.
+	".git/commondir": true,
 	// Claude Code project settings carry a "hooks" key that the host auto-executes
 	// when it opens the repo. They are materialized as empty read-only placeholders
 	// so a contained agent cannot PLANT them when absent (the parent .claude dir is
@@ -477,8 +482,14 @@ func isDirTypeProtected(relPath string) bool {
 	return directoryTypeProtectedPaths[relPath]
 }
 
+// commonDirPlaceholder is the content of a materialized commondir: the git
+// dir itself, as when the file is absent. libgit2 refuses "." without the
+// trailing slash.
+const commonDirPlaceholder = "./\n"
+
 // ExpandGitWorktreeProtectedPaths returns paths plus a protected entry for each
-// existing per-worktree git config file (.git/worktrees/<name>/config.worktree).
+// existing per-worktree git config file (.git/worktrees/<name>/config.worktree)
+// and commondir (.git/worktrees/<name>/commondir).
 //
 // When a repo has extensions.worktreeConfig=true, git reads those per-worktree
 // config files, so they are config sinks that can carry filter/diff/textconv
@@ -486,7 +497,8 @@ func isDirTypeProtected(relPath string) bool {
 // operation. The static protected_paths list cannot glob, so this discovers the
 // concrete files at setup time. Only files that already exist on disk are added
 // (worktree config files are created by `git worktree`, never synthesized here);
-// symlinks and directories are skipped.
+// symlinks and directories are skipped. A worktree's commondir names the dir
+// git reads its config and hooks from when run in that worktree.
 //
 // The same trusted-scope opt-outs that GetEffectiveProtectedPaths applies to the
 // static list are honored for these dynamically discovered files: when sec is
@@ -518,22 +530,24 @@ func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *
 		if !e.IsDir() {
 			continue
 		}
-		rel := filepath.Join(".git", "worktrees", e.Name(), "config.worktree")
-		if seen[filepath.ToSlash(rel)] {
-			continue // already protected — keep expansion idempotent
+		for _, name := range []string{"config.worktree", "commondir"} {
+			rel := filepath.Join(".git", "worktrees", e.Name(), name)
+			if seen[filepath.ToSlash(rel)] {
+				continue // already protected — keep expansion idempotent
+			}
+			if err := validateRelPath(rel); err != nil {
+				continue
+			}
+			if sec != nil && sec.IsWritablePath(rel) {
+				continue // user explicitly opted this path out of protection
+			}
+			info, err := os.Lstat(filepath.Join(workspacePath, rel))
+			if err != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+				continue
+			}
+			seen[filepath.ToSlash(rel)] = true
+			out = append(out, rel)
 		}
-		if err := validateRelPath(rel); err != nil {
-			continue
-		}
-		if sec != nil && sec.IsWritablePath(rel) {
-			continue // user explicitly opted this path out of protection
-		}
-		info, err := os.Lstat(filepath.Join(workspacePath, rel))
-		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
-			continue
-		}
-		seen[filepath.ToSlash(rel)] = true
-		out = append(out, rel)
 	}
 	return out
 }
@@ -548,7 +562,7 @@ const gitModulesSearchDepth = 8
 
 // nestedGitDirEntries are the per-git-dir entries protected for every git dir
 // below the workspace root, mirroring the root .git defaults.
-var nestedGitDirEntries = []string{"hooks", "config", "config.worktree", filepath.Join("info", "attributes")}
+var nestedGitDirEntries = []string{"hooks", "config", "config.worktree", filepath.Join("info", "attributes"), "commondir"}
 
 // nestedGitFound is what scanNestedGit found below the workspace root.
 type nestedGitFound struct {
@@ -586,7 +600,7 @@ func (s NestedGitScan) resultFor(workspacePath string) nestedGitFound {
 // dirs below the workspace root: submodule git dirs (.git/modules/**, nested
 // modules included) and nested repositories (<dir>/.git, up to
 // nestedGitSearchDepth). For each such git dir its hooks, config,
-// config.worktree and info/attributes are added, materialized like the root
+// config.worktree, info/attributes and commondir are added, materialized like the root
 // .git defaults so they cannot be planted. A .git file (submodule or worktree
 // checkout) is protected itself, so its gitdir pointer cannot be redirected.
 //
@@ -795,6 +809,11 @@ func isRealDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
+func isRegularFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
 // isNestedGitPath reports whether rel lies in or is a git dir below the
 // workspace root: .git/modules/... or any later .git segment.
 func isNestedGitPath(rel string) bool {
@@ -843,9 +862,9 @@ func ensureProtectedExists(workspacePath, hostPath, relPath string) error {
 	}
 }
 
-// createProtectedFilePlaceholder creates an empty file at hostPath,
-// but only if its parent directory already exists and is not a
-// symlink. It never synthesizes a parent tree.
+// createProtectedFilePlaceholder creates an empty file at hostPath (a
+// commondir gets commonDirPlaceholder), but only if its parent directory
+// already exists and is not a symlink. It never synthesizes a parent tree.
 func createProtectedFilePlaceholder(hostPath, relPath string) error {
 	parent := filepath.Dir(hostPath)
 	parentInfo, err := os.Lstat(parent)
@@ -868,6 +887,12 @@ func createProtectedFilePlaceholder(hostPath, relPath string) error {
 			return nil // lost a harmless race
 		}
 		return fmt.Errorf("failed to create protected file placeholder %s: %w", relPath, err)
+	}
+	if filepath.Base(relPath) == "commondir" {
+		if _, err := f.WriteString(commonDirPlaceholder); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("failed to write protected file placeholder %s: %w", relPath, err)
+		}
 	}
 	return f.Close()
 }

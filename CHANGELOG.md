@@ -34,6 +34,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`.git/commondir` is protected like `.git/config` and `.git/hooks`** — it names the dir git reads config and hooks from, so it is now read-only in the container, in the root git dir, in submodule and nested git dirs, and for linked worktrees. When it is absent, coi creates it as `./` (the git dir itself, which is what git assumes without the file); `git rev-parse --git-common-dir` then prints an absolute path.
 - [Bug Fix] **A stuck disk-space check no longer stops the security monitor** — when coi can't read a container's `/tmp` from the host, it runs `df` in the container. If that hung, the monitor stopped checking the container for any threat. The check now gives up after 10 seconds, and the session log records when the check starts to fail.
 - [Bug Fix] **auth.log and syslog monitoring no longer stops at random** — a signal could stop the log watcher at any time, and failed logins, sudo or su attempts in the container were then not detected for the rest of the session. The watcher now keeps running.
 - [Bug Fix] **`coi attach` ignores stopped containers** — with one running session it attaches even when stopped containers exist, the session list numbers running sessions only, and with none running it says `No active sessions`. `coi attach <stopped container>` says the container is not running instead of a code-user error.
