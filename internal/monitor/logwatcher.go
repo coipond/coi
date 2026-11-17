@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -138,8 +137,8 @@ type inotifyRawEvent struct {
 // The inotify approach watches each log file for IN_MODIFY events and the
 // parent directory for IN_CREATE so log rotation (mv + new file) is handled
 // transparently. A 30-second backstop ticker covers missed events and
-// container restarts. If inotify is unavailable the watcher falls back to
-// 5-second polling.
+// container restarts. If inotify is unavailable, or reading it fails, the
+// watcher falls back to 5-second polling.
 //
 // Note: unlike kernel-maintained sources (network, process, cgroup), auth.log
 // and syslog are regular writable files. A root attacker inside the container
@@ -174,14 +173,6 @@ func (lw *LogWatcher) Run(ctx context.Context) {
 		lw.runPolling(ctx, states)
 		return
 	}
-	// Close ifd exactly once — either when ctx is cancelled or on return.
-	var closeOnce sync.Once
-	closeFd := func() { closeOnce.Do(func() { unix.Close(ifd) }) }
-	defer closeFd()
-	// This goroutine may outlive Run when ifd closes due to a read error before
-	// ctx is done; it exits as soon as the session context is cancelled.
-	go func() { <-ctx.Done(); closeFd() }()
-
 	pid, _ := GetContainerInitPID(ctx, lw.containerName)
 	wdToRel, dirWd := addInotifyWatches(ifd, pid)
 
@@ -190,7 +181,14 @@ func (lw *LogWatcher) Run(ctx context.Context) {
 		lw.pollFile(ctx, rel, states, pid)
 	}
 
-	events := inotifyReader(ifd)
+	events := newInotifyReader(ctx, ifd)
+	defer func() {
+		// Close ifd only once the reader has stopped: a reader still polling a
+		// closed fd number would read from whatever reuses it.
+		for range events {
+		}
+		unix.Close(ifd)
+	}()
 	// Backstop: re-resolve PID on container restart and fill any missing watches.
 	// 3 s keeps detection latency low when log files don't exist at watch-setup
 	// time (e.g. container using overlayfs where IN_CREATE doesn't cross the
@@ -204,7 +202,14 @@ func (lw *LogWatcher) Run(ctx context.Context) {
 			return
 		case ev, ok := <-events:
 			if !ok {
-				return // ifd closed (ctx cancelled or unrecoverable read error)
+				if ctx.Err() == nil {
+					// Unrecoverable read error: keep watching by polling.
+					if lw.onError != nil {
+						lw.onError(fmt.Errorf("logwatcher: inotify read failed, falling back to %s polling", logPollInterval))
+					}
+					lw.runPolling(ctx, states)
+				}
+				return
 			}
 			switch {
 			case ev.mask&unix.IN_IGNORED != 0:
@@ -266,10 +271,17 @@ func (lw *LogWatcher) Run(ctx context.Context) {
 	}
 }
 
+// logPollInterval is the runPolling period. Same-package tests shorten it.
+var logPollInterval = 5 * time.Second
+
+// newInotifyReader starts the inotify reader. Same-package tests replace it.
+var newInotifyReader = inotifyReader
+
 // runPolling is the fallback 5-second ticker path used when inotify is
-// unavailable (e.g. kernel too old or resource limit reached).
+// unavailable (e.g. kernel too old or resource limit reached) or its read
+// fails.
 func (lw *LogWatcher) runPolling(ctx context.Context, states map[string]logState) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(logPollInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -315,16 +327,22 @@ func addInotifyWatches(ifd, pid int) (wdToRel map[int32]string, dirWd int32) {
 const inotifyBufSize = (unix.SizeofInotifyEvent + unix.NAME_MAX + 1) * 16
 
 // inotifyReader spawns a goroutine that polls ifd (non-blocking) and forwards
-// parsed events to the returned channel. The channel is closed when ifd is
-// closed or an unrecoverable read error occurs.
-func inotifyReader(ifd int) <-chan inotifyRawEvent {
+// parsed events to the returned channel. The channel is closed when ctx is
+// cancelled or an unrecoverable read error occurs. It never closes ifd: the
+// caller closes it after the channel is closed.
+func inotifyReader(ctx context.Context, ifd int) <-chan inotifyRawEvent {
 	ch := make(chan inotifyRawEvent, 64)
 	go func() {
 		defer close(ch)
 		buf := make([]byte, inotifyBufSize)
 		fds := []unix.PollFd{{Fd: int32(ifd), Events: unix.POLLIN}} //nolint:gosec // G115: fd values are small non-negative ints
-		for {
+		for ctx.Err() == nil {
 			n, err := unix.Poll(fds, 200) // 200 ms so ctx cancellation is noticed promptly
+			if err == unix.EINTR {
+				// poll(2) is never restarted after a signal (SIGCHLD from
+				// the monitor's incus subprocesses).
+				continue
+			}
 			if err != nil || n < 0 {
 				return
 			}
@@ -346,7 +364,11 @@ func inotifyReader(ifd int) <-chan inotifyRawEvent {
 					break
 				}
 				data = data[nameLen:]
-				ch <- inotifyRawEvent{wd: wd, mask: mask}
+				select {
+				case ch <- inotifyRawEvent{wd: wd, mask: mask}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}()

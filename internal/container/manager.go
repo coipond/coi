@@ -109,6 +109,11 @@ func (m *Manager) Running() (bool, error) {
 	return ContainerRunning(m.ContainerName)
 }
 
+// Stopped checks if the container is stopped or gone (see ContainerStopped)
+func (m *Manager) Stopped() (bool, error) {
+	return ContainerStopped(m.ContainerName)
+}
+
 // StartLogErrors returns the first ERROR lines of the container's last start
 // log, at most maxLines (see StartLogErrors).
 func (m *Manager) StartLogErrors(maxLines int) []string {

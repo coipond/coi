@@ -10,6 +10,7 @@ type ContainerLifecycle interface {
 	Delete(force bool) error
 	Start() error
 	Running() (bool, error)
+	Stopped() (bool, error)
 	Exists() (bool, error)
 }
 

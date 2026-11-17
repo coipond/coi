@@ -280,6 +280,7 @@ func fakeIncus(t *testing.T, listJSON string) {
 }
 
 func TestResolveAliasForRunning_WholeNameWinsOverSlotSuffix(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
 	withTempHome(t)
 	fakeIncus(t, `[
  {"name":"coi-aaaaaaaa-1","status":"Running","config":{"user.coi.alias":"app-2"}},
