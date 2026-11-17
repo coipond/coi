@@ -30,15 +30,31 @@ type OrphanedResources struct {
 // so tests can point it at a fixture.
 var netClassDir = "/sys/class/net"
 
-// DetectOrphanedVeths finds veth interfaces that have no master bridge
-// These are typically left over from improperly cleaned up containers
+// DetectOrphanedVeths finds host veths that coi recorded for its containers
+// and that have no master bridge. These are typically left over from
+// improperly cleaned up containers. Unrecorded veths are never reported: a
+// master-less veth of another tool (CNI, a manual netns pair) looks the same.
 func DetectOrphanedVeths() ([]string, error) {
-	var orphaned []string
-
-	// Read all network interfaces from /sys/class/net
-	entries, err := os.ReadDir(netClassDir)
+	recorded, err := network.RecordedHostVeths()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read network interfaces: %w", err)
+		return nil, fmt.Errorf("failed to read recorded veths: %w", err)
+	}
+
+	var candidates []string
+	for _, name := range recorded {
+		if !strings.HasPrefix(name, "veth") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(netClassDir, name)); err != nil {
+			continue // gone: nothing to remove
+		}
+		// No master symlink = no bridge
+		if _, err := os.Stat(filepath.Join(netClassDir, name, "master")); os.IsNotExist(err) {
+			candidates = append(candidates, name)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, nil
 	}
 
 	// A routed NIC's host veth has no master either; never take one from any
@@ -48,22 +64,12 @@ func DetectOrphanedVeths() ([]string, error) {
 		return nil, fmt.Errorf("failed to list instance NICs: %w", err)
 	}
 
-	for _, entry := range entries {
-		name := entry.Name()
-
-		// Only check veth interfaces
-		if !strings.HasPrefix(name, "veth") || inUse[name] {
-			continue
-		}
-
-		// Check if this veth has a master (bridge)
-		masterPath := filepath.Join(netClassDir, name, "master")
-		if _, err := os.Stat(masterPath); os.IsNotExist(err) {
-			// No master symlink = orphaned veth
+	var orphaned []string
+	for _, name := range candidates {
+		if !inUse[name] {
 			orphaned = append(orphaned, name)
 		}
 	}
-
 	return orphaned, nil
 }
 
@@ -237,6 +243,7 @@ func CleanupOrphanedVeths(veths []string, logger func(string)) (int, error) {
 			logger(fmt.Sprintf("  Warning: Failed to remove %s: %v", veth, err))
 			continue
 		}
+		_ = network.ForgetHostVeth(veth)
 		cleaned++
 	}
 
