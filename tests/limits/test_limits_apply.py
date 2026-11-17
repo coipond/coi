@@ -10,11 +10,10 @@ Tests that:
 """
 
 import json
-import re
 import subprocess
 from pathlib import Path
 
-from support.helpers import calculate_container_name, run_and_show_config
+from support.helpers import calculate_container_name, container_config_get, run_and_show_config
 
 
 def test_cpu_limit_applied(coi_binary, workspace_dir, cleanup_containers):
@@ -266,6 +265,7 @@ def test_process_limit_follows_config_on_persistent_restart(
     """
     config_file = Path(workspace_dir) / ".coi" / "config.toml"
     config_file.parent.mkdir(exist_ok=True)
+    container_name = calculate_container_name(workspace_dir, 1)
     uuids = []
 
     for max_processes in (100, 200):
@@ -282,7 +282,7 @@ max_processes = {max_processes}
         assert f'limits.processes: "{max_processes}"' in config, (
             f"Process limit {max_processes} should apply. Config: {config}"
         )
-        uuids.append(re.search(r"^\s*volatile\.uuid: (\S+)$", config, re.M).group(1))
+        uuids.append(container_config_get(container_name, "volatile.uuid"))
 
     config_file.write_text(
         """
@@ -297,8 +297,10 @@ max_processes = 0
     assert "limits.processes" not in config, (
         f"max_processes = 0 should unset the process limit. Config: {config}"
     )
-    uuids.append(re.search(r"^\s*volatile\.uuid: (\S+)$", config, re.M).group(1))
-    assert len(set(uuids)) == 1, f"Each launch should reuse the same container: {uuids}"
+    uuids.append(container_config_get(container_name, "volatile.uuid"))
+    assert None not in uuids and len(set(uuids)) == 1, (
+        f"Each launch should reuse the same container: {uuids}"
+    )
 
 
 def _default_root_pool_driver():
