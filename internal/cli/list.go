@@ -97,7 +97,7 @@ func listCommand(cmd *cobra.Command, args []string) error {
 		containers = filterContainersByStatus(containers, statusFilter)
 	}
 
-	containerWorkspaces, containerPersistent := containerSessionInfo(containers, sessionsDir)
+	containerWorkspaces, containerPersistent := containerSessionInfo(containers, allSessionsDirs(baseDir))
 
 	// Get saved sessions if --all
 	var sessions []SessionInfo
@@ -215,9 +215,11 @@ func listActiveContainers() ([]ContainerInfo, error) {
 
 // containerSessionInfo maps container name -> workspace and -> persistent from
 // the keys launch sets on the container. Saved-session metadata is read only
-// for containers created before coi set the persistence key; a managed
-// container without a workspace (`coi container launch`) has no session.
-func containerSessionInfo(containers []ContainerInfo, sessionsDir string) (map[string]string, map[string]bool) {
+// for containers created before coi set the persistence key, from every
+// tool's sessions dir: the configured tool need not be the one that launched
+// it. A managed container without a workspace (`coi container launch`) has no
+// session.
+func containerSessionInfo(containers []ContainerInfo, sessionsDirs []string) (map[string]string, map[string]bool) {
 	workspaces := make(map[string]string, len(containers))
 	persistent := make(map[string]bool, len(containers))
 	missing := make(map[string]bool)
@@ -233,13 +235,35 @@ func containerSessionInfo(containers []ContainerInfo, sessionsDir string) (map[s
 			missing[c.Name] = true
 		}
 	}
-	for name, md := range readContainerMetadata(sessionsDir, missing) {
-		if _, ok := workspaces[name]; !ok {
-			workspaces[name] = md.Workspace
+	for _, dir := range sessionsDirs {
+		if len(missing) == 0 {
+			break
 		}
-		persistent[name] = md.Persistent
+		for name, md := range readContainerMetadata(dir, missing) {
+			if _, ok := workspaces[name]; !ok {
+				workspaces[name] = md.Workspace
+			}
+			persistent[name] = md.Persistent
+			delete(missing, name)
+		}
 	}
 	return workspaces, persistent
+}
+
+// allSessionsDirs returns the sessions dir of every supported tool, without
+// duplicates, in tool name order.
+func allSessionsDirs(baseDir string) []string {
+	var dirs []string
+	for _, name := range tool.ListSupported() {
+		t, err := tool.Get(name)
+		if err != nil {
+			continue
+		}
+		if dir := session.GetSessionsDir(baseDir, t); !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
 }
 
 // validStatusFilters is the single source of the --status vocabulary: it

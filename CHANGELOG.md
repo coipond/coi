@@ -36,6 +36,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`coi list` shows the mode and workspace of containers launched with another tool** — a container created before coi recorded its mode on the container showed `(ephemeral)` and no workspace when its session was saved by a tool other than the configured one (e.g. opencode while `[tool] name` is claude). JSON output had `"persistent": false`. coi now reads the saved sessions of every tool for such containers.
 - [Bug Fix] **The container hostname is in `/etc/hosts` before `coi run` and `coi shell` start** — on a fast start the command could run before the hostname was added, so `sudo` printed `unable to resolve host` and the hostname did not resolve. Takes effect after `coi build --force`.
 - [Bug Fix] **`.git/commondir` is protected like `.git/config` and `.git/hooks`** — it names the dir git reads config and hooks from, so it is now read-only in the container, in the root git dir, in submodule and nested git dirs, and for linked worktrees. When it is absent, coi creates it as `./` (the git dir itself, which is what git assumes without the file); `git rev-parse --git-common-dir` then prints an absolute path.
 - [Bug Fix] **A slow `poweroff` no longer leaves an ephemeral container running** — while a container shuts down, Incus can briefly report it as `Stopping` or `Error` and then as `Running` again. Cleanup took the first of these answers as stopped, then saw `Running`, printed "Container kept running" and kept the container. It now waits until Incus reports the container as stopped, then removes it.
