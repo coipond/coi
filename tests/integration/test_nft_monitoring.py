@@ -467,6 +467,9 @@ class TestNFTRuleManagement:
             cleanup_container(container_name, coi_binary, env=coi_monitoring_env)
 
 
+LAN_HOST = "192.168.254.254"  # RFC1918, off the bridge subnet
+
+
 class TestNetworkThreatDetection:
     """Test network threat detection scenarios."""
 
@@ -771,7 +774,7 @@ enabled = true
             # rule. Connected UDP stays in /proc/net/udp for the process monitor.
             holders.append(hold_connect(name, LAN_HOST, 80, proto="udp"))
             holders.append(hold_connect(name, LAN_HOST, 4444, proto="udp"))
-            # The TCP leg that hung incus exec on AWS runners.
+            # Also TCP, the path a plain curl takes; a hung exec fails with diagnostics.
             try:
                 subprocess.run(
                     ["incus", "exec", name, "--", "curl", "-m", "3", f"http://{LAN_HOST}/"],
@@ -825,7 +828,7 @@ enabled = true
         )
         try:
             subprocess.run(
-                ["incus", "exec", name, "--", "curl", "-m", "3", "http://192.168.254.254/"],
+                ["incus", "exec", name, "--", "curl", "-m", "3", f"http://{LAN_HOST}/"],
                 capture_output=True,
                 timeout=10,
             )
@@ -1704,7 +1707,6 @@ class TestHealthChecks:
 
 DNS_THRESHOLD = 20
 PUBLIC_RESOLVER = "8.8.8.8"
-LAN_HOST = "192.168.254.254"  # RFC1918, off the bridge subnet
 
 
 @pytest.fixture
