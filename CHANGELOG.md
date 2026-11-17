@@ -34,6 +34,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **A slow `poweroff` no longer leaves an ephemeral container running** — while a container shuts down, Incus can briefly report it as `Stopping` or `Error` and then as `Running` again. Cleanup took the first of these answers as stopped, then saw `Running`, printed "Container kept running" and kept the container. It now waits until Incus reports the container as stopped, then removes it.
 - [Bug Fix] **A stuck disk-space check no longer stops the security monitor** — when coi can't read a container's `/tmp` from the host, it runs `df` in the container. If that hung, the monitor stopped checking the container for any threat. The check now gives up after 10 seconds, and the session log records when the check starts to fail.
 - [Bug Fix] **auth.log and syslog monitoring no longer stops at random** — a signal could stop the log watcher at any time, and failed logins, sudo or su attempts in the container were then not detected for the rest of the session. The watcher now keeps running.
 - [Bug Fix] **`coi attach` ignores stopped containers** — with one running session it attaches even when stopped containers exist, the session list numbers running sessions only, and with none running it says `No active sessions`. `coi attach <stopped container>` says the container is not running instead of a code-user error.
