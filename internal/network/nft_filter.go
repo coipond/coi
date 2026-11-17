@@ -990,6 +990,9 @@ func lookupInstanceNet(containerName string) (instanceNet, error) {
 		n.at = time.Now()
 		instanceNetCache.Store(containerName, n)
 	}
+	if hostInterfaceExists(n.veth) {
+		recordHostVeth(n.veth)
+	}
 	return n, nil
 }
 
@@ -1310,6 +1313,7 @@ func GetContainerVethName(containerName string) (string, error) {
 	// (measured: 2.7 s in half of restart runs). Trusted only while the
 	// interface really exists on the host.
 	if veth, err := container.ConfigGetUncached(context.Background(), containerName, "volatile.eth0.host_name"); err == nil && hostInterfaceExists(veth) {
+		recordHostVeth(veth)
 		return veth, nil
 	}
 	n, err := lookupInstanceNet(containerName)
