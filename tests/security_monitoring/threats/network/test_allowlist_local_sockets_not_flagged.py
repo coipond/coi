@@ -6,7 +6,6 @@ gateway's DNS port are all local or blocked by the firewall. Another port on
 the gateway must still be flagged, and a name not in /etc/hosts must fail at
 once."""
 
-import subprocess
 import time
 from pathlib import Path
 
@@ -15,6 +14,8 @@ from support.monitoring import (
     cleanup_container,
     get_container_state,
     get_threat_events,
+    hold_script,
+    poll_network_threats,
     start_shell,
 )
 
@@ -67,14 +68,6 @@ time.sleep(60)
 )
 
 
-def _hold(container_name, script):
-    return subprocess.Popen(
-        ["incus", "exec", container_name, "--", "python3", "-c", script],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-
 def test_allowlist_local_sockets_not_flagged(test_workspace, coi_binary):
     config_path = Path.home() / ".coi" / "config.toml"
     backup = config_path.read_text() if config_path.exists() else None
@@ -108,7 +101,7 @@ file_read_rate_mb_per_sec = 1000
         assert rc != 0, f"example.org is not in /etc/hosts: {lookup}"
         assert elapsed < 5, f"an unknown name must fail at once, took {elapsed:.1f}s"
 
-        holders.append(_hold(container_name, HOLD))
+        holders.append(hold_script(container_name, HOLD))
         time.sleep(15)
         assert get_container_state(container_name) == "Running", (
             "local resolver and loopback sockets must not pause the container; "
@@ -118,14 +111,8 @@ file_read_rate_mb_per_sec = 1000
         assert not flagged, f"no local socket may be flagged, got: {flagged}"
 
         # Positive control: another port on the gateway is still flagged.
-        holders.append(_hold(container_name, HOLD_GATEWAY_OTHER_PORT))
-        threats = []
-        deadline = time.monotonic() + 45
-        while not threats and time.monotonic() < deadline:
-            threats = [
-                e for e in get_threat_events(container_name) if ":5353" in e.get("description", "")
-            ]
-            time.sleep(2)
+        holders.append(hold_script(container_name, HOLD_GATEWAY_OTHER_PORT))
+        threats = poll_network_threats(container_name, match=":5353")
         assert threats, "a socket to another port on the gateway must still be flagged"
     finally:
         for h in holders:
