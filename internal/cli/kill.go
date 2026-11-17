@@ -95,14 +95,22 @@ func resolveContainerArgs(args []string, all bool, force bool, action string) ([
 	return containerNames, nil
 }
 
-func killCommand(cmd *cobra.Command, args []string) error {
-	// --slot is a root flag, so kill parses it; it would otherwise be ignored
-	// and kill the slot the name resolves to.
+// checkContainerArgsUsage rejects --slot and names given with --all. --slot is
+// a root flag, so the command parses it; it would otherwise be ignored and act
+// on the slot the name resolves to. allVerb describes --all ("kills").
+func checkContainerArgsUsage(cmd *cobra.Command, args []string, all bool, allVerb string) error {
 	if cmd.Flags().Changed("slot") {
-		return &ExitCodeError{Code: ExitUsage, Message: "coi kill does not take --slot: name the slot as <alias>-<N> or use the container name"}
+		return &ExitCodeError{Code: ExitUsage, Message: fmt.Sprintf("coi %s does not take --slot: name the slot as <alias>-<N> or use the container name", cmd.Name())}
 	}
-	if killAll && len(args) > 0 {
-		return &ExitCodeError{Code: ExitUsage, Message: "--all kills every container: give container names or --all, not both"}
+	if all && len(args) > 0 {
+		return &ExitCodeError{Code: ExitUsage, Message: fmt.Sprintf("--all %s every container: give container names or --all, not both", allVerb)}
+	}
+	return nil
+}
+
+func killCommand(cmd *cobra.Command, args []string) error {
+	if err := checkContainerArgsUsage(cmd, args, killAll, "kills"); err != nil {
+		return err
 	}
 
 	containerNames, err := resolveContainerArgs(args, killAll, killForce, "Kill")
