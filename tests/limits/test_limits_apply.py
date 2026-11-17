@@ -10,6 +10,7 @@ Tests that:
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -261,9 +262,11 @@ def test_process_limit_follows_config_on_persistent_restart(
     """Test that a restarted persistent container gets the current max_processes.
 
     100, then 200: the raised limit is set. Then an explicit 0: the limit is unset.
+    Every launch reuses the same container (same volatile.uuid).
     """
     config_file = Path(workspace_dir) / ".coi" / "config.toml"
     config_file.parent.mkdir(exist_ok=True)
+    uuids = []
 
     for max_processes in (100, 200):
         config_file.write_text(
@@ -279,6 +282,7 @@ max_processes = {max_processes}
         assert f'limits.processes: "{max_processes}"' in config, (
             f"Process limit {max_processes} should apply. Config: {config}"
         )
+        uuids.append(re.search(r"^\s*volatile\.uuid: (\S+)$", config, re.M).group(1))
 
     config_file.write_text(
         """
@@ -293,6 +297,8 @@ max_processes = 0
     assert "limits.processes" not in config, (
         f"max_processes = 0 should unset the process limit. Config: {config}"
     )
+    uuids.append(re.search(r"^\s*volatile\.uuid: (\S+)$", config, re.M).group(1))
+    assert len(set(uuids)) == 1, f"Each launch should reuse the same container: {uuids}"
 
 
 def _default_root_pool_driver():
