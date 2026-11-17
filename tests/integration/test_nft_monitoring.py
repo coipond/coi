@@ -764,6 +764,13 @@ enabled = true
             # rule. Connected UDP stays in /proc/net/udp for the process monitor.
             holders.append(hold_connect(name, LAN_HOST, 80, proto="udp"))
             holders.append(hold_connect(name, LAN_HOST, 4444, proto="udp"))
+            # The TCP leg the old pause hit on AWS runners: a HIGH it raises now
+            # fails below with its name.
+            subprocess.run(
+                ["incus", "exec", name, "--", "curl", "-m", "3", f"http://{LAN_HOST}/"],
+                capture_output=True,
+                timeout=10,
+            )
 
             c2 = is_c2_port_threat(LAN_HOST)
             nft_c2 = _wait_for_events(name, c2)
