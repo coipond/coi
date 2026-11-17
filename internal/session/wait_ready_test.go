@@ -125,27 +125,30 @@ func TestWaitForReady_BriefNotRunningIsTolerated(t *testing.T) {
 
 // The readiness probe holds a systemd guest back until sysinit.target, i.e.
 // until systemd-tmpfiles-setup has emptied /tmp, and passes at once without
-// systemd. Run against a fake PID 1 name and a fake systemctl.
+// systemd. Run against a fake /sbin/init, PID 1 name and systemctl.
 func TestReadyProbeScript(t *testing.T) {
 	cases := []struct {
 		name      string
+		init      string // /sbin/init target name, "" for none
 		pid1      string
 		systemctl bool
 		sysinit   string // is-active sysinit.target answer
 		state     string // is-system-running answer
 		ready     bool
 	}{
-		{name: "no systemd", pid1: "bash", ready: true},
-		{name: "no systemctl", pid1: "systemd", ready: true},
-		{name: "other init with systemctl", pid1: "init", systemctl: true, sysinit: "inactive", state: "offline", ready: true},
-		{name: "early boot", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "initializing", ready: false},
-		{name: "tmpfiles running", pid1: "systemd", systemctl: true, sysinit: "activating", state: "starting", ready: false},
-		{name: "manager not answering", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "offline", ready: false},
-		{name: "past sysinit", pid1: "systemd", systemctl: true, sysinit: "active", state: "starting", ready: true},
-		{name: "booted", pid1: "systemd", systemctl: true, sysinit: "active", state: "running", ready: true},
-		{name: "emergency mode", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "maintenance", ready: true},
-		{name: "sysinit failed", pid1: "systemd", systemctl: true, sysinit: "failed", state: "degraded", ready: true},
-		{name: "shutting down", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "stopping", ready: true},
+		{name: "no init", pid1: "bash", ready: true},
+		{name: "no systemd", init: "busybox", pid1: "init", systemctl: true, sysinit: "inactive", state: "offline", ready: true},
+		{name: "no systemctl", init: "systemd", pid1: "systemd", ready: true},
+		{name: "init not executed yet", init: "systemd", pid1: "incusd", systemctl: true, sysinit: "inactive", state: "offline", ready: false},
+		{name: "systemd not renamed yet", init: "systemd", pid1: "init", systemctl: true, sysinit: "inactive", state: "offline", ready: false},
+		{name: "early boot", init: "systemd", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "initializing", ready: false},
+		{name: "tmpfiles running", init: "systemd", pid1: "systemd", systemctl: true, sysinit: "activating", state: "starting", ready: false},
+		{name: "manager not answering", init: "systemd", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "offline", ready: false},
+		{name: "past sysinit", init: "systemd", pid1: "systemd", systemctl: true, sysinit: "active", state: "starting", ready: true},
+		{name: "booted", init: "systemd", pid1: "systemd", systemctl: true, sysinit: "active", state: "running", ready: true},
+		{name: "emergency mode", init: "systemd", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "maintenance", ready: true},
+		{name: "sysinit failed", init: "systemd", pid1: "systemd", systemctl: true, sysinit: "failed", state: "degraded", ready: true},
+		{name: "shutting down", init: "systemd", pid1: "systemd", systemctl: true, sysinit: "inactive", state: "stopping", ready: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -154,11 +157,21 @@ func TestReadyProbeScript(t *testing.T) {
 			if err := os.WriteFile(comm, []byte(tc.pid1+"\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			initLink := filepath.Join(dir, "init")
+			if tc.init != "" {
+				target := filepath.Join(dir, tc.init)
+				if err := os.WriteFile(target, nil, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, initLink); err != nil {
+					t.Fatal(err)
+				}
+			}
 			bin := filepath.Join(dir, "bin")
 			if err := os.Mkdir(bin, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			for _, tool := range []string{"bash", "grep"} {
+			for _, tool := range []string{"bash", "grep", "readlink"} {
 				path, err := exec.LookPath(tool)
 				if err != nil {
 					t.Skipf("%s not found", tool)
@@ -180,6 +193,7 @@ esac
 				}
 			}
 			script := strings.ReplaceAll(readyProbeScript, "/proc/1/comm", comm)
+			script = strings.ReplaceAll(script, "/sbin/init", initLink)
 			cmd := exec.Command(filepath.Join(bin, "bash"), "-c", script)
 			cmd.Env = []string{"PATH=" + bin}
 			err := cmd.Run()
