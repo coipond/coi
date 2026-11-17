@@ -217,8 +217,8 @@ func listActiveContainers() ([]ContainerInfo, error) {
 // the keys launch sets on the container. Saved-session metadata is read only
 // for containers created before coi set the persistence key, from every
 // tool's sessions dir in order: the configured tool need not be the one that
-// launched it. A managed container without a workspace (`coi container launch`) has no
-// session.
+// launched it. A managed container without a workspace (`coi container
+// launch`) has no session.
 func containerSessionInfo(containers []ContainerInfo, sessionsDirs []string) (map[string]string, map[string]bool) {
 	workspaces := make(map[string]string, len(containers))
 	persistent := make(map[string]bool, len(containers))
