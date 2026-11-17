@@ -97,7 +97,7 @@ func listCommand(cmd *cobra.Command, args []string) error {
 		containers = filterContainersByStatus(containers, statusFilter)
 	}
 
-	containerWorkspaces, containerPersistent := containerSessionInfo(containers, allSessionsDirs(baseDir))
+	containerWorkspaces, containerPersistent := containerSessionInfo(containers, allSessionsDirs(baseDir, toolInstance))
 
 	// Get saved sessions if --all
 	var sessions []SessionInfo
@@ -216,8 +216,8 @@ func listActiveContainers() ([]ContainerInfo, error) {
 // containerSessionInfo maps container name -> workspace and -> persistent from
 // the keys launch sets on the container. Saved-session metadata is read only
 // for containers created before coi set the persistence key, from every
-// tool's sessions dir: the configured tool need not be the one that launched
-// it. A managed container without a workspace (`coi container launch`) has no
+// tool's sessions dir in order: the configured tool need not be the one that
+// launched it. A managed container without a workspace (`coi container launch`) has no
 // session.
 func containerSessionInfo(containers []ContainerInfo, sessionsDirs []string) (map[string]string, map[string]bool) {
 	workspaces := make(map[string]string, len(containers))
@@ -251,9 +251,10 @@ func containerSessionInfo(containers []ContainerInfo, sessionsDirs []string) (ma
 }
 
 // allSessionsDirs returns the sessions dir of every supported tool, without
-// duplicates, in tool name order.
-func allSessionsDirs(baseDir string) []string {
-	var dirs []string
+// duplicates: the configured tool's first, so its save wins over a stale one
+// of another tool for the same container name, then the rest by tool name.
+func allSessionsDirs(baseDir string, configured tool.Tool) []string {
+	dirs := []string{session.GetSessionsDir(baseDir, configured)}
 	for _, name := range tool.ListSupported() {
 		t, err := tool.Get(name)
 		if err != nil {

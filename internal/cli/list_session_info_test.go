@@ -9,6 +9,7 @@ import (
 
 	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/tool"
 )
 
 func TestContainerSessionInfo_FromKeys(t *testing.T) {
@@ -58,7 +59,7 @@ func TestContainerSessionInfo_FallbackWithoutKeys(t *testing.T) {
 
 func TestContainerSessionInfo_FallbackReadsEveryToolsSessions(t *testing.T) {
 	base := t.TempDir()
-	dirs := allSessionsDirs(base)
+	dirs := allSessionsDirs(base, tool.NewClaude())
 	// Launched by opencode while the configured tool is claude.
 	opencodeDir := filepath.Join(base, "sessions-opencode")
 	if !slices.Contains(dirs, opencodeDir) || !slices.Contains(dirs, filepath.Join(base, "sessions-claude")) {
@@ -69,6 +70,24 @@ func TestContainerSessionInfo_FallbackReadsEveryToolsSessions(t *testing.T) {
 
 	if ws["coi-aaaaaaaa-1"] != "/home/u/proj" || !persistent["coi-aaaaaaaa-1"] {
 		t.Errorf("workspace=%q persistent=%v; want /home/u/proj, true from the opencode save",
+			ws["coi-aaaaaaaa-1"], persistent["coi-aaaaaaaa-1"])
+	}
+}
+
+func TestContainerSessionInfo_FallbackPrefersConfiguredToolsSave(t *testing.T) {
+	base := t.TempDir()
+	// The same name in two tools' dirs: an old ephemeral claude run in the
+	// slot, then a persistent opencode one, the configured tool.
+	writeSavedSession(t, filepath.Join(base, "sessions-claude"), "s1", "coi-aaaaaaaa-1", "/home/u/old", false)
+	writeSavedSession(t, filepath.Join(base, "sessions-opencode"), "s2", "coi-aaaaaaaa-1", "/home/u/proj", true)
+	dirs := allSessionsDirs(base, tool.NewOpencode())
+	if dirs[0] != filepath.Join(base, "sessions-opencode") || len(dirs) != len(tool.ListSupported()) {
+		t.Fatalf("allSessionsDirs = %v; want sessions-opencode first, each tool once", dirs)
+	}
+	ws, persistent := containerSessionInfo([]ContainerInfo{{Name: "coi-aaaaaaaa-1"}}, dirs)
+
+	if ws["coi-aaaaaaaa-1"] != "/home/u/proj" || !persistent["coi-aaaaaaaa-1"] {
+		t.Errorf("workspace=%q persistent=%v; want /home/u/proj, true from the configured tool's save",
 			ws["coi-aaaaaaaa-1"], persistent["coi-aaaaaaaa-1"])
 	}
 }
