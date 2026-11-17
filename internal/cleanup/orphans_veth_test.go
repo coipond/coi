@@ -107,3 +107,20 @@ func TestDetectOrphanedVethsNoRecords(t *testing.T) {
 		t.Error("incus called with no recorded veths")
 	}
 }
+
+// Unreadable records are no error, so DetectAll still runs the other scans.
+func TestDetectOrphanedVethsUnreadableRecords(t *testing.T) {
+	fakeVethHost(t)
+	recordsDir := filepath.Join(os.Getenv("HOME"), ".coi", "veths")
+	if err := os.RemoveAll(recordsDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recordsDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := DetectOrphanedVeths()
+	if err != nil || len(got) != 0 {
+		t.Errorf("DetectOrphanedVeths() = %v, %v; want none, no error", got, err)
+	}
+}

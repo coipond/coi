@@ -37,7 +37,9 @@ var netClassDir = "/sys/class/net"
 func DetectOrphanedVeths() ([]string, error) {
 	recorded, err := network.RecordedHostVeths()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read recorded veths: %w", err)
+		// Records are best-effort; don't let them stop the other orphan scans.
+		log.Printf("Warning: Could not read recorded veths: %v", err)
+		return nil, nil
 	}
 
 	var candidates []string
