@@ -286,18 +286,29 @@ func TestAllocateSlotFrom(t *testing.T) {
 	}
 }
 
-func TestListWorkspaceSessions(t *testing.T) {
-	t.Setenv("COI_CONTAINER_PREFIX", "")
-	hash := IdentityHash("/home/u/proj", "")
-	prefix := "coi-" + hash + "-"
+// fakeListIncus puts an `incus` on PATH that prints listOut and logs its
+// arguments, and returns the log path.
+func fakeListIncus(t *testing.T, listOut string) (logPath string) {
+	t.Helper()
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nprintf '" +
-		prefix + "1\\n" + prefix + "10\\n" + prefix + "x\\n" + prefix + "2-backup\\n'\n"
+	out := filepath.Join(dir, "list.out")
+	if err := os.WriteFile(out, []byte(listOut), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logPath = filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncat " + out + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func TestListWorkspaceSessions(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	hash := IdentityHash("/home/u/proj", "")
+	prefix := "coi-" + hash + "-"
+	logPath := fakeListIncus(t, prefix+"1\n"+prefix+"10\n"+prefix+"x\n"+prefix+"2-backup\n")
 
 	got, err := ListWorkspaceSessions("/home/u/proj", "")
 	if err != nil {
@@ -315,15 +326,8 @@ func TestListWorkspaceSessions(t *testing.T) {
 func TestFindReusablePersistentSlot(t *testing.T) {
 	t.Setenv("COI_CONTAINER_PREFIX", "")
 	prefix := "coi-" + IdentityHash("/home/u/proj", "") + "-"
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nprintf '" +
-		prefix + "1,RUNNING\\n" + prefix + "3,STOPPED\\n" + prefix + "2,STOPPED\\n" +
-		"coi-other-1,STOPPED\\n'\n"
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := fakeListIncus(t, prefix+"1,RUNNING\n"+prefix+"3,STOPPED\n"+
+		prefix+"2,STOPPED\ncoi-other-1,STOPPED\n")
 
 	if slot, ok := FindReusablePersistentSlot("/home/u/proj", "", MaxSlots); !ok || slot != 2 {
 		t.Errorf("FindReusablePersistentSlot() = %d, %v; want 2, true", slot, ok)
