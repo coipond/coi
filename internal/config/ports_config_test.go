@@ -153,3 +153,39 @@ func TestConfigFilePortListenValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigFilePortEntryValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cases := []struct {
+		body string
+		want string
+	}{
+		{"[[ports.map]]\ncontainer = 8000\n", "ports[0] is missing 'name'"},
+		{"[[ports.map]]\nname = \"web\"\ncontainer = 8000\n[[ports.map]]\nname = \"web\"\ncontainer = 8001\n", "ports[1] duplicates name \"web\""},
+		{"[[ports.map]]\nname = \"web\"\ncontainer = 0\n", "'container' must be a TCP port (1-65535), got 0"},
+		{"[[ports.map]]\nname = \"web\"\ncontainer = 65536\n", "'container' must be a TCP port (1-65535), got 65536"},
+		{"[[ports.map]]\nname = \"web\"\ncontainer = 8000\nhost = 70000\n", "'host' must be a TCP port (1-65535) or omitted for auto-allocation, got 70000"},
+		{"[[ports.map]]\nname = \"web\"\ncontainer = 8000\nhost = -1\n", "'host' must be a TCP port (1-65535) or omitted for auto-allocation, got -1"},
+	}
+
+	for _, trusted := range []bool{true, false} {
+		for _, tc := range cases {
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := loadConfigFileScoped(GetDefaultConfig(), path, trusted)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("trusted=%v: %q should fail with %q, got: %v", trusted, tc.body, tc.want, err)
+			}
+		}
+
+		body := "[[ports.map]]\nname = \"web\"\ncontainer = 65535\nhost = 1\n"
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg := GetDefaultConfig()
+		if err := loadConfigFileScoped(cfg, path, trusted); err != nil {
+			t.Errorf("trusted=%v: valid entry rejected: %v", trusted, err)
+		}
+	}
+}
