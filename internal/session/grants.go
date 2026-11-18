@@ -819,25 +819,8 @@ func (g *Grants) Render() string {
 	if g.DockerUnavailable {
 		docker = "unavailable"
 	}
-	if g.DockerConfigDiffers {
-		verb := "disables"
-		if g.DockerUnavailable {
-			verb = "enables"
-		}
-		// A restart reconciles the container's own nesting to config: with
-		// Docker on it sets it, which overrides a profile; with Docker off it
-		// only removes the container's own setting, so a profile's stays.
-		// An explicit --container attach skips the reconcile altogether.
-		switch {
-		case g.DockerNotReconciled:
-			docker += " (config " + verb + " it; not applied to a container named with --container)"
-		case g.DockerSource == dockerSourceProfile && !g.DockerUnavailable:
-			docker += " (an Incus profile enables nesting; config disables Docker)"
-		case g.DockerSource == dockerSourceUnknown:
-			docker += " (config " + verb + " it)"
-		default:
-			docker += " (config " + verb + " it; restart the container to apply)"
-		}
+	if note := g.dockerNote(); note != "" {
+		docker += " (" + note + ")"
 	}
 	add("Agent", fmt.Sprintf("runs as %s, Docker %s", user, docker))
 
@@ -861,27 +844,50 @@ func (g *Grants) Render() string {
 	return b.String()
 }
 
-// envLines lists each variable once, under the source the agent's value
+// dockerNote says why the container's Docker state differs from config, ""
+// when it doesn't.
+func (g *Grants) dockerNote() string {
+	if !g.DockerConfigDiffers {
+		return ""
+	}
+	verb := "disables"
+	if g.DockerUnavailable {
+		verb = "enables"
+	}
+	// A restart reconciles the container's own nesting to config: with
+	// Docker on it sets it, which overrides a profile; with Docker off it
+	// only removes the container's own setting, so a profile's stays.
+	// An explicit --container attach skips the reconcile altogether.
+	switch {
+	case g.DockerNotReconciled:
+		return "config " + verb + " it; not applied to a container named with --container"
+	case g.DockerSource == dockerSourceProfile && !g.DockerUnavailable:
+		return "an Incus profile enables nesting; config disables Docker"
+	case g.DockerSource == dockerSourceUnknown:
+		return "config " + verb + " it"
+	default:
+		return "config " + verb + " it; restart the container to apply"
+	}
+}
+
+// envSource is one env row: the names the agent's value comes from src for.
+type envSource struct {
+	key, label string
+	names      []string
+}
+
+// envSources lists each variable once, under the source the agent's value
 // comes from: the tool's own env overrides the config layers (it is merged in
 // last), and any per-exec value overrides the container's environment.*.
-func (g *Grants) envLines() []string {
-	var lines []string
-	switch g.Env.Launch {
-	case ToolAttached:
-		lines = append(lines, "the running tool keeps the env it started with; new panes get:")
-	case ToolSentToPane:
-		lines = append(lines, "the tool starts in the existing pane, which keeps its env; new panes get:")
-	}
+func (g *Grants) envSources() []envSource {
 	seen := map[string]bool{}
-	for _, src := range []struct {
-		names []string
-		label string
-	}{
-		{g.Env.Tool, "tool settings"},
-		{g.Env.FromHost, "from host"},
-		{g.Env.Minted, "env_commands"},
-		{g.Env.Configured, "set by config"},
-		{g.Env.Container, "container environment"},
+	var out []envSource
+	for _, src := range []envSource{
+		{"tool", "tool settings", g.Env.Tool},
+		{"from_host", "from host", g.Env.FromHost},
+		{"env_commands", "env_commands", g.Env.Minted},
+		{"configured", "set by config", g.Env.Configured},
+		{"container", "container environment", g.Env.Container},
 	} {
 		var names []string
 		for _, n := range src.names {
@@ -890,8 +896,25 @@ func (g *Grants) envLines() []string {
 				names = append(names, n)
 			}
 		}
-		if len(names) > 0 {
-			lines = append(lines, strings.Join(names, ", ")+" ("+src.label+")")
+		src.names = names
+		out = append(out, src)
+	}
+	return out
+}
+
+// envLines lists the envSources rows, after a note when the tool keeps the env
+// it started with.
+func (g *Grants) envLines() []string {
+	var lines []string
+	switch g.Env.Launch {
+	case ToolAttached:
+		lines = append(lines, "the running tool keeps the env it started with; new panes get:")
+	case ToolSentToPane:
+		lines = append(lines, "the tool starts in the existing pane, which keeps its env; new panes get:")
+	}
+	for _, src := range g.envSources() {
+		if len(src.names) > 0 {
+			lines = append(lines, strings.Join(src.names, ", ")+" ("+src.label+")")
 		}
 	}
 	if len(lines) == 0 || (g.Env.Launch != ToolStarted && len(lines) == 1) {
@@ -900,34 +923,54 @@ func (g *Grants) envLines() []string {
 	return lines
 }
 
+// copyState is how a copied file got into the container.
+type copyState string
+
+const (
+	copyCopied     copyState = "copied"     // copied this launch
+	copyRestored   copyState = "restored"   // restored from the saved session
+	copyUnverified copyState = "unverified" // in the container, maybe not from the host
+	copyChanged    copyState = "changed"    // copied earlier, since changed
+	copyEarlier    copyState = "earlier"    // copied earlier, unchanged
+)
+
+// copyNotes is the text report's note for each copyState.
+var copyNotes = map[copyState]string{
+	copyRestored:   " (restored from the saved session)",
+	copyUnverified: " (in the container; it predates coi recording copies, so it may not be from the host)",
+	copyChanged:    " (copied by an earlier session, since changed in the container)",
+	copyEarlier:    " (already in the container, not copied this launch)",
+}
+
+// state says how c got into the container.
+func (c CredentialGrant) state() copyState {
+	switch {
+	case c.Restored:
+		return copyRestored
+	case c.Earlier && c.Unverified:
+		return copyUnverified
+	case c.Earlier && c.Changed:
+		return copyChanged
+	case c.Earlier:
+		return copyEarlier
+	}
+	return copyCopied
+}
+
 func copiedLines(files []CredentialGrant) []string {
 	var lines []string
 	for _, c := range files {
-		l := fmt.Sprintf("%s -> %s", c.HostPath, c.ContainerPath)
-		switch {
-		case c.Restored:
-			l += " (restored from the saved session)"
-		case c.Earlier && c.Unverified:
-			l += " (in the container; it predates coi recording copies, so it may not be from the host)"
-		case c.Earlier && c.Changed:
-			l += " (copied by an earlier session, since changed in the container)"
-		case c.Earlier:
-			l += " (already in the container, not copied this launch)"
-		}
-		lines = append(lines, l)
+		lines = append(lines, fmt.Sprintf("%s -> %s", c.HostPath, c.ContainerPath)+copyNotes[c.state()])
 	}
 	return lines
 }
 
-// networkLines describes egress: the mode, then what it lets through. Port
-// caps and DNS pins are shown only in the modes whose firewall enforces them,
-// as the sandbox context does.
+// networkLines describes egress: the mode, then what it lets through.
 func (g *Grants) networkLines() []string {
-	n := g.Network
-	mode := config.NetworkMode(n.Mode)
+	n := g.Network.effective()
 	var lines []string
-	switch mode {
-	case "", config.NetworkModeOpen:
+	switch config.NetworkMode(n.Mode) {
+	case config.NetworkModeOpen:
 		lines = append(lines, "open (no egress filtering)")
 	case config.NetworkModeAllowlist:
 		dests := "nothing"
@@ -935,38 +978,28 @@ func (g *Grants) networkLines() []string {
 			dests = strings.Join(n.AllowedDomains, ", ")
 		}
 		lines = append(lines, "allowlist: "+dests)
-		// Allowlist mode keys its private/link-local handling off
-		// allow_local_network_access alone: with it off, LAN and metadata are
-		// rejected; with it on, neither is, whatever the block_* settings say.
-		if n.LANAccess {
+		if n.LAN == netAllowed {
 			lines = append(lines, "LAN allowed (metadata endpoint not blocked)")
 		} else {
 			lines = append(lines, "LAN and metadata endpoint blocked")
 		}
 	case config.NetworkModeRestricted:
-		lan := "LAN not blocked"
-		switch {
-		case n.LANAccess:
-			lan = "LAN allowed"
-		case n.LANBlocked:
-			lan = "LAN blocked"
-		}
+		lan := map[netAccess]string{netAllowed: "LAN allowed", netBlocked: "LAN blocked", netNotBlocked: "LAN not blocked"}[n.LAN]
 		metadata := "metadata endpoint not blocked"
-		if n.MetadataBlock {
+		if n.MetadataEndpoint == netBlocked {
 			metadata = "metadata endpoint blocked"
 		}
 		lines = append(lines, "restricted: internet ("+lan+", "+metadata+")")
 	default:
 		lines = append(lines, n.Mode)
 	}
-	enforcing := mode == config.NetworkModeRestricted || mode == config.NetworkModeAllowlist
-	if enforcing && n.HostAccess {
+	if n.HostAccess {
 		lines = append(lines, "host services allowed (allow_host_access)")
 	}
-	if enforcing && len(n.AllowedPorts) > 0 {
+	if len(n.AllowedPorts) > 0 {
 		lines = append(lines, "ports "+joinInts(n.AllowedPorts)+" only")
 	}
-	if mode == config.NetworkModeRestricted && len(n.DNSServers) > 0 {
+	if len(n.DNSServers) > 0 {
 		lines = append(lines, "DNS pinned to "+strings.Join(n.DNSServers, ", "))
 	}
 	for _, h := range n.Hosts {
@@ -974,7 +1007,7 @@ func (g *Grants) networkLines() []string {
 		if len(h.Hostnames) > 0 {
 			l += " (" + strings.Join(h.Hostnames, ", ") + ")"
 		}
-		if enforcing && len(h.Ports) > 0 {
+		if len(h.Ports) > 0 {
 			l += " on ports " + joinInts(h.Ports)
 		}
 		lines = append(lines, l)

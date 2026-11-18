@@ -583,7 +583,11 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 				}
 			}
 			if g := s.result.Grants; g != nil {
-				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(envSources, launch).Render())
+				report, err := grantsReport(g.WithEnv(envSources, launch), grantsJSON)
+				if err != nil {
+					return nil, err
+				}
+				fmt.Fprintf(os.Stderr, "\n%s", report)
 			}
 			fmt.Fprintf(os.Stderr, "\nStarting session...\n")
 			fmt.Fprintf(os.Stderr, "Session ID: %s\n", s.sessionID)
@@ -638,6 +642,19 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 // registry with the profile this launch chose by --profile, the alias or a
 // resume. A profile that came only from [defaults] profile is not saved, so the
 // entry keeps its earlier profile and a later change of the default applies.
+// grantsReport is the startup grants report: the text block, or with asJSON
+// one JSON line.
+func grantsReport(g *session.Grants, asJSON bool) (string, error) {
+	if !asJSON {
+		return g.Render(), nil
+	}
+	b, err := g.JSON()
+	if err != nil {
+		return "", fmt.Errorf("grants report: %w", err)
+	}
+	return string(b) + "\n", nil
+}
+
 func (a *App) registerShellAlias(absWorkspace string) error {
 	effectiveAlias := a.cfg.Container.Alias
 	if effectiveAlias == "" {
