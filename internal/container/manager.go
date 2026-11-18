@@ -735,7 +735,7 @@ func (m *Manager) ExecCommand(command string, opts ExecCommandOptions) (string, 
 // umask unless they are passed explicitly.
 func (m *Manager) PushFile(source, destination string) error {
 	// Ensure destination starts with /
-	if destination[0] != '/' {
+	if !strings.HasPrefix(destination, "/") {
 		destination = "/" + destination
 	}
 	dest := m.ContainerName + destination
@@ -1301,7 +1301,7 @@ func (m *Manager) CreateFileWithOwner(containerPath, content string, uid, gid in
 // PushFileWithOwner pushes a file into the container with explicit ownership
 // and mode (see IncusFilePushWithOwner).
 func (m *Manager) PushFileWithOwner(source, destination string, uid, gid int, mode string) error {
-	if destination[0] != '/' {
+	if !strings.HasPrefix(destination, "/") {
 		destination = "/" + destination
 	}
 	return IncusFilePushWithOwner(source, m.ContainerName+destination, uid, gid, mode)
