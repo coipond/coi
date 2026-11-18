@@ -151,23 +151,38 @@ func parseGitdirPointer(gitFilePath, workspacePath string) (string, error) {
 // returns the symlink-resolved common git dir. When no commondir file exists the
 // gitdir is its own common dir.
 func resolveCommonDir(gitDir string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
+	common, ok, err := commonDirTarget(gitDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return gitDir, nil
-		}
 		return "", fmt.Errorf("read commondir: %w", err)
 	}
-	rel := strings.TrimSpace(string(data))
-	common := rel
-	if !filepath.IsAbs(common) {
-		common = filepath.Join(gitDir, rel)
+	if !ok {
+		return gitDir, nil
 	}
-	common, err = filepath.EvalSymlinks(filepath.Clean(common))
+	resolved, err := filepath.EvalSymlinks(common)
 	if err != nil {
 		return "", fmt.Errorf("resolve commondir %q: %w", common, err)
 	}
-	return common, nil
+	return resolved, nil
+}
+
+// commonDirTarget returns the dir named by <gitDir>/commondir, read as git
+// reads it: trailing CR and LF trimmed, a relative path appended to gitDir.
+// The path is not cleaned: git resolves symlinks before "..", so only
+// filepath.EvalSymlinks gives the dir git uses. ok is false when the file is
+// absent.
+func commonDirTarget(gitDir string) (target string, ok bool, err error) {
+	data, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	target = strings.TrimRight(string(data), "\r\n")
+	if !filepath.IsAbs(target) {
+		target = gitDir + string(filepath.Separator) + target
+	}
+	return target, true, nil
 }
 
 // verifyWorktreeBinding is the security guard: it proves the external dirs are a

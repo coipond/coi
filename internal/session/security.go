@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -207,14 +208,21 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 	// Extend the read-only protection to the external git common dir (issue #533):
 	// the same #474 hook/config lockdown applied to the worktree's real internals,
 	// which the workspace-relative pass above cannot reach.
+	var commonDir string
+	var cProtected []string
 	if worktreeLayout != nil {
-		cProtected, cErr := SetupCommonDirProtection(mgr, worktreeLayout.CommonDir, useShift, worktreeWritableHooks, opts.Security.Config)
+		commonDir = worktreeLayout.CommonDir
+		var cErr error
+		cProtected, cErr = SetupCommonDirProtection(mgr, commonDir, useShift, worktreeWritableHooks, opts.Security.Config)
 		if cErr != nil {
 			opts.Logger(fmt.Sprintf("Warning: some git common-dir protections not applied: %v", cErr))
 		}
 		if len(cProtected) > 0 {
 			opts.Logger(fmt.Sprintf("Protected git common-dir paths (read-only): %s", strings.Join(cProtected, ", ")))
 		}
+	}
+	if found := UnexpectedCommonDirs(opts.WorkspacePath, effectivePaths, nestedScan, commonDir, cProtected); len(found) > 0 {
+		opts.Logger(fmt.Sprintf("Warning: unexpected git commondir, kept as it is; check it: %s", strings.Join(found, ", ")))
 	}
 
 	// Host-side immutable attribute for defense-in-depth. Runs even on a partial
@@ -835,6 +843,62 @@ func materializeNestedGitEntry(workspacePath, rel string, isDir bool) bool {
 		return false
 	}
 	return info.IsDir() == isDir
+}
+
+// UnexpectedCommonDirs returns "<file> -> <dir>" for each protected commondir
+// of a git dir that names another dir: the root .git and the git dirs below it
+// (effective, relative to workspacePath, as SetupSecurityMounts returns it),
+// and the common dir of a worktree checkout when commonProtected (as
+// SetupCommonDirProtection returns it) holds its commondir. git writes a
+// commondir only in a linked worktree's admin dir, and coi keeps an existing
+// file as it is.
+func UnexpectedCommonDirs(workspacePath string, effective []string, scan NestedGitScan, commonDir string, commonProtected []string) []string {
+	var out []string
+	var gitDirs map[string]bool
+	for _, rel := range effective {
+		if filepath.Base(rel) != "commondir" {
+			continue
+		}
+		gitDir := filepath.Dir(rel)
+		if gitDir != ".git" {
+			if gitDirs == nil {
+				gitDirs = map[string]bool{}
+				for _, d := range scan.resultFor(workspacePath).gitDirs {
+					gitDirs[filepath.Clean(d)] = true
+				}
+			}
+			if !gitDirs[gitDir] {
+				continue // a linked worktree's admin dir
+			}
+		}
+		if target, ok := foreignCommonDir(filepath.Join(workspacePath, gitDir)); ok {
+			out = append(out, fmt.Sprintf("%s -> %s", rel, target))
+		}
+	}
+	if commonDir != "" && slices.Contains(commonProtected, "commondir") {
+		if target, ok := foreignCommonDir(commonDir); ok {
+			out = append(out, fmt.Sprintf("%s -> %s", filepath.Join(commonDir, "commondir"), target))
+		}
+	}
+	return out
+}
+
+// foreignCommonDir returns the dir named by gitDir's commondir when the file
+// exists and names a dir other than gitDir. A target that does not resolve is
+// returned as written.
+func foreignCommonDir(gitDir string) (string, bool) {
+	target, ok, err := commonDirTarget(gitDir)
+	if err != nil || !ok {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return target, true
+	}
+	if SameDir(resolved, gitDir) {
+		return "", false
+	}
+	return resolved, true
 }
 
 func isRealDir(path string) bool {

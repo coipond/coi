@@ -222,3 +222,32 @@ func TestResolveGitWorktree_InsideWorkspaceIsNoop(t *testing.T) {
 		t.Fatalf("in-workspace gitdir should be a no-op, got layout=%v err=%v", layout, err)
 	}
 }
+
+// resolveCommonDir reads commondir as git does: only CR and LF are trimmed,
+// and symlinks are resolved before "..".
+func TestResolveCommonDir_ReadsLikeGit(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDir := filepath.Join(root, "git")
+	for _, d := range []string{gitDir, filepath.Join(root, "x"), filepath.Join(root, "x "), filepath.Join(root, "d", "real.git", "x")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("..", "d", "real.git", "x"), filepath.Join(gitDir, "lnk")); err != nil {
+		t.Fatal(err)
+	}
+	for content, want := range map[string]string{
+		"../x \r\n": filepath.Join(root, "x "),
+		"lnk/..\n":  filepath.Join(root, "d", "real.git"),
+	} {
+		if err := os.WriteFile(filepath.Join(gitDir, "commondir"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := resolveCommonDir(gitDir); err != nil || got != want {
+			t.Errorf("commondir %q: resolveCommonDir = %q, %v; want %q", content, got, err, want)
+		}
+	}
+}
