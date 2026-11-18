@@ -65,3 +65,37 @@ func TestApplySecurityMounts_WritableHooksLeavesNestedHooks(t *testing.T) {
 		}
 	}
 }
+
+// coi run warns about a protected commondir that names another dir, and not
+// about the placeholder it creates for an absent one.
+func TestApplySecurityMounts_UnexpectedCommonDir(t *testing.T) {
+	for _, planted := range []bool{false, true} {
+		ws := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(ws, ".git", "hooks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(ws, "planted")
+		if planted {
+			if err := os.Mkdir(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(ws, ".git", "commondir"), []byte(target+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cfg := config.GetDefaultConfig()
+		off := false
+		cfg.Security.HostImmutable = &off
+		var runErr error
+		stderr := captureOutput(t, &os.Stderr, func() {
+			runErr = (&App{cfg: cfg}).applySecurityMounts(&mountRecorder{}, ws, "/workspace", "c1", false, nil, session.NestedGitScan{})
+		})
+		if runErr != nil {
+			t.Fatal(runErr)
+		}
+		want := "unexpected git commondir, kept as it is; check it: .git/commondir -> " + target
+		if strings.Contains(stderr, want) != planted {
+			t.Errorf("planted=%v: stderr has warning=%v, want %v:\n%s", planted, !planted, planted, stderr)
+		}
+	}
+}

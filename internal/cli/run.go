@@ -750,7 +750,7 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 		}
 	}
 	if found := session.UnexpectedCommonDirs(absWorkspace, effectivePaths, nestedScan, commonDir, cProtected); len(found) > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: unexpected git commondir, mounted read-only as it is; check it: %s\n", strings.Join(found, ", "))
+		fmt.Fprintf(os.Stderr, "Warning: unexpected git commondir, kept as it is; check it: %s\n", strings.Join(found, ", "))
 	}
 
 	// Mask secret paths (issue #494) — independent of protected_paths.

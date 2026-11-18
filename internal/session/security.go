@@ -222,7 +222,7 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 		}
 	}
 	if found := UnexpectedCommonDirs(opts.WorkspacePath, effectivePaths, nestedScan, commonDir, cProtected); len(found) > 0 {
-		opts.Logger(fmt.Sprintf("Warning: unexpected git commondir, mounted read-only as it is; check it: %s", strings.Join(found, ", ")))
+		opts.Logger(fmt.Sprintf("Warning: unexpected git commondir, kept as it is; check it: %s", strings.Join(found, ", ")))
 	}
 
 	// Host-side immutable attribute for defense-in-depth. Runs even on a partial
@@ -850,8 +850,8 @@ func materializeNestedGitEntry(workspacePath, rel string, isDir bool) bool {
 // (effective, relative to workspacePath, as SetupSecurityMounts returns it),
 // and the common dir of a worktree checkout when commonProtected (as
 // SetupCommonDirProtection returns it) holds its commondir. git writes a
-// commondir only in a linked worktree's admin dir, and an existing file is
-// mounted read-only as it is.
+// commondir only in a linked worktree's admin dir, and coi keeps an existing
+// file as it is.
 func UnexpectedCommonDirs(workspacePath string, effective []string, scan NestedGitScan, commonDir string, commonProtected []string) []string {
 	var out []string
 	var gitDirs map[string]bool
@@ -890,11 +890,7 @@ func foreignCommonDir(gitDir string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	name := strings.TrimRight(string(data), "\r\n")
-	if name == "" {
-		return "", false
-	}
-	target := name
+	target := strings.TrimRight(string(data), "\r\n")
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(gitDir, target)
 	}
@@ -906,12 +902,12 @@ func foreignCommonDir(gitDir string) (string, bool) {
 
 // samePath reports whether a and b name the same dir, symlinks resolved.
 func samePath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)
-	if errA != nil || errB != nil {
-		return filepath.Clean(a) == filepath.Clean(b)
-	}
-	return ra == rb
+	return errA == nil && errB == nil && ra == rb
 }
 
 func isRealDir(path string) bool {

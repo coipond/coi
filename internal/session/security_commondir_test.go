@@ -423,7 +423,8 @@ func TestApplySessionSecurity_UnexpectedCommonDir(t *testing.T) {
 	}
 }
 
-// git-made layouts and a commondir naming its own git dir give no warning:
+// git-made layouts and a commondir naming its own git dir (also through a
+// symlink) give no warning:
 // coi's placeholder, linked worktrees of the root, a submodule and a nested
 // repo, and a workspace that is a linked worktree.
 func TestApplySessionSecurity_NoUnexpectedCommonDir(t *testing.T) {
@@ -439,7 +440,12 @@ func TestApplySessionSecurity_NoUnexpectedCommonDir(t *testing.T) {
 	}
 
 	sub := filepath.Join(ws, ".git", "modules", "lib")
-	for _, self := range []string{".", "./\n", sub + "\n", "\n"} {
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(ws, link); err != nil {
+		t.Fatal(err)
+	}
+	viaLink := filepath.Join(link, ".git", "modules", "lib")
+	for _, self := range []string{".", "./\n", "./\r\n", sub + "\n", viaLink + "\n", "\n"} {
 		if err := os.WriteFile(filepath.Join(sub, "commondir"), []byte(self), 0o644); err != nil {
 			t.Fatal(err)
 		}
