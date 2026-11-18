@@ -86,3 +86,21 @@ func TestResolvePushDestination_KindError(t *testing.T) {
 		t.Errorf("error = %v, want the probe error", err)
 	}
 }
+
+// An empty path after `<container>:` is a usage error, not a push.
+func TestFilePush_EmptyFileDestinationIsUsageError(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(src, []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logPath := fakeIncusLog(t)
+
+	err := executeWithProfiles(t, nil, "", "file", "push", src, "c1:")
+	var ece *ExitCodeError
+	if !errors.As(err, &ece) || ece.Code != ExitUsage {
+		t.Fatalf("coi file push %s c1: = %v, want an ExitCodeError with code %d", src, err, ExitUsage)
+	}
+	if b, _ := os.ReadFile(logPath); len(b) > 0 {
+		t.Errorf("incus called before the usage error:\n%s", b)
+	}
+}
