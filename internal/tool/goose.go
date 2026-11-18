@@ -161,6 +161,11 @@ func (g *GooseTool) StateConfigFileName() string { return mustBundle("goose").St
 // AlwaysSetupConfig implements ToolWithConfigDirFiles.
 func (g *GooseTool) AlwaysSetupConfig() bool { return mustBundle("goose").AlwaysSetup }
 
+// AutoContextFile implements ToolWithAutoContextFile. goose loads
+// ~/.config/goose/.goosehints as global hints; a symlink out of
+// ~/.config/goose is skipped, so coi writes the managed block into the file.
+func (g *GooseTool) AutoContextFile() string { return mustBundle("goose").AutoContextFile }
+
 // DataDirs implements ToolWithDataDirs. goose keeps its SQLite session
 // database (with its WAL files) in the XDG data dir and its logs in the XDG
 // state dir; host mounts keep the database consistent when an ephemeral

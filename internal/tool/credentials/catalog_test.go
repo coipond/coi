@@ -194,7 +194,7 @@ func TestGooseBundle_MatchesHardcodedValues(t *testing.T) {
 	if b.AlwaysSetup {
 		t.Error("AlwaysSetup = true, want false")
 	}
-	if b.AutoContextFile != "" {
-		t.Errorf("AutoContextFile = %q, want empty", b.AutoContextFile)
+	if b.AutoContextFile != ".config/goose/.goosehints" {
+		t.Errorf("AutoContextFile = %q, want %q", b.AutoContextFile, ".config/goose/.goosehints")
 	}
 }
