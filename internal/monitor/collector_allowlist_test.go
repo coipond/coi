@@ -2,7 +2,10 @@ package monitor
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // M1: the collector must prefer the live-allowlist provider when it yields
@@ -39,7 +42,7 @@ func TestCollector_KeepPermittedFlows(t *testing.T) {
 	poll := func(c *Collector, allowed []string, conns ...Connection) NetworkStats {
 		stats := NetworkStats{Connections: conns}
 		for i := range stats.Connections {
-			if reason := checkSuspicious(stats.Connections[i], allowed, nil, nil); reason != "" {
+			if reason := checkSuspicious(stats.Connections[i], config.NetworkModeAllowlist, allowed, nil, nil); reason != "" {
 				stats.Connections[i].Suspicious = true
 				stats.Connections[i].SuspectReason = reason
 				stats.SuspiciousCount++
@@ -92,5 +95,38 @@ func TestCollector_KeepPermittedFlows(t *testing.T) {
 	poll(c, expired)
 	if got := poll(c, expired, held); got.SuspiciousCount != 1 {
 		t.Errorf("reused flow after a gap must be flagged: %+v", got.Connections)
+	}
+}
+
+// checkWith runs checkSuspicious with what c passes to CollectNetworkStats.
+func checkWith(c *Collector, remote, proto string) string {
+	conn := Connection{Protocol: proto, LocalAddr: "10.47.0.5:41000", RemoteAddr: remote, State: "ESTABLISHED"}
+	return checkSuspicious(conn, c.networkMode, c.currentAllowedCIDRs(), c.permitted, c.gateway)
+}
+
+// A collector told no mode (`coi monitor`) has no gateway or permit check, so
+// it must not flag private addresses.
+func TestNewCollector_NoPrivateNetworkCheckByDefault(t *testing.T) {
+	c := NewCollector("c", "", "", []string{})
+	for _, remote := range []string{"10.47.0.1:53", "192.168.1.50:5432"} {
+		if reason := checkWith(c, remote, "udp"); reason != "" {
+			t.Errorf("%s: got %q, want not flagged", remote, reason)
+		}
+	}
+}
+
+func TestNewDaemonCollector_Wiring(t *testing.T) {
+	c := newDaemonCollector(DaemonConfig{
+		NetworkMode:          config.NetworkModeRestricted,
+		Gateway:              func() string { return "10.47.0.1" },
+		PermittedDestination: func(_, ip string, port int) bool { return ip == "192.168.1.50" && port == 5432 },
+	})
+	for _, remote := range []string{"10.47.0.1:53", "192.168.1.50:5432"} {
+		if reason := checkWith(c, remote, "udp"); reason != "" {
+			t.Errorf("%s: got %q, want not flagged", remote, reason)
+		}
+	}
+	if reason := checkWith(c, "192.168.1.51:5432", "udp"); !strings.Contains(reason, "RFC1918") {
+		t.Errorf("a LAN host that is not permitted: got %q, want RFC1918", reason)
 	}
 }

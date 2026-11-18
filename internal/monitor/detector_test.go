@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 func TestDetectReverseShells(t *testing.T) {
@@ -462,6 +464,7 @@ func TestCheckSuspicious(t *testing.T) {
 	tests := []struct {
 		name         string
 		conn         Connection
+		mode         config.NetworkMode
 		allowedCIDRs []string
 		wantReason   string
 	}{
@@ -472,7 +475,8 @@ func TestCheckSuspicious(t *testing.T) {
 				RemoteAddr: "192.168.1.100:4444",
 				State:      "ESTABLISHED",
 			},
-			allowedCIDRs: []string{"8.8.8.8/32"}, // Network restricted - RFC1918 should be flagged
+			mode:         config.NetworkModeAllowlist,
+			allowedCIDRs: []string{"8.8.8.8/32"},
 			wantReason:   "RFC1918 private address",
 		},
 		{
@@ -482,6 +486,7 @@ func TestCheckSuspicious(t *testing.T) {
 				RemoteAddr: "203.0.113.1:4444",
 				State:      "ESTABLISHED",
 			},
+			mode:         config.NetworkModeOpen,
 			allowedCIDRs: []string{},
 			wantReason:   "Suspicious port: 4444",
 		},
@@ -492,6 +497,7 @@ func TestCheckSuspicious(t *testing.T) {
 				RemoteAddr: "169.254.169.254:80",
 				State:      "ESTABLISHED",
 			},
+			mode:         config.NetworkModeOpen,
 			allowedCIDRs: []string{},
 			wantReason:   "Cloud metadata endpoint access",
 		},
@@ -502,6 +508,7 @@ func TestCheckSuspicious(t *testing.T) {
 				RemoteAddr: "52.84.142.12:443",
 				State:      "ESTABLISHED",
 			},
+			mode:         config.NetworkModeOpen,
 			allowedCIDRs: []string{},
 			wantReason:   "",
 		},
@@ -512,6 +519,7 @@ func TestCheckSuspicious(t *testing.T) {
 				RemoteAddr: "0.0.0.0:0",
 				State:      "LISTEN",
 			},
+			mode:         config.NetworkModeOpen,
 			allowedCIDRs: []string{},
 			wantReason:   "",
 		},
@@ -519,7 +527,7 @@ func TestCheckSuspicious(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reason := checkSuspicious(tt.conn, tt.allowedCIDRs, nil, nil)
+			reason := checkSuspicious(tt.conn, tt.mode, tt.allowedCIDRs, nil, nil)
 			if (reason != "") != (tt.wantReason != "") {
 				t.Errorf("checkSuspicious() reason = %q, want %q", reason, tt.wantReason)
 			}

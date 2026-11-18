@@ -42,15 +42,15 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 		allowedCIDRs = resolveDomainsToHostCIDRs(a.cfg.Network.AllowedDomains)
 		if len(allowedCIDRs) == 0 {
 			// Both monitors read an empty list as "not allowlist mode" and switch
-			// their allowlist and private-network checks off. Domains that failed to
-			// resolve at start must not do that: keep the list non-empty with an
-			// address no connection can have.
+			// their allowlist check off. Domains that failed to resolve at start
+			// must not do that: keep the list non-empty with an address no
+			// connection can have.
 			allowedCIDRs = []string{"255.255.255.255/32"}
 		}
 	}
 
 	nftEnabled := config.BoolVal(a.cfg.Monitoring.NFT.Enabled) && a.cfg.Network.SudoAllowed()
-	permitted, stopPermits := a.startEgressPermits(ctx, containerName, nftEnabled)
+	permitted, stopPermits := a.startEgressPermits(ctx, containerName)
 
 	if err := startMonitoringDaemon(ctx, containerName, workspacePath, a.cfg, allowedCIDRs, permitted, log, mon); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to start security monitor: %v\n", err)
@@ -92,14 +92,11 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 // startEgressPermits returns the check both monitors share for "does the
 // firewall deliberately permit this destination?", so a configured LAN service
 // (also one added later with `coi hosts add`) is not reported as a
-// private-network leak and auto-paused, while other ports on that host are. It is
-// built only where a monitor consults it: the process monitor in allowlist mode,
-// the nft monitor in either enforcing mode. The rules are refreshed in the
-// background until the returned stop is called.
-func (a *App) startEgressPermits(ctx context.Context, containerName string, nftEnabled bool) (func(proto, ip string, port int) bool, func()) {
-	mode := a.cfg.Network.Mode
-	needed := mode == config.NetworkModeAllowlist || (mode == config.NetworkModeRestricted && nftEnabled)
-	if !needed {
+// private-network leak and auto-paused, while other ports on that host are. Both
+// monitors consult it in either enforcing mode, so it is not built in open mode.
+// The rules are refreshed in the background until the returned stop is called.
+func (a *App) startEgressPermits(ctx context.Context, containerName string) (func(proto, ip string, port int) bool, func()) {
+	if a.cfg.Network.Mode == config.NetworkModeOpen {
 		return nil, func() {}
 	}
 	containerIP, err := network.GetContainerIP(containerName)
