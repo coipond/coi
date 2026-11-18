@@ -151,9 +151,10 @@ def test_full_installation_process(meta_container, coi_binary):
         while pgrep -x 'dpkg|apt-get' >/dev/null; do sleep 1; done
         dpkg --configure -a
 
-        # Wait for network and DNS to be ready
+        # Wait for DNS to be ready. Not ping: Azure runners drop ICMP, so each
+        # ping waits 10 s for a reply and the loop outlasts the try.
         for i in {{1..30}}; do
-            if ping -c 1 archive.ubuntu.com >/dev/null 2>&1; then
+            if timeout 5 getent hosts archive.ubuntu.com >/dev/null; then
                 break
             fi
             sleep 1
