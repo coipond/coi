@@ -511,3 +511,18 @@ func TestApplySessionSecurity_UnexpectedCommonDirThroughSymlink(t *testing.T) {
 		t.Errorf("warnings = %q, want one naming %q", warnings, want)
 	}
 }
+
+// A commondir that names a dir that does not exist yet warns with the path as
+// written: git uses it once the dir is created.
+func TestApplySessionSecurity_UnexpectedCommonDirMissingTarget(t *testing.T) {
+	_, ws := commonDirRepo(t)
+	if err := os.WriteFile(filepath.Join(ws, ".git", "commondir"), []byte("../planted-later\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := commonDirWarnings(t, ws, nil)
+	want := ".git/commondir -> " + filepath.Join(ws, ".git") + "/../planted-later"
+	if len(warnings) != 1 || !strings.Contains(warnings[0], want) {
+		t.Errorf("warnings = %q, want one naming %q", warnings, want)
+	}
+}
