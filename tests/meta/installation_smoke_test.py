@@ -15,10 +15,30 @@ Note: This test requires nested Incus support and takes longer to run.
 """
 
 import os
+import re
+import shlex
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
+
+BUILD_SH = Path(__file__).resolve().parents[2] / "profiles" / "default" / "build.sh"
+
+# Cap for one apt try: a healthy try without a mirror takes about 3 minutes on
+# a slow machine.
+APT_TRY_TIMEOUT_SEC = 240
+# Shorter than build.sh's default so a mirror fallback fits in one try.
+APT_MIRROR_TIMEOUT_SEC = 60
+
+
+def build_sh_functions(*names):
+    """Return the named shell functions from the image build script."""
+    text = BUILD_SH.read_text()
+    return "\n".join(
+        re.search(rf"^{name}\(\) {{\n.*?^}}$", text, re.MULTILINE | re.DOTALL).group(0)
+        for name in names
+    )
 
 
 @pytest.fixture(scope="module")
@@ -102,47 +122,78 @@ def test_full_installation_process(meta_container, coi_binary):
     container_name = meta_container
 
     # Phase 1: Install system dependencies
-    # Retry apt-get operations to handle transient network issues in CI
+    # Retry apt-get operations to handle transient network issues in CI. A
+    # stalled apt hangs instead of failing.
     max_retries = 3
     last_error = None
+    apt_env = ""
+    if os.environ.get("COI_APT_MIRROR"):
+        apt_env = (
+            f"COI_APT_MIRROR={shlex.quote(os.environ['COI_APT_MIRROR'])} "
+            f"COI_APT_MIRROR_TIMEOUT={APT_MIRROR_TIMEOUT_SEC} "
+        )
+    apt_functions = build_sh_functions(
+        "log",
+        "configure_network_ipv4",
+        "configure_apt_mirror",
+        "restore_default_apt_sources",
+        "apt_get",
+    )
+    script = f"""
+        set -e
+        {apt_functions}
+        configure_network_ipv4
+        configure_apt_mirror
+
+        # dpkg and apt_get's own timeout run outside this try's process group,
+        # so killing an earlier try can leave them running with the apt lock
+        # held, or dpkg half-configured if it died.
+        while pgrep -x 'dpkg|apt-get' >/dev/null; do sleep 1; done
+        dpkg --configure -a
+
+        # Wait for DNS to be ready. Not ping: Azure runners drop ICMP, so each
+        # ping waits 10 s for a reply and the loop outlasts the try.
+        for i in {{1..30}}; do
+            if timeout 5 getent hosts archive.ubuntu.com >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+
+        apt_get update -qq
+
+        # Install packages
+        # pkg-config is required by the Makefile's check-deps preflight
+        # (coi links libsystemd via cgo, which needs pkg-config + libsystemd-dev).
+        apt_get install -y -qq \\
+            curl wget git ca-certificates gnupg build-essential pkg-config libsystemd-dev
+
+        echo "System dependencies installed"
+        """
+    command = f"{apt_env}timeout -k 10 {APT_TRY_TIMEOUT_SEC} bash -c {shlex.quote(script)}"
 
     for attempt in range(max_retries):
-        result = exec_in_container(
-            container_name,
-            """
-            set -e
-            # Wait for network and DNS to be ready
-            for i in {1..30}; do
-                if ping -c 1 archive.ubuntu.com >/dev/null 2>&1; then
-                    break
-                fi
-                sleep 1
-            done
+        try:
+            result = exec_in_container(
+                container_name,
+                command,
+                timeout=APT_TRY_TIMEOUT_SEC + 30,
+                check=False,
+            )
+            if result.returncode == 0:
+                break
+            last_error = result.stderr
+            if result.returncode == 124:
+                last_error = f"timed out after {APT_TRY_TIMEOUT_SEC}s: {last_error}"
+        except subprocess.TimeoutExpired as e:
+            result = None
+            last_error = f"incus exec timed out after {e.timeout}s"
 
-            # Update package lists with retry
-            apt-get update -qq || sleep 5 && apt-get update -qq
-
-            # Install packages
-            # pkg-config is required by the Makefile's check-deps preflight
-            # (coi links libsystemd via cgo, which needs pkg-config + libsystemd-dev).
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-                curl wget git ca-certificates gnupg build-essential pkg-config libsystemd-dev
-
-            echo "System dependencies installed"
-            """,
-            timeout=600,
-            check=False,
-        )
-
-        if result.returncode == 0:
-            break
-
-        last_error = result.stderr
         if attempt < max_retries - 1:
-            print(f"apt-get attempt {attempt + 1} failed, retrying...")
+            print(f"apt-get attempt {attempt + 1} failed, retrying: {last_error}")
             time.sleep(10)  # Wait before retry
 
-    assert result.returncode == 0, (
+    assert result is not None and result.returncode == 0, (
         f"Failed to install dependencies after {max_retries} attempts: {last_error}"
     )
 

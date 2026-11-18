@@ -4,7 +4,7 @@
 
 ### Features
 
-- [Feature] **goose is supported as an opt-in agent (#970)** — add `"goose"` to `[container.build] agents` and set `[tool] name = "goose"`. coi brings in your host goose config and credentials, keeps goose sessions per workspace, and `coi shell --resume` picks up the latest one.
+- [Feature] **goose is supported as an opt-in agent (#970)** — add `"goose"` to `[container.build] agents` and set `[tool] name = "goose"`. coi brings in your host goose config and credentials, keeps goose sessions per workspace, `coi shell --resume` picks up the latest one, and `permission_mode` sets goose's `GOOSE_MODE` (`bypass`: `auto`, `interactive`: `approve`).
 
 ### Breaking
 
@@ -37,6 +37,8 @@
 ### Bug Fixes
 
 - [Bug Fix] **An alias that starts with the container prefix works for `coi attach` and the other running-container commands** — an alias such as `coi-web` worked for `coi shell` but `coi attach`, `coi unfreeze`, `coi monitor` and similar commands took it for a container name and failed with `not found or not running`. A registered alias now resolves to its container. A name that is an existing container's name still means that container.
+- [Bug Fix] **A long-lived allowlisted connection no longer pauses the container when its address expires** — in allowlist mode, an open keep-alive or streaming connection to an address learned from DNS is no longer flagged as "IP not in network allowlist" once that address leaves the allowlist; other checks still apply. A new connection to the expired address is still flagged.
+- [Bug Fix] **`coi file push <file> <container>:` gives a usage error instead of a crash** — an empty container path after `:` made coi panic with a Go stack trace. It now exits 2 with `destination path is empty, use 'container:path'`.
 - [Bug Fix] **`coi list` shows the mode and workspace of containers launched with another tool** — a container created before coi recorded its mode on the container showed `(ephemeral)` and no workspace when its session was saved by a tool other than the configured one (e.g. opencode while `[tool] name` is claude). JSON output had `"persistent": false`. coi now reads the saved sessions of every tool for such containers.
 - [Bug Fix] **The container hostname is in `/etc/hosts` before `coi run` and `coi shell` start** — on a fast start the command could run before the hostname was added, so `sudo` printed `unable to resolve host` and the hostname did not resolve. Takes effect after `coi build --force`.
 - [Bug Fix] **`.git/commondir` is protected like `.git/config` and `.git/hooks`** — it names the dir git reads config and hooks from, so it is now read-only in the container, in the root git dir, in submodule and nested git dirs, and for linked worktrees. When it is absent, coi creates it as `./` (the git dir itself, which is what git assumes without the file); `git rev-parse --git-common-dir` then prints an absolute path.
