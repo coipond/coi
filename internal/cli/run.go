@@ -735,15 +735,22 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 	// checkout (#533): the same #474 hook/config lockdown applied to the real
 	// internals the workspace-relative pass above cannot reach. Mount-only (the
 	// host-immutable belt is deferred; the read-only mount is the primary control).
+	var commonDir string
+	var cProtected []string
 	if worktree != nil {
+		commonDir = worktree.CommonDir
 		writableHooks := config.BoolVal(a.cfg.Git.WritableHooks)
-		cProtected, cErr := session.SetupCommonDirProtection(mgr, worktree.CommonDir, useShift, writableHooks, &a.cfg.Security)
+		var cErr error
+		cProtected, cErr = session.SetupCommonDirProtection(mgr, commonDir, useShift, writableHooks, &a.cfg.Security)
 		if cErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: some git common-dir protections not applied: %v\n", cErr)
 		}
 		if len(cProtected) > 0 {
 			fmt.Fprintf(os.Stderr, "Protected git common-dir paths (read-only): %s\n", strings.Join(cProtected, ", "))
 		}
+	}
+	if found := session.UnexpectedCommonDirs(absWorkspace, effectivePaths, nestedScan, commonDir, cProtected); len(found) > 0 {
+		fmt.Fprintf(os.Stderr, "Warning: unexpected git commondir, mounted read-only as it is; check it: %s\n", strings.Join(found, ", "))
 	}
 
 	// Mask secret paths (issue #494) — independent of protected_paths.

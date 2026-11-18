@@ -353,3 +353,126 @@ func TestExpandNestedGit_LinkedWorktreeOptOutsAndSymlinks(t *testing.T) {
 		t.Errorf("re-expanding must be a no-op, got %v then %v", got, again)
 	}
 }
+
+// commonDirWarnings runs the coi shell security setup and returns its
+// unexpected commondir warnings.
+func commonDirWarnings(t *testing.T, ws string, layout *GitWorktreeLayout) []string {
+	t.Helper()
+	var warnings []string
+	opts := SetupOptions{WorkspacePath: ws, Logger: func(msg string) {
+		if strings.Contains(msg, "unexpected git commondir") {
+			warnings = append(warnings, msg)
+		}
+	}}
+	opts.Security.ProtectedPaths = []string{".git/hooks", ".git/config", ".git/commondir"}
+	if _, _, err := applySessionSecurity(&sessionMountRecorder{}, opts, "/workspace", false, layout, false, "c1", NestedGitScan{}); err != nil {
+		t.Fatal(err)
+	}
+	return warnings
+}
+
+// commonDirRepo builds a workspace repo with a submodule, a nested repo and a
+// linked worktree of each, as git makes them.
+func commonDirRepo(t *testing.T) (dir, ws string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir = t.TempDir()
+	lib := filepath.Join(dir, "lib")
+	ws = filepath.Join(dir, "ws")
+	for _, d := range []string{lib, ws} {
+		gitCmd(t, dir, "init", "-q", d)
+		gitCmd(t, d, "commit", "-q", "--allow-empty", "-m", "init")
+	}
+	gitCmd(t, ws, "submodule", "add", "-q", lib, "lib")
+	nested := filepath.Join(ws, "nested")
+	gitCmd(t, ws, "init", "-q", nested)
+	gitCmd(t, nested, "commit", "-q", "--allow-empty", "-m", "init")
+	gitCmd(t, ws, "worktree", "add", "-q", filepath.Join(dir, "wt"))
+	gitCmd(t, filepath.Join(ws, "lib"), "worktree", "add", "-q", filepath.Join(dir, "sub-wt"))
+	gitCmd(t, nested, "worktree", "add", "-q", filepath.Join(dir, "nested-wt"))
+	return dir, ws
+}
+
+// A commondir of the root, a submodule or a nested git dir that names another
+// dir is reported with the dir it names; the file is kept as it is.
+func TestApplySessionSecurity_UnexpectedCommonDir(t *testing.T) {
+	for _, gitDir := range []string{".git", ".git/modules/lib", "nested/.git"} {
+		t.Run(gitDir, func(t *testing.T) {
+			_, ws := commonDirRepo(t)
+			target := filepath.Join(ws, "planted")
+			if err := os.Mkdir(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(ws, gitDir, "commondir")
+			planted := target + "\n"
+			if err := os.WriteFile(file, []byte(planted), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			warnings := commonDirWarnings(t, ws, nil)
+			want := filepath.Join(gitDir, "commondir") + " -> " + target
+			if len(warnings) != 1 || !strings.Contains(warnings[0], want) {
+				t.Errorf("warnings = %q, want one naming %q", warnings, want)
+			}
+			if data, err := os.ReadFile(file); err != nil || string(data) != planted {
+				t.Errorf("%s = %q, %v; want it kept as %q", file, data, err, planted)
+			}
+		})
+	}
+}
+
+// git-made layouts and a commondir naming its own git dir give no warning:
+// coi's placeholder, linked worktrees of the root, a submodule and a nested
+// repo, and a workspace that is a linked worktree.
+func TestApplySessionSecurity_NoUnexpectedCommonDir(t *testing.T) {
+	dir, ws := commonDirRepo(t)
+	if w := commonDirWarnings(t, ws, nil); len(w) != 0 {
+		t.Errorf("git-made layout: unexpected warnings %q", w)
+	}
+	if data, err := os.ReadFile(filepath.Join(ws, ".git", "commondir")); err != nil || string(data) != commonDirPlaceholder {
+		t.Fatalf(".git/commondir = %q, %v; want the placeholder", data, err)
+	}
+	if w := commonDirWarnings(t, ws, nil); len(w) != 0 {
+		t.Errorf("second launch: unexpected warnings %q", w)
+	}
+
+	sub := filepath.Join(ws, ".git", "modules", "lib")
+	for _, self := range []string{".", "./\n", sub + "\n", "\n"} {
+		if err := os.WriteFile(filepath.Join(sub, "commondir"), []byte(self), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if w := commonDirWarnings(t, ws, nil); len(w) != 0 {
+			t.Errorf("commondir %q: unexpected warnings %q", self, w)
+		}
+	}
+
+	wt := filepath.Join(dir, "wt")
+	layout, err := ResolveGitWorktree(wt)
+	if err != nil || layout == nil {
+		t.Fatalf("ResolveGitWorktree = %v, %v", layout, err)
+	}
+	if w := commonDirWarnings(t, wt, layout); len(w) != 0 {
+		t.Errorf("linked worktree workspace: unexpected warnings %q", w)
+	}
+}
+
+// The common dir of a worktree checkout is checked too.
+func TestApplySessionSecurity_UnexpectedCommonDirInCommonDir(t *testing.T) {
+	dir, ws := commonDirRepo(t)
+	wt := filepath.Join(dir, "wt")
+	layout, err := ResolveGitWorktree(wt)
+	if err != nil || layout == nil {
+		t.Fatalf("ResolveGitWorktree = %v, %v", layout, err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".git", "commondir"), []byte("../nested/.git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := commonDirWarnings(t, wt, layout)
+	want := filepath.Join(layout.CommonDir, "commondir") + " -> " + filepath.Join(layout.CommonDir, "..", "nested", ".git")
+	if len(warnings) != 1 || !strings.Contains(warnings[0], filepath.Clean(want)) {
+		t.Errorf("warnings = %q, want one naming %q", warnings, filepath.Clean(want))
+	}
+}
