@@ -24,7 +24,7 @@
 
 ### Changed
 
-- [Change] **`coi shell <alias>` warns when `-w` is also given** — the alias's workspace is still used; coi now says so on stderr and names the ignored `-w` directory instead of dropping it silently.
+- [Change] **`coi shell <alias>` warns when `-w` names another directory** — the alias's workspace is still used; coi now says so on stderr and names the ignored `-w` directory instead of dropping it silently.
 - [Change] **Faster commands on busy hosts** — `coi list`, `coi top`, `coi shell`, `coi run` and the `coi container` commands stay fast with many containers, saved sessions, profiles or large network allowlists. Container launch makes far fewer Incus calls.
 - [Change] **`coi build` no longer scans SSH port 22** — GitHub, GitLab and Bitbucket host keys come from their HTTPS endpoints or keys built into coi. Builds no longer trip IDS rules or stall where port 22 is blocked.
 - [Change] **A broken profile only fails commands that use it** — coi used to read and validate every profile on every command.

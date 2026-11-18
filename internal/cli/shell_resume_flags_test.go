@@ -122,13 +122,34 @@ func TestResolveResumeAndProfile_SameIDNoWarning(t *testing.T) {
 	}
 }
 
+// An unknown --resume ID with a bare --continue fails with the not-found
+// error and prints no conflict warning.
+func TestResolveResumeAndProfile_UnknownResumeIDNoWarning(t *testing.T) {
+	ws := t.TempDir()
+	a, cmd, sessionsDir := newResumeTestApp(t, "")
+	writeSession(t, sessionsDir, "sessB", ws, "2026-02-01T00:00:00Z")
+	for _, f := range [][2]string{{"resume", "bogus"}, {"continue", "auto"}} {
+		if err := cmd.Flags().Set(f[0], f[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stderr := captureOutput(t, &os.Stderr, func() {
+		if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, ws); err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Errorf("err = %v, want session not found", err)
+		}
+	})
+	if strings.Contains(stderr, "Warning:") {
+		t.Errorf("stderr = %q, want no warning", stderr)
+	}
+}
+
 // resolveAliasWorkspace runs resolve-workspace for alias "proj" (registered
 // for aliasWS) with the given -w (none when empty) and returns the workspace
 // and stderr.
-func resolveAliasWorkspace(t *testing.T, workspaceFlag string) (aliasWS, got, stderr string) {
+func resolveAliasWorkspace(t *testing.T, aliasWS, workspaceFlag string) (got, stderr string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	aliasWS = t.TempDir()
 	reg, err := alias.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -153,14 +174,14 @@ func resolveAliasWorkspace(t *testing.T, workspaceFlag string) (aliasWS, got, st
 			t.Errorf("resolve-workspace: %v", err)
 		}
 	})
-	return aliasWS, s.absWorkspace, stderr
+	return s.absWorkspace, stderr
 }
 
 // An alias still wins over an explicit -w, with a warning naming the
 // ignored directory.
 func TestResolveWorkspacePhase_AliasWithWorkspaceFlagWarns(t *testing.T) {
-	other := t.TempDir()
-	aliasWS, got, stderr := resolveAliasWorkspace(t, other)
+	aliasWS, other := t.TempDir(), t.TempDir()
+	got, stderr := resolveAliasWorkspace(t, aliasWS, other)
 	if got != aliasWS {
 		t.Errorf("workspace = %q, want the alias workspace %q", got, aliasWS)
 	}
@@ -171,7 +192,20 @@ func TestResolveWorkspacePhase_AliasWithWorkspaceFlagWarns(t *testing.T) {
 
 // An alias without -w prints no warning.
 func TestResolveWorkspacePhase_AliasWithoutWorkspaceFlagNoWarning(t *testing.T) {
-	aliasWS, got, stderr := resolveAliasWorkspace(t, "")
+	aliasWS := t.TempDir()
+	got, stderr := resolveAliasWorkspace(t, aliasWS, "")
+	if got != aliasWS {
+		t.Errorf("workspace = %q, want the alias workspace %q", got, aliasWS)
+	}
+	if strings.Contains(stderr, "Warning:") {
+		t.Errorf("stderr = %q, want no warning", stderr)
+	}
+}
+
+// -w naming the alias's own workspace prints no warning.
+func TestResolveWorkspacePhase_AliasWithSameWorkspaceFlagNoWarning(t *testing.T) {
+	aliasWS := t.TempDir()
+	got, stderr := resolveAliasWorkspace(t, aliasWS, aliasWS)
 	if got != aliasWS {
 		t.Errorf("workspace = %q, want the alias workspace %q", got, aliasWS)
 	}

@@ -670,9 +670,6 @@ func (a *App) registerShellAlias(absWorkspace string) error {
 // on top would stack the two.
 func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorkspace string) (string, *session.SessionMetadata, error) {
 	resumeID, warning := pickResumeID(a.resume, a.continueSession)
-	if warning != "" {
-		fmt.Fprintln(os.Stderr, warning)
-	}
 
 	defaultProfile, err := a.defaultProfileFallbackName(cmd)
 	if err != nil {
@@ -697,6 +694,9 @@ func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorksp
 	} else if resumeID != "" {
 		if !session.SessionExists(sessionsDir, resumeID) {
 			return "", nil, fmt.Errorf("session '%s' not found - check available sessions with: coi list --all", resumeID)
+		}
+		if warning != "" {
+			fmt.Fprintln(os.Stderr, warning)
 		}
 		fmt.Fprintf(os.Stderr, "Resuming session: %s\n", resumeID)
 	}
