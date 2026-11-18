@@ -1,12 +1,13 @@
 """
 Tests for the opencode2 (OpenCode v2) install in build.sh.
 
-OpenCode v2 has no GitHub release assets: it ships as the npm package
-@opencode/cli-linux-<arch>. install_opencode2 picks the newest stable 2.x from
-the npm registry, falls back to OPENCODE2_FALLBACK_VERSION, and installs into
-its own directory so the v1 `opencode` install is untouched. These tests source
-the real functions from build.sh with curl faked via PATH and the install paths
-moved under tmp_path. Hermetic: no network, no Incus.
+coi installs OpenCode v2 from the npm package @opencode/cli-linux-<arch>
+(GitHub release assets exist only from 2.2.0 on). install_opencode2 picks the
+newest stable 2.x from the npm registry, falls back to
+OPENCODE2_FALLBACK_VERSION, and installs into its own directory so the v1
+`opencode` install is untouched. These tests source the real functions from
+build.sh with curl faked via PATH and the install paths moved under tmp_path.
+Hermetic: no network, no Incus.
 """
 
 import io
