@@ -4,7 +4,7 @@
 
 ### Features
 
-- [Feature] **goose is supported as an opt-in agent (#970)** — add `"goose"` to `[container.build] agents` and set `[tool] name = "goose"`. coi brings in your host goose config and credentials, keeps goose sessions per workspace, `coi shell --resume` picks up the latest one, and `permission_mode` sets goose's `GOOSE_MODE` (`bypass`: `auto`, `interactive`: `approve`).
+- [Feature] **goose is supported as an opt-in agent (#970)** — add `"goose"` to `[container.build] agents` and set `[tool] name = "goose"`. coi brings in your host goose config and credentials, keeps goose sessions per workspace, `coi shell --resume` picks up the latest one, `permission_mode` sets goose's `GOOSE_MODE` (`bypass`: `auto`, `interactive`: `approve`), and `coi run --prompt` runs goose headless (`goose run --quiet`). The `coi run --prompt` error for an unsupported tool now names every supported tool.
 
 ### Breaking
 

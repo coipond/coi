@@ -109,6 +109,22 @@ func TestResolvePromptMode_UnsupportedToolRejected(t *testing.T) {
 	if code := exitCode(t, err); code != 2 {
 		t.Errorf("a tool without headless support should exit 2, got %d", code)
 	}
+	want := `coi run headless prompt mode supports only the claude, goose, opencode and opencode2 tools (configured: "codex")`
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestResolvePromptMode_GooseAccepted(t *testing.T) {
+	a := &App{cfg: &config.Config{Tool: config.ToolConfig{Name: "goose"}}}
+	cmd := newRunPromptCmd(t, []string{"--prompt", "do the thing"})
+	s := &runState{}
+	if err := a.resolvePromptMode(cmd, s, nil); err != nil {
+		t.Fatalf("goose should run a headless prompt, got %v", err)
+	}
+	if s.promptTool == nil || s.promptTool.Name() != "goose" {
+		t.Errorf("resolved tool should be goose, got %v", s.promptTool)
+	}
 }
 
 func TestResolvePromptMode_InteractivePermissionRejected(t *testing.T) {

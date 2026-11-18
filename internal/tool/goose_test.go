@@ -4,6 +4,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/coipond/coi/internal/tool/credentials"
@@ -257,5 +258,47 @@ func TestGooseTool_SessionExcludedFiles(t *testing.T) {
 	want := []string{"tls", "roaming_node_key"}
 	if got := tse.SessionExcludedFiles(); !reflect.DeepEqual(got, want) {
 		t.Errorf("SessionExcludedFiles() = %v, want %v", got, want)
+	}
+}
+
+func TestGooseTool_BuildHeadlessCommand(t *testing.T) {
+	goose, ok := NewGoose().(ToolWithHeadlessPrompt)
+	if !ok {
+		t.Fatal("goose should implement ToolWithHeadlessPrompt")
+	}
+	const p, s = "/home/code/.coi/runs/a.prompt", "/home/code/.coi/runs/a.system"
+	tests := []struct {
+		name string
+		spec LaunchSpec
+		want string
+	}{
+		{"no prompt", LaunchSpec{SessionID: "sid", Print: true}, `goose run --quiet --instructions - </dev/null`},
+		{"prompt", LaunchSpec{SessionID: "sid", PromptFile: p, Print: true}, `goose run --quiet --instructions - <` + p},
+		{"system prompt", LaunchSpec{PromptFile: p, SystemPromptFile: s, Print: true}, `goose run --quiet --system "$(cat ` + s + `)" --instructions - <` + p},
+		{"resume with id", LaunchSpec{Resume: true, ResumeSessionID: "20261107_1", PromptFile: p, Print: true}, `goose run --quiet --resume --session-id 20261107_1 --instructions - <` + p},
+		{"resume without id", LaunchSpec{Resume: true, PromptFile: p, Print: true}, `goose run --quiet --instructions - <` + p},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := goose.BuildHeadlessCommand(tt.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(cmd, " "); got != tt.want {
+				t.Errorf("BuildHeadlessCommand = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGooseTool_BuildHeadlessCommand_Binary(t *testing.T) {
+	goose := &GooseTool{}
+	goose.SetBinary("/opt/bin/goose")
+	cmd, err := goose.BuildHeadlessCommand(LaunchSpec{PromptFile: "/run/p", Print: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd[0] != "/opt/bin/goose" || cmd[1] != "run" {
+		t.Errorf("BuildHeadlessCommand = %v, want the [tool] binary then run", cmd)
 	}
 }

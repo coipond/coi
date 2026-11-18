@@ -56,9 +56,9 @@ the container as a file (never on the command line), the agent's auth and
 context are seeded exactly as in an interactive session, and each fire is a
 fresh ephemeral session by default. --prompt-name looks the prompt up in the
 [prompts] config table (inline text or { file = "..." }, profile-inheritable).
-Prompt mode currently supports the claude and opencode tools (opencode runs
-the prompt via "opencode run") with permission_mode = "bypass"
-(a headless run has no TTY to approve tool use).
+Prompt mode supports the claude, goose, opencode and opencode2 tools (goose
+and opencode run the prompt via their "run" subcommand) with
+permission_mode = "bypass" (a headless run has no TTY to approve tool use).
 
 coi flags go before the command: everything after the command's name is
 passed to the command, flags included (coi run ls -la). --resume and
@@ -282,7 +282,8 @@ func (a *App) resolvePromptMode(cmd *cobra.Command, s *runState, args []string) 
 	}
 	if !supportsHeadlessPrompt(t) {
 		return &ExitCodeError{Code: 2, Message: fmt.Sprintf(
-			"coi run headless prompt mode currently supports only the claude and opencode tools (configured: %q)", t.Name())}
+			"coi run headless prompt mode supports only the %s tools (configured: %q)",
+			headlessPromptToolList(), t.Name())}
 	}
 
 	sessionID, err := session.GenerateSessionID()
@@ -305,6 +306,21 @@ func supportsHeadlessPrompt(t tool.Tool) bool {
 	}
 	_, ok := t.(tool.ToolWithHeadlessPrompt)
 	return ok
+}
+
+// headlessPromptToolList names the registered tools that pass
+// supportsHeadlessPrompt, sorted, as "a, b and c".
+func headlessPromptToolList() string {
+	var names []string
+	for _, name := range tool.ListSupported() {
+		if t, err := tool.Get(name); err == nil && supportsHeadlessPrompt(t) {
+			names = append(names, name)
+		}
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // launchOrReuseContainer restarts an existing persistent container, or

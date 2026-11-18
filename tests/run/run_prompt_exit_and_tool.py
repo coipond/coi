@@ -73,7 +73,7 @@ def test_run_prompt_unsupported_tool(coi_binary, workspace_dir):
     # Should fail with exit code 2 (usage error)
     assert result.returncode == 2, f"want exit 2, got {result.returncode}. output:\n{output}"
     assert (
-        "coi run headless prompt mode currently supports only the claude and opencode tools "
+        "coi run headless prompt mode supports only the claude, goose, opencode and opencode2 tools "
         '(configured: "codex")'
     ) in output
     assert "Launching container" not in output, f"no container should be started:\n{output}"
