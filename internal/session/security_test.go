@@ -871,9 +871,9 @@ func TestSetupProtectedPath_RejectsTraversal(t *testing.T) {
 	}
 }
 
-// ExpandGitWorktreeProtectedPaths must add an entry for each existing
-// per-worktree config.worktree file, and leave inputs unchanged when there are
-// no worktrees.
+// ExpandGitWorktreeProtectedPaths must add an entry for each per-worktree
+// config.worktree file, creating an absent one, and leave inputs unchanged
+// when there are no worktrees.
 func TestExpandGitWorktreeProtectedPaths(t *testing.T) {
 	tmp := t.TempDir()
 	in := []string{".git/config"}
@@ -891,7 +891,8 @@ func TestExpandGitWorktreeProtectedPaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wtDir, "config.worktree"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Noise that must be ignored: a non-dir entry, and a worktree without config.worktree.
+	// A non-dir entry is ignored; a worktree without config.worktree gets an
+	// empty one.
 	if err := os.WriteFile(filepath.Join(tmp, ".git", "worktrees", "stray"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -901,17 +902,16 @@ func TestExpandGitWorktreeProtectedPaths(t *testing.T) {
 
 	out := ExpandGitWorktreeProtectedPaths(tmp, in, nil)
 	want := filepath.Join(".git", "worktrees", "wt", "config.worktree")
-	found := false
-	for _, p := range out {
-		if p == want {
-			found = true
-		}
+	created := filepath.Join(".git", "worktrees", "noconfig", "config.worktree")
+	assertContainsAll(t, out, []string{want, created})
+	if len(out) != len(in)+2 {
+		t.Errorf("expected exactly two added paths, got %v", out)
 	}
-	if !found {
-		t.Errorf("expected %q in expanded paths, got %v", want, out)
+	if data, err := os.ReadFile(filepath.Join(tmp, created)); err != nil || len(data) != 0 {
+		t.Errorf("%s = %q, %v; want an empty placeholder", created, data, err)
 	}
-	if len(out) != len(in)+1 {
-		t.Errorf("expected exactly one added path, got %v", out)
+	if _, err := os.Lstat(filepath.Join(tmp, ".git", "worktrees", "noconfig", "commondir")); !os.IsNotExist(err) {
+		t.Errorf("absent commondir must not be created: %v", err)
 	}
 
 	// disable_protection must suppress expansion — the discovered worktree config

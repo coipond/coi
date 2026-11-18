@@ -280,6 +280,51 @@ func TestSetupSecurityMounts_NestedLinkedWorktrees(t *testing.T) {
 	}
 }
 
+// An absent config.worktree of a root linked worktree is created and mounted
+// read-only in the batch, with and without extensions.worktreeConfig, and git
+// still works in the worktree.
+func TestSetupSecurityMounts_RootLinkedWorktreeConfig(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	for _, worktreeConfig := range []bool{false, true} {
+		t.Run(fmt.Sprintf("worktreeConfig=%v", worktreeConfig), func(t *testing.T) {
+			dir := t.TempDir()
+			ws := filepath.Join(dir, "ws")
+			gitCmd(t, dir, "init", "-q", ws)
+			gitCmd(t, ws, "commit", "-q", "--allow-empty", "-m", "init")
+			if worktreeConfig {
+				gitCmd(t, ws, "config", "extensions.worktreeConfig", "true")
+			}
+			wt := filepath.Join(dir, "wt")
+			gitCmd(t, ws, "worktree", "add", "-q", wt)
+			rel := filepath.Join(".git", "worktrees", "wt", "config.worktree")
+			if _, err := os.Lstat(filepath.Join(ws, rel)); !os.IsNotExist(err) {
+				t.Fatalf("git created %s (%v); the test needs it absent", rel, err)
+			}
+
+			dev := &batchDevices{}
+			effective, err := SetupSecurityMounts(dev, ws, "/workspace", []string{".git/config"}, false, nil, NestedGitScan{}, false)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertContainsAll(t, effective, []string{rel})
+			if len(dev.batches) != 1 {
+				t.Fatalf("want 1 batch, got %d", len(dev.batches))
+			}
+			path := filepath.Join("/workspace", rel)
+			if !slices.ContainsFunc(dev.batches[0], func(m container.DiskMount) bool { return m.Path == path && m.Readonly }) {
+				t.Errorf("expected a read-only batched mount at %s", path)
+			}
+			if data, err := os.ReadFile(filepath.Join(ws, rel)); err != nil || len(data) != 0 {
+				t.Errorf("%s = %q, %v; want an empty placeholder", rel, data, err)
+			}
+			gitCmd(t, wt, "status")
+			gitCmd(t, wt, "commit", "-q", "--allow-empty", "-m", "wt")
+		})
+	}
+}
+
 // A symlinked worktrees dir of a nested git dir is not followed out of the
 // workspace, and nothing is created through it.
 func TestExpandNestedGit_SymlinkedWorktreesDir(t *testing.T) {
