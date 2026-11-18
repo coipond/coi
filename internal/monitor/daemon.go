@@ -36,11 +36,7 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 	daemonCtx, cancel := context.WithCancel(ctx)
 
 	// Create components
-	collector := NewCollector(cfg.ContainerName, "", cfg.WorkspacePath, cfg.AllowedCIDRs)
-	collector.SetNetworkMode(cfg.NetworkMode)
-	collector.SetAllowedCIDRsProvider(cfg.AllowedCIDRsProvider)
-	collector.SetPermittedDestination(cfg.PermittedDestination)
-	collector.SetGateway(cfg.Gateway)
+	collector := newDaemonCollector(cfg)
 	detector := NewDetector(cfg.FileReadThresholdMB, cfg.FileReadRateMBPerSec).
 		WithProcessCountThreshold(cfg.ProcessCountThreshold).
 		WithProcessSpawnRateThreshold(cfg.ProcessSpawnRateThreshold).
@@ -103,6 +99,16 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 	go daemon.run()
 
 	return daemon, nil
+}
+
+// newDaemonCollector builds the collector StartDaemon polls.
+func newDaemonCollector(cfg DaemonConfig) *Collector {
+	collector := NewCollector(cfg.ContainerName, "", cfg.WorkspacePath, cfg.AllowedCIDRs)
+	collector.SetNetworkMode(cfg.NetworkMode)
+	collector.SetAllowedCIDRsProvider(cfg.AllowedCIDRsProvider)
+	collector.SetPermittedDestination(cfg.PermittedDestination)
+	collector.SetGateway(cfg.Gateway)
+	return collector
 }
 
 // run is the main monitoring loop

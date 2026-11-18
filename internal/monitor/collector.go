@@ -38,7 +38,9 @@ func (c *Collector) SetAllowedCIDRsProvider(fn func() []string) {
 }
 
 // SetNetworkMode supplies the container's [network] mode (see
-// DaemonConfig.NetworkMode).
+// DaemonConfig.NetworkMode). Until it is set, the collector checks no
+// private addresses: it has no gateway or firewall-permit check to exempt
+// the container's own DNS or a permitted LAN service.
 func (c *Collector) SetNetworkMode(mode config.NetworkMode) {
 	c.networkMode = mode
 }
@@ -98,6 +100,7 @@ func NewCollector(containerName, containerIP, workspacePath string, allowedCIDRs
 		containerName:     containerName,
 		containerIP:       containerIP,
 		workspacePath:     workspacePath,
+		networkMode:       config.NetworkModeOpen,
 		allowedCIDRs:      allowedCIDRs,
 		filesystemMonitor: NewFilesystemMonitor(),
 	}
