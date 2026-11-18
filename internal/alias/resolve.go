@@ -40,14 +40,12 @@ func IsContainerName(arg string) bool {
 // before a slot suffix, is registered and no container has that exact name.
 // Errors if the alias matches 0 or >1 running containers (listing them for disambiguation).
 func ResolveAliasForRunning(arg string) (string, error) {
-	// 1. Exact container name → pass through
+	// 1. Container name that is no registered alias → pass through
 	if IsContainerName(arg) {
 		return arg, nil
 	}
 
-	// 2. Try the whole argument as an alias. Split a slot suffix (alias-N,
-	// N > 0) only when no running container has that alias and no
-	// registered alias has that name.
+	// 2. Exact name of an existing container → that container
 	running, err := coiContainers()
 	if err != nil {
 		return "", fmt.Errorf("failed to find containers by alias: %w", err)
@@ -56,6 +54,9 @@ func ResolveAliasForRunning(arg string) (string, error) {
 		return arg, nil
 	}
 
+	// 3. Try the whole argument as an alias. Split a slot suffix (alias-N,
+	// N > 0) only when no running container has that alias and no
+	// registered alias has that name.
 	alias, slotNum := arg, 0
 	containers := running.withAlias(alias)
 	if len(containers) == 0 && !mayBeRegisteredAlias(arg) {
