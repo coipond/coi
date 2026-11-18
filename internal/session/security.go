@@ -516,9 +516,8 @@ func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *
 	if sec != nil && sec.DisableProtection {
 		return paths // protection disabled — do not resurrect worktree configs
 	}
-	wtRoot := filepath.Join(workspacePath, ".git", "worktrees")
-	entries, err := os.ReadDir(wtRoot)
-	if err != nil {
+	found := linkedWorktreeEntries(workspacePath, ".git", false)
+	if len(found) == 0 {
 		return paths // no worktrees, or .git is a file/symlink — nothing to add
 	}
 
@@ -527,27 +526,54 @@ func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *
 		seen[filepath.ToSlash(p)] = true
 	}
 	out := append([]string(nil), paths...)
+	for _, rel := range found {
+		if seen[filepath.ToSlash(rel)] {
+			continue // already protected — keep expansion idempotent
+		}
+		if sec != nil && sec.IsWritablePath(rel) {
+			continue // user explicitly opted this path out of protection
+		}
+		seen[filepath.ToSlash(rel)] = true
+		out = append(out, rel)
+	}
+	return out
+}
+
+// linkedWorktreeEntries returns the config.worktree and commondir files of the
+// linked worktrees of the git dir at gitDirRel
+// (<gitDirRel>/worktrees/<name>/...) that exist as regular files; symlinks,
+// directories and a symlinked worktrees dir are skipped. With
+// materializeConfig, an absent config.worktree is created as a placeholder so
+// it cannot be planted; commondir never is, since a placeholder would point
+// the worktree at its own admin dir.
+func linkedWorktreeEntries(workspacePath, gitDirRel string, materializeConfig bool) []string {
+	wtRoot := filepath.Join(workspacePath, gitDirRel, "worktrees")
+	if !isRealDir(wtRoot) {
+		return nil
+	}
+	entries, err := os.ReadDir(wtRoot)
+	if err != nil {
+		return nil
+	}
+	var out []string
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		for _, name := range []string{"config.worktree", "commondir"} {
-			rel := filepath.Join(".git", "worktrees", e.Name(), name)
-			if seen[filepath.ToSlash(rel)] {
-				continue // already protected — keep expansion idempotent
-			}
-			if err := validateRelPath(rel); err != nil {
+			rel := filepath.Join(gitDirRel, "worktrees", e.Name(), name)
+			if validateRelPath(rel) != nil {
 				continue
 			}
-			if sec != nil && sec.IsWritablePath(rel) {
-				continue // user explicitly opted this path out of protection
-			}
-			info, err := os.Lstat(filepath.Join(workspacePath, rel))
-			if err != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+			if name == "config.worktree" && materializeConfig {
+				if materializeNestedGitEntry(workspacePath, rel, false) {
+					out = append(out, rel)
+				}
 				continue
 			}
-			seen[filepath.ToSlash(rel)] = true
-			out = append(out, rel)
+			if isRegularFile(filepath.Join(workspacePath, rel)) {
+				out = append(out, rel)
+			}
 		}
 	}
 	return out
@@ -602,9 +628,11 @@ func (s NestedGitScan) resultFor(workspacePath string) nestedGitFound {
 // modules included) and nested repositories (<dir>/.git, up to
 // nestedGitSearchDepth). For each such git dir its hooks, config,
 // config.worktree, info/attributes and commondir are added, materialized like
-// the root .git defaults so they cannot be planted. A .git file (submodule or
-// worktree checkout) is protected itself, so its gitdir pointer cannot be
-// redirected.
+// the root .git defaults so they cannot be planted, and so are its linked
+// worktree entries (worktrees/<name>/config.worktree, materialized, and an
+// existing commondir). A .git file
+// (submodule or worktree checkout) is protected itself, so its gitdir pointer
+// cannot be redirected.
 //
 // Host git reads these on a plain `git status` in the superproject (it recurses
 // into submodules), so a writable submodule config is host code execution
@@ -644,6 +672,9 @@ func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityC
 			if materializeNestedGitEntry(workspacePath, rel, entry == "hooks") {
 				add(rel)
 			}
+		}
+		for _, rel := range linkedWorktreeEntries(workspacePath, gitDir, true) {
+			add(rel)
 		}
 	}
 	for _, f := range found.gitFiles {
