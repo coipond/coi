@@ -978,15 +978,15 @@ func (g *Grants) networkLines() []string {
 			dests = strings.Join(n.AllowedDomains, ", ")
 		}
 		lines = append(lines, "allowlist: "+dests)
-		if n.LAN == netAllowed {
+		if *n.LAN == netAllowed {
 			lines = append(lines, "LAN allowed (metadata endpoint not blocked)")
 		} else {
 			lines = append(lines, "LAN and metadata endpoint blocked")
 		}
 	case config.NetworkModeRestricted:
-		lan := map[netAccess]string{netAllowed: "LAN allowed", netBlocked: "LAN blocked", netNotBlocked: "LAN not blocked"}[n.LAN]
+		lan := map[netAccess]string{netAllowed: "LAN allowed", netBlocked: "LAN blocked", netNotBlocked: "LAN not blocked"}[*n.LAN]
 		metadata := "metadata endpoint not blocked"
-		if n.MetadataEndpoint == netBlocked {
+		if *n.MetadataEndpoint == netBlocked {
 			metadata = "metadata endpoint blocked"
 		}
 		lines = append(lines, "restricted: internet ("+lan+", "+metadata+")")

@@ -638,10 +638,6 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 	}
 }
 
-// registerShellAlias saves the [container] alias, if any, into the alias
-// registry with the profile this launch chose by --profile, the alias or a
-// resume. A profile that came only from [defaults] profile is not saved, so the
-// entry keeps its earlier profile and a later change of the default applies.
 // grantsReport is the startup grants report: the text block, or with asJSON
 // one JSON line.
 func grantsReport(g *session.Grants, asJSON bool) (string, error) {
@@ -655,6 +651,10 @@ func grantsReport(g *session.Grants, asJSON bool) (string, error) {
 	return string(b) + "\n", nil
 }
 
+// registerShellAlias saves the [container] alias, if any, into the alias
+// registry with the profile this launch chose by --profile, the alias or a
+// resume. A profile that came only from [defaults] profile is not saved, so the
+// entry keeps its earlier profile and a later change of the default applies.
 func (a *App) registerShellAlias(absWorkspace string) error {
 	effectiveAlias := a.cfg.Container.Alias
 	if effectiveAlias == "" {

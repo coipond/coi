@@ -16,13 +16,15 @@ const (
 	netNotBlocked netAccess = "not_blocked" // reachable by default
 )
 
+func accessOf(a netAccess) *netAccess { return &a }
+
 // effectiveNetwork is the egress the firewall enforces: fields a mode doesn't
 // enforce are empty (nil in JSON), so the text and JSON report show the same.
 type effectiveNetwork struct {
 	Mode             string        `json:"mode"`
 	AllowedDomains   []string      `json:"allowed_domains"` // allowlist mode only
-	LAN              netAccess     `json:"lan,omitempty"`
-	MetadataEndpoint netAccess     `json:"metadata_endpoint,omitempty"`
+	LAN              *netAccess    `json:"lan"`
+	MetadataEndpoint *netAccess    `json:"metadata_endpoint"`
 	HostAccess       bool          `json:"host_access"`
 	AllowedPorts     []int         `json:"allowed_ports"`
 	DNSServers       []string      `json:"dns_servers"` // restricted mode only
@@ -49,22 +51,22 @@ func (n NetworkGrants) effective() effectiveNetwork {
 	switch mode {
 	case config.NetworkModeAllowlist:
 		e.AllowedDomains = append([]string{}, n.AllowedDomains...)
-		e.LAN, e.MetadataEndpoint = netBlocked, netBlocked
+		e.LAN, e.MetadataEndpoint = accessOf(netBlocked), accessOf(netBlocked)
 		if n.LANAccess {
-			e.LAN, e.MetadataEndpoint = netAllowed, netNotBlocked
+			e.LAN, e.MetadataEndpoint = accessOf(netAllowed), accessOf(netNotBlocked)
 		}
 	case config.NetworkModeRestricted:
 		switch {
 		case n.LANAccess:
-			e.LAN = netAllowed
+			e.LAN = accessOf(netAllowed)
 		case n.LANBlocked:
-			e.LAN = netBlocked
+			e.LAN = accessOf(netBlocked)
 		default:
-			e.LAN = netNotBlocked
+			e.LAN = accessOf(netNotBlocked)
 		}
-		e.MetadataEndpoint = netNotBlocked
+		e.MetadataEndpoint = accessOf(netNotBlocked)
 		if n.MetadataBlock {
-			e.MetadataEndpoint = netBlocked
+			e.MetadataEndpoint = accessOf(netBlocked)
 		}
 		if len(n.DNSServers) > 0 {
 			e.DNSServers = n.DNSServers
@@ -117,7 +119,7 @@ type mountJSON struct {
 }
 
 type portJSON struct {
-	Name          string `json:"name,omitempty"` // empty for a pool port
+	Name          string `json:"name,omitempty"` // left out for a pool port, as the text does
 	ContainerPort int    `json:"container_port"`
 	HostPort      int    `json:"host_port"`
 	Listen        string `json:"listen"`
@@ -193,7 +195,11 @@ func (g *Grants) JSON() ([]byte, error) {
 		if listen == "" {
 			listen = "127.0.0.1"
 		}
-		out.Ports = append(out.Ports, portJSON{Name: p.Name, ContainerPort: p.ContainerPort, HostPort: p.HostPort, Listen: listen, Pool: p.Pool})
+		name := p.Name
+		if p.Pool {
+			name = ""
+		}
+		out.Ports = append(out.Ports, portJSON{Name: name, ContainerPort: p.ContainerPort, HostPort: p.HostPort, Listen: listen, Pool: p.Pool})
 	}
 	for _, s := range g.Sockets {
 		out.Sockets = append(out.Sockets, socketJSON{HostPath: s.HostPath, ContainerPath: s.ContainerPath, EnvVar: s.EnvVar})

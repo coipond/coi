@@ -51,7 +51,7 @@ func fullGrants() *Grants {
 		Ports: []tool.PortInfo{
 			{Name: "web", HostPort: 41000, ContainerPort: 3000, EnvVar: "COI_PORT_WEB"},
 			{Name: "api", HostPort: 41001, ContainerPort: 8080, Listen: "0.0.0.0"},
-			{HostPort: 42000, ContainerPort: 42000, Pool: true},
+			{Name: "pool-1", HostPort: 42000, ContainerPort: 42000, Pool: true}, // as ResolvePorts names it
 		},
 		RunAsRoot:           true,
 		DockerUnavailable:   true,
@@ -224,6 +224,32 @@ func TestGrantsJSON_EverySection(t *testing.T) {
 	}`)
 }
 
+// The JSON twin of the golden bare session: no workspace device is null,
+// empty sections are [].
+func TestGrantsJSON_BareSession(t *testing.T) {
+	got, err := (&Grants{DevicesUnread: true}).JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameJSON(t, got, `{
+		"workspace": null,
+		"mounts": [],
+		"devices_unread": true,
+		"protected": [],
+		"masked": [],
+		"network": {"mode": "open", "allowed_domains": null, "lan": null, "metadata_endpoint": null,
+			"host_access": false, "allowed_ports": null, "dns_servers": null, "hosts": []},
+		"ports": [],
+		"sockets": [],
+		"env": {"launch": "started", "tool": [], "from_host": [], "env_commands": [], "configured": [], "container": []},
+		"tool_files": [],
+		"credentials": [],
+		"leftovers_unchecked": false,
+		"agent": {"run_as_root": false, "docker_available": true},
+		"limits": []
+	}`)
+}
+
 // Empty sections are [], and network settings the mode doesn't enforce are
 // null, as the text report leaves them out.
 func TestGrantsJSON_Network(t *testing.T) {
@@ -236,7 +262,7 @@ func TestGrantsJSON_Network(t *testing.T) {
 		{
 			name: "open enforces no caps",
 			n:    NetworkGrants{Hosts: hosts, AllowedPorts: []int{443}, DNSServers: []string{"1.1.1.1"}, HostAccess: true, LANBlocked: true},
-			want: `{"mode": "open", "allowed_domains": null, "host_access": false, "allowed_ports": null, "dns_servers": null,
+			want: `{"mode": "open", "allowed_domains": null, "lan": null, "metadata_endpoint": null, "host_access": false, "allowed_ports": null, "dns_servers": null,
 				"hosts": [{"ip": "10.0.0.5", "hostnames": [], "ports": null}]}`,
 		},
 		{
@@ -244,6 +270,12 @@ func TestGrantsJSON_Network(t *testing.T) {
 			n:    NetworkGrants{Mode: "restricted", LANAccess: true, MetadataBlock: true, DNSServers: []string{"10.0.0.53"}},
 			want: `{"mode": "restricted", "allowed_domains": null, "lan": "allowed", "metadata_endpoint": "blocked",
 				"host_access": false, "allowed_ports": null, "dns_servers": ["10.0.0.53"], "hosts": []}`,
+		},
+		{
+			name: "restricted with no blocks",
+			n:    NetworkGrants{Mode: "restricted"},
+			want: `{"mode": "restricted", "allowed_domains": null, "lan": "not_blocked", "metadata_endpoint": "not_blocked",
+				"host_access": false, "allowed_ports": null, "dns_servers": null, "hosts": []}`,
 		},
 		{
 			name: "allowlist of nothing with LAN access",
