@@ -46,7 +46,7 @@ func TestPushFile_MissingSourcePushesPlain(t *testing.T) {
 	}
 }
 
-// An empty destination is the container root, never an index panic.
+// An empty destination is the container root.
 func TestPushFile_EmptyDestination(t *testing.T) {
 	log := fakeIncusScript(t, "exit 0")
 	src := filepath.Join(t.TempDir(), "missing")

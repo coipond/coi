@@ -87,7 +87,6 @@ func TestResolvePushDestination_KindError(t *testing.T) {
 	}
 }
 
-// An empty path after `<container>:` is a usage error, not a push.
 func TestFilePush_EmptyFileDestinationIsUsageError(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "a.txt")
 	if err := os.WriteFile(src, []byte("a"), 0o644); err != nil {
