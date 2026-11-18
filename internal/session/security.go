@@ -895,7 +895,7 @@ func foreignCommonDir(gitDir string) (string, bool) {
 	if err != nil {
 		return target, true
 	}
-	if SameWorkspaceSource(resolved, gitDir) {
+	if SameDir(resolved, gitDir) {
 		return "", false
 	}
 	return resolved, true

@@ -54,7 +54,7 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 				if st.opts.ContainerName == "" {
 					if src := st.result.Manager.GetWorkspaceSource(); src == "" {
 						st.opts.Logger("Warning: could not determine the running container's workspace source; skipping the workspace-match check")
-					} else if !SameWorkspaceSource(src, st.opts.WorkspacePath) {
+					} else if !SameDir(src, st.opts.WorkspacePath) {
 						return nil, fmt.Errorf(
 							"container %s is running with a different workspace mounted (%s); "+
 								"stop that session first (coi shutdown %s) or launch from that workspace",

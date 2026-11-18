@@ -291,12 +291,13 @@ func reuseShiftDecision(configuredShift, hasRawIdmap bool) bool {
 	return configuredShift && !hasRawIdmap
 }
 
-// SameWorkspaceSource reports whether two host paths refer to the same
-// directory (a workspace, a git dir). Symlinks are resolved when possible so a workspace
-// reached via an aliased path (~/proj -> /data/proj) does not count as moved —
-// a spurious remount would churn devices on every launch and, under
-// preserve-path, flip the container-side path between spellings.
-func SameWorkspaceSource(a, b string) bool {
+// SameDir reports whether two host paths refer to the same directory.
+// Symlinks are resolved when possible: a workspace reached via an aliased path
+// (~/proj -> /data/proj) does not count as moved — a spurious remount would
+// churn devices on every launch and, under preserve-path, flip the
+// container-side path between spellings — and a git dir named through a
+// symlink is the same git dir. Paths that do not resolve compare lexically.
+func SameDir(a, b string) bool {
 	if filepath.Clean(a) == filepath.Clean(b) {
 		return true
 	}
@@ -343,7 +344,7 @@ func RemountMovedWorkspace(mgr WorkspaceRemounter, workspacePath string, preserv
 		logger("Warning: could not determine the reused container's workspace source; skipping the moved-workspace check")
 		return "", false, nil
 	}
-	if SameWorkspaceSource(src, workspacePath) {
+	if SameDir(src, workspacePath) {
 		return "", false, nil
 	}
 	logger(fmt.Sprintf("Workspace location changed since this session's container was created (%s -> %s); remounting", src, workspacePath))
