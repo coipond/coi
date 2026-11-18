@@ -17,6 +17,9 @@ type Collector struct {
 	permitted         PermittedDestinationFunc
 	gateway           func() string
 	filesystemMonitor *FilesystemMonitor
+	// permittedFlows holds the flows the previous poll did not flag, keyed by
+	// flowKey. Collect runs one poll at a time.
+	permittedFlows map[string]bool
 }
 
 // SetAllowedCIDRsProvider supplies a function that returns the CURRENT allowlist
@@ -54,6 +57,32 @@ func (c *Collector) currentAllowedCIDRs() []string {
 	return c.allowedCIDRs
 }
 
+// keepPermittedFlows clears the allowlist flag on a flow the previous poll did
+// not flag. Its address can leave the dynamic nft set (element timeout) while
+// the firewall keeps the flow open (ct state established), so that is not a
+// violation. A new flow to the same address has a new key and is still flagged.
+func (c *Collector) keepPermittedFlows(stats *NetworkStats) {
+	permitted := make(map[string]bool, len(stats.Connections))
+	for i := range stats.Connections {
+		conn := &stats.Connections[i]
+		key := flowKey(*conn)
+		if conn.Suspicious && conn.SuspectReason == reasonNotInAllowlist && c.permittedFlows[key] {
+			conn.Suspicious = false
+			conn.SuspectReason = ""
+			stats.SuspiciousCount--
+		}
+		if !conn.Suspicious {
+			permitted[key] = true
+		}
+	}
+	c.permittedFlows = permitted
+}
+
+// flowKey identifies one socket's flow by protocol and both endpoints.
+func flowKey(conn Connection) string {
+	return conn.Protocol + " " + conn.LocalAddr + " " + conn.RemoteAddr
+}
+
 // NewCollector creates a new data collector
 func NewCollector(containerName, containerIP, workspacePath string, allowedCIDRs []string) *Collector {
 	return &Collector{
@@ -89,6 +118,7 @@ func (c *Collector) Collect(ctx context.Context) (MonitorSnapshot, error) {
 			snapshot.Errors = append(snapshot.Errors, fmt.Sprintf("network: %v", err))
 			snapshot.Network = NetworkStats{ActiveConnections: 0}
 		} else {
+			c.keepPermittedFlows(&networkStats)
 			snapshot.Network = networkStats
 		}
 	}()

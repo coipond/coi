@@ -356,6 +356,9 @@ func tcpStateFromHex(hexState string) string {
 	return "UNKNOWN"
 }
 
+// reasonNotInAllowlist flags a destination outside the network allowlist.
+const reasonNotInAllowlist = "IP not in network allowlist"
+
 // checkSuspicious determines if a connection is suspicious. permitted (may be
 // nil) reports destinations the firewall deliberately accepts; those are exempt
 // from the private-network and allowlist checks, but not from the others.
@@ -403,7 +406,7 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 
 	// Check allowlist (if network is restricted)
 	if len(allowedCIDRs) > 0 && !inAllowlist(remoteIP, allowedCIDRs) && !firewallPermits() {
-		return "IP not in network allowlist"
+		return reasonNotInAllowlist
 	}
 
 	// Check suspicious ports
