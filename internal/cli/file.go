@@ -69,6 +69,9 @@ Examples:
 			}
 			fmt.Fprintf(os.Stderr, "Pushed directory %s -> %s:%s\n", localPath, containerName, target)
 		} else {
+			if remotePath == "" {
+				return &ExitCodeError{Code: 2, Message: "destination path is empty, use 'container:path'"}
+			}
 			if err := mgr.PushFile(localPath, remotePath); err != nil {
 				return fmt.Errorf("failed to push file: %v", err)
 			}
