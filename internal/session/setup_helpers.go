@@ -292,11 +292,14 @@ func reuseShiftDecision(configuredShift, hasRawIdmap bool) bool {
 }
 
 // SameWorkspaceSource reports whether two host paths refer to the same
-// workspace directory. Symlinks are resolved when possible so a workspace
+// directory (a workspace, a git dir). Symlinks are resolved when possible so a workspace
 // reached via an aliased path (~/proj -> /data/proj) does not count as moved —
 // a spurious remount would churn devices on every launch and, under
 // preserve-path, flip the container-side path between spellings.
 func SameWorkspaceSource(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
 	na, errA := filepath.EvalSymlinks(a)
 	nb, errB := filepath.EvalSymlinks(b)
 	if errA != nil || errB != nil {

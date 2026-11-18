@@ -883,31 +883,14 @@ func UnexpectedCommonDirs(workspacePath string, effective []string, scan NestedG
 	return out
 }
 
-// foreignCommonDir returns the dir named by gitDir's commondir, resolved as
-// git does, when the file exists and names a dir other than gitDir.
+// foreignCommonDir returns the dir named by gitDir's commondir when the file
+// exists and names a dir other than gitDir.
 func foreignCommonDir(gitDir string) (string, bool) {
-	data, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
-	if err != nil {
+	target, ok, err := commonDirTarget(gitDir)
+	if err != nil || !ok || SameWorkspaceSource(target, gitDir) {
 		return "", false
 	}
-	target := strings.TrimRight(string(data), "\r\n")
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(gitDir, target)
-	}
-	if samePath(target, gitDir) {
-		return "", false
-	}
-	return filepath.Clean(target), true
-}
-
-// samePath reports whether a and b name the same dir, symlinks resolved.
-func samePath(a, b string) bool {
-	if filepath.Clean(a) == filepath.Clean(b) {
-		return true
-	}
-	ra, errA := filepath.EvalSymlinks(a)
-	rb, errB := filepath.EvalSymlinks(b)
-	return errA == nil && errB == nil && ra == rb
+	return target, true
 }
 
 func isRealDir(path string) bool {
