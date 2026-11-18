@@ -1840,7 +1840,12 @@ class TestNetworkDetectorClassification:
             assert hits, f"expected a non-standard DNS warning. Events: {events}"
             assert all(e.get("level") == "warning" for e in hits), hits
             assert _remote_host(hits[0]) == PUBLIC_RESOLVER, hits[0]
-            assert get_container_state(name) == "Running"
+            state = get_container_state(name)
+            # A WARNING never pauses: on a pause, name the threat that did.
+            assert state == "Running", (
+                f"container should keep running, but is {state}. "
+                f"Events: {get_threat_events(name, nft=True)}{coi_session_logs(name)}"
+            )
         finally:
             _stop_shell(proc, name, coi_binary, env)
 
