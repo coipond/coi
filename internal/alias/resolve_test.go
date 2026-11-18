@@ -476,3 +476,48 @@ func TestResolveAliasForRunning_UnknownPrefixedNamePassesThrough(t *testing.T) {
 		t.Errorf("ResolveAliasForRunning(\"coi-x\") = %q, want %q", got, "coi-x")
 	}
 }
+
+func TestResolveAliasForRunning_PrefixedNameUnreadableRegistryPassesThrough(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	tmpHome := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpHome, ".coi", "aliases.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir()) // no incus: a call would fail
+
+	if !IsContainerName("coi-web") {
+		t.Error("IsContainerName(\"coi-web\") = false, want true")
+	}
+	got, err := ResolveAliasForRunning("coi-web")
+	if err != nil {
+		t.Fatalf("ResolveAliasForRunning(\"coi-web\") error: %v", err)
+	}
+	if got != "coi-web" {
+		t.Errorf("ResolveAliasForRunning(\"coi-web\") = %q, want %q", got, "coi-web")
+	}
+}
+
+func TestIsContainerName_RegisteredPrefixedAlias(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	tmpHome := withTempHome(t)
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register("coi-web", "/ws/web", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]bool{"coi-web": false, "coi-web-3": false, "coi-x": true, "coi-aaaaaaaa-1": true}
+	for name, want := range tests {
+		if got := IsContainerName(name); got != want {
+			t.Errorf("IsContainerName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

@@ -25,9 +25,13 @@ type ResolvedAlias struct {
 var containerNamePattern = regexp.MustCompile(`^` + regexp.QuoteMeta(session.GetContainerPrefix()) + `[a-f0-9]{8}-\d+$`)
 
 // IsContainerName returns true if the argument looks like a container name
-// (either exact match or starts with the container prefix).
+// (either exact match or starts with the container prefix) and is not a
+// registered alias.
 func IsContainerName(arg string) bool {
-	return containerNamePattern.MatchString(arg) || strings.HasPrefix(arg, session.GetContainerPrefix())
+	if !containerNamePattern.MatchString(arg) && !strings.HasPrefix(arg, session.GetContainerPrefix()) {
+		return false
+	}
+	return !hasRegisteredAliasFor(arg)
 }
 
 // ResolveAliasForRunning resolves an alias (or alias-N) to a running container name.
@@ -37,8 +41,7 @@ func IsContainerName(arg string) bool {
 // Errors if the alias matches 0 or >1 running containers (listing them for disambiguation).
 func ResolveAliasForRunning(arg string) (string, error) {
 	// 1. Exact container name → pass through
-	prefixed := IsContainerName(arg)
-	if prefixed && !hasRegisteredAliasFor(arg) {
+	if IsContainerName(arg) {
 		return arg, nil
 	}
 
@@ -49,7 +52,7 @@ func ResolveAliasForRunning(arg string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to find containers by alias: %w", err)
 	}
-	if prefixed && running.has(arg) {
+	if running.has(arg) {
 		return arg, nil
 	}
 
