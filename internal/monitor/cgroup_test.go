@@ -1,10 +1,13 @@
 package monitor
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInitPIDFromCgroupProcs_SingleProc(t *testing.T) {
@@ -180,5 +183,21 @@ func TestWellKnownCgroupPaths_DotPayloadFirst(t *testing.T) {
 	paths := wellKnownCgroupPaths("coi-abc-1")
 	if want := "/sys/fs/cgroup/lxc.payload.coi-abc-1"; len(paths) == 0 || paths[0] != want {
 		t.Fatalf("first candidate: want %q (all: %v)", want, paths)
+	}
+}
+
+func TestGetInitPIDViaIncusTimesOut(t *testing.T) {
+	fakeDfIncus(t, `exec sleep 30`)
+	old := initPIDInfoTimeout
+	initPIDInfoTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { initPIDInfoTimeout = old })
+
+	start := time.Now()
+	_, err := getInitPIDViaIncus(t.Context(), "c1")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want context.DeadlineExceeded, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("incus info fallback took %v, want it bounded by the timeout", elapsed)
 	}
 }
