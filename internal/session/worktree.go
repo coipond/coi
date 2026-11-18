@@ -166,8 +166,10 @@ func resolveCommonDir(gitDir string) (string, error) {
 }
 
 // commonDirTarget returns the dir named by <gitDir>/commondir, read as git
-// reads it: trailing CR and LF trimmed, a relative path joined to gitDir. ok
-// is false when the file is absent.
+// reads it: trailing CR and LF trimmed, a relative path appended to gitDir.
+// The path is not cleaned: git resolves symlinks before "..", so only
+// filepath.EvalSymlinks gives the dir git uses. ok is false when the file is
+// absent.
 func commonDirTarget(gitDir string) (target string, ok bool, err error) {
 	data, err := os.ReadFile(filepath.Join(gitDir, "commondir"))
 	if err != nil {
@@ -178,9 +180,9 @@ func commonDirTarget(gitDir string) (target string, ok bool, err error) {
 	}
 	target = strings.TrimRight(string(data), "\r\n")
 	if !filepath.IsAbs(target) {
-		target = filepath.Join(gitDir, target)
+		target = gitDir + string(filepath.Separator) + target
 	}
-	return filepath.Clean(target), true, nil
+	return target, true, nil
 }
 
 // verifyWorktreeBinding is the security guard: it proves the external dirs are a

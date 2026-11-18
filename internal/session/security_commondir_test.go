@@ -482,3 +482,32 @@ func TestApplySessionSecurity_UnexpectedCommonDirInCommonDir(t *testing.T) {
 		t.Errorf("warnings = %q, want one naming %q", warnings, filepath.Clean(want))
 	}
 }
+
+// A commondir that reaches another dir through a symlink and ".." warns with
+// the dir git uses: git resolves the symlink before "..".
+func TestApplySessionSecurity_UnexpectedCommonDirThroughSymlink(t *testing.T) {
+	_, ws := commonDirRepo(t)
+	realGit := filepath.Join(ws, "d", "real.git")
+	gitCmd(t, ws, "init", "-q", "--bare", realGit)
+	if err := os.Mkdir(filepath.Join(realGit, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "d", "real.git", "x"), filepath.Join(ws, ".git", "lnk")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".git", "commondir"), []byte("lnk/..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(realGit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gitCmd(t, ws, "rev-parse", "--path-format=absolute", "--git-common-dir"); got != want {
+		t.Fatalf("git common dir = %q, want %q", got, want)
+	}
+
+	warnings := commonDirWarnings(t, ws, nil)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], ".git/commondir -> "+want) {
+		t.Errorf("warnings = %q, want one naming %q", warnings, want)
+	}
+}
