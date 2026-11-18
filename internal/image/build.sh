@@ -253,6 +253,35 @@ disable_host_only_services() {
 }
 
 #######################################
+# Remove snapd
+# The Ubuntu cloud image ships snapd, which seeds and checks for
+# refreshes against api.snapcraft.io as soon as the container boots,
+# before coi sets up the firewall. In restricted and allowlist modes
+# the security monitor then flags that connection and pauses the
+# container. Nothing in the image uses snaps; a package that depends
+# on snapd (Ubuntu's firefox and chromium transitional packages) no
+# longer installs.
+#######################################
+remove_snapd() {
+    log "Removing snapd..."
+    systemctl stop snapd.socket snapd.service 2>/dev/null || true
+    if dpkg -s snapd >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq snapd
+    fi
+    rm -rf /snap /var/snap /var/lib/snapd /var/cache/snapd
+    cat > /etc/apt/preferences.d/no-snapd <<'EOF_PREF'
+Package: snapd
+Pin: release *
+Pin-Priority: -10
+EOF_PREF
+    if dpkg -s snapd >/dev/null 2>&1; then
+        log "ERROR: snapd is still installed"
+        exit 1
+    fi
+    log "snapd removed"
+}
+
+#######################################
 # Install Node.js LTS
 #######################################
 install_nodejs() {
@@ -440,6 +469,11 @@ create_code_user() {
     # the image installs, so a mount target never leaves a root-owned parent
     # behind.
     mkdir -p "/home/$CODE_USER/.local/share" "/home/$CODE_USER/.local/state" "/home/$CODE_USER/.opencode"
+    # Ubuntu's ~/.profile puts ~/.local/bin on PATH only if it exists at login.
+    # Agent installers run without a TTY (pi's among them) link into it only
+    # when it is already on PATH, so create it before any of them runs rather
+    # than relying on an earlier installer (claude's) to (#1035).
+    mkdir -p "/home/$CODE_USER/.local/bin"
     populate_known_hosts "/home/$CODE_USER/.ssh/known_hosts" ||
         log "WARNING: could not fill /home/$CODE_USER/.ssh/known_hosts"
     chmod 644 "/home/$CODE_USER/.ssh/known_hosts"
@@ -485,6 +519,37 @@ install_mise() {
 }
 
 #######################################
+# Add the runtime hostname to /etc/hosts at boot
+# Incus assigns the container hostname at boot (from the UTS namespace), but
+# /etc/hosts is baked into the image at build time with a different name.
+# sudo looks up the current hostname for logging; if it is not in /etc/hosts
+# the lookup fails and prints "unable to resolve host" on every invocation.
+#
+# coi runs its first command once sysinit.target is active
+# (readyProbeScript, internal/session/setup.go). Default dependencies order
+# a unit after sysinit.target, so the unit needs DefaultDependencies=no.
+#######################################
+configure_hostname_fix() {
+    log "Configuring hostname fix..."
+    cat > /etc/systemd/system/coi-fix-hostname.service << 'UNIT_EOF'
+[Unit]
+Description=Add container hostname to /etc/hosts
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'h=$(hostname); grep -qF "$h" /etc/hosts || echo "127.0.0.1 $h" >> /etc/hosts'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
+UNIT_EOF
+    systemctl enable coi-fix-hostname.service
+}
+
+#######################################
 # Configure power management wrappers
 #######################################
 configure_power_wrappers() {
@@ -493,29 +558,6 @@ configure_power_wrappers() {
     # Create wrapper scripts that use sudo automatically
     # This allows users to type "poweroff" instead of "sudo poweroff"
     # while working around the lack of login sessions in containers
-
-    # Incus assigns the container hostname at boot (from the UTS namespace), but
-    # /etc/hosts is baked into the image at build time with a different name.
-    # sudo looks up the current hostname for logging; if it is not in /etc/hosts
-    # the lookup fails and prints "unable to resolve host" on every invocation.
-    #
-    # Fix: a oneshot systemd service that appends the runtime hostname to
-    # /etc/hosts before multi-user.target is reached (i.e. before any shell).
-    cat > /etc/systemd/system/coi-fix-hostname.service << 'UNIT_EOF'
-[Unit]
-Description=Add container hostname to /etc/hosts
-After=local-fs.target
-Before=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash -c 'h=$(hostname); grep -qF "$h" /etc/hosts || echo "127.0.0.1 $h" >> /etc/hosts'
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-UNIT_EOF
-    systemctl enable coi-fix-hostname.service
 
     # Shared power helper. It touches /run/coi-shutdown-requested right before
     # asking systemd to power off, so coi's session cleanup can tell a `close`
@@ -725,10 +767,12 @@ install_opencode() {
 
 #######################################
 # Print the newest stable OpenCode v2.x version (MAJOR.MINOR.PATCH) of the
-# npm package @opencode/cli-linux-<arch>. v2 has no GitHub release assets:
-# it ships only through npm. The abbreviated registry document lists every
-# version. If the lookup fails or finds nothing from OPENCODE2_MIN_VERSION
-# on, prints OPENCODE2_FALLBACK_VERSION.
+# npm package @opencode/cli-linux-<arch>. coi installs v2 from npm: GitHub
+# release assets (with SHA256SUMS) exist only from 2.2.0 on, not for
+# OPENCODE2_FALLBACK_VERSION, and the repo's latest release is v1. The
+# abbreviated registry document lists every version. If the lookup fails or
+# finds nothing from OPENCODE2_MIN_VERSION on, prints
+# OPENCODE2_FALLBACK_VERSION.
 #######################################
 opencode2_npm_version() {
     local arch="$1" version
@@ -829,11 +873,15 @@ install_pi() {
         sleep 10
     done
 
-    # Ensure pi is available system-wide for non-login/non-interactive shells
-    local PI_BIN
-    PI_BIN="$(su - "$CODE_USER" -c 'which pi' 2>/dev/null || true)"
+    # Ensure pi is available system-wide. The installer's managed launcher
+    # lives in ~/.pi/agent/bin; fall back to the login PATH for other layouts
+    # (PI_CODING_AGENT_DIR, PI_LEGACY_INSTALL's npm install).
+    local PI_BIN="/home/$CODE_USER/.pi/agent/bin/pi"
+    if [[ ! -x "$PI_BIN" ]]; then
+        PI_BIN="$(su - "$CODE_USER" -c 'which pi' 2>/dev/null || true)"
+    fi
     if [[ -z "$PI_BIN" ]]; then
-        log "ERROR: pi binary not found after installation."
+        log "ERROR: pi binary not found in /home/$CODE_USER/.pi/agent/bin or on PATH after installation."
         exit 1
     fi
     ln -sf "$PI_BIN" /usr/local/bin/pi
@@ -1306,10 +1354,12 @@ main() {
     configure_dns_if_needed
     install_base_dependencies
     disable_host_only_services
+    remove_snapd
     install_nodejs
     create_code_user
     install_mise
     configure_mise_tools
+    configure_hostname_fix
     configure_power_wrappers
     configure_tmp_cleanup
     configure_tmux

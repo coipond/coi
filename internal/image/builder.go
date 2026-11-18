@@ -503,13 +503,13 @@ func (b *Builder) runBuildScriptResolved(resolvedScript string) error {
 	defer cleanupDummy()
 
 	b.opts.Logger("Pushing dummy to container...")
-	if err := b.mgr.PushFile(dummyPath, "/tmp/dummy"); err != nil {
+	if err := b.pushBuildAsset(dummyPath, "/tmp/dummy"); err != nil {
 		return fmt.Errorf("failed to push dummy: %w", err)
 	}
 
 	// Push build script to container
 	b.opts.Logger("Pushing build script to container...")
-	if err := b.mgr.PushFile(resolvedScript, "/tmp/build.sh"); err != nil {
+	if err := b.pushBuildAsset(resolvedScript, "/tmp/build.sh"); err != nil {
 		return fmt.Errorf("failed to push build script: %w", err)
 	}
 
@@ -526,6 +526,23 @@ func (b *Builder) runBuildScriptResolved(resolvedScript string) error {
 
 	b.opts.Logger("Build script completed successfully")
 	return nil
+}
+
+// buildAssetMode is the mode for files pushed into the build container. Both
+// build assets (the dummy and the build script) are shell scripts that are
+// executed there.
+const buildAssetMode = "0755"
+
+// pushBuildAsset pushes a host file into the build container owned by
+// root:root. A plain push keeps the SOURCE file's owner, i.e. the UID of the
+// user running `coi build`. The build container is UID-isolated
+// (security.idmap.isolated, 65536 IDs by default), so when that UID is outside
+// the container's range - typical for FreeIPA/LDAP/AD users (e.g. 916200003) -
+// the push fails with `chown ...: invalid argument` and the build aborts with
+// "failed to push dummy". The build runs as root inside the container, so root
+// ownership is what the assets need anyway.
+func (b *Builder) pushBuildAsset(source, destination string) error {
+	return b.mgr.PushFileWithOwner(source, destination, 0, 0, buildAssetMode)
 }
 
 // buildCustom runs a custom build script
@@ -547,14 +564,14 @@ func (b *Builder) buildCustom() error {
 	if err == nil {
 		defer cleanupDummy()
 		b.opts.Logger("Pushing dummy to container...")
-		if err := b.mgr.PushFile(dummyPath, "/tmp/dummy"); err != nil {
+		if err := b.pushBuildAsset(dummyPath, "/tmp/dummy"); err != nil {
 			return fmt.Errorf("failed to push dummy: %w", err)
 		}
 	}
 
 	// Push script to container
 	b.opts.Logger(fmt.Sprintf("Uploading build script from %s...", b.opts.BuildScript))
-	if err := b.mgr.PushFile(b.opts.BuildScript, "/tmp/build.sh"); err != nil {
+	if err := b.pushBuildAsset(b.opts.BuildScript, "/tmp/build.sh"); err != nil {
 		return fmt.Errorf("failed to push build script: %w", err)
 	}
 

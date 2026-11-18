@@ -280,6 +280,7 @@ func fakeIncus(t *testing.T, listJSON string) {
 }
 
 func TestResolveAliasForRunning_WholeNameWinsOverSlotSuffix(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
 	withTempHome(t)
 	fakeIncus(t, `[
  {"name":"coi-aaaaaaaa-1","status":"Running","config":{"user.coi.alias":"app-2"}},
@@ -386,5 +387,137 @@ func TestResolveAliasForLaunch_SlotZeroNotSplit(t *testing.T) {
 	}
 	if got.Workspace != "/ws/b" || got.Slot != 1 {
 		t.Errorf("ResolveAliasForLaunch(\"app-1\") = {%s, slot %d}, want {/ws/b, slot 1}", got.Workspace, got.Slot)
+	}
+}
+
+func TestResolveAliasForRunning_PrefixedAlias(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	tmpHome := withTempHome(t)
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []string{"coi-web", "coi-aaaaaaaa-1", "coi-cccccccc-1"} {
+		if err := reg.Register(a, "/ws/"+a, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	fakeIncus(t, `[
+ {"name":"coi-aaaaaaaa-1","status":"Running","config":{"user.coi.alias":"other"}},
+ {"name":"coi-bbbbbbbb-1","status":"Running","config":{"user.coi.alias":"coi-web"}},
+ {"name":"coi-bbbbbbbb-2","status":"Running","config":{"user.coi.alias":"coi-web"}},
+ {"name":"coi-cccccccc-1","status":"Stopped","config":{"user.coi.alias":"other"}},
+ {"name":"coi-dddddddd-1","status":"Running","config":{"user.coi.alias":"coi-aaaaaaaa-1"}},
+ {"name":"coi-eeeeeeee-1","status":"Running","config":{"user.coi.alias":"coi-cccccccc-1"}}
+]`)
+
+	tests := map[string]string{
+		"coi-web-2":      "coi-bbbbbbbb-2", // registered alias with a slot suffix
+		"coi-aaaaaaaa-1": "coi-aaaaaaaa-1", // the container wins over its alias
+		"coi-cccccccc-1": "coi-cccccccc-1", // also when it is stopped
+		"coi-bbbbbbbb-1": "coi-bbbbbbbb-1", // no alias of that name
+	}
+	for arg, want := range tests {
+		t.Run(arg, func(t *testing.T) {
+			got, err := ResolveAliasForRunning(arg)
+			if err != nil {
+				t.Fatalf("ResolveAliasForRunning(%q) error: %v", arg, err)
+			}
+			if got != want {
+				t.Errorf("ResolveAliasForRunning(%q) = %q, want %q", arg, got, want)
+			}
+		})
+	}
+
+	if got, err := ResolveAliasForRunning("coi-web"); err == nil || !strings.Contains(err.Error(), "matches 2 running containers") {
+		t.Errorf("ResolveAliasForRunning(\"coi-web\") = %q, %v; want the disambiguation error", got, err)
+	}
+}
+
+func TestResolveAliasForRunning_PrefixedAliasSingleContainer(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	tmpHome := withTempHome(t)
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register("coi-web", "/ws/web", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	fakeIncus(t, `[
+ {"name":"coi-bbbbbbbb-1","status":"Running","config":{"user.coi.alias":"coi-web"}}
+]`)
+
+	got, err := ResolveAliasForRunning("coi-web")
+	if err != nil {
+		t.Fatalf("ResolveAliasForRunning(\"coi-web\") error: %v", err)
+	}
+	if got != "coi-bbbbbbbb-1" {
+		t.Errorf("ResolveAliasForRunning(\"coi-web\") = %q, want %q", got, "coi-bbbbbbbb-1")
+	}
+}
+
+func TestResolveAliasForRunning_UnknownPrefixedNamePassesThrough(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	withTempHome(t)
+	t.Setenv("PATH", t.TempDir()) // no incus: a call would fail
+
+	got, err := ResolveAliasForRunning("coi-x")
+	if err != nil {
+		t.Fatalf("ResolveAliasForRunning(\"coi-x\") error: %v", err)
+	}
+	if got != "coi-x" {
+		t.Errorf("ResolveAliasForRunning(\"coi-x\") = %q, want %q", got, "coi-x")
+	}
+}
+
+func TestResolveAliasForRunning_PrefixedNameUnreadableRegistryPassesThrough(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	tmpHome := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(tmpHome, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpHome, ".coi", "aliases.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir()) // no incus: a call would fail
+
+	if !IsContainerName("coi-web") {
+		t.Error("IsContainerName(\"coi-web\") = false, want true")
+	}
+	got, err := ResolveAliasForRunning("coi-web")
+	if err != nil {
+		t.Fatalf("ResolveAliasForRunning(\"coi-web\") error: %v", err)
+	}
+	if got != "coi-web" {
+		t.Errorf("ResolveAliasForRunning(\"coi-web\") = %q, want %q", got, "coi-web")
+	}
+}
+
+func TestIsContainerName_RegisteredPrefixedAlias(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	tmpHome := withTempHome(t)
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register("coi-web", "/ws/web", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]bool{"coi-web": false, "coi-web-3": false, "coi-x": true, "coi-aaaaaaaa-1": true}
+	for name, want := range tests {
+		if got := IsContainerName(name); got != want {
+			t.Errorf("IsContainerName(%q) = %v, want %v", name, got, want)
+		}
 	}
 }

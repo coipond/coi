@@ -93,27 +93,50 @@ func TestContainerFullJSON(t *testing.T) {
 	}
 }
 
-func TestParseRunningNamesCSV(t *testing.T) {
-	for in, want := range map[string][]string{
-		"":                                     nil,
-		"c1,STOPPED\n":                         nil,
-		"c1,RUNNING\nc2,STOPPED\nc3,RUNNING\n": {"c1", "c3"},
-		"c1,RUNNING\r\n\nbad\n":                {"c1"},
+func TestParseStatusesCSV(t *testing.T) {
+	for in, want := range map[string][]ContainerStatus{
+		"":             nil,
+		"\n":           nil,
+		"c1,STOPPED\n": {{Name: "c1", Status: "STOPPED"}},
+		"c1,RUNNING\r\n\nc2,FROZEN\n": {
+			{Name: "c1", Status: "RUNNING"}, {Name: "c2", Status: "FROZEN"},
+		},
+		"bad\n": {{Name: "bad"}},
 	} {
-		if got := parseRunningNamesCSV(in); !reflect.DeepEqual(got, want) {
-			t.Errorf("parseRunningNamesCSV(%q) = %q, want %q", in, got, want)
+		if got := parseStatusesCSV(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("parseStatusesCSV(%q) = %v, want %v", in, got, want)
 		}
 	}
 }
 
-func TestListRunningContainerNames(t *testing.T) {
-	logPath := fakeListIncus(t, "c1,RUNNING\nc2,FROZEN\nc3,RUNNING\n")
+func TestListContainerStatuses(t *testing.T) {
+	logPath := fakeListIncus(t, "c1,RUNNING\nc2,STOPPED\n")
 
-	names, err := ListRunningContainerNames()
+	got, err := ListContainerStatuses("^coi-")
+	want := []ContainerStatus{{Name: "c1", Status: "RUNNING"}, {Name: "c2", Status: "STOPPED"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("statuses = %v, %v", got, err)
+	}
+	if calls := calls(t, logPath); len(calls) != 1 || calls[0] != "--project default list ^coi- --format=csv --columns=ns" {
+		t.Errorf("calls = %q", calls)
+	}
+}
+
+func TestListRunningContainerNames(t *testing.T) {
+	logPath := fakeListIncus(t, "c1,RUNNING\r\n\nbad\nc2,FROZEN\nc3,RUNNING\n")
+
+	names, err := ListRunningContainerNames("")
 	if err != nil || !reflect.DeepEqual(names, []string{"c1", "c3"}) {
 		t.Fatalf("names = %q, %v", names, err)
 	}
-	if got := calls(t, logPath); !reflect.DeepEqual(got, []string{"--project default list --format=csv --columns=ns"}) {
-		t.Errorf("calls = %q", got)
+	if _, err := ListRunningContainerNames("^coi-"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"--project default list --format=csv --columns=ns",
+		"--project default list ^coi- --format=csv --columns=ns",
+	}
+	if got := calls(t, logPath); !reflect.DeepEqual(got, want) {
+		t.Errorf("calls = %q, want %q", got, want)
 	}
 }

@@ -54,6 +54,34 @@ file_read_rate_mb_per_sec = 1000
 
 
 @pytest.fixture
+def enable_monitoring_defaults():
+    """Enable monitoring with pause and kill on and every threshold at its
+    default, as users run it. Open mode, as in enable_monitoring."""
+    config_path = Path.home() / ".coi" / "config.toml"
+    backup = config_path.read_text() if config_path.exists() else None
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+[network]
+mode = "open"
+
+[monitoring]
+enabled = true
+auto_pause_on_high = true
+auto_kill_on_critical = true
+"""
+    )
+
+    yield config_path
+
+    if backup:
+        config_path.write_text(backup)
+    elif config_path.exists():
+        config_path.unlink()
+
+
+@pytest.fixture
 def enable_monitoring_high_read_threshold():
     """Enable monitoring with a HIGH file-read threshold (500MB) for the
     below-threshold negative test.

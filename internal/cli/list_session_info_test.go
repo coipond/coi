@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/tool"
 )
 
 func TestContainerSessionInfo_FromKeys(t *testing.T) {
@@ -18,7 +20,7 @@ func TestContainerSessionInfo_FromKeys(t *testing.T) {
 	ws, persistent := containerSessionInfo([]ContainerInfo{
 		{Name: "coi-aaaaaaaa-1", Workspace: "/home/u/proj", Persistent: true, PersistentSet: true},
 		{Name: "coi-bbbbbbbb-1", Workspace: "/home/u/eph", PersistentSet: true},
-	}, dir)
+	}, []string{dir})
 
 	if ws["coi-aaaaaaaa-1"] != "/home/u/proj" || !persistent["coi-aaaaaaaa-1"] {
 		t.Errorf("aaaa: workspace=%q persistent=%v; want /home/u/proj, true", ws["coi-aaaaaaaa-1"], persistent["coi-aaaaaaaa-1"])
@@ -39,7 +41,7 @@ func TestContainerSessionInfo_FallbackWithoutKeys(t *testing.T) {
 		{Name: "coi-bbbbbbbb-1"},
 		// Workspace key without the persistence key: the key's workspace wins.
 		{Name: "coi-dddddddd-1", Workspace: "/home/u/keyed", Managed: true},
-	}, dir)
+	}, []string{dir})
 
 	want := map[string]string{"coi-aaaaaaaa-1": "/home/u/proj", "coi-bbbbbbbb-1": "/home/u/legacy", "coi-dddddddd-1": "/home/u/keyed"}
 	for name, w := range want {
@@ -55,11 +57,46 @@ func TestContainerSessionInfo_FallbackWithoutKeys(t *testing.T) {
 	}
 }
 
+func TestContainerSessionInfo_FallbackReadsEveryToolsSessions(t *testing.T) {
+	base := t.TempDir()
+	dirs := allSessionsDirs(base, tool.NewClaude())
+	// Launched by opencode while the configured tool is claude.
+	opencodeDir := filepath.Join(base, "sessions-opencode")
+	if !slices.Contains(dirs, opencodeDir) || !slices.Contains(dirs, filepath.Join(base, "sessions-claude")) {
+		t.Fatalf("allSessionsDirs = %v; want the claude and opencode dirs", dirs)
+	}
+	writeSavedSession(t, opencodeDir, "s1", "coi-aaaaaaaa-1", "/home/u/proj", true)
+	ws, persistent := containerSessionInfo([]ContainerInfo{{Name: "coi-aaaaaaaa-1"}}, dirs)
+
+	if ws["coi-aaaaaaaa-1"] != "/home/u/proj" || !persistent["coi-aaaaaaaa-1"] {
+		t.Errorf("workspace=%q persistent=%v; want /home/u/proj, true from the opencode save",
+			ws["coi-aaaaaaaa-1"], persistent["coi-aaaaaaaa-1"])
+	}
+}
+
+func TestContainerSessionInfo_FallbackPrefersConfiguredToolsSave(t *testing.T) {
+	base := t.TempDir()
+	// The same name in two tools' dirs: an old ephemeral claude run in the
+	// slot, then a persistent opencode one, the configured tool.
+	writeSavedSession(t, filepath.Join(base, "sessions-claude"), "s1", "coi-aaaaaaaa-1", "/home/u/old", false)
+	writeSavedSession(t, filepath.Join(base, "sessions-opencode"), "s2", "coi-aaaaaaaa-1", "/home/u/proj", true)
+	dirs := allSessionsDirs(base, tool.NewOpencode())
+	if dirs[0] != filepath.Join(base, "sessions-opencode") || len(dirs) != len(tool.ListSupported()) {
+		t.Fatalf("allSessionsDirs = %v; want sessions-opencode first, each tool once", dirs)
+	}
+	ws, persistent := containerSessionInfo([]ContainerInfo{{Name: "coi-aaaaaaaa-1"}}, dirs)
+
+	if ws["coi-aaaaaaaa-1"] != "/home/u/proj" || !persistent["coi-aaaaaaaa-1"] {
+		t.Errorf("workspace=%q persistent=%v; want /home/u/proj, true from the configured tool's save",
+			ws["coi-aaaaaaaa-1"], persistent["coi-aaaaaaaa-1"])
+	}
+}
+
 func TestContainerSessionInfo_ManagedWithoutWorkspaceSkipsFallback(t *testing.T) {
 	dir := t.TempDir()
 	// Even a matching save is not read: the marker says coi set no workspace.
 	writeSavedSession(t, dir, "s1", "coi-launched-1", "/home/u/stale", true)
-	ws, persistent := containerSessionInfo([]ContainerInfo{{Name: "coi-launched-1", Managed: true}}, dir)
+	ws, persistent := containerSessionInfo([]ContainerInfo{{Name: "coi-launched-1", Managed: true}}, []string{dir})
 
 	if w, ok := ws["coi-launched-1"]; ok || persistent["coi-launched-1"] {
 		t.Errorf("workspace=%q (present %v) persistent=%v; want none for a managed container without %s",
@@ -75,7 +112,7 @@ func TestContainerSessionInfo_ShellIntoLaunchedContainerShowsNoWorkspace(t *test
 	writeSavedSession(t, dir, "s1", "coi-launched-1", "/home/u/w", false)
 	ws, persistent := containerSessionInfo([]ContainerInfo{
 		{Name: "coi-launched-1", Managed: true, Persistent: true, PersistentSet: true},
-	}, dir)
+	}, []string{dir})
 
 	if w, ok := ws["coi-launched-1"]; ok || !persistent["coi-launched-1"] {
 		t.Errorf("workspace=%q (present %v) persistent=%v; want no workspace, persistent from the key",
@@ -87,7 +124,7 @@ func TestContainerSessionInfo_NoSaves(t *testing.T) {
 	ws, persistent := containerSessionInfo([]ContainerInfo{
 		{Name: "coi-aaaaaaaa-1", Workspace: "/home/u/proj", Persistent: true, PersistentSet: true},
 		{Name: "coi-bbbbbbbb-1"},
-	}, filepath.Join(t.TempDir(), "missing"))
+	}, []string{filepath.Join(t.TempDir(), "missing")})
 
 	if ws["coi-aaaaaaaa-1"] != "/home/u/proj" || !persistent["coi-aaaaaaaa-1"] {
 		t.Errorf("keyed: workspace=%q persistent=%v; want /home/u/proj, true", ws["coi-aaaaaaaa-1"], persistent["coi-aaaaaaaa-1"])
@@ -151,7 +188,7 @@ func BenchmarkContainerSessionInfo_SavedSessions(b *testing.B) {
 			// A `coi container launch` container: no workspace, no save.
 			containers = append(containers, ContainerInfo{Name: "coi-launched-1", Managed: true})
 			for b.Loop() {
-				containerSessionInfo(containers, dir)
+				containerSessionInfo(containers, []string{dir})
 			}
 		})
 	}

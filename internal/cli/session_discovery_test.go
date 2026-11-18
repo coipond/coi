@@ -58,8 +58,8 @@ func TestDiscoverContainerSession_ResumesDiscoveredOpencodeSession(t *testing.T)
 	if mgr.opts.Env["HOME"] != "/home/code" {
 		t.Errorf("lookup env = %v, want the launch env's HOME", mgr.opts.Env)
 	}
-	if got := buildCLICommand("coi-id", true, false, t.TempDir(), "coi-id", oc); got != "opencode --session ses_abc123" {
-		t.Errorf("buildCLICommand() = %q, want %q", got, "opencode --session ses_abc123")
+	if got := buildCLICommand("coi-id", true, false, t.TempDir(), "coi-id", oc); got != "opencode --auto --session ses_abc123" {
+		t.Errorf("buildCLICommand() = %q, want %q", got, "opencode --auto --session ses_abc123")
 	}
 }
 
@@ -72,8 +72,8 @@ func TestDiscoverContainerSession_FallsBackToContinue(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			oc := tool.NewOpencode()
 			discoverContainerSession(mgr, oc, true, "/workspace", container.ExecCommandOptions{})
-			if got := buildCLICommand("coi-id", true, false, t.TempDir(), "coi-id", oc); got != "opencode --continue" {
-				t.Errorf("buildCLICommand() = %q, want %q", got, "opencode --continue")
+			if got := buildCLICommand("coi-id", true, false, t.TempDir(), "coi-id", oc); got != "opencode --auto --continue" {
+				t.Errorf("buildCLICommand() = %q, want %q", got, "opencode --auto --continue")
 			}
 		})
 	}
@@ -129,12 +129,12 @@ func TestPrepareLaunch_ResumesDiscoveredOpencodeSession(t *testing.T) {
 					t.Fatalf("prepareTmux() error = %v", err)
 				}
 				cmd = l.cliCmd
-				if len(mgr.execCommands) != 1 || !strings.Contains(mgr.execCommands[0], "opencode --session ses_abc123") {
-					t.Errorf("tmux session command = %q, want it to launch opencode --session ses_abc123", mgr.execCommands)
+				if len(mgr.execCommands) != 1 || !strings.Contains(mgr.execCommands[0], "opencode --auto --session ses_abc123") {
+					t.Errorf("tmux session command = %q, want it to launch opencode --auto --session ses_abc123", mgr.execCommands)
 				}
 			}
 
-			if want := guardToolInstalled("opencode", "opencode --session ses_abc123"); cmd != want {
+			if want := guardToolInstalled("opencode", "opencode --auto --session ses_abc123"); cmd != want {
 				t.Errorf("launch command = %q, want %q", cmd, want)
 			}
 			if mgr.calls != 1 {
@@ -161,7 +161,7 @@ func TestPrepareLaunch_NewSessionSkipsLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareDirect() error = %v", err)
 	}
-	if want := guardToolInstalled("opencode", "opencode"); d.cmd != want || mgr.calls != 0 {
+	if want := guardToolInstalled("opencode", "opencode --auto"); d.cmd != want || mgr.calls != 0 {
 		t.Errorf("launch command = %q with %d lookups, want %q with none", d.cmd, mgr.calls, want)
 	}
 }

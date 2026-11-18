@@ -1008,6 +1008,7 @@ func TestBuildGrants_FallbackWorktreeProtections(t *testing.T) {
 	for _, want := range []string{
 		filepath.Join(common, "hooks"), filepath.Join(common, "config"),
 		filepath.Join(common, "info", "attributes"), filepath.Join(common, "worktrees", "wt", "config.worktree"),
+		filepath.Join(common, "commondir"), filepath.Join(common, "worktrees", "wt", "commondir"),
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("fallback protected = %v, missing %s", g.Protected, want)

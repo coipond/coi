@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/container"
 )
 
 func TestWorkspaceHash(t *testing.T) {
@@ -259,10 +261,10 @@ func TestAllocateSlotFrom(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			orig := listSlotInstances
 			t.Cleanup(func() { listSlotInstances = orig })
-			listSlotInstances = func() ([]slotInstance, error) {
-				out := []slotInstance{{Name: ContainerName("/other", "", 1), Status: "RUNNING"}}
+			listSlotInstances = func() ([]container.ContainerStatus, error) {
+				out := []container.ContainerStatus{{Name: ContainerName("/other", "", 1), Status: "RUNNING"}}
 				for _, n := range tt.used {
-					out = append(out, slotInstance{Name: ContainerName(workspace, "", n), Status: "RUNNING"})
+					out = append(out, container.ContainerStatus{Name: ContainerName(workspace, "", n), Status: "RUNNING"})
 				}
 				return out, nil
 			}
@@ -284,18 +286,29 @@ func TestAllocateSlotFrom(t *testing.T) {
 	}
 }
 
-func TestListWorkspaceSessions(t *testing.T) {
-	t.Setenv("COI_CONTAINER_PREFIX", "")
-	hash := IdentityHash("/home/u/proj", "")
-	prefix := "coi-" + hash + "-"
+// fakeListIncus puts an `incus` on PATH that prints listOut and logs its
+// arguments, and returns the log path.
+func fakeListIncus(t *testing.T, listOut string) (logPath string) {
+	t.Helper()
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nprintf '" +
-		prefix + "1\\n" + prefix + "10\\n" + prefix + "x\\n" + prefix + "2-backup\\n'\n"
+	out := filepath.Join(dir, "list.out")
+	if err := os.WriteFile(out, []byte(listOut), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logPath = filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncat " + out + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func TestListWorkspaceSessions(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	hash := IdentityHash("/home/u/proj", "")
+	prefix := "coi-" + hash + "-"
+	logPath := fakeListIncus(t, prefix+"1\n"+prefix+"10\n"+prefix+"x\n"+prefix+"2-backup\n")
 
 	got, err := ListWorkspaceSessions("/home/u/proj", "")
 	if err != nil {
@@ -306,6 +319,21 @@ func TestListWorkspaceSessions(t *testing.T) {
 	}
 	b, _ := os.ReadFile(logPath)
 	if call := strings.TrimSpace(string(b)); call != "--project default list ^"+prefix+" --format=csv --columns=n" {
+		t.Errorf("incus call = %q", call)
+	}
+}
+
+func TestFindReusablePersistentSlot(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	prefix := "coi-" + IdentityHash("/home/u/proj", "") + "-"
+	logPath := fakeListIncus(t, prefix+"1,RUNNING\n"+prefix+"3,STOPPED\n"+
+		prefix+"2,STOPPED\ncoi-other-1,STOPPED\n")
+
+	if slot, ok := FindReusablePersistentSlot("/home/u/proj", "", MaxSlots); !ok || slot != 2 {
+		t.Errorf("FindReusablePersistentSlot() = %d, %v; want 2, true", slot, ok)
+	}
+	b, _ := os.ReadFile(logPath)
+	if call := strings.TrimSpace(string(b)); call != "--project default list --format=csv --columns=ns" {
 		t.Errorf("incus call = %q", call)
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/coipond/coi/internal/container"
 )
@@ -70,39 +69,13 @@ func ContainerName(workspacePath, sessionName string, slot int) string {
 	return fmt.Sprintf("%s%s-%d", prefix, hash, slot)
 }
 
-// slotInstance is one instance as seen by slot allocation: just its name and
-// status, which is all the slot logic needs.
-type slotInstance struct {
-	Name   string
-	Status string
-}
-
 // listSlotInstances lists instance names and statuses. It asks Incus for the
 // name and status columns only (CSV), so the daemon skips the per-instance
 // state fetch (network counters, processes, disk usage) that `--format=json`
 // always pays for — that fetch grows with every container on the host and
 // dominated launch latency. A variable so tests can stub Incus.
-var listSlotInstances = func() ([]slotInstance, error) {
-	output, err := container.IncusOutput("list", "--format=csv", "--columns=ns")
-	if err != nil {
-		return nil, err
-	}
-	return parseSlotInstancesCSV(output), nil
-}
-
-// parseSlotInstancesCSV parses `incus list --format=csv --columns=ns` output
-// ("name,STATUS" per line). Instance names cannot contain commas.
-func parseSlotInstancesCSV(output string) []slotInstance {
-	var out []slotInstance
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		name, status, _ := strings.Cut(line, ",")
-		out = append(out, slotInstance{Name: name, Status: status})
-	}
-	return out
+var listSlotInstances = func() ([]container.ContainerStatus, error) {
+	return container.ListContainerStatuses("")
 }
 
 // slotOf returns the slot number of an instance name for the given identity

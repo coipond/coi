@@ -1,0 +1,38 @@
+name: Set up Go build
+description: >-
+  Set up Go, install the cgo build dependency (libsystemd-dev, for sdjournal)
+  plus any extra apt packages, and stage the embedded assets `go build` needs.
+inputs:
+  packages:
+    description: Extra apt packages to install alongside libsystemd-dev.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: '1.26'
+        check-latest: true
+        cache: true
+
+    - name: Install build dependencies
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        sudo apt-get update
+        # shellcheck disable=SC2086 # PACKAGES is a space-separated list
+        sudo apt-get install -y libsystemd-dev $PACKAGES
+
+    - name: Prepare embedded build assets
+      shell: bash
+      run: |
+        mkdir -p internal/image/embedded
+        mkdir -p internal/config/embedded
+        cp profiles/default/config.toml internal/config/embedded/default_config.toml
+        cp testdata/dummy/dummy internal/image/embedded/dummy
+        # GitHub Actions runners lack the memory.swap cgroup controller.
+        # Disable swap limit in the embedded default so tests can run.
+        sed -i 's/^swap = "true"/swap = ""/' internal/config/embedded/default_config.toml

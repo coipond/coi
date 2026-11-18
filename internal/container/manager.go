@@ -109,6 +109,11 @@ func (m *Manager) Running() (bool, error) {
 	return ContainerRunning(m.ContainerName)
 }
 
+// Stopped checks if the container is stopped or gone (see ContainerStopped)
+func (m *Manager) Stopped() (bool, error) {
+	return ContainerStopped(m.ContainerName)
+}
+
 // StartLogErrors returns the first ERROR lines of the container's last start
 // log, at most maxLines (see StartLogErrors).
 func (m *Manager) StartLogErrors(maxLines int) []string {
@@ -730,7 +735,7 @@ func (m *Manager) ExecCommand(command string, opts ExecCommandOptions) (string, 
 // umask unless they are passed explicitly.
 func (m *Manager) PushFile(source, destination string) error {
 	// Ensure destination starts with /
-	if destination[0] != '/' {
+	if !strings.HasPrefix(destination, "/") {
 		destination = "/" + destination
 	}
 	dest := m.ContainerName + destination
@@ -747,6 +752,10 @@ func (m *Manager) PushFile(source, destination string) error {
 
 // PullDirectory pulls a directory from the container recursively
 func (m *Manager) PullDirectory(containerPath, localPath string) error {
+	if !strings.HasPrefix(containerPath, "/") {
+		containerPath = "/" + containerPath
+	}
+
 	// Fail fast, before anything is transferred. This function used to clear
 	// the way for the final rename with os.RemoveAll(localPath),
 	// which recursively deleted whole host trees when a caller passed
@@ -1292,7 +1301,7 @@ func (m *Manager) CreateFileWithOwner(containerPath, content string, uid, gid in
 // PushFileWithOwner pushes a file into the container with explicit ownership
 // and mode (see IncusFilePushWithOwner).
 func (m *Manager) PushFileWithOwner(source, destination string, uid, gid int, mode string) error {
-	if destination[0] != '/' {
+	if !strings.HasPrefix(destination, "/") {
 		destination = "/" + destination
 	}
 	return IncusFilePushWithOwner(source, m.ContainerName+destination, uid, gid, mode)

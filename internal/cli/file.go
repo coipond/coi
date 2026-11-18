@@ -69,6 +69,9 @@ Examples:
 			}
 			fmt.Fprintf(os.Stderr, "Pushed directory %s -> %s:%s\n", localPath, containerName, target)
 		} else {
+			if remotePath == "" {
+				return &ExitCodeError{Code: 2, Message: "destination path is empty, use 'container:path'"}
+			}
 			if err := mgr.PushFile(localPath, remotePath); err != nil {
 				return fmt.Errorf("failed to push file: %v", err)
 			}
@@ -84,6 +87,8 @@ var filePullCmd = &cobra.Command{
 	Use:   "pull <container>:<remote-path> <local-path>",
 	Short: "Pull a file or directory from a container",
 	Long: `Pull a file or directory from a container to the host.
+
+A relative container path is read from the container's root (/).
 
 Examples:
   # Pull a file into the current directory

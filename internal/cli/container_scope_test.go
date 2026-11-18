@@ -113,7 +113,7 @@ func TestTmuxListSkipsForeignContainers(t *testing.T) {
 func TestAttachListSkipsForeignContainers(t *testing.T) {
 	t.Setenv("COI_CONTAINER_PREFIX", "")
 	t.Setenv("HOME", t.TempDir())
-	logPath := fakeScopeIncus(t, scopeListNames, "")
+	logPath := fakeScopeIncus(t, nil, "")
 	attachCmd.SetContext(t.Context())
 
 	if err := (&App{cfg: &config.Config{}}).attachCommand(attachCmd, nil); err != nil {
@@ -121,8 +121,8 @@ func TestAttachListSkipsForeignContainers(t *testing.T) {
 	}
 
 	b, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(b), "coi-abc12345-2") {
-		t.Fatalf("attach did not check the coi containers; calls:\n%s", b)
+	if !strings.Contains(string(b), "list ^coi- --format=csv --columns=ns") {
+		t.Fatalf("attach did not list only the coi containers; calls:\n%s", b)
 	}
 	assertNoCallFor(t, logPath, "web-coi-")
 }
