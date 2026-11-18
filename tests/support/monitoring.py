@@ -99,7 +99,15 @@ def get_threat_events(container_name, nft=False):
     log_paths = [audit_dir / f"{container_name}.jsonl"]
     if nft:
         log_paths.append(audit_dir / f"{container_name}-nft.jsonl")
+    return _read_threat_events(log_paths)
 
+
+def get_nft_threat_events(container_name):
+    """Get threat events from the nft monitor's log (<container>-nft.jsonl) only."""
+    return _read_threat_events([Path.home() / ".coi" / "audit" / f"{container_name}-nft.jsonl"])
+
+
+def _read_threat_events(log_paths):
     events = []
     for log_path in log_paths:
         if not log_path.exists():

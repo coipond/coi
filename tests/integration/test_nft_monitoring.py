@@ -26,6 +26,7 @@ import pytest
 from support.helpers import container_ipv4
 from support.monitoring import (
     coi_session_logs,
+    get_nft_threat_events,
     get_threat_events,
     hold_connect,
     is_c2_port_threat,
@@ -65,25 +66,6 @@ def get_container_state(name):
     # `incus list <name>` matches by prefix; pick the exact name.
     match = [c for c in containers if c.get("name") == name]
     return match[0].get("status", "Unknown") if match else "Unknown"
-
-
-def get_nft_threat_events(container_name):
-    """Get threat events from NFT audit log."""
-    log_path = Path.home() / ".coi" / "audit" / f"{container_name}-nft.jsonl"
-    if not log_path.exists():
-        return []
-
-    events = []
-    with open(log_path) as f:
-        for line in f:
-            if line.strip():
-                try:
-                    event = json.loads(line)
-                    if "level" in event:
-                        events.append(event)
-                except json.JSONDecodeError:
-                    pass
-    return events
 
 
 def cleanup_container(name, coi_binary, env=None):
