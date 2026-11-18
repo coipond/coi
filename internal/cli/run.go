@@ -282,7 +282,8 @@ func (a *App) resolvePromptMode(cmd *cobra.Command, s *runState, args []string) 
 	}
 	if !supportsHeadlessPrompt(t) {
 		return &ExitCodeError{Code: 2, Message: fmt.Sprintf(
-			"coi run headless prompt mode currently supports only the claude and opencode tools (configured: %q)", t.Name())}
+			"coi run headless prompt mode supports only the %s tools (configured: %q)",
+			headlessPromptToolList(), t.Name())}
 	}
 
 	sessionID, err := session.GenerateSessionID()
@@ -305,6 +306,21 @@ func supportsHeadlessPrompt(t tool.Tool) bool {
 	}
 	_, ok := t.(tool.ToolWithHeadlessPrompt)
 	return ok
+}
+
+// headlessPromptToolList names the registered tools that pass
+// supportsHeadlessPrompt, sorted, as "a, b and c".
+func headlessPromptToolList() string {
+	var names []string
+	for _, name := range tool.ListSupported() {
+		if t, err := tool.Get(name); err == nil && supportsHeadlessPrompt(t) {
+			names = append(names, name)
+		}
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // launchOrReuseContainer restarts an existing persistent container, or

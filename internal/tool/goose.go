@@ -61,6 +61,27 @@ func (g *GooseTool) BuildCommand(sessionID string, resume bool, resumeSessionID 
 	return cmd
 }
 
+// BuildHeadlessCommand implements ToolWithHeadlessPrompt with `goose run
+// --quiet`, which prints only the model reply and exits non-zero on failure.
+// The prompt goes in on stdin (`--instructions -`): `-t <text>` reads text
+// starting with "-" as a flag, and `-i <file>` drops --system. Stdin is always
+// redirected, so an open stdin inherited from the caller can't block the run.
+// No --no-session: it hides the run from `goose session list`.
+func (g *GooseTool) BuildHeadlessCommand(spec LaunchSpec) ([]string, error) {
+	cmd := []string{g.Binary(), "run", "--quiet"}
+	if spec.Resume && spec.ResumeSessionID != "" {
+		cmd = append(cmd, "--resume", "--session-id", spec.ResumeSessionID)
+	}
+	if spec.SystemPromptFile != "" {
+		cmd = append(cmd, "--system", catSubst(spec.SystemPromptFile))
+	}
+	stdin := "/dev/null"
+	if spec.PromptFile != "" {
+		stdin = spec.PromptFile
+	}
+	return append(cmd, "--instructions", "-", "<"+stdin), nil
+}
+
 // DiscoverSessionID returns the session found by the in-container session
 // list (SetSessionDiscoveryOutput), or "". goose keeps its sessions in a
 // SQLite store in its data dir, not in stateDir.
