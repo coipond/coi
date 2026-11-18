@@ -993,7 +993,7 @@ func (g *Grants) networkLines() []string {
 	default:
 		lines = append(lines, n.Mode)
 	}
-	if n.HostAccess {
+	if n.HostAccess != nil && *n.HostAccess {
 		lines = append(lines, "host services allowed (allow_host_access)")
 	}
 	if len(n.AllowedPorts) > 0 {

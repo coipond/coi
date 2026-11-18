@@ -238,7 +238,7 @@ func TestGrantsJSON_BareSession(t *testing.T) {
 		"protected": [],
 		"masked": [],
 		"network": {"mode": "open", "allowed_domains": null, "lan": null, "metadata_endpoint": null,
-			"host_access": false, "allowed_ports": null, "dns_servers": null, "hosts": []},
+			"host_access": null, "allowed_ports": null, "dns_servers": null, "hosts": []},
 		"ports": [],
 		"sockets": [],
 		"env": {"launch": "started", "tool": [], "from_host": [], "env_commands": [], "configured": [], "container": []},
@@ -262,7 +262,7 @@ func TestGrantsJSON_Network(t *testing.T) {
 		{
 			name: "open enforces no caps",
 			n:    NetworkGrants{Hosts: hosts, AllowedPorts: []int{443}, DNSServers: []string{"1.1.1.1"}, HostAccess: true, LANBlocked: true},
-			want: `{"mode": "open", "allowed_domains": null, "lan": null, "metadata_endpoint": null, "host_access": false, "allowed_ports": null, "dns_servers": null,
+			want: `{"mode": "open", "allowed_domains": null, "lan": null, "metadata_endpoint": null, "host_access": null, "allowed_ports": null, "dns_servers": null,
 				"hosts": [{"ip": "10.0.0.5", "hostnames": [], "ports": null}]}`,
 		},
 		{

@@ -19,13 +19,13 @@ const (
 func accessOf(a netAccess) *netAccess { return &a }
 
 // effectiveNetwork is the egress the firewall enforces: fields a mode doesn't
-// enforce are empty (nil in JSON), so the text and JSON report show the same.
+// enforce are empty (null in JSON), so the text and JSON report show the same.
 type effectiveNetwork struct {
 	Mode             string        `json:"mode"`
 	AllowedDomains   []string      `json:"allowed_domains"` // allowlist mode only
 	LAN              *netAccess    `json:"lan"`
 	MetadataEndpoint *netAccess    `json:"metadata_endpoint"`
-	HostAccess       bool          `json:"host_access"`
+	HostAccess       *bool         `json:"host_access"`
 	AllowedPorts     []int         `json:"allowed_ports"`
 	DNSServers       []string      `json:"dns_servers"` // restricted mode only
 	Hosts            []grantedHost `json:"hosts"`
@@ -74,7 +74,7 @@ func (n NetworkGrants) effective() effectiveNetwork {
 	}
 	enforcing := mode == config.NetworkModeRestricted || mode == config.NetworkModeAllowlist
 	if enforcing {
-		e.HostAccess = n.HostAccess
+		e.HostAccess = &n.HostAccess
 		if len(n.AllowedPorts) > 0 {
 			e.AllowedPorts = n.AllowedPorts
 		}
