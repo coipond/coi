@@ -1,36 +1,13 @@
 package cli
 
 import (
-	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/coipond/coi/internal/alias"
 	"github.com/coipond/coi/internal/session"
 )
-
-// writeSession saves session id for workspace ws at savedAt.
-func writeSession(t *testing.T, sessionsDir, id, ws, savedAt string) {
-	t.Helper()
-	dir := filepath.Join(sessionsDir, id)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(session.SessionMetadata{
-		SessionID:     id,
-		ContainerName: session.ContainerName(ws, "", 1),
-		Workspace:     ws,
-		SavedAt:       savedAt,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestPickResumeID(t *testing.T) {
 	tests := []struct {
@@ -75,8 +52,8 @@ func TestResolveResumeAndProfile_ResumeIDBeatsContinue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := t.TempDir()
 			a, cmd, sessionsDir := newResumeTestApp(t, "")
-			writeSession(t, sessionsDir, "sessA", ws, "2026-01-01T00:00:00Z")
-			writeSession(t, sessionsDir, "sessB", ws, "2026-02-01T00:00:00Z")
+			writeSessionMetadata(t, sessionsDir, session.SessionMetadata{SessionID: "sessA", ContainerName: session.ContainerName(ws, "", 1), Workspace: ws, SavedAt: "2026-01-01T00:00:00Z"})
+			writeSessionMetadata(t, sessionsDir, session.SessionMetadata{SessionID: "sessB", ContainerName: session.ContainerName(ws, "", 1), Workspace: ws, SavedAt: "2026-02-01T00:00:00Z"})
 			for _, f := range tt.flags {
 				if err := cmd.Flags().Set(f[0], f[1]); err != nil {
 					t.Fatal(err)
@@ -104,7 +81,7 @@ func TestResolveResumeAndProfile_ResumeIDBeatsContinue(t *testing.T) {
 func TestResolveResumeAndProfile_SameIDNoWarning(t *testing.T) {
 	ws := t.TempDir()
 	a, cmd, sessionsDir := newResumeTestApp(t, "")
-	writeSession(t, sessionsDir, "sessA", ws, "2026-01-01T00:00:00Z")
+	writeSessionMetadata(t, sessionsDir, session.SessionMetadata{SessionID: "sessA", ContainerName: session.ContainerName(ws, "", 1), Workspace: ws, SavedAt: "2026-01-01T00:00:00Z"})
 	for _, f := range []string{"resume", "continue"} {
 		if err := cmd.Flags().Set(f, "sessA"); err != nil {
 			t.Fatal(err)
@@ -127,7 +104,7 @@ func TestResolveResumeAndProfile_SameIDNoWarning(t *testing.T) {
 func TestResolveResumeAndProfile_UnknownResumeIDNoWarning(t *testing.T) {
 	ws := t.TempDir()
 	a, cmd, sessionsDir := newResumeTestApp(t, "")
-	writeSession(t, sessionsDir, "sessB", ws, "2026-02-01T00:00:00Z")
+	writeSessionMetadata(t, sessionsDir, session.SessionMetadata{SessionID: "sessB", ContainerName: session.ContainerName(ws, "", 1), Workspace: ws, SavedAt: "2026-02-01T00:00:00Z"})
 	for _, f := range [][2]string{{"resume", "bogus"}, {"continue", "auto"}} {
 		if err := cmd.Flags().Set(f[0], f[1]); err != nil {
 			t.Fatal(err)
