@@ -3,6 +3,8 @@ package monitor
 import (
 	"reflect"
 	"testing"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // M1: the collector must prefer the live-allowlist provider when it yields
@@ -39,7 +41,7 @@ func TestCollector_KeepPermittedFlows(t *testing.T) {
 	poll := func(c *Collector, allowed []string, conns ...Connection) NetworkStats {
 		stats := NetworkStats{Connections: conns}
 		for i := range stats.Connections {
-			if reason := checkSuspicious(stats.Connections[i], allowed, nil, nil); reason != "" {
+			if reason := checkSuspicious(stats.Connections[i], config.NetworkModeAllowlist, allowed, nil, nil); reason != "" {
 				stats.Connections[i].Suspicious = true
 				stats.Connections[i].SuspectReason = reason
 				stats.SuspiciousCount++

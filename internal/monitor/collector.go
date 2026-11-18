@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // Collector orchestrates data collection from multiple sources
@@ -12,6 +14,7 @@ type Collector struct {
 	containerName     string
 	containerIP       string
 	workspacePath     string
+	networkMode       config.NetworkMode
 	allowedCIDRs      []string
 	allowedCIDRsFn    func() []string
 	permitted         PermittedDestinationFunc
@@ -32,6 +35,12 @@ type Collector struct {
 // the collector uses them, so it is never worse than before.
 func (c *Collector) SetAllowedCIDRsProvider(fn func() []string) {
 	c.allowedCIDRsFn = fn
+}
+
+// SetNetworkMode supplies the container's [network] mode (see
+// DaemonConfig.NetworkMode).
+func (c *Collector) SetNetworkMode(mode config.NetworkMode) {
+	c.networkMode = mode
 }
 
 // SetPermittedDestination supplies the firewall-permit check (see
@@ -111,7 +120,7 @@ func (c *Collector) Collect(ctx context.Context) (MonitorSnapshot, error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		networkStats, err := CollectNetworkStats(ctx, c.containerName, c.containerIP, c.currentAllowedCIDRs(), c.permitted, c.gateway)
+		networkStats, err := CollectNetworkStats(ctx, c.containerName, c.containerIP, c.networkMode, c.currentAllowedCIDRs(), c.permitted, c.gateway)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {

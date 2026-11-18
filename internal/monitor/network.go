@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // CollectNetworkStats collects network statistics and flags suspicious connections.
@@ -18,7 +20,7 @@ import (
 // namespaced reads fail, it falls back to host /proc/net/tcp[6] filtered by
 // containerIP (best-effort; requires a non-empty containerIP to avoid returning
 // all host connections).
-func CollectNetworkStats(ctx context.Context, containerName, containerIP string, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) (NetworkStats, error) {
+func CollectNetworkStats(ctx context.Context, containerName, containerIP string, mode config.NetworkMode, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) (NetworkStats, error) {
 	connections, pid, err := parseConnections(ctx, containerName, containerIP)
 	if err != nil {
 		return NetworkStats{}, err
@@ -29,7 +31,7 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 	var local []*net.IPNet
 	localRead := false
 	for i := range connections {
-		reason := checkSuspicious(connections[i], allowedCIDRs, permitted, gateway)
+		reason := checkSuspicious(connections[i], mode, allowedCIDRs, permitted, gateway)
 		if reason != "" && pid > 0 {
 			if !localRead {
 				local = containerLocalNets(fmt.Sprintf("/proc/%d/net/route", pid))
@@ -363,8 +365,8 @@ const reasonNotInAllowlist = "IP not in network allowlist"
 // nil) reports destinations the firewall deliberately accepts; those are exempt
 // from the private-network and allowlist checks, but not from the others.
 // gateway (may be nil) returns the container's bridge gateway, asked only for a
-// DNS or DHCP port when allowedCIDRs is set.
-func checkSuspicious(conn Connection, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) string {
+// DNS or DHCP port outside open mode.
+func checkSuspicious(conn Connection, mode config.NetworkMode, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) string {
 	// Skip local connections (LISTEN state or localhost)
 	if conn.State == "LISTEN" {
 		return ""
@@ -379,9 +381,9 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 	}
 	// The bridge's DNS and DHCP service: a resolver or DHCP client in the
 	// container keeps a socket to it even where the firewall drops the packets.
-	// By port only: any other port on the gateway is still checked. Without an
-	// allowlist nothing below flags these ports, so the gateway is not asked.
-	if len(allowedCIDRs) > 0 && (port == 53 || (port == 67 && strings.HasPrefix(conn.Protocol, "udp"))) && gateway != nil {
+	// By port only: any other port on the gateway is still checked. In open mode
+	// nothing below flags these ports, so the gateway is not asked.
+	if mode != config.NetworkModeOpen && (port == 53 || (port == 67 && strings.HasPrefix(conn.Protocol, "udp"))) && gateway != nil {
 		if gw := net.ParseIP(gateway()); gw != nil && gw.Equal(ip) {
 			return ""
 		}
@@ -393,9 +395,9 @@ func checkSuspicious(conn Connection, allowedCIDRs []string, permitted Permitted
 	// Only asked once a check would otherwise fire.
 	firewallPermits := func() bool { return permitted != nil && permitted(conn.Protocol, remoteIP, port) }
 
-	// Check RFC1918 addresses only when network is restricted (allowedCIDRs not empty)
-	// In "open" network mode (no restrictions), RFC1918 addresses are expected/allowed.
-	if len(allowedCIDRs) > 0 && isRFC1918(remoteIP) && !firewallPermits() {
+	// The firewall blocks RFC1918 destinations in every mode except open, which
+	// allows LAN traffic.
+	if mode != config.NetworkModeOpen && isRFC1918(remoteIP) && !firewallPermits() {
 		return "RFC1918 private address (should be blocked by firewall)"
 	}
 

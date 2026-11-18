@@ -37,6 +37,7 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 
 	// Create components
 	collector := NewCollector(cfg.ContainerName, "", cfg.WorkspacePath, cfg.AllowedCIDRs)
+	collector.SetNetworkMode(cfg.NetworkMode)
 	collector.SetAllowedCIDRsProvider(cfg.AllowedCIDRsProvider)
 	collector.SetPermittedDestination(cfg.PermittedDestination)
 	collector.SetGateway(cfg.Gateway)

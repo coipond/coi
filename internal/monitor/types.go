@@ -3,6 +3,8 @@ package monitor
 import (
 	"fmt"
 	"time"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // ThreatLevel indicates severity of detected threat
@@ -218,6 +220,9 @@ type DaemonConfig struct {
 	AuditLogPath   string
 	AllowedCIDRs   []string // CIDR ranges for allowed networks (static snapshot / fallback)
 	AllowedDomains []string // Domains from network allowlist
+	// NetworkMode is the container's [network] mode. Open mode allows LAN
+	// traffic, so RFC1918 destinations are not flagged there.
+	NetworkMode config.NetworkMode
 
 	// AllowedCIDRsProvider, when set, is consulted on every collection for the
 	// CURRENT allowlist (e.g. the live nft set in allowlist mode) so the monitor
