@@ -214,7 +214,6 @@ func TestCheckSuspicious_RFC1918_RestrictedMode(t *testing.T) {
 	}
 }
 
-// The firewall blocks RFC1918 destinations in every mode except open.
 func TestCheckSuspicious_RFC1918_ByMode(t *testing.T) {
 	conn := Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: "192.168.1.1:80", State: "ESTABLISHED"}
 	permitted := func(_, ip string, port int) bool { return ip == "192.168.1.1" && port == 80 }
@@ -268,7 +267,6 @@ func TestCheckSuspicious_RFC1918_OpenMode(t *testing.T) {
 		RemoteAddr: "192.168.1.1:80",
 		State:      "ESTABLISHED",
 	}
-	// Open mode allows LAN traffic.
 	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil)
 	if reason != "" {
 		t.Errorf("RFC1918 should not be flagged in open mode, got %q", reason)
