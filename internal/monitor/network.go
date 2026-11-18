@@ -436,31 +436,20 @@ func extractPort(addr string) int {
 	return 0
 }
 
+// rfc1918Nets are the private ranges, parsed once: checkSuspicious asks for
+// every connection on every poll.
+var rfc1918Nets = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		_, network, _ := net.ParseCIDR(cidr)
+		nets = append(nets, network)
+	}
+	return nets
+}()
+
 // isRFC1918 checks if IP is in private address space
 func isRFC1918(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-
-	// Check private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-	privateRanges := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-	}
-
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if network.Contains(ip) {
-			return true
-		}
-	}
-
-	return false
+	return inNets(ipStr, rfc1918Nets)
 }
 
 // inAllowlist checks if IP is in allowed CIDR ranges
