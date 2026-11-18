@@ -145,23 +145,6 @@ func TestIncusArgsAreReadOnly(t *testing.T) {
 	}
 }
 
-func TestStatusFromCSV(t *testing.T) {
-	for _, tc := range []struct {
-		output, status string
-		listed         bool
-	}{
-		{"c1,RUNNING\n", "RUNNING", true},
-		{"c1,STOPPING\n", "STOPPING", true},
-		{"c10,RUNNING\n", "", false},
-		{"", "", false},
-	} {
-		status, listed := statusFromCSV(tc.output, "c1")
-		if status != tc.status || listed != tc.listed {
-			t.Errorf("%q: got (%q, %v), want (%q, %v)", tc.output, status, listed, tc.status, tc.listed)
-		}
-	}
-}
-
 func TestContainerRunningAndStopped(t *testing.T) {
 	for _, tc := range []struct {
 		output           string
@@ -172,6 +155,7 @@ func TestContainerRunningAndStopped(t *testing.T) {
 		{"c1,STOPPING", false, false},
 		{"c1,ERROR", false, false},
 		{"c1,FROZEN", false, false},
+		{"c10,RUNNING", false, true},
 		{"", false, true},
 	} {
 		fakeIncusScript(t, "echo '"+tc.output+"'")

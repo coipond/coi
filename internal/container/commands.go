@@ -1012,24 +1012,16 @@ func ContainerStopped(containerName string) (bool, error) {
 // listedStatus returns the container's Incus status and whether Incus lists
 // the container at all.
 func listedStatus(containerName string) (status string, listed bool, err error) {
-	output, err := IncusOutput("list", "^"+regexp.QuoteMeta(containerName)+"$", "--format=csv", "--columns=ns")
+	statuses, err := ListContainerStatuses("^" + regexp.QuoteMeta(containerName) + "$")
 	if err != nil {
 		return "", false, err
 	}
-	status, listed = statusFromCSV(output, containerName)
-	return status, listed, nil
-}
-
-// statusFromCSV returns containerName's status from `incus list
-// --format=csv --columns=ns` output and whether the output lists it.
-func statusFromCSV(output, containerName string) (status string, listed bool) {
-	for _, line := range strings.Split(output, "\n") {
-		name, status, ok := strings.Cut(strings.TrimSpace(line), ",")
-		if ok && name == containerName {
-			return status, true
+	for _, c := range statuses {
+		if c.Name == containerName {
+			return c.Status, true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // PublishContainer publishes a stopped container as an image
@@ -1176,10 +1168,16 @@ func parseNamesCSV(output string) []string {
 	return names
 }
 
-// ListRunningContainerNames lists the names of running containers, optionally
+// ContainerStatus is a container's name and Incus status.
+type ContainerStatus struct {
+	Name   string
+	Status string
+}
+
+// ListContainerStatuses lists container names and statuses, optionally
 // narrowed by an Incus name filter. Like ListContainerNames, it asks for the
 // name and status columns only (CSV), which need no instance state.
-func ListRunningContainerNames(filter string) ([]string, error) {
+func ListContainerStatuses(filter string) ([]ContainerStatus, error) {
 	args := []string{"list"}
 	if filter != "" {
 		args = append(args, filter)
@@ -1188,20 +1186,38 @@ func ListRunningContainerNames(filter string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseRunningNamesCSV(output), nil
+	return parseStatusesCSV(output), nil
 }
 
-// parseRunningNamesCSV returns the running instances' names from
-// `incus list --format=csv --columns=ns` output ("name,STATUS" per line).
-func parseRunningNamesCSV(output string) []string {
-	var names []string
+// parseStatusesCSV parses `incus list --format=csv --columns=ns` output
+// ("name,STATUS" per line). Instance names cannot contain commas.
+func parseStatusesCSV(output string) []ContainerStatus {
+	var out []ContainerStatus
 	for _, line := range strings.Split(output, "\n") {
-		name, status, ok := strings.Cut(strings.TrimSpace(line), ",")
-		if ok && StatusIsRunning(status) {
-			names = append(names, name)
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		name, status, _ := strings.Cut(line, ",")
+		out = append(out, ContainerStatus{Name: name, Status: status})
+	}
+	return out
+}
+
+// ListRunningContainerNames lists the names of running containers, optionally
+// narrowed by an Incus name filter.
+func ListRunningContainerNames(filter string) ([]string, error) {
+	statuses, err := ListContainerStatuses(filter)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, c := range statuses {
+		if StatusIsRunning(c.Status) {
+			names = append(names, c.Name)
 		}
 	}
-	return names
+	return names, nil
 }
 
 // ContainerFullJSON returns the `/1.0/instances/<name>?recursion=1` JSON of
