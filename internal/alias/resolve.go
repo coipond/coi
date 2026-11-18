@@ -25,29 +25,38 @@ type ResolvedAlias struct {
 var containerNamePattern = regexp.MustCompile(`^` + regexp.QuoteMeta(session.GetContainerPrefix()) + `[a-f0-9]{8}-\d+$`)
 
 // IsContainerName returns true if the argument looks like a container name
-// (either exact match or starts with the container prefix).
-// Names starting with the container prefix are never treated as aliases.
+// (either exact match or starts with the container prefix) and is not a
+// registered alias.
 func IsContainerName(arg string) bool {
-	return containerNamePattern.MatchString(arg) || strings.HasPrefix(arg, session.GetContainerPrefix())
+	if !containerNamePattern.MatchString(arg) && !strings.HasPrefix(arg, session.GetContainerPrefix()) {
+		return false
+	}
+	return !hasRegisteredAliasFor(arg)
 }
 
 // ResolveAliasForRunning resolves an alias (or alias-N) to a running container name.
-// If the arg is an exact container name, it is returned unchanged.
+// If the arg is an exact container name, it is returned unchanged. A name
+// with the container prefix is an alias only when it, or its alias part
+// before a slot suffix, is registered and no container has that exact name.
 // Errors if the alias matches 0 or >1 running containers (listing them for disambiguation).
 func ResolveAliasForRunning(arg string) (string, error) {
-	// 1. Exact container name → pass through
+	// 1. Container name that is no registered alias → pass through
 	if IsContainerName(arg) {
 		return arg, nil
 	}
 
-	// 2. Try the whole argument as an alias. Split a slot suffix (alias-N,
-	// N > 0) only when no running container has that alias and no
-	// registered alias has that name.
-	running, err := runningAliases()
+	// 2. Exact name of an existing container → that container
+	running, err := coiContainers()
 	if err != nil {
 		return "", fmt.Errorf("failed to find containers by alias: %w", err)
 	}
+	if running.has(arg) {
+		return arg, nil
+	}
 
+	// 3. Try the whole argument as an alias. Split a slot suffix (alias-N,
+	// N > 0) only when no running container has that alias and no
+	// registered alias has that name.
 	alias, slotNum := arg, 0
 	containers := running.withAlias(alias)
 	if len(containers) == 0 && !mayBeRegisteredAlias(arg) {
@@ -149,28 +158,38 @@ func loadProjectAlias(dir string) string {
 	return cfg.Container.Alias
 }
 
-// aliasedContainer is a running Coi container and its user.coi.alias value.
+// aliasedContainer is a Coi container and its user.coi.alias value.
 type aliasedContainer struct {
-	name  string
-	alias string
+	name    string
+	alias   string
+	running bool
 }
 
 type aliasedContainers []aliasedContainer
 
-// withAlias returns the names of the containers whose alias is alias.
+// withAlias returns the names of the running containers whose alias is alias.
 func (cs aliasedContainers) withAlias(alias string) []string {
 	var matches []string
 	for _, c := range cs {
-		if c.alias == alias {
+		if c.running && c.alias == alias {
 			matches = append(matches, c.name)
 		}
 	}
 	return matches
 }
 
-// runningAliases lists running Coi containers with their aliases in one
-// Incus call.
-func runningAliases() (aliasedContainers, error) {
+// has reports whether a container of any status is named name.
+func (cs aliasedContainers) has(name string) bool {
+	for _, c := range cs {
+		if c.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// coiContainers lists Coi containers with their aliases in one Incus call.
+func coiContainers() (aliasedContainers, error) {
 	output, err := container.IncusOutput("list", session.ContainerPattern(), "--format=json")
 	if err != nil {
 		return nil, err
@@ -181,23 +200,36 @@ func runningAliases() (aliasedContainers, error) {
 		return nil, fmt.Errorf("failed to parse container list: %w", err)
 	}
 
-	var running aliasedContainers
+	var all aliasedContainers
 	for _, c := range containers {
 		name, _ := c["name"].(string)
 		status, _ := c["status"].(string)
-
-		// Only consider running containers
-		if !container.StatusIsRunning(status) {
-			continue
-		}
-
 		cfg, _ := c["config"].(map[string]interface{})
 		containerAlias, _ := cfg["user.coi.alias"].(string)
 
-		running = append(running, aliasedContainer{name: name, alias: containerAlias})
+		all = append(all, aliasedContainer{
+			name:    name,
+			alias:   containerAlias,
+			running: container.StatusIsRunning(status),
+		})
 	}
 
-	return running, nil
+	return all, nil
+}
+
+// hasRegisteredAliasFor reports whether the alias registry has an entry named
+// arg, or named its alias part when arg ends in a slot suffix. An unreadable
+// registry has none, so container names keep passing through.
+func hasRegisteredAliasFor(arg string) bool {
+	reg, err := Load()
+	if err != nil {
+		return false
+	}
+	if reg.Lookup(arg) != nil {
+		return true
+	}
+	a, s := splitAliasSlot(arg)
+	return s > 0 && reg.Lookup(a) != nil
 }
 
 // mayBeRegisteredAlias reports whether the alias registry has an entry named
