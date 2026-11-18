@@ -56,9 +56,9 @@ the container as a file (never on the command line), the agent's auth and
 context are seeded exactly as in an interactive session, and each fire is a
 fresh ephemeral session by default. --prompt-name looks the prompt up in the
 [prompts] config table (inline text or { file = "..." }, profile-inheritable).
-Prompt mode currently supports the claude and opencode tools (opencode runs
-the prompt via "opencode run") with permission_mode = "bypass"
-(a headless run has no TTY to approve tool use).
+Prompt mode supports the claude, goose, opencode and opencode2 tools (goose
+and opencode run the prompt via their "run" subcommand) with
+permission_mode = "bypass" (a headless run has no TTY to approve tool use).
 
 coi flags go before the command: everything after the command's name is
 passed to the command, flags included (coi run ls -la). --resume and
