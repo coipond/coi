@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coipond/coi/internal/container"
 )
@@ -47,12 +48,22 @@ func GetContainerInitPID(ctx context.Context, containerName string) (int, error)
 	return getInitPIDViaIncus(ctx, containerName)
 }
 
+// initPIDInfoTimeout bounds the incus info fallback: the collector waits for
+// every source, so a hung incus info would stall all detection for the
+// container.
+var initPIDInfoTimeout = 10 * time.Second
+
 // getInitPIDViaIncus calls incus info and parses the PID line. Kept separate
 // from GetContainerInitPID so findCgroupPathViaIncus can call it without
 // creating a call cycle through GetCgroupPath.
 func getInitPIDViaIncus(ctx context.Context, containerName string) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, initPIDInfoTimeout)
+	defer cancel()
 	output, err := container.IncusOutputContext(ctx, "info", containerName)
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0, fmt.Errorf("incus info: %w", ctx.Err())
+		}
 		return 0, fmt.Errorf("failed to get container info: %w", err)
 	}
 	return parseInitPIDFromIncusInfo(output)

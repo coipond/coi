@@ -37,6 +37,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **A stuck `incus info` no longer stops the security monitor** — when coi can't find a container's cgroup on the host, it asks `incus info` for the container's init PID. If that hung, the monitor stopped checking the container for any threat. The call now gives up after 10 seconds.
 - [Bug Fix] **An alias that starts with the container prefix works for `coi attach` and the other running-container commands** — an alias such as `coi-web` worked for `coi shell` but `coi attach`, `coi unfreeze`, `coi monitor` and similar commands took it for a container name and failed with `not found or not running`. A registered alias now resolves to its container. A name that is an existing container's name still means that container.
 - [Bug Fix] **A long-lived allowlisted connection no longer pauses the container when its address expires** — in allowlist mode, an open keep-alive or streaming connection to an address learned from DNS is no longer flagged as "IP not in network allowlist" once that address leaves the allowlist; other checks still apply. A new connection to the expired address is still flagged.
 - [Bug Fix] **`coi file push <file> <container>:` gives a usage error instead of a crash** — an empty container path after `:` made coi panic with a Go stack trace. It now exits 2 with `destination path is empty, use 'container:path'`.
