@@ -50,7 +50,8 @@ type staticTuple struct {
 // private (RFC1918, link-local) entries unless allow_local_network_access,
 // which opens the whole RFC1918 LAN, so an RFC1918 entry's ports limit nothing.
 // An entry naming an address of the host itself is the exception: the host
-// input rules accept it on its own ports only (allowlistHostAccepts).
+// input rules accept it on its own ports only, else on allowed_ports, else
+// not at all (allowlistHostAccepts).
 // Wildcards are rejected — see the error text below for why, and for what to
 // write instead.
 func NewAllowPolicy(entries []string) (*AllowPolicy, error) {

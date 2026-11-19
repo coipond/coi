@@ -557,8 +557,8 @@ type NetworkConfig struct {
 	// AllowLocalNetworkAccess, which opens the whole RFC1918 LAN, so an RFC1918
 	// entry's ports limit nothing; one LAN service is a [[network.hosts]] entry
 	// with ports. Exception: an address of the coi host itself is reachable on
-	// the entry's ports only (host input rules), unless AllowHostAccess. IPv4
-	// only; wildcards rejected.
+	// the entry's ports only (host input rules), else allowed_ports, else not
+	// at all, unless AllowHostAccess. IPv4 only; wildcards rejected.
 	AllowedDomains          []string `toml:"allowed_domains"`
 	RefreshIntervalMinutes  *int     `toml:"refresh_interval_minutes"`   // 0 = no refresh; a pointer so an explicit 0 overrides the default
 	AllowLocalNetworkAccess *bool    `toml:"allow_local_network_access"` // Allow established connections from entire local network (not just gateway)
