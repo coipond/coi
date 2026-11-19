@@ -45,8 +45,8 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 				"192.168.1.80",      // all ports; [[network.hosts]] opens one
 			},
 			Hosts: []config.HostEntry{
-				{IP: "192.168.1.60", Hostnames: []string{"svc"}, Ports: []int{22}},
-				{IP: "192.168.1.60", Hostnames: []string{"svc2"}, Ports: []int{5000}},
+				{IP: "192.168.1.60", Hostnames: []string{"svc"}, Ports: []int{5000}},
+				{IP: "192.168.1.60", Hostnames: []string{"svc2"}, Ports: []int{22}},
 				{IP: "192.168.1.70", Hostnames: []string{"other"}, Ports: []int{22}},
 				{IP: "192.168.1.80", Hostnames: []string{"one"}, Ports: []int{443}},
 			},
@@ -118,6 +118,11 @@ func TestPortsCover(t *testing.T) {
 		if got := portsCover(have, tc.want); got != tc.ok {
 			t.Errorf("portsCover(%v) = %v, want %v", tc.want, got, tc.ok)
 		}
+	}
+	// Out of order: 8101-8200 comes first, so only a second pass over have
+	// reaches it.
+	if !portsCover([]portRange{{Lo: 8101, Hi: 8200}, {Lo: 8000, Hi: 8100}}, []portRange{{Lo: 8050, Hi: 8150}}) {
+		t.Error("ranges out of order cover 8050-8150")
 	}
 	if !portsCover(allPortsRange(), []portRange{{Lo: 65535, Hi: 65535}}) {
 		t.Error("all ports cover 65535")
