@@ -17,6 +17,7 @@ const noSudoConfig = "[network]\nuse_sudo = false\n"
 // body, is matched first. It logs every call and returns the log path.
 func fakeDeleteIncus(t *testing.T, cases string, listed ...string) string {
 	t.Helper()
+	t.Setenv("COI_CONTAINER_PREFIX", "")
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls")
 	var entries []string
