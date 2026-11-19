@@ -1,5 +1,5 @@
 """
-Test for coi run --prompt with the goose tool.
+Test for coi run --prompt - goose launch argv, stdin and exit code.
 
 Tests that:
 1. A plain prompt launches `goose run --quiet --instructions -`.
