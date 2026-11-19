@@ -166,6 +166,9 @@ func TestConfigFilePortEntryValidation(t *testing.T) {
 		{"[[ports.map]]\nname = \"web\"\ncontainer = 65536\n", "'container' must be a TCP port (1-65535), got 65536"},
 		{"[[ports.map]]\nname = \"web\"\ncontainer = 8000\nhost = 70000\n", "'host' must be a TCP port (1-65535) or omitted for auto-allocation, got 70000"},
 		{"[[ports.map]]\nname = \"web\"\ncontainer = 8000\nhost = -1\n", "'host' must be a TCP port (1-65535) or omitted for auto-allocation, got -1"},
+		{"[ports]\npool = 99\n", "[ports] pool must be 0-10, got 99"},
+		{"[ports]\npool = 11\n", "[ports] pool must be 0-10, got 11"},
+		{"[ports]\npool = -1\n", "[ports] pool must be 0-10, got -1"},
 	}
 
 	for _, trusted := range []bool{true, false} {
@@ -179,13 +182,17 @@ func TestConfigFilePortEntryValidation(t *testing.T) {
 			}
 		}
 
-		body := "[[ports.map]]\nname = \"web\"\ncontainer = 65535\nhost = 1\n"
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		cfg := GetDefaultConfig()
-		if err := loadConfigFileScoped(cfg, path, trusted); err != nil {
-			t.Errorf("trusted=%v: valid entry rejected: %v", trusted, err)
+		for _, body := range []string{
+			"[[ports.map]]\nname = \"web\"\ncontainer = 65535\nhost = 1\n",
+			"[ports]\npool = 0\n",
+			"[ports]\npool = 10\n",
+		} {
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := loadConfigFileScoped(GetDefaultConfig(), path, trusted); err != nil {
+				t.Errorf("trusted=%v: valid %q rejected: %v", trusted, body, err)
+			}
 		}
 	}
 }
