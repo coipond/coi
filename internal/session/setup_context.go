@@ -238,11 +238,24 @@ const (
 	autoContextMissingMarker = "coi:missing"
 )
 
-// autoContextReadCmd creates the auto-context file's directory and prints the
-// file's current content (after an exists/missing marker line) in one exec.
-func autoContextReadCmd(destPath string) string {
-	return fmt.Sprintf("mkdir -p %s && if [ -f %s ]; then echo %s; cat %s; else echo %s; fi",
-		shellEscape(filepath.Dir(destPath)), shellEscape(destPath), autoContextExistsMarker,
+// autoContextReadCmd creates the auto-context file's missing directories under
+// homeDir and prints the file's current content (after an exists/missing
+// marker line) in one exec. The exec runs as root, so each directory it
+// creates is handed to the home's owner: a root-owned ~/.config/goose stops
+// goose saving its config.
+func autoContextReadCmd(destPath, homeDir string) string {
+	owner := homeFileOwner(homeDir)
+	var dirs []string
+	for dir := filepath.Dir(destPath); dir != homeDir && strings.HasPrefix(dir, homeDir+"/"); dir = filepath.Dir(dir) {
+		dirs = append([]string{shellEscape(dir)}, dirs...)
+	}
+	mkdirs := ""
+	if len(dirs) > 0 {
+		mkdirs = fmt.Sprintf(`for d in %s; do [ -d "$d" ] || { mkdir "$d" && chown %d:%d "$d"; } || exit 1; done && `,
+			strings.Join(dirs, " "), owner, owner)
+	}
+	return fmt.Sprintf("%sif [ -f %s ]; then echo %s; cat %s; else echo %s; fi",
+		mkdirs, shellEscape(destPath), autoContextExistsMarker,
 		shellEscape(destPath), autoContextMissingMarker)
 }
 
@@ -258,7 +271,7 @@ func autoContextFileOp(mgr container.ContainerManager, acf tool.ToolWithAutoCont
 	// Ensure the parent directory exists and read the file if it is already
 	// there (e.g., host's CLAUDE.md was copied, or the container is persistent
 	// and a prior session already wrote one).
-	out, err := mgr.ExecCommand(autoContextReadCmd(destPath), container.ExecCommandOptions{Capture: true})
+	out, err := mgr.ExecCommand(autoContextReadCmd(destPath, homeDir), container.ExecCommandOptions{Capture: true})
 	if err != nil {
 		return guestOp{}, fmt.Errorf("failed to read %s: %w", relPath, err)
 	}

@@ -2,7 +2,10 @@ package session
 
 import (
 	"encoding/base64"
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -333,5 +336,43 @@ func TestInjectAutoContextFile_ContentContainingMarkerStaysIdempotent(t *testing
 	got := mgr.files[destPath]
 	if n := strings.Count(got, sentinel); n != 1 {
 		t.Errorf("content mentioning the end marker inline must remain a single block, found %d copies (%d chars)", n, len(got))
+	}
+}
+
+// TestAutoContextReadCmd_ChownsCreatedDirs runs the probe with a logging
+// `chown` on PATH: the exec runs as root, so a directory it creates under the
+// home (~/.config/goose on a host without goose config) must go to the home's
+// owner, and a directory that already exists must be left alone.
+func TestAutoContextReadCmd_ChownsCreatedDirs(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "chown.log")
+	script := "#!/bin/sh\necho \"$*\" >> " + shellEscape(logPath) + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "chown"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dest := filepath.Join(home, ".config", "goose", ".goosehints")
+	out, err := exec.Command("bash", "-c", autoContextReadCmd(dest, home)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe failed: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != autoContextMissingMarker {
+		t.Errorf("output = %q, want %q", out, autoContextMissingMarker)
+	}
+	if fi, err := os.Stat(filepath.Dir(dest)); err != nil || !fi.IsDir() {
+		t.Fatalf("%s not created: %v", filepath.Dir(dest), err)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("chown never ran: %v", err)
+	}
+	want := fmt.Sprintf("%d:%d %s\n", container.CodeUID, container.CodeUID, filepath.Dir(dest))
+	if string(log) != want {
+		t.Errorf("chown calls = %q, want %q", log, want)
 	}
 }

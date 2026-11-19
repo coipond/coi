@@ -236,6 +236,16 @@ func TestGooseTool_SetSessionDiscoveryOutput_ResetsID(t *testing.T) {
 	}
 }
 
+func TestGooseTool_AutoContextFile(t *testing.T) {
+	acf, ok := NewGoose().(ToolWithAutoContextFile)
+	if !ok {
+		t.Fatal("GooseTool does not implement ToolWithAutoContextFile")
+	}
+	if got := acf.AutoContextFile(); got != ".config/goose/.goosehints" {
+		t.Errorf("AutoContextFile() = %q, want %q", got, ".config/goose/.goosehints")
+	}
+}
+
 func TestGooseTool_DataDirs(t *testing.T) {
 	tdd, ok := NewGoose().(ToolWithDataDirs)
 	if !ok {
