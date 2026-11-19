@@ -50,9 +50,9 @@ coi builds the command from the profile's tool via the tool.Tool abstraction
 tool (claude/codex/…). The prompt (and optional system prompt) are staged into
 the container as files and referenced via "$(cat <file>)", keeping arbitrary
 prompt content off the command line. Only tool-derived env is emitted: model
-and effort settings, goose's GOOSE_MODE, plus the session-dir and XDG redirects
-to the workspace for pi, omp and opencode. Secrets and auth stay with the
-caller, which adds its own --env when it execs.
+and effort settings, goose's GOOSE_MODE, plus the session-dir redirects to the
+workspace for pi and omp. Secrets and auth stay with the caller, which adds its
+own --env when it execs.
 
 Tools that can't embed the initial prompt in their launch command (e.g.
 opencode) instead get a "prompt" field: the in-container path to the staged
@@ -89,7 +89,7 @@ func init() {
 
 // toolSpecResult is the machine-readable spec a `coi tool spec` prints: the
 // exact argv to run in the container and the tool-derived env only (model/effort,
-// goose's GOOSE_MODE, plus pi/omp/opencode session-dir/XDG redirects).
+// goose's GOOSE_MODE, plus pi/omp session-dir redirects).
 // Secrets/auth are deliberately absent — the caller adds those itself.
 //
 // Prompt is set only for tools that can't embed the initial prompt in their
@@ -233,11 +233,11 @@ func (a *App) toolSpecCommand(cmd *cobra.Command) error {
 		return err
 	}
 
-	// Env: tool-derived only, computed against the container's
-	// ACTUAL workspace mount — pi/omp/opencode derive session-dir/XDG paths from
-	// it, so a container that mounts the workspace somewhere other than
-	// /workspace (preserve_workspace_path / worktree) must get the real path,
-	// not a hardcoded default. Secrets/auth stay with the caller.
+	// Env: tool-derived only, computed against the container's ACTUAL
+	// workspace mount — pi/omp derive session-dir paths from it, so a
+	// container that mounts the workspace somewhere other than /workspace
+	// (preserve_workspace_path / worktree) must get the real path, not a
+	// hardcoded default. Secrets/auth stay with the caller.
 	env := map[string]string{}
 	mergeToolEnv(env, t, mgr.GetWorkspacePath())
 
