@@ -586,7 +586,11 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 				}
 			}
 			if g := s.result.Grants; g != nil {
-				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(envSources, launch).Render())
+				report, err := grantsReport(g.WithEnv(envSources, launch), grantsJSON)
+				if err != nil {
+					return nil, err
+				}
+				fmt.Fprintf(os.Stderr, "\n%s", report)
 			}
 			fmt.Fprintf(os.Stderr, "\nStarting session...\n")
 			fmt.Fprintf(os.Stderr, "Session ID: %s\n", s.sessionID)
@@ -635,6 +639,19 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 			return nil, runErr
 		},
 	}
+}
+
+// grantsReport is the startup grants report: the text block, or with asJSON
+// one JSON line.
+func grantsReport(g *session.Grants, asJSON bool) (string, error) {
+	if !asJSON {
+		return g.Render(), nil
+	}
+	b, err := g.JSON()
+	if err != nil {
+		return "", fmt.Errorf("grants report: %w", err)
+	}
+	return string(b) + "\n", nil
 }
 
 // registerShellAlias saves the [container] alias, if any, into the alias
