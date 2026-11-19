@@ -20,13 +20,13 @@ from pathlib import Path
 BUILD_SH = Path(__file__).resolve().parents[2] / "profiles" / "default" / "build.sh"
 
 # Sources the GOOSE_* constants, log and install_goose from build.sh, sets the
-# pinned sha256 values to $TEST_SHA256 and runs the installer with the install
+# pinned sha256 values to $TEST_SHA256_<ARCH> and runs the installer with the install
 # paths moved under $TEST_ROOT. tar logs each call to $TAR_LOG.
 _RUN_INSTALL = r"""
 set -euo pipefail
 source <(grep -E '^GOOSE_(VERSION|SHA256_[A-Z0-9_]+)=' "$BUILD_SH")
-GOOSE_SHA256_X86_64="$TEST_SHA256"
-GOOSE_SHA256_AARCH64="$TEST_SHA256"
+GOOSE_SHA256_X86_64="$TEST_SHA256_X86_64"
+GOOSE_SHA256_AARCH64="$TEST_SHA256_AARCH64"
 source <(sed -n '/^log()/,/^}/p' "$BUILD_SH")
 source <(sed -n '/^install_goose()/,/^}/p' "$BUILD_SH" |
     sed -e "s|/usr/local/bin|$TEST_ROOT/bin|g" -e "s|/etc/goose|$TEST_ROOT/etc/goose|g")
@@ -36,6 +36,15 @@ install_goose
 
 GOOSE_BINARY = b"#!/bin/sh\necho goose 1.57.0-fake\n"
 
+# The pin variable install_goose must check for each `uname -m`; the other
+# arch's pin is set to OTHER_ARCH_SHA256 so a swapped pin fails the install.
+PIN_VARS = {
+    "x86_64": "TEST_SHA256_X86_64",
+    "aarch64": "TEST_SHA256_AARCH64",
+    "arm64": "TEST_SHA256_AARCH64",
+}
+OTHER_ARCH_SHA256 = "f" * 64
+
 
 def _goose_version():
     values = re.findall(r'^GOOSE_VERSION="([^"]+)"', BUILD_SH.read_text(), re.MULTILINE)
@@ -44,8 +53,8 @@ def _goose_version():
 
 
 def _run_install(tmp_path, machine, sha256=None):
-    """Run install_goose on a host whose `uname -m` is `machine`. The pinned
-    sha256 is set to `sha256` (None: the fake tarball's real sha256).
+    """Run install_goose on a host whose `uname -m` is `machine`. The pin of
+    that arch is set to `sha256` (None: the fake tarball's real sha256).
     Returns (result, requested URLs, tar calls)."""
     fake_bin = tmp_path / "fakebin"
     fake_bin.mkdir()
@@ -86,9 +95,13 @@ def _run_install(tmp_path, machine, sha256=None):
         "PATH": f"{fake_bin}{os.pathsep}{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
         "BUILD_SH": str(BUILD_SH),
         "TEST_ROOT": str(tmp_path),
-        "TEST_SHA256": sha256 or hashlib.sha256(tarball.read_bytes()).hexdigest(),
+        "TEST_SHA256_X86_64": OTHER_ARCH_SHA256,
+        "TEST_SHA256_AARCH64": OTHER_ARCH_SHA256,
+        "TMPDIR": str(tmp_path),
         "TAR_LOG": str(tar_log),
     }
+    if machine in PIN_VARS:
+        env[PIN_VARS[machine]] = sha256 or hashlib.sha256(tarball.read_bytes()).hexdigest()
     result = subprocess.run(
         ["bash", "-c", _RUN_INSTALL], capture_output=True, text=True, env=env, timeout=60
     )
