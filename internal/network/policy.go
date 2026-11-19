@@ -43,11 +43,17 @@ type staticTuple struct {
 //	10.0.0.0/8           IPv4 CIDR
 //	api.example.com      exact hostname
 //	github.com:443       hostname reachable only on 443
-//	192.168.1.50:8080    address reachable only on 8080
+//	203.0.113.10:8080    address reachable only on 8080
 //
 // A per-entry port set scopes that destination (Phase 3); an entry with no port
-// inherits the global allowed_ports, else all ports. Wildcards are rejected — see
-// the error text below for why, and for what to write instead.
+// inherits the global allowed_ports, else all ports. The firewall rejects
+// private (RFC1918, link-local) entries unless allow_local_network_access,
+// which opens the whole RFC1918 LAN, so an RFC1918 entry's ports limit nothing.
+// An entry naming an address of the host itself is the exception: the host
+// input rules accept it on its own ports only, else on allowed_ports, else
+// not at all (allowlistHostAccepts).
+// Wildcards are rejected — see the error text below for why, and for what to
+// write instead.
 func NewAllowPolicy(entries []string) (*AllowPolicy, error) {
 	p := &AllowPolicy{exact: make(map[string]bool), namePorts: make(map[string][]portRange)}
 

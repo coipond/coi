@@ -550,9 +550,16 @@ type NetworkConfig struct {
 	// AllowedDomains is the allowlist-mode reachable-destination list: hostnames,
 	// IPv4 addresses, and IPv4 CIDRs. Each entry may carry a per-destination port
 	// scope as ":ports" — a comma list of single ports and/or lo-hi ranges, e.g.
-	// "github.com:443", "192.168.1.50:8080", "10.0.0.0/8:22", "svc:8000-8100". An
-	// entry with no port inherits the global allowed_ports (else all ports), so a
-	// per-entry scope tightens just that destination. IPv4 only; wildcards rejected.
+	// "github.com:443", "203.0.113.10:8080", "198.51.100.0/24:22",
+	// "svc:8000-8100". An entry with no port inherits the global allowed_ports
+	// (else all ports), so a per-entry scope tightens just that destination.
+	// Private (RFC1918, link-local) entries are rejected unless
+	// allow_local_network_access, which opens the whole RFC1918 LAN, so an
+	// RFC1918 entry's ports limit nothing; one LAN service is a
+	// [[network.hosts]] entry with ports. Exception: an address of the coi host
+	// itself is reachable on the entry's ports only (host input rules), else
+	// allowed_ports, else not at all, unless allow_host_access. IPv4 only;
+	// wildcards rejected.
 	AllowedDomains          []string `toml:"allowed_domains"`
 	RefreshIntervalMinutes  *int     `toml:"refresh_interval_minutes"`   // 0 = no refresh; a pointer so an explicit 0 overrides the default
 	AllowLocalNetworkAccess *bool    `toml:"allow_local_network_access"` // Allow established connections from entire local network (not just gateway)
