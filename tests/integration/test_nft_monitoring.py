@@ -774,7 +774,13 @@ enabled = true
                 f"Expected the nft monitor to flag the C2-port flow.{diag()}"
             )
             assert proc_c2, f"Expected the process monitor to flag the C2-port flow.{diag()}"
-            high_events = [e for e in get_threat_events(name, nft=True) if e.get("level") == "high"]
+            # Network only: a fresh container's cgroup block reads can raise an
+            # unrelated filesystem "Large workspace read" HIGH.
+            high_events = [
+                e
+                for e in get_threat_events(name, nft=True)
+                if e.get("level") == "high" and e.get("category") == "network"
+            ]
             assert not high_events, (
                 f"Open mode: LAN access must not be HIGH: {high_events}.{diag()}"
             )
