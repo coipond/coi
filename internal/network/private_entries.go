@@ -50,9 +50,10 @@ func blockedPrivateEntries(tuples []staticTuple, skip map[string]bool) []blocked
 // AllowlistPrivateWarnings returns one warning per allowed_domains IP/CIDR
 // entry that allowlist mode blocks because it overlaps a private range and
 // allow_local_network_access is off. Left out: an address of the host (the
-// input chain opens it, allowlistHostAccepts) and the address of a private
-// [[network.hosts]] entry (applyHostFirewall opens it). Callers show the
-// warnings: the package logger is a session log file or discarded.
+// input chain opens it, allowlistHostAccepts) and an address that private
+// [[network.hosts]] entries open on all of the entry's ports
+// (applyHostFirewall). Callers show the warnings: the package logger is a
+// session log file or discarded.
 func AllowlistPrivateWarnings(cfg *config.NetworkConfig) []string {
 	if cfg.Mode != config.NetworkModeAllowlist || config.BoolVal(cfg.AllowLocalNetworkAccess) {
 		return nil
@@ -61,10 +62,18 @@ func AllowlistPrivateWarnings(cfg *config.NetworkConfig) []string {
 	if err != nil {
 		return nil // setupAllowlist reports it
 	}
-	skip := hostIPv4Addrs()
+	globalPorts := intsToPortRanges(cfg.AllowedPorts)
+	hostPorts := make(map[string][]portRange)
 	for _, h := range cfg.Hosts {
 		if classifyHostIP(h.IP) == hostPrivate {
-			skip[h.IP] = true
+			hostPorts[h.IP] = append(hostPorts[h.IP], resolvePorts(intsToPortRanges(h.Ports), globalPorts)...)
+		}
+	}
+	skip := hostIPv4Addrs()
+	for _, t := range policy.staticTuples() {
+		ip := strings.TrimSuffix(t.CIDR, "/32")
+		if opened, ok := hostPorts[ip]; ok && portsCover(opened, resolvePorts(t.Ports, globalPorts)) {
+			skip[ip] = true
 		}
 	}
 	var warnings []string
@@ -79,4 +88,24 @@ func AllowlistPrivateWarnings(cfg *config.NetworkConfig) []string {
 			"which allowlist mode blocks; only network.allow_local_network_access = true opens it (and the whole LAN)", b.Entry))
 	}
 	return warnings
+}
+
+// portsCover reports whether the ranges in have cover every port in want.
+func portsCover(have, want []portRange) bool {
+	for _, w := range want {
+		next := int(w.Lo)
+		for moved := true; moved && next <= int(w.Hi); {
+			moved = false
+			for _, h := range have {
+				if int(h.Lo) <= next && next <= int(h.Hi) {
+					next = int(h.Hi) + 1
+					moved = true
+				}
+			}
+		}
+		if next <= int(w.Hi) {
+			return false
+		}
+	}
+	return true
 }

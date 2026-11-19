@@ -41,16 +41,26 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 				"192.168.1.50:5000", "10.0.0.0/7", "169.254.169.254", "1.2.3.4:443", "github.com",
 				"192.168.1.10:8080", // host address
 				"192.168.1.60:5000", // opened by [[network.hosts]]
+				"192.168.1.70:5000", // [[network.hosts]] opens other ports
+				"192.168.1.80",      // all ports; [[network.hosts]] opens one
 			},
-			Hosts: []config.HostEntry{{IP: "192.168.1.60", Hostnames: []string{"svc"}, Ports: []int{5000}}},
+			Hosts: []config.HostEntry{
+				{IP: "192.168.1.60", Hostnames: []string{"svc"}, Ports: []int{22}},
+				{IP: "192.168.1.60", Hostnames: []string{"svc2"}, Ports: []int{5000}},
+				{IP: "192.168.1.70", Hostnames: []string{"other"}, Ports: []int{22}},
+				{IP: "192.168.1.80", Hostnames: []string{"one"}, Ports: []int{443}},
+			},
 		}
 	}
 
 	got := AllowlistPrivateWarnings(cfg())
-	if len(got) != 3 {
-		t.Fatalf("want 3 warnings, got %d: %q", len(got), got)
+	if len(got) != 5 {
+		t.Fatalf("want 5 warnings, got %d: %q", len(got), got)
 	}
-	for i, entry := range []string{"192.168.1.50", "10.0.0.0/7"} {
+	for i, entry := range []string{"192.168.1.50", "10.0.0.0/7", "", "192.168.1.70", "192.168.1.80"} {
+		if entry == "" {
+			continue
+		}
 		if !strings.Contains(got[i], "entry "+entry+" ") ||
 			!strings.Contains(got[i], "allow_local_network_access = true") ||
 			!strings.Contains(got[i], "[[network.hosts]]") {
@@ -69,6 +79,18 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 	if got := AllowlistPrivateWarnings(c); len(got) != 0 {
 		t.Errorf("allow_local_network_access: want no warning, got %q", got)
 	}
+	// allowed_ports is what both sides inherit when they name no ports.
+	c = cfg()
+	c.AllowedPorts = []int{443}
+	c.AllowedDomains = []string{"192.168.1.80"}
+	if got := AllowlistPrivateWarnings(c); len(got) != 0 {
+		t.Errorf("entry on allowed_ports opened by [[network.hosts]]: want no warning, got %q", got)
+	}
+	c.Hosts = []config.HostEntry{{IP: "192.168.1.80", Hostnames: []string{"one"}}}
+	if got := AllowlistPrivateWarnings(c); len(got) != 0 {
+		t.Errorf("both on allowed_ports: want no warning, got %q", got)
+	}
+
 	c = cfg()
 	c.Mode = config.NetworkModeRestricted
 	if got := AllowlistPrivateWarnings(c); len(got) != 0 {
@@ -78,5 +100,26 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 	c.AllowedDomains = append(c.AllowedDomains, "*.example.com")
 	if got := AllowlistPrivateWarnings(c); len(got) != 0 {
 		t.Errorf("invalid allowed_domains: want no warning, got %q", got)
+	}
+}
+
+func TestPortsCover(t *testing.T) {
+	have := []portRange{{Lo: 8000, Hi: 8100}, {Lo: 22, Hi: 22}, {Lo: 8101, Hi: 8200}}
+	for _, tc := range []struct {
+		want []portRange
+		ok   bool
+	}{
+		{[]portRange{{Lo: 22, Hi: 22}}, true},
+		{[]portRange{{Lo: 8050, Hi: 8150}}, true}, // spans two adjacent ranges
+		{[]portRange{{Lo: 22, Hi: 23}}, false},
+		{[]portRange{{Lo: 22, Hi: 22}, {Lo: 443, Hi: 443}}, false},
+		{allPortsRange(), false},
+	} {
+		if got := portsCover(have, tc.want); got != tc.ok {
+			t.Errorf("portsCover(%v) = %v, want %v", tc.want, got, tc.ok)
+		}
+	}
+	if !portsCover(allPortsRange(), []portRange{{Lo: 65535, Hi: 65535}}) {
+		t.Error("all ports cover 65535")
 	}
 }
