@@ -11,7 +11,7 @@
 
 **Give the agent a machine. Just not yours.**
 
-`coi` runs your AI coding tool (Claude Code, Codex, opencode, pi, omp) inside its own isolated Linux system: a full-OS container with root access, systemd, Docker, and the freedom to install anything. The agent works like it would on a real server, but it cannot touch your host, cannot see your credentials, and if it does something dangerous, `coi` pauses or kills the container on its own.
+`coi` runs your AI coding tool (Claude Code, Codex, opencode, pi, omp, goose) inside its own isolated Linux system: a full-OS container with root access, systemd, Docker, and the freedom to install anything. The agent works like it would on a real server, but it cannot touch your host, cannot see your credentials, and if it does something dangerous, `coi` pauses or kills the container on its own.
 
 One command drops you into a coding session. Your project is mounted, file permissions just work, and your SSH keys, tokens, and environment variables never enter the container unless you explicitly say so.
 
