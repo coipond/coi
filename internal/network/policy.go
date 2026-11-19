@@ -49,6 +49,8 @@ type staticTuple struct {
 // inherits the global allowed_ports, else all ports. The firewall rejects
 // private (RFC1918, link-local) entries unless allow_local_network_access,
 // which opens the whole RFC1918 LAN, so an RFC1918 entry's ports limit nothing.
+// An entry naming an address of the host itself is the exception: the host
+// input rules accept it on its own ports only (allowlistHostAccepts).
 // Wildcards are rejected — see the error text below for why, and for what to
 // write instead.
 func NewAllowPolicy(entries []string) (*AllowPolicy, error) {
