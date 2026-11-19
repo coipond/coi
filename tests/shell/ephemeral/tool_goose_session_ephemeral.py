@@ -20,12 +20,11 @@ launched binary and skip the discovery.
 """
 
 import subprocess
-import time
 from pathlib import Path
 
 from support.helpers import (
     calculate_container_name,
-    start_background_shell,
+    launch_recorded_tool,
     tool_data_dir,
     write_trusted_coi_config,
 )
@@ -57,26 +56,6 @@ cat "$cfg/.goosehints" > "$dir/{HINTS_COPY}" 2>/dev/null
 mv "$dir/{MARKER}.tmp" "$dir/{MARKER}"
 exec sleep 300
 """
-
-
-def _launch(coi_binary, workspace_dir, env, marker, *extra):
-    if marker.exists():
-        marker.unlink()
-    _, result = start_background_shell(
-        coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180, extra_args=extra
-    )
-
-    # The tool starts inside tmux shortly after the container is ready.
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline and not marker.exists():
-        time.sleep(1)
-    assert marker.exists(), f"goose was not launched (no marker). coi stderr:\n{result.stderr}"
-
-    recorded = {}
-    for line in marker.read_text().splitlines():
-        key, _, value = line.partition("=")
-        recorded[key] = value
-    return recorded
 
 
 def test_goose_session_setup(coi_binary, cleanup_containers, workspace_dir, tmp_path):
@@ -112,7 +91,7 @@ def test_goose_session_setup(coi_binary, cleanup_containers, workspace_dir, tmp_
 
     # === Phase 1: new session ===
 
-    recorded = _launch(coi_binary, workspace_dir, env, marker)
+    recorded = launch_recorded_tool(coi_binary, workspace_dir, env, marker)
 
     assert recorded.get("argv") == "session", (
         f"a new session must start `goose session`: {recorded}"
@@ -147,7 +126,7 @@ def test_goose_session_setup(coi_binary, cleanup_containers, workspace_dir, tmp_
 
     # === Phase 2: resume ===
 
-    recorded = _launch(coi_binary, workspace_dir, env, marker, "--resume")
+    recorded = launch_recorded_tool(coi_binary, workspace_dir, env, marker, "--resume")
 
     assert recorded.get("argv") == "session --resume --session-id 20261107_1", (
         f"--resume should resume the workspace's own session by id: {recorded}"
