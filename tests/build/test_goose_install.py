@@ -4,24 +4,23 @@ Tests for the goose install in build.sh.
 install_goose downloads the pinned goose release tarball for the host CPU
 (x86_64 or aarch64), checks its sha256 before unpacking, installs
 /usr/local/bin/goose and writes /etc/goose/config.yaml. These tests source the
-real function from build.sh with curl, uname and sleep faked via PATH, the
-install paths moved under tmp_path and the pinned sha256 values replaced by
-the fake tarball's. Hermetic: no network, no root, no Incus.
+real function from build.sh with curl, uname and sleep faked via PATH and the
+install paths moved under tmp_path. The pin of the arch under test is set to
+the fake tarball's sha256 and the other arch's pin to a wrong value.
+Hermetic: no network, no root, no Incus.
 """
 
 import hashlib
 import io
 import os
-import re
 import subprocess
 import tarfile
-from pathlib import Path
 
-BUILD_SH = Path(__file__).resolve().parents[2] / "profiles" / "default" / "build.sh"
+from support.build_sh import BUILD_SH, build_sh_var
 
 # Sources the GOOSE_* constants, log and install_goose from build.sh, sets the
-# pinned sha256 values to $TEST_SHA256_<ARCH> and runs the installer with the install
-# paths moved under $TEST_ROOT. tar logs each call to $TAR_LOG.
+# pinned sha256 values to $TEST_SHA256_<ARCH> and runs the installer with the
+# install paths moved under $TEST_ROOT. tar logs each call to $TAR_LOG.
 _RUN_INSTALL = r"""
 set -euo pipefail
 source <(grep -E '^GOOSE_(VERSION|SHA256_[A-Z0-9_]+)=' "$BUILD_SH")
@@ -44,12 +43,6 @@ PIN_VARS = {
     "arm64": "TEST_SHA256_AARCH64",
 }
 OTHER_ARCH_SHA256 = "f" * 64
-
-
-def _goose_version():
-    values = re.findall(r'^GOOSE_VERSION="([^"]+)"', BUILD_SH.read_text(), re.MULTILINE)
-    assert len(values) == 1, f"expected one GOOSE_VERSION, got {values}"
-    return values[0]
 
 
 def _run_install(tmp_path, machine, sha256=None):
@@ -112,7 +105,7 @@ def _run_install(tmp_path, machine, sha256=None):
 
 def test_goose_arch_map_downloads_pinned_release_asset(tmp_path):
     """Each supported `uname -m` downloads its asset from the pinned release."""
-    base = f"https://github.com/aaif-goose/goose/releases/download/{_goose_version()}"
+    base = f"https://github.com/aaif-goose/goose/releases/download/{build_sh_var('GOOSE_VERSION')}"
     cases = {
         "x86_64": "goose-x86_64-unknown-linux-gnu.tar.gz",
         "aarch64": "goose-aarch64-unknown-linux-gnu.tar.gz",
