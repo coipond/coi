@@ -21,7 +21,8 @@ const (
 	NetworkModeRestricted NetworkMode = "restricted"
 	// NetworkModeOpen allows all network access (current behavior)
 	NetworkModeOpen NetworkMode = "open"
-	// NetworkModeAllowlist allows only specific domains (with RFC1918 always blocked)
+	// NetworkModeAllowlist allows only specific domains; RFC1918 and metadata
+	// ranges stay blocked unless allow_local_network_access is set
 	NetworkModeAllowlist NetworkMode = "allowlist"
 )
 

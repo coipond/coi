@@ -1,5 +1,5 @@
-// Package tool defines the AI coding tools (Claude Code, codex, opencode, pi,
-// omp) that coi can run in containers: how each is launched, resumed and
+// Package tool defines the AI coding tools that coi can run in containers (the
+// tools registered in registry.go): how each is launched, resumed and
 // configured for sandboxed, permission-bypassing operation.
 package tool
 
