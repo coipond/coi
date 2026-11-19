@@ -33,11 +33,17 @@ func useTopHome(tb testing.TB) string {
 // writeSavedSession writes one saved session's metadata.json.
 func writeSavedSession(tb testing.TB, sessionsDir, id, containerName, workspace string, persistent bool) {
 	tb.Helper()
-	dir := filepath.Join(sessionsDir, id)
+	writeSessionMetadata(tb, sessionsDir, session.SessionMetadata{SessionID: id, ContainerName: containerName, Workspace: workspace, Persistent: persistent})
+}
+
+// writeSessionMetadata writes m as the metadata.json of session m.SessionID.
+func writeSessionMetadata(tb testing.TB, sessionsDir string, m session.SessionMetadata) {
+	tb.Helper()
+	dir := filepath.Join(sessionsDir, m.SessionID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		tb.Fatal(err)
 	}
-	data, err := json.Marshal(session.SessionMetadata{SessionID: id, ContainerName: containerName, Workspace: workspace, Persistent: persistent})
+	data, err := json.Marshal(m)
 	if err != nil {
 		tb.Fatal(err)
 	}
