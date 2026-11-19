@@ -158,39 +158,6 @@ func allowlistHostAccepts(tuples []staticTuple, globalPorts []portRange, hostAdd
 	return accepts
 }
 
-// allowlistPrivateCIDRs are the ranges allowlist mode rejects ahead of its
-// allowed_domains accepts unless allow_local_network_access is set.
-var allowlistPrivateCIDRs = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
-
-// blockedPrivateEntries returns the allowed_domains literal entries that
-// overlap allowlistPrivateCIDRs, so the forward chain rejects them (wholly or
-// in part). None with allow_local_network_access. An address of the host is
-// left out: the input chain handles it (allowlistHostAccepts).
-func blockedPrivateEntries(tuples []staticTuple, allowLocal bool, hostAddrs map[string]bool) []string {
-	if allowLocal {
-		return nil
-	}
-	var entries []string
-	for _, t := range tuples {
-		ip := strings.TrimSuffix(t.CIDR, "/32")
-		if hostAddrs[ip] {
-			continue
-		}
-		_, entryNet, err := net.ParseCIDR(t.CIDR)
-		if err != nil {
-			continue
-		}
-		for _, cidr := range allowlistPrivateCIDRs {
-			_, privNet, _ := net.ParseCIDR(cidr)
-			if entryNet.Contains(privNet.IP) || privNet.Contains(entryNet.IP) {
-				entries = append(entries, ip)
-				break
-			}
-		}
-	}
-	return entries
-}
-
 // addHostInputRules adds the container's input-chain rules for mode
 // (restricted or allowlist), to the current batch if there is one. A no-op
 // with allow_host_access.

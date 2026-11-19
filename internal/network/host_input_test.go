@@ -142,24 +142,3 @@ func TestParseInputRulesForDelete(t *testing.T) {
 		t.Errorf("got %+v", rules)
 	}
 }
-
-func TestBlockedPrivateEntries(t *testing.T) {
-	host := map[string]bool{"192.168.1.10": true}
-	tuples := []staticTuple{
-		{CIDR: "192.168.1.50/32", Ports: []portRange{{Lo: 5000, Hi: 5000}}}, // private IP
-		{CIDR: "172.16.0.0/16"}, // private CIDR
-		{CIDR: "10.0.0.0/7"},    // partly private
-		{CIDR: "172.0.0.0/8"},   // starts outside 172.16.0.0/12
-		{CIDR: "169.254.169.254/32"},
-		{CIDR: "1.2.3.4/32"}, // public
-		{CIDR: "11.0.0.0/8"}, // public, next to 10/8
-		{CIDR: "192.168.1.10/32", Ports: []portRange{{Lo: 8080, Hi: 8080}}}, // host address
-	}
-	want := []string{"192.168.1.50", "172.16.0.0/16", "10.0.0.0/7", "172.0.0.0/8", "169.254.169.254"}
-	if got := blockedPrivateEntries(tuples, false, host); !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v want %v", got, want)
-	}
-	if got := blockedPrivateEntries(tuples, true, host); len(got) != 0 {
-		t.Errorf("allow_local_network_access blocks nothing, got %v", got)
-	}
-}

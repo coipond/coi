@@ -157,6 +157,9 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 		}
 		result.NetworkApplied = string(opts.NetworkConfig.Mode)
 		opts.Logger(fmt.Sprintf("Network isolation applied: %s", opts.NetworkConfig.Mode))
+		for _, w := range network.AllowlistPrivateWarnings(opts.NetworkConfig) {
+			opts.Logger(w)
+		}
 	}
 
 	// 7. Runtime limits (timeout monitor, max_processes)

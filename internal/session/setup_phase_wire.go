@@ -128,6 +128,9 @@ func (st *setupState) phaseSetupNetwork(ctx context.Context) (Teardown, error) {
 		if err := st.result.NetworkManager.SetupForContainer(ctx, st.result.ContainerName); err != nil {
 			return nil, fmt.Errorf("failed to setup network isolation: %w", err)
 		}
+		for _, w := range network.AllowlistPrivateWarnings(st.opts.Network.Config) {
+			st.opts.Logger(w)
+		}
 	}
 	return nil, nil
 }
