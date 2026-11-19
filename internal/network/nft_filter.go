@@ -254,9 +254,15 @@ func (f *NftManager) ApplyAllowlist(cfg *config.NetworkConfig, _ []string) error
 		f.abortBatch()
 		return err
 	}
+	hostAddrs := hostIPv4Addrs()
+	for _, entry := range blockedPrivateEntries(policy.staticTuples(), config.BoolVal(cfg.AllowLocalNetworkAccess), hostAddrs) {
+		logWarnf("Warning: allowed_domains entry %s is in a private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16), "+
+			"which allowlist mode blocks; set network.allow_local_network_access = true (opens the whole LAN), "+
+			"or reach one service with a [[network.hosts]] entry and its ports", entry)
+	}
 	var hostAccepts []hostPortAccept
 	if !config.BoolVal(cfg.AllowHostAccess) {
-		hostAccepts = allowlistHostAccepts(policy.staticTuples(), intsToPortRanges(allowedPorts), hostIPv4Addrs())
+		hostAccepts = allowlistHostAccepts(policy.staticTuples(), intsToPortRanges(allowedPorts), hostAddrs)
 	}
 	if err := f.addHostInputRules(cfg, config.NetworkModeAllowlist, hostAccepts); err != nil {
 		f.abortBatch()
@@ -300,7 +306,7 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 			return err
 		}
 	} else {
-		for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"} {
+		for _, cidr := range allowlistPrivateCIDRs {
 			if err := f.addRule(f.containerIP, cidr, "reject"); err != nil {
 				return fmt.Errorf("failed to add RFC1918/metadata block rule: %w", err)
 			}
