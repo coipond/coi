@@ -88,8 +88,8 @@ func init() {
 }
 
 // toolSpecResult is the machine-readable spec a `coi tool spec` prints: the
-// exact argv to run in the container and the tool-derived env only (model/effort,
-// goose's GOOSE_MODE, plus pi/omp session-dir redirects).
+// exact argv to run in the container and the tool-derived env only
+// (model/effort, goose's GOOSE_MODE, plus pi/omp session-dir redirects).
 // Secrets/auth are deliberately absent — the caller adds those itself.
 //
 // Prompt is set only for tools that can't embed the initial prompt in their
