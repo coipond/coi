@@ -870,10 +870,22 @@ func (g *Grants) dockerNote() string {
 	}
 }
 
-// envSource is one env row: the names the agent's value comes from src for.
+// envKind is where an env variable's value comes from.
+type envKind int
+
+const (
+	envTool envKind = iota
+	envFromHost
+	envMinted
+	envConfigured
+	envContainer
+)
+
+// envSource is one env row: the variables whose value comes from kind.
 type envSource struct {
-	key, label string
-	names      []string
+	kind  envKind
+	label string
+	names []string
 }
 
 // envSources lists each variable once, under the source the agent's value
@@ -883,11 +895,11 @@ func (g *Grants) envSources() []envSource {
 	seen := map[string]bool{}
 	var out []envSource
 	for _, src := range []envSource{
-		{"tool", "tool settings", g.Env.Tool},
-		{"from_host", "from host", g.Env.FromHost},
-		{"env_commands", "env_commands", g.Env.Minted},
-		{"configured", "set by config", g.Env.Configured},
-		{"container", "container environment", g.Env.Container},
+		{envTool, "tool settings", g.Env.Tool},
+		{envFromHost, "from host", g.Env.FromHost},
+		{envMinted, "env_commands", g.Env.Minted},
+		{envConfigured, "set by config", g.Env.Configured},
+		{envContainer, "container environment", g.Env.Container},
 	} {
 		var names []string
 		for _, n := range src.names {

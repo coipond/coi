@@ -207,16 +207,16 @@ func (g *Grants) JSON() ([]byte, error) {
 	out.Env.Launch = toolLaunchNames[g.Env.Launch]
 	for _, src := range g.envSources() {
 		names := nonNil(src.names)
-		switch src.key {
-		case "tool":
+		switch src.kind {
+		case envTool:
 			out.Env.Tool = names
-		case "from_host":
+		case envFromHost:
 			out.Env.FromHost = names
-		case "env_commands":
+		case envMinted:
 			out.Env.EnvCommands = names
-		case "configured":
+		case envConfigured:
 			out.Env.Configured = names
-		case "container":
+		case envContainer:
 			out.Env.Container = names
 		}
 	}

@@ -62,7 +62,7 @@ func fullGrants() *Grants {
 	}).WithEnv(EnvGrants{FromHost: []string{"GH_TOKEN"}, Minted: []string{"AWS_SESSION_TOKEN"}, Configured: []string{"ANTHROPIC_MODEL", "FOO"}}, ToolAttached)
 }
 
-// The text report is byte for byte what it was before the JSON form existed.
+// Render gives exactly this text, byte for byte.
 func TestGrantsRender_Golden(t *testing.T) {
 	cases := []struct {
 		name string
