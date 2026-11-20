@@ -243,8 +243,9 @@ type commonDirSink struct {
 
 // commonDirSinks lists the common-dir paths SetupCommonDirProtection covers
 // read-only: hooks (unless writable), config, info/attributes, commondir,
-// each linked worktree's config.worktree and its existing commondir, less
-// writable_paths.
+// each linked worktree's config.worktree and its existing commondir, and the
+// same entries of each submodule git dir (modules/**, materialized as on the
+// workspace side), less writable_paths.
 func commonDirSinks(commonDir string, writableHooks bool, sec *config.SecurityConfig) []commonDirSink {
 	if sec != nil && sec.DisableProtection {
 		return nil
@@ -264,6 +265,12 @@ func commonDirSinks(commonDir string, writableHooks bool, sec *config.SecurityCo
 			}
 		}
 	}
+	dirs := realDirs{}
+	walkModuleGitDirs(commonDir, ".", func(gitDir string) {
+		addGitDirEntries(commonDir, gitDir, writableHooks, dirs, func(rel string, isDir bool) {
+			sinks = append(sinks, commonDirSink{rel, isDir})
+		})
+	})
 	var out []commonDirSink
 	for _, s := range sinks {
 		if sec == nil || !sec.IsWritablePath(s.rel) {

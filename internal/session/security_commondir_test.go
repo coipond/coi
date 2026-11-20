@@ -591,3 +591,103 @@ func TestExpandGitWorktreeProtectedPaths_SymlinkedGitDir(t *testing.T) {
 		t.Errorf("config.worktree created outside the workspace: %v", err)
 	}
 }
+
+// The submodule git dirs of a worktree checkout's common dir (modules/**,
+// nested modules included) get the entries the workspace's own .git/modules
+// git dirs get, in the one batch.
+func TestSetupCommonDirProtection_SubmoduleGitDirs(t *testing.T) {
+	common := t.TempDir()
+	mkGitDir(t, common, ".")
+	mkGitDir(t, common, "modules/sub")
+	mkGitDir(t, common, "modules/a")
+	mkGitDir(t, common, "modules/a/modules/b")
+	wt := filepath.Join(common, "modules", "sub", "worktrees", "w")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dev := &batchDevices{}
+	protected, err := SetupCommonDirProtection(dev, common, false, false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var want []string
+	for _, gitDir := range []string{"modules/sub", "modules/a", "modules/a/modules/b"} {
+		for _, entry := range nestedGitDirEntries {
+			want = append(want, filepath.Join(gitDir, entry))
+		}
+	}
+	want = append(want, "modules/sub/worktrees/w/config.worktree", "modules/sub/worktrees/w/commondir")
+	for _, rel := range want {
+		if !slices.Contains(protected, rel) {
+			t.Errorf("%s not protected; got %v", rel, protected)
+		}
+		path := filepath.Join(common, rel)
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("%s not materialized: %v", rel, err)
+		}
+	}
+	if len(dev.mounts) != 0 || len(dev.batches) != 1 {
+		t.Fatalf("want 1 batch, got %d mounts, %d batches", len(dev.mounts), len(dev.batches))
+	}
+	for _, rel := range want {
+		path := filepath.Join(common, rel)
+		if !slices.ContainsFunc(dev.batches[0], func(m container.DiskMount) bool { return m.Path == path && m.Readonly }) {
+			t.Errorf("expected a read-only mount at %s", path)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(common, "modules", "sub", "commondir")); err != nil || string(data) != commonDirPlaceholder {
+		t.Errorf("modules/sub/commondir = %q, %v; want %q", data, err, commonDirPlaceholder)
+	}
+}
+
+// writable_hooks, writable_paths and disable_protection apply to the
+// submodule git dirs of a common dir; a symlinked modules dir or submodule
+// git dir is skipped and nothing is created through it.
+func TestSetupCommonDirProtection_SubmoduleGitDirOptOutsAndSymlinks(t *testing.T) {
+	common := t.TempDir()
+	mkGitDir(t, common, ".")
+	mkGitDir(t, common, "modules/sub")
+	outside := t.TempDir()
+	mkGitDir(t, outside, "linked")
+	if err := os.Symlink(filepath.Join(outside, "linked"), filepath.Join(common, "modules", "linked")); err != nil {
+		t.Fatal(err)
+	}
+	mkGitDir(t, outside, "mods/x")
+	mkGitDir(t, common, "modules/sub2")
+	if err := os.Symlink(filepath.Join(outside, "mods"), filepath.Join(common, "modules", "sub2", "modules")); err != nil {
+		t.Fatal(err)
+	}
+
+	sec := &config.SecurityConfig{WritablePaths: []string{"modules/sub/config"}}
+	protected, err := SetupCommonDirProtection(&batchDevices{}, common, false, true, sec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, rel := range []string{"modules/sub/hooks", "modules/sub/config"} {
+		if slices.Contains(protected, rel) {
+			t.Errorf("%s must stay writable; got %v", rel, protected)
+		}
+	}
+	if !slices.Contains(protected, "modules/sub/info/attributes") {
+		t.Errorf("modules/sub/info/attributes not protected; got %v", protected)
+	}
+	for _, p := range protected {
+		if strings.HasPrefix(p, "modules/linked/") || strings.HasPrefix(p, "modules/sub2/modules/") {
+			t.Errorf("%s is below a symlink; got %v", p, protected)
+		}
+	}
+	for _, rel := range []string{"linked/config.worktree", "linked/commondir", "mods/x/config.worktree", "mods/x/commondir"} {
+		if _, err := os.Lstat(filepath.Join(outside, rel)); !os.IsNotExist(err) {
+			t.Errorf("%s created through a symlink: %v", rel, err)
+		}
+	}
+
+	disabled := &config.SecurityConfig{DisableProtection: true}
+	if got, err := SetupCommonDirProtection(&batchDevices{}, common, false, false, disabled); err != nil || len(got) != 0 {
+		t.Errorf("disable_protection: got %v, %v; want nothing", got, err)
+	}
+}
