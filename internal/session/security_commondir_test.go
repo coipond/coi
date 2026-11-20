@@ -667,3 +667,57 @@ func TestRealDirs_SymlinkedParentNextToChecked(t *testing.T) {
 		t.Error("symlinked a/c cached as a real dir")
 	}
 }
+
+// A protected path that is, or lies below, a symlink is refused with a
+// warning; the later paths, the nested batch and the pins are still mounted.
+func TestSetupSecurityMounts_SymlinkRefusalKeepsLaterPaths(t *testing.T) {
+	ws := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, ".git/modules/lib")
+	for _, d := range []string{"shared", "docs/claude"} {
+		if err := os.MkdirAll(filepath.Join(ws, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"shared/attributes", "docs/claude/settings.json"} {
+		if err := os.WriteFile(filepath.Join(ws, f), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(ws, ".git", "info")); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{".git/info": "../shared", ".claude": "docs/claude", ".vscode": "docs"} {
+		if err := os.Symlink(target, filepath.Join(ws, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dev := &batchDevices{}
+	refused := []string{".git/info/attributes", ".claude/settings.json", ".vscode"}
+	paths := append(append([]string(nil), refused...), ".git/hooks", ".git/config", ".codex/config.toml")
+	_, err := SetupSecurityMounts(dev, ws, "/workspace", paths, false, nil, NestedGitScan{}, false)
+	if err == nil {
+		t.Fatal("want warnings for the symlinked paths")
+	}
+	for _, rel := range refused {
+		if !strings.Contains(err.Error(), rel+": refusing to mount through a symlink") {
+			t.Errorf("no warning for %s in %v", rel, err)
+		}
+	}
+	var mounted []string
+	for _, m := range dev.mounts {
+		mounted = append(mounted, strings.TrimPrefix(m.path, "/workspace/"))
+	}
+	assertContainsAll(t, mounted, []string{".git/hooks", ".git/config", ".codex/config.toml"})
+	for _, rel := range refused {
+		if slices.Contains(mounted, rel) {
+			t.Errorf("symlinked %s mounted", rel)
+		}
+	}
+	if len(dev.batches) != 1 || !slices.ContainsFunc(dev.batches[0], func(m container.DiskMount) bool {
+		return m.Path == "/workspace/.git/modules/lib/config"
+	}) {
+		t.Errorf("nested batch not mounted: %v", dev.batches)
+	}
+}

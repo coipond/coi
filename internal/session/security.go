@@ -17,6 +17,9 @@ import (
 
 var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 
+// errSymlinkedPath refuses a protected path that is, or lies below, a symlink.
+var errSymlinkedPath = errors.New("refusing to mount through a symlink")
+
 // SetupSecurityMounts mounts protected paths as read-only for security.
 // This prevents containers from modifying files that could execute automatically
 // on the host (git hooks, IDE configs, etc.).
@@ -67,7 +70,7 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 			err = mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly)
 		}
 		if err != nil {
-			if errors.Is(err, errGitDirIndirection) {
+			if errors.Is(err, errGitDirIndirection) || errors.Is(err, errSymlinkedPath) {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", relPath, err))
 				continue
 			}
@@ -378,7 +381,7 @@ func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string,
 	}
 
 	if parent := dirs.symlinkedParent(workspacePath, cleaned); parent != "" {
-		return none, fmt.Errorf("parent dir %s of %s is a symlink; refusing to mount for security reasons", parent, cleaned)
+		return none, fmt.Errorf("%w: parent dir %s of %s is a symlink", errSymlinkedPath, parent, cleaned)
 	}
 
 	if err := ensureProtectedExists(workspacePath, hostPath, cleaned); err != nil {
@@ -393,7 +396,7 @@ func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string,
 
 	// Security check: reject symlinks to prevent mounting arbitrary host paths
 	if info.Mode()&os.ModeSymlink != 0 {
-		return none, fmt.Errorf("%s is a symlink; refusing to mount for security reasons", cleaned)
+		return none, fmt.Errorf("%w: %s is a symlink", errSymlinkedPath, cleaned)
 	}
 
 	return container.DiskMount{Name: pathToDeviceName(cleaned), Source: hostPath, Path: containerPath, Shift: useShift, Readonly: true}, nil
