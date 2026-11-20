@@ -300,7 +300,7 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 			return err
 		}
 	} else {
-		for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"} {
+		for _, cidr := range allowlistPrivateCIDRs {
 			if err := f.addRule(f.containerIP, cidr, "reject"); err != nil {
 				return fmt.Errorf("failed to add RFC1918/metadata block rule: %w", err)
 			}

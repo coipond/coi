@@ -845,5 +845,8 @@ func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (
 		return nil, fmt.Errorf("failed to setup network isolation: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Network isolation applied: %s\n", networkConfig.Mode)
+	for _, w := range network.AllowlistPrivateWarnings(&networkConfig) {
+		fmt.Fprintln(os.Stderr, w)
+	}
 	return nm, nil
 }

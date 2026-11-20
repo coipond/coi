@@ -152,6 +152,9 @@ func (a *App) isolateStartedContainer(cmd *cobra.Command, name string) error {
 		return fmt.Errorf("failed to setup network isolation: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Network isolation applied: %s\n", netCfg.Mode)
+	for _, w := range network.AllowlistPrivateWarnings(&netCfg) {
+		fmt.Fprintln(os.Stderr, w)
+	}
 	return nil
 }
 

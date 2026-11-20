@@ -25,6 +25,7 @@
 
 ### Changed
 
+- [Change] **Warning for private `allowed_domains` addresses that allowlist mode blocks** — an IP or CIDR entry in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` or `169.254.0.0/16` (e.g. `"192.168.1.50:5000"`) is unreachable unless `allow_local_network_access = true`, and coi said nothing. `coi shell`, `coi run` and `coi container launch` now print a warning for each such entry when they apply network isolation, with the fix: `allow_local_network_access = true` (opens the whole LAN) or, for a private LAN address, a `[[network.hosts]]` entry with `ports` (one service). No warning for an address of the coi host itself or one a `[[network.hosts]]` entry opens.
 - [Change] **`coi shell <alias>` warns when `-w` names another directory** — the alias's workspace is still used; coi now says so on stderr and names the ignored `-w` directory instead of dropping it silently.
 - [Change] **Faster commands on busy hosts** — `coi list`, `coi top`, `coi shell`, `coi run` and the `coi container` commands stay fast with many containers, saved sessions, profiles or large network allowlists. Container launch makes far fewer Incus calls.
 - [Change] **`coi build` no longer scans SSH port 22** — GitHub, GitLab and Bitbucket host keys come from their HTTPS endpoints or keys built into coi. Builds no longer trip IDS rules or stall where port 22 is blocked.
