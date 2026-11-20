@@ -342,7 +342,7 @@ func TestExpandNestedGit_SymlinkedWorktreesDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false) {
+	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false, nil) {
 		if strings.Contains(filepath.ToSlash(p), "/worktrees/") {
 			t.Errorf("entry through a symlinked worktrees dir: %s", p)
 		}
@@ -376,7 +376,7 @@ func TestExpandNestedGit_LinkedWorktreeOptOutsAndSymlinks(t *testing.T) {
 	bCommonDir := filepath.Join(".git", "modules", "lib", "worktrees", "b", "commondir")
 	bConfigWt := filepath.Join(".git", "modules", "lib", "worktrees", "b", "config.worktree")
 
-	got := expandNestedGit(ws, nil, nil, NestedGitScan{}, false)
+	got := expandNestedGit(ws, nil, nil, NestedGitScan{}, false, nil)
 	if !slices.Contains(got, commonDir) || slices.Contains(got, configWt) {
 		t.Errorf("got %v, want %s and not the symlinked %s", got, commonDir, configWt)
 	}
@@ -390,10 +390,10 @@ func TestExpandNestedGit_LinkedWorktreeOptOutsAndSymlinks(t *testing.T) {
 		t.Errorf("%s must not be created: %v", bCommonDir, err)
 	}
 	sec := &config.SecurityConfig{WritablePaths: []string{commonDir}}
-	if got := expandNestedGit(ws, nil, sec, NestedGitScan{}, false); slices.Contains(got, commonDir) {
+	if got := expandNestedGit(ws, nil, sec, NestedGitScan{}, false, nil); slices.Contains(got, commonDir) {
 		t.Errorf("writable_paths opt-out ignored: %v", got)
 	}
-	again := expandNestedGit(ws, got, nil, NestedGitScan{}, false)
+	again := expandNestedGit(ws, got, nil, NestedGitScan{}, false, nil)
 	if len(again) != len(got) {
 		t.Errorf("re-expanding must be a no-op, got %v then %v", got, again)
 	}
@@ -594,7 +594,7 @@ func TestExpandNestedGit_SymlinkedParentDir(t *testing.T) {
 		}
 	}
 
-	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false) {
+	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false, nil) {
 		if strings.Contains(filepath.ToSlash(p), "/info/") {
 			t.Errorf("entry below a symlinked dir: %s", p)
 		}
@@ -620,7 +620,7 @@ func TestPrepareProtectedPath_SymlinkedParentDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := prepareProtectedPath(ws, "/workspace", ".git/info/attributes", false)
+	_, err := prepareProtectedPath(ws, "/workspace", ".git/info/attributes", false, nil)
 	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
 		t.Errorf("err = %v; want a symlinked parent error", err)
 	}
@@ -638,10 +638,32 @@ func TestExpandGitWorktreeProtectedPaths_SymlinkedGitDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := ExpandGitWorktreeProtectedPaths(ws, nil, nil); len(got) != 0 {
+	if got := ExpandGitWorktreeProtectedPaths(ws, nil, nil, nil); len(got) != 0 {
 		t.Errorf("entries through a symlinked .git: %v", got)
 	}
 	if _, err := os.Lstat(filepath.Join(outside, "worktrees", "x", "config.worktree")); !os.IsNotExist(err) {
 		t.Errorf("config.worktree created outside the workspace: %v", err)
+	}
+}
+
+// A shared realDirs still finds a symlinked dir next to a checked one.
+func TestRealDirs_SymlinkedParentNextToChecked(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(ws, "a", "c")); err != nil {
+		t.Fatal(err)
+	}
+
+	dirs := realDirs{}
+	if got := dirs.symlinkedParent(ws, "a/b/x"); got != "" {
+		t.Errorf("a/b/x: %q; want none", got)
+	}
+	if got := dirs.symlinkedParent(ws, "a/c/d/x"); got != filepath.Join("a", "c") {
+		t.Errorf("a/c/d/x: %q; want a/c", got)
+	}
+	if dirs[filepath.Join("a", "c")] {
+		t.Error("symlinked a/c cached as a real dir")
 	}
 }

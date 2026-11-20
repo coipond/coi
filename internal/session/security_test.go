@@ -879,7 +879,7 @@ func TestExpandGitWorktreeProtectedPaths(t *testing.T) {
 	in := []string{".git/config"}
 
 	// No .git/worktrees → unchanged.
-	if out := ExpandGitWorktreeProtectedPaths(tmp, in, nil); len(out) != len(in) {
+	if out := ExpandGitWorktreeProtectedPaths(tmp, in, nil, nil); len(out) != len(in) {
 		t.Fatalf("expected no expansion without .git/worktrees, got %v", out)
 	}
 
@@ -900,7 +900,7 @@ func TestExpandGitWorktreeProtectedPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := ExpandGitWorktreeProtectedPaths(tmp, in, nil)
+	out := ExpandGitWorktreeProtectedPaths(tmp, in, nil, nil)
 	want := filepath.Join(".git", "worktrees", "wt", "config.worktree")
 	created := filepath.Join(".git", "worktrees", "noconfig", "config.worktree")
 	assertContainsAll(t, out, []string{want, created})
@@ -917,13 +917,13 @@ func TestExpandGitWorktreeProtectedPaths(t *testing.T) {
 	// disable_protection must suppress expansion — the discovered worktree config
 	// is not resurrected when the user turned all protection off.
 	sec := &config.SecurityConfig{DisableProtection: true}
-	if out := ExpandGitWorktreeProtectedPaths(tmp, in, sec); len(out) != len(in) {
+	if out := ExpandGitWorktreeProtectedPaths(tmp, in, sec, nil); len(out) != len(in) {
 		t.Errorf("disable_protection should suppress worktree expansion, got %v", out)
 	}
 
 	// writable_paths must opt a specific discovered worktree config out of protection.
 	sec = &config.SecurityConfig{WritablePaths: []string{want}}
-	out = ExpandGitWorktreeProtectedPaths(tmp, in, sec)
+	out = ExpandGitWorktreeProtectedPaths(tmp, in, sec, nil)
 	for _, p := range out {
 		if p == want {
 			t.Errorf("writable_paths entry %q should be excluded from expansion, got %v", want, out)
@@ -932,8 +932,8 @@ func TestExpandGitWorktreeProtectedPaths(t *testing.T) {
 
 	// Idempotent: expanding an already-expanded list must not duplicate the entry
 	// (a duplicate would collide on the derived device name and fail the 2nd mount).
-	expanded := ExpandGitWorktreeProtectedPaths(tmp, in, nil)
-	again := ExpandGitWorktreeProtectedPaths(tmp, expanded, nil)
+	expanded := ExpandGitWorktreeProtectedPaths(tmp, in, nil, nil)
+	again := ExpandGitWorktreeProtectedPaths(tmp, expanded, nil, nil)
 	if len(again) != len(expanded) {
 		t.Errorf("re-expanding an expanded list must be a no-op, got %v then %v", expanded, again)
 	}
