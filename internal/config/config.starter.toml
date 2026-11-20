@@ -118,7 +118,7 @@
 # ports     = [443]
 
 [tool]
-# name = "claude"                # claude | opencode | pi | codex | omp
+# name = "claude"                # claude | opencode | opencode2 | pi | codex | omp | goose
 # auto_context = true            # inject SANDBOX_CONTEXT.md into the tool
 # context_json = true            # also write ~/SANDBOX_CONTEXT.json (set false to disable)
 # context_json_file = "~/coi-context.json"  # inject a custom JSON instead of the generated one
