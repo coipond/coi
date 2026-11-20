@@ -12,7 +12,8 @@ Genuinely end-to-end: a Node HTTP server inside the container replies with a
 sentinel; the HOST fetches http://127.0.0.1:<published-port>/ and must read
 it back, proving bytes traverse the proxy device. The preflight test proves
 a taken pinned port aborts the session BEFORE any container is created,
-and the config-file test that an out-of-range port in $COI_CONFIG does too.
+and the config-file tests that an out-of-range port or pool in $COI_CONFIG
+does too.
 """
 
 import json
@@ -349,3 +350,21 @@ def test_invalid_port_range_fails_config_file(coi_binary, cleanup_containers, wo
         assert result.returncode != 0, f"coi run must fail on {ports!r}"
         assert error in result.stderr, f"error should name the bad port. stderr: {result.stderr}"
         assert not workspace_containers(workspace_dir), "invalid config must abort before launch"
+
+
+def test_invalid_pool_fails_config_file(coi_binary, cleanup_containers, workspace_dir):
+    """An out-of-range `[ports] pool` in $COI_CONFIG aborts before any container."""
+    env = write_trusted_coi_config("[ports]\npool = 99\n")
+    result = subprocess.run(
+        [coi_binary, "run", "--workspace", workspace_dir, "--", "true"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=workspace_dir,
+        env=env,
+    )
+    assert result.returncode != 0, "coi run must fail on pool = 99"
+    assert "[ports] pool must be 0-10, got 99" in result.stderr, (
+        f"error should name the bad pool. stderr: {result.stderr}"
+    )
+    assert not workspace_containers(workspace_dir), "invalid config must abort before launch"

@@ -59,15 +59,7 @@ func (p *ProfileConfig) Validate(name string) error {
 		}
 	}
 
-	// Validate port entries
-	var portEntries []PortEntry
-	if p.Ports != nil {
-		if p.Ports.Pool < 0 || p.Ports.Pool > 10 {
-			return fmt.Errorf("profile '%s': [ports] pool must be 0-10, got %d", name, p.Ports.Pool)
-		}
-		portEntries = p.Ports.Map
-	}
-	if err := validatePortEntries(portEntries); err != nil {
+	if err := validatePorts(p.Ports); err != nil {
 		return fmt.Errorf("profile '%s': %w", name, err)
 	}
 
@@ -89,6 +81,18 @@ func (p *ProfileConfig) Validate(name string) error {
 	}
 
 	return nil
+}
+
+// validatePorts checks a [ports] section: pool in range, then its
+// [[ports.map]] entries.
+func validatePorts(p *PortsConfig) error {
+	if p == nil {
+		return nil
+	}
+	if p.Pool < 0 || p.Pool > 10 {
+		return fmt.Errorf("[ports] pool must be 0-10, got %d", p.Pool)
+	}
+	return validatePortEntries(p.Map)
 }
 
 // validatePortEntries checks [[ports.map]] entries: name required and unique,
