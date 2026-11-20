@@ -1653,6 +1653,33 @@ def start_background_shell(
     return name, result
 
 
+def launch_recorded_tool(coi_binary, workspace_dir, env, marker, *extra_args):
+    """Start `coi shell --background` in slot 1 and return what a recorder
+    `[tool] binary` wrote at launch.
+
+    The recorder writes `key=value` lines to marker (a Path in the workspace);
+    a stale marker is removed first. Waits up to 60 s for it, as the tool starts
+    inside tmux after the container is ready. extra_args are appended to the
+    argv (e.g. "--resume"). Returns the lines as a dict.
+    """
+    if marker.exists():
+        marker.unlink()
+    _, result = start_background_shell(
+        coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180, extra_args=extra_args
+    )
+
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not marker.exists():
+        time.sleep(1)
+    assert marker.exists(), f"the tool was not launched (no marker). coi stderr:\n{result.stderr}"
+
+    recorded = {}
+    for line in marker.read_text().splitlines():
+        key, _, value = line.partition("=")
+        recorded[key] = value
+    return recorded
+
+
 def wait_for_container_started(coi_binary, container_name, timeout=90):
     """Poll until the container is up AND systemd's bus is reachable.
 

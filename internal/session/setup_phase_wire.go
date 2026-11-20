@@ -124,6 +124,15 @@ func (st *setupState) phaseStartTimeoutMonitor(ctx context.Context) (Teardown, e
 // 8. Setup network isolation (after the container is running and has an IP).
 func (st *setupState) phaseSetupNetwork(ctx context.Context) (Teardown, error) {
 	if st.opts.Network.Config != nil {
+		// phaseEnsureBridge covered the default profile's bridge; a reused
+		// container can be on another network.
+		if m := st.opts.Network.Config.Mode; m != "" && m != config.NetworkModeOpen {
+			if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(st.result.ContainerName); err != nil {
+				st.opts.Logger(fmt.Sprintf("Warning: could not ensure bridge forwarding rules: %v", err))
+			} else if changed {
+				st.opts.Logger(fmt.Sprintf("Added iptables FORWARD rules for %s", bridgeName))
+			}
+		}
 		st.result.NetworkManager = network.NewManager(st.opts.Network.Config, st.result.Logger)
 		if err := st.result.NetworkManager.SetupForContainer(ctx, st.result.ContainerName); err != nil {
 			return nil, fmt.Errorf("failed to setup network isolation: %w", err)
