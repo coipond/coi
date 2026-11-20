@@ -265,8 +265,9 @@ func commonDirSinks(commonDir string, writableHooks bool, sec *config.SecurityCo
 			}
 		}
 	}
+	dirs := realDirs{}
 	walkModuleGitDirs(commonDir, ".", func(gitDir string) {
-		addGitDirEntries(commonDir, gitDir, writableHooks, nil, func(rel string, isDir bool) {
+		addGitDirEntries(commonDir, gitDir, writableHooks, dirs, func(rel string, isDir bool) {
 			sinks = append(sinks, commonDirSink{rel, isDir})
 		})
 	})
