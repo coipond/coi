@@ -112,7 +112,7 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 				m.applyOpenRules(containerIP)
 			}
 		} else if m.config.SudoAllowed() && NeedsIptablesFallback() {
-			bridgeName, err := GetIncusBridgeName()
+			bridgeName, err := containerNetworkName(containerName)
 			if err != nil {
 				m.logger.Errorf("Warning: could not get bridge name for iptables fallback: %v", err)
 			} else {
@@ -878,13 +878,9 @@ func GetContainerGatewayIP(containerName string) (string, error) {
 // getContainerGatewayIP auto-detects the gateway IP of the network the
 // container's eth0 is attached to (not the default profile's).
 func getContainerGatewayIP(containerName string) (string, error) {
-	n, err := lookupInstanceNet(containerName)
+	networkName, err := containerNetworkName(containerName)
 	if err != nil {
 		return "", err
-	}
-	networkName := n.network
-	if networkName == "" {
-		return "", fmt.Errorf("no eth0 network found for container %s", containerName)
 	}
 	gatewayMu.Lock()
 	defer gatewayMu.Unlock()

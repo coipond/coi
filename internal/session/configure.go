@@ -145,7 +145,7 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 	// 6. Network isolation
 	if opts.NetworkConfig != nil && opts.NetworkConfig.Mode != "" && opts.NetworkConfig.Mode != config.NetworkModeOpen {
 		// Ensure bridge is in trusted zone before applying network rules
-		if changed, bridgeName, err := network.EnsureBridgeInTrustedZone(); err != nil {
+		if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(opts.ContainerName); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: could not ensure bridge forwarding rules: %v", err))
 		} else if changed {
 			opts.Logger(fmt.Sprintf("Added iptables FORWARD rules for %s", bridgeName))
