@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -570,5 +571,35 @@ func TestImmutableOptOut(t *testing.T) {
 	// Verify that without applying, the files remain writable
 	if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte("modified"), 0o755); err != nil {
 		t.Errorf("files should be writable when immutable is not applied: %v", err)
+	}
+}
+
+// TestApplyImmutableSkipsSymlinkedParent verifies that a path below a
+// symlinked dir is skipped with a warning before any ioctl, and a path below a
+// missing dir is skipped silently.
+func TestApplyImmutableSkipsSymlinkedParent(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("immutable is Linux-only")
+	}
+	ws := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "attributes"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws, ".git", "info")); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs []string
+	applied := ApplyImmutable(ws, []string{".git/info/attributes", ".git/missing/config"}, "test-container", func(msg string) { logs = append(logs, msg) })
+	if len(applied) != 0 {
+		t.Errorf("applied = %v; want none", applied)
+	}
+	want := "Warning: Skipping .git/info/attributes (symlink in parent path)"
+	if len(logs) != 1 || logs[0] != want {
+		t.Errorf("logs = %q; want only %q", logs, want)
 	}
 }

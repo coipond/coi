@@ -17,6 +17,9 @@ import (
 
 var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 
+// errSymlinkedPath refuses a protected path that is, or lies below, a symlink.
+var errSymlinkedPath = errors.New("refusing to mount through a symlink")
+
 // SetupSecurityMounts mounts protected paths as read-only for security.
 // This prevents containers from modifying files that could execute automatically
 // on the host (git hooks, IDE configs, etc.).
@@ -47,8 +50,9 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // error if a mount failed. The list is returned even on error so a partial failure
 // still applies the immutable attribute to the full set.
 func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) ([]string, error) {
-	protectedPaths = ExpandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec)
-	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, scan, writableHooks)
+	dirs := realDirs{}
+	protectedPaths = expandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec, dirs)
+	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, scan, writableHooks, dirs)
 	if len(protectedPaths) == 0 {
 		return protectedPaths, nil
 	}
@@ -56,7 +60,7 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 	var warnings, prepared []string
 	var batch []container.DiskMount
 	for _, relPath := range protectedPaths {
-		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift)
+		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift, dirs)
 		if err == nil {
 			prepared = append(prepared, filepath.Clean(relPath))
 			if isBatchedGitPath(relPath) {
@@ -66,7 +70,7 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 			err = mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly)
 		}
 		if err != nil {
-			if errors.Is(err, errGitDirIndirection) {
+			if errors.Is(err, errGitDirIndirection) || errors.Is(err, errSymlinkedPath) {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", relPath, err))
 				continue
 			}
@@ -341,8 +345,9 @@ func mountNestedAndPins(mgr container.ContainerDevices, nested, pins []container
 }
 
 // prepareProtectedPath validates and materializes one protected path and
-// returns its read-only disk device, without mounting it.
-func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string, useShift bool) (container.DiskMount, error) {
+// returns its read-only disk device, without mounting it. dirs caches the
+// parent dirs checked in this setup; it may be nil.
+func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string, useShift bool, dirs realDirs) (container.DiskMount, error) {
 	var none container.DiskMount
 	if err := validateRelPath(relPath); err != nil {
 		return none, err
@@ -375,6 +380,10 @@ func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string,
 		}
 	}
 
+	if parent := dirs.symlinkedParent(workspacePath, cleaned); parent != "" {
+		return none, fmt.Errorf("%w: parent dir %s of %s is a symlink", errSymlinkedPath, parent, cleaned)
+	}
+
 	if err := ensureProtectedExists(workspacePath, hostPath, cleaned); err != nil {
 		return none, err // os.ErrNotExist surfaces for unknown / user-added missing paths
 	}
@@ -387,7 +396,7 @@ func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string,
 
 	// Security check: reject symlinks to prevent mounting arbitrary host paths
 	if info.Mode()&os.ModeSymlink != 0 {
-		return none, fmt.Errorf("%s is a symlink; refusing to mount for security reasons", cleaned)
+		return none, fmt.Errorf("%w: %s is a symlink", errSymlinkedPath, cleaned)
 	}
 
 	return container.DiskMount{Name: pathToDeviceName(cleaned), Source: hostPath, Path: containerPath, Shift: useShift, Readonly: true}, nil
@@ -521,10 +530,16 @@ const commonDirPlaceholder = "./\n"
 // never produces a duplicate — a duplicate would collide on the derived Incus
 // device name and fail the second mount.
 func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig) []string {
+	return expandGitWorktreeProtectedPaths(workspacePath, paths, sec, nil)
+}
+
+// expandGitWorktreeProtectedPaths is ExpandGitWorktreeProtectedPaths with dirs,
+// the cache of the parent dirs checked in this setup; dirs may be nil.
+func expandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig, dirs realDirs) []string {
 	if sec != nil && sec.DisableProtection {
 		return paths // protection disabled — do not resurrect worktree configs
 	}
-	found := linkedWorktreeEntries(workspacePath, ".git")
+	found := linkedWorktreeEntries(workspacePath, ".git", dirs)
 	if len(found) == 0 {
 		return paths // no worktrees, or .git is a file/symlink — nothing to add
 	}
@@ -554,7 +569,7 @@ func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *
 // config.worktree is created as a placeholder so it cannot be planted;
 // commondir never is, since a placeholder would point the worktree at its own
 // admin dir.
-func linkedWorktreeEntries(workspacePath, gitDirRel string) []string {
+func linkedWorktreeEntries(workspacePath, gitDirRel string, dirs realDirs) []string {
 	wtRoot := filepath.Join(workspacePath, gitDirRel, "worktrees")
 	if !isRealDir(wtRoot) {
 		return nil
@@ -574,7 +589,7 @@ func linkedWorktreeEntries(workspacePath, gitDirRel string) []string {
 				continue
 			}
 			if name == "config.worktree" {
-				if materializeNestedGitEntry(workspacePath, rel, false) {
+				if materializeNestedGitEntry(workspacePath, rel, false, dirs) {
 					out = append(out, rel)
 				}
 				continue
@@ -650,7 +665,7 @@ func (s NestedGitScan) resultFor(workspacePath string) nestedGitFound {
 //
 // disable_protection, writable_paths, symlinks and idempotency are handled as
 // in ExpandGitWorktreeProtectedPaths; writableHooks leaves the hooks entries out.
-func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) []string {
+func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool, dirs realDirs) []string {
 	if sec != nil && sec.DisableProtection {
 		return paths
 	}
@@ -677,11 +692,11 @@ func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityC
 				continue
 			}
 			rel := filepath.Join(gitDir, entry)
-			if materializeNestedGitEntry(workspacePath, rel, entry == "hooks") {
+			if materializeNestedGitEntry(workspacePath, rel, entry == "hooks", dirs) {
 				add(rel)
 			}
 		}
-		for _, rel := range linkedWorktreeEntries(workspacePath, gitDir) {
+		for _, rel := range linkedWorktreeEntries(workspacePath, gitDir, dirs) {
 			add(rel)
 		}
 	}
@@ -826,8 +841,12 @@ func walkNestedGit(workspacePath, dirRel string, depth int, addGitFile, addGitDi
 
 // materializeNestedGitEntry makes sure rel exists as a real (non-symlink)
 // directory or file, creating a missing one inside an existing parent, and
-// reports whether it can be protected.
-func materializeNestedGitEntry(workspacePath, rel string, isDir bool) bool {
+// reports whether it can be protected. Nothing is created or reported below a
+// symlinked parent dir.
+func materializeNestedGitEntry(workspacePath, rel string, isDir bool, dirs realDirs) bool {
+	if dirs.symlinkedParent(workspacePath, rel) != "" {
+		return false
+	}
 	hostPath := filepath.Join(workspacePath, rel)
 	if _, err := os.Lstat(hostPath); os.IsNotExist(err) {
 		if isDir {
@@ -899,6 +918,34 @@ func foreignCommonDir(gitDir string) (string, bool) {
 		return "", false
 	}
 	return resolved, true
+}
+
+// realDirs holds the dirs below the workspace root, relative to it, that one
+// protected-path setup found to be real dirs, so each is checked once per
+// launch. A nil realDirs checks every time.
+type realDirs map[string]bool
+
+// symlinkedParent returns the first parent dir of rel below workspacePath that
+// is a symlink, relative to workspacePath; "" when there is none. The check
+// ends at the first missing part.
+func (d realDirs) symlinkedParent(workspacePath, rel string) string {
+	var unchecked []string
+	for dir := filepath.Dir(filepath.Clean(rel)); dir != "." && !d[dir]; dir = filepath.Dir(dir) {
+		unchecked = append(unchecked, dir)
+	}
+	for i := len(unchecked) - 1; i >= 0; i-- {
+		info, err := os.Lstat(filepath.Join(workspacePath, unchecked[i]))
+		if err != nil || !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			return ""
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return unchecked[i]
+		}
+		if d != nil {
+			d[unchecked[i]] = true
+		}
+	}
+	return ""
 }
 
 func isRealDir(path string) bool {

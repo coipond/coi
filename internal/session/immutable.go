@@ -32,24 +32,6 @@ type ImmutableManifest struct {
 	AppliedAt     string   `json:"applied_at"`
 }
 
-// hasSymlinkParent checks if any parent directory segment of hostPath
-// (up to but not including root) is a symlink. This prevents applying
-// immutable flags outside the workspace through symlink indirection.
-func hasSymlinkParent(hostPath, workspaceRoot string) bool {
-	dir := filepath.Dir(hostPath)
-	for dir != workspaceRoot && dir != "/" && dir != "." {
-		info, err := os.Lstat(dir)
-		if err != nil {
-			return true // err on the side of caution
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return true
-		}
-		dir = filepath.Dir(dir)
-	}
-	return false
-}
-
 // ApplyImmutable sets FS_IMMUTABLE_FL on each protected path (host-side).
 // For directories, applies recursively. Writes a manifest for crash recovery.
 // Returns the list of paths that were made immutable (empty if degraded).
@@ -60,6 +42,7 @@ func ApplyImmutable(workspacePath string, protectedPaths []string, containerName
 	}
 
 	var applied []string
+	dirs := realDirs{}
 
 	for _, relPath := range protectedPaths {
 		if err := validateRelPath(relPath); err != nil {
@@ -70,7 +53,7 @@ func ApplyImmutable(workspacePath string, protectedPaths []string, containerName
 		hostPath := filepath.Join(workspacePath, filepath.Clean(relPath))
 
 		// Check for symlink parents that could redirect outside workspace
-		if hasSymlinkParent(hostPath, workspacePath) {
+		if dirs.symlinkedParent(workspacePath, relPath) != "" {
 			logger(fmt.Sprintf("Warning: Skipping %s (symlink in parent path)", relPath))
 			continue
 		}

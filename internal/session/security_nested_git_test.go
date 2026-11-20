@@ -61,7 +61,7 @@ func TestExpandNestedGit_Submodules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := expandNestedGit(tmp, []string{".git/config"}, nil, NestedGitScan{}, false)
+	out := expandNestedGit(tmp, []string{".git/config"}, nil, NestedGitScan{}, false, nil)
 
 	var want []string
 	want = append(want, gitDirEntries(".git/modules/lib")...)
@@ -93,7 +93,7 @@ func TestExpandNestedGit_NestedRepoAndDepth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false)
+	out := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false, nil)
 
 	var want []string
 	want = append(want, gitDirEntries("sub/.git")...)
@@ -120,17 +120,17 @@ func TestExpandNestedGit_OptOutsAndSymlinks(t *testing.T) {
 	hooks := filepath.Join(".git", "modules", "lib", "hooks")
 
 	sec := &config.SecurityConfig{DisableProtection: true}
-	if out := expandNestedGit(tmp, nil, sec, NestedGitScan{}, false); len(out) != 0 {
+	if out := expandNestedGit(tmp, nil, sec, NestedGitScan{}, false, nil); len(out) != 0 {
 		t.Errorf("disable_protection should suppress expansion, got %v", out)
 	}
 
 	sec = &config.SecurityConfig{WritablePaths: []string{hooks}}
-	if out := expandNestedGit(tmp, nil, sec, NestedGitScan{}, false); slices.Contains(out, hooks) {
+	if out := expandNestedGit(tmp, nil, sec, NestedGitScan{}, false, nil); slices.Contains(out, hooks) {
 		t.Errorf("writable_paths entry %q should be excluded, got %v", hooks, out)
 	}
 
-	expanded := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false)
-	if again := expandNestedGit(tmp, expanded, nil, NestedGitScan{}, false); len(again) != len(expanded) {
+	expanded := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false, nil)
+	if again := expandNestedGit(tmp, expanded, nil, NestedGitScan{}, false, nil); len(again) != len(expanded) {
 		t.Errorf("re-expanding must be a no-op, got %v then %v", expanded, again)
 	}
 
@@ -140,7 +140,7 @@ func TestExpandNestedGit_OptOutsAndSymlinks(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(tmp, hooks)); err != nil {
 		t.Fatal(err)
 	}
-	if out := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false); slices.Contains(out, hooks) {
+	if out := expandNestedGit(tmp, nil, nil, NestedGitScan{}, false, nil); slices.Contains(out, hooks) {
 		t.Errorf("symlinked hooks must not be added, got %v", out)
 	}
 
@@ -151,8 +151,40 @@ func TestExpandNestedGit_OptOutsAndSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(tmp, "elsewhere"), filepath.Join(linked, ".git", "modules")); err != nil {
 		t.Fatal(err)
 	}
-	if out := expandNestedGit(linked, nil, nil, NestedGitScan{}, false); len(out) != 0 {
+	if out := expandNestedGit(linked, nil, nil, NestedGitScan{}, false, nil); len(out) != 0 {
 		t.Errorf("symlinked modules dir must not be followed, got %v", out)
+	}
+}
+
+// A nested git dir's entry below a symlinked dir (info/attributes) is not
+// protected, and nothing is created through it.
+func TestExpandNestedGit_SymlinkedParentDir(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, "nested/.git")
+	mkGitDir(t, ws, "empty/.git")
+	if err := os.WriteFile(filepath.Join(outside, "attributes"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	emptyOutside := t.TempDir()
+	for dir, target := range map[string]string{"nested": outside, "empty": emptyOutside} {
+		info := filepath.Join(ws, dir, ".git", "info")
+		if err := os.RemoveAll(info); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, info); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false, nil) {
+		if strings.Contains(filepath.ToSlash(p), "/info/") {
+			t.Errorf("entry below a symlinked dir: %s", p)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(emptyOutside, "attributes")); !os.IsNotExist(err) {
+		t.Errorf("attributes created outside the workspace: %v", err)
 	}
 }
 
@@ -290,7 +322,7 @@ func TestExpandNestedGit_DisabledMaterializesNothing(t *testing.T) {
 	mkGitDir(t, tmp, ".git/modules/lib")
 	scan := StartNestedGitScan(tmp)
 	sec := &config.SecurityConfig{DisableProtection: true}
-	if out := expandNestedGit(tmp, nil, sec, scan, false); len(out) != 0 {
+	if out := expandNestedGit(tmp, nil, sec, scan, false, nil); len(out) != 0 {
 		t.Errorf("want no paths, got %v", out)
 	}
 	if _, err := os.Lstat(filepath.Join(tmp, ".git/modules/lib/config.worktree")); !os.IsNotExist(err) {

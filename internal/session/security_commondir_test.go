@@ -342,7 +342,7 @@ func TestExpandNestedGit_SymlinkedWorktreesDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false) {
+	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false, nil) {
 		if strings.Contains(filepath.ToSlash(p), "/worktrees/") {
 			t.Errorf("entry through a symlinked worktrees dir: %s", p)
 		}
@@ -376,7 +376,7 @@ func TestExpandNestedGit_LinkedWorktreeOptOutsAndSymlinks(t *testing.T) {
 	bCommonDir := filepath.Join(".git", "modules", "lib", "worktrees", "b", "commondir")
 	bConfigWt := filepath.Join(".git", "modules", "lib", "worktrees", "b", "config.worktree")
 
-	got := expandNestedGit(ws, nil, nil, NestedGitScan{}, false)
+	got := expandNestedGit(ws, nil, nil, NestedGitScan{}, false, nil)
 	if !slices.Contains(got, commonDir) || slices.Contains(got, configWt) {
 		t.Errorf("got %v, want %s and not the symlinked %s", got, commonDir, configWt)
 	}
@@ -390,10 +390,10 @@ func TestExpandNestedGit_LinkedWorktreeOptOutsAndSymlinks(t *testing.T) {
 		t.Errorf("%s must not be created: %v", bCommonDir, err)
 	}
 	sec := &config.SecurityConfig{WritablePaths: []string{commonDir}}
-	if got := expandNestedGit(ws, nil, sec, NestedGitScan{}, false); slices.Contains(got, commonDir) {
+	if got := expandNestedGit(ws, nil, sec, NestedGitScan{}, false, nil); slices.Contains(got, commonDir) {
 		t.Errorf("writable_paths opt-out ignored: %v", got)
 	}
-	again := expandNestedGit(ws, got, nil, NestedGitScan{}, false)
+	again := expandNestedGit(ws, got, nil, NestedGitScan{}, false, nil)
 	if len(again) != len(got) {
 		t.Errorf("re-expanding must be a no-op, got %v then %v", got, again)
 	}
@@ -569,5 +569,25 @@ func TestApplySessionSecurity_UnexpectedCommonDirMissingTarget(t *testing.T) {
 	want := ".git/commondir -> " + filepath.Join(ws, ".git") + "/../planted-later"
 	if len(warnings) != 1 || !strings.Contains(warnings[0], want) {
 		t.Errorf("warnings = %q, want one naming %q", warnings, want)
+	}
+}
+
+// A linked worktree config.worktree placeholder is not created through a
+// symlinked .git.
+func TestExpandGitWorktreeProtectedPaths_SymlinkedGitDir(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "worktrees", "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws, ".git")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ExpandGitWorktreeProtectedPaths(ws, nil, nil); len(got) != 0 {
+		t.Errorf("entries through a symlinked .git: %v", got)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "worktrees", "x", "config.worktree")); !os.IsNotExist(err) {
+		t.Errorf("config.worktree created outside the workspace: %v", err)
 	}
 }
