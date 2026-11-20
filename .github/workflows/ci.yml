@@ -194,6 +194,15 @@ jobs:
           - name: terminal-pollution
             path: tests/integration/test_session_diagnostics_no_terminal_pollution.py
             description: "Session-runtime diagnostics must not leak onto the attached terminal (#372): nft debug + runtime-limit auto-stop"
+          # Incus 6.1..7.4 paths (file push without --archive): Zabbly LTS 7.0.
+          - name: incus-lts-file
+            path: tests/file
+            incus_channel: lts-7.0
+            description: "File push/pull on Incus LTS 7.0 (pre-7.5 client and server)"
+          - name: incus-lts-session
+            path: tests/shell/ephemeral/resume_content_roundtrip_ephemeral.py tests/shell/ephemeral/new_session_with_resume_ephemeral.py tests/shell/ephemeral/managed_settings_permissions_ephemeral.py
+            incus_channel: lts-7.0
+            description: "Session setup (config-dir restore, managed settings) on Incus LTS 7.0 (pre-7.5 client and server)"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -263,6 +272,20 @@ jobs:
 
       - name: Set up Incus
         uses: ./.github/actions/setup-incus
+        with:
+          channel: ${{ matrix.test_group.incus_channel || 'stable' }}
+
+      - name: Check Incus is below 7.5
+        if: matrix.test_group.incus_channel
+        run: |
+          incus version
+          for v in "$(incus version | sed -n 's/^Client version: //p')" \
+                   "$(incus version | sed -n 's/^Server version: //p')"; do
+            if ! printf '6.1\n%s\n' "$v" | sort -V -C || printf '7.5\n%s\n' "$v" | sort -V -C; then
+              echo "ERROR: Incus $v is not in [6.1, 7.5)"
+              exit 1
+            fi
+          done
 
       - name: Check kernel idmap support
         run: |
