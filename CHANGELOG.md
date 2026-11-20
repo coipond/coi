@@ -40,6 +40,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **Protected paths below a symlinked dir are refused** — coi refuses to protect a path when a dir between the workspace root and that path is a symlink, as it already does for a symlinked path itself, and creates no placeholder through it.
 - [Bug Fix] **A linked worktree's `config.worktree` is protected even when git has not created it** — for linked worktrees of the root git dir, coi now creates an absent `.git/worktrees/<name>/config.worktree` empty and makes it read-only in the container, like the linked worktrees of submodule and nested git dirs.
 - [Bug Fix] **The starter config no longer says private `allowed_domains` entries are limited to their ports** — `coi profile create default` showed entries such as `"192.168.1.50:8080"` as reachable only on the port named. Private entries are blocked unless `allow_local_network_access = true`, which opens the whole LAN on every port (or on `allowed_ports`); only an address of the coi host itself stays limited to the entry's ports. The example now uses public addresses and says to reach one LAN service with a `[[network.hosts]]` entry and its `ports`.
 - [Bug Fix] **A stuck `incus info` no longer stops the security monitor** — when coi can't find a container's cgroup on the host, it asks `incus info` for the container's init PID. If that hung, the monitor stopped checking the container for any threat. The call now gives up after 10 seconds.

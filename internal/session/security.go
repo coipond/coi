@@ -375,6 +375,10 @@ func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string,
 		}
 	}
 
+	if parent := symlinkedParent(workspacePath, cleaned); parent != "" {
+		return none, fmt.Errorf("parent dir %s of %s is a symlink; refusing to mount for security reasons", parent, cleaned)
+	}
+
 	if err := ensureProtectedExists(workspacePath, hostPath, cleaned); err != nil {
 		return none, err // os.ErrNotExist surfaces for unknown / user-added missing paths
 	}
@@ -826,8 +830,12 @@ func walkNestedGit(workspacePath, dirRel string, depth int, addGitFile, addGitDi
 
 // materializeNestedGitEntry makes sure rel exists as a real (non-symlink)
 // directory or file, creating a missing one inside an existing parent, and
-// reports whether it can be protected.
+// reports whether it can be protected. Nothing is created or reported below a
+// symlinked parent dir.
 func materializeNestedGitEntry(workspacePath, rel string, isDir bool) bool {
+	if symlinkedParent(workspacePath, rel) != "" {
+		return false
+	}
 	hostPath := filepath.Join(workspacePath, rel)
 	if _, err := os.Lstat(hostPath); os.IsNotExist(err) {
 		if isDir {
@@ -899,6 +907,25 @@ func foreignCommonDir(gitDir string) (string, bool) {
 		return "", false
 	}
 	return resolved, true
+}
+
+// symlinkedParent returns the first parent dir of rel below workspacePath that
+// is a symlink, relative to workspacePath; "" when there is none. The check
+// ends at the first missing part.
+func symlinkedParent(workspacePath, rel string) string {
+	parts := strings.Split(filepath.Clean(rel), string(filepath.Separator))
+	current := ""
+	for _, part := range parts[:len(parts)-1] {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(filepath.Join(workspacePath, current))
+		if err != nil {
+			return ""
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return current
+		}
+	}
+	return ""
 }
 
 func isRealDir(path string) bool {

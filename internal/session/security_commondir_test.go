@@ -571,3 +571,77 @@ func TestApplySessionSecurity_UnexpectedCommonDirMissingTarget(t *testing.T) {
 		t.Errorf("warnings = %q, want one naming %q", warnings, want)
 	}
 }
+
+// A nested git dir's entry below a symlinked dir (info/attributes) is not
+// protected, and nothing is created through it.
+func TestExpandNestedGit_SymlinkedParentDir(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, "nested/.git")
+	mkGitDir(t, ws, "empty/.git")
+	if err := os.WriteFile(filepath.Join(outside, "attributes"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	emptyOutside := t.TempDir()
+	for dir, target := range map[string]string{"nested": outside, "empty": emptyOutside} {
+		info := filepath.Join(ws, dir, ".git", "info")
+		if err := os.RemoveAll(info); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, info); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false) {
+		if strings.Contains(filepath.ToSlash(p), "/info/") {
+			t.Errorf("entry below a symlinked dir: %s", p)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(emptyOutside, "attributes")); !os.IsNotExist(err) {
+		t.Errorf("attributes created outside the workspace: %v", err)
+	}
+}
+
+// A root protected path below a symlinked dir is refused.
+func TestPrepareProtectedPath_SymlinkedParentDir(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	if err := os.WriteFile(filepath.Join(outside, "attributes"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info := filepath.Join(ws, ".git", "info")
+	if err := os.RemoveAll(info); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, info); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := prepareProtectedPath(ws, "/workspace", ".git/info/attributes", false)
+	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Errorf("err = %v; want a symlinked parent error", err)
+	}
+}
+
+// A linked worktree config.worktree placeholder is not created through a
+// symlinked .git.
+func TestExpandGitWorktreeProtectedPaths_SymlinkedGitDir(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "worktrees", "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws, ".git")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ExpandGitWorktreeProtectedPaths(ws, nil, nil); len(got) != 0 {
+		t.Errorf("entries through a symlinked .git: %v", got)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "worktrees", "x", "config.worktree")); !os.IsNotExist(err) {
+		t.Errorf("config.worktree created outside the workspace: %v", err)
+	}
+}
