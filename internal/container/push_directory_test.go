@@ -57,25 +57,23 @@ func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
 	}
 }
 
-// An Incus 7.5+ client makes a recursively pushed tree root-owned with
-// umask-masked modes unless the push passes --archive, which older clients
-// do not have. Every push form gets the flag; the client version is read once.
-func TestPushDirectory_ArchiveByClientVersion(t *testing.T) {
+// An Incus 7.5+ client, and an LTS client with the backport (7.0.2), makes a
+// recursively pushed tree root-owned with umask-masked modes unless the push
+// passes --archive, which older clients do not have. Every push form gets the
+// flag when the client's help lists it; the help is read once.
+func TestPushDirectory_ArchiveByClientHelp(t *testing.T) {
 	tests := []struct {
 		name    string
-		version string
+		help    string
 		archive bool
 	}{
-		{"6.0", "6.0.3", false},
-		{"7.4", "7.4", false},
-		{"7.5", "7.5", true},
-		{"8.0", "8.0", true},
-		{"unparsable", "unknown", false},
+		{"7.0.1 and 7.4 without the flag", "  -p, --create-dirs   Create any directories necessary", false},
+		{"7.0.2 and 7.5+ with the flag", "  -a, --archive       Preserve ownership, timestamps and mode (implies --recursive)", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetPushArchive(t)
-			log := fakeIncusScript(t, `case "$*" in *--version) echo `+tt.version+`;; esac`)
+			log := fakeIncusScript(t, `case "$*" in *"push --help") echo "`+tt.help+`";; esac`)
 			src := filepath.Join(t.TempDir(), "src")
 			if err := os.Mkdir(src, 0o755); err != nil {
 				t.Fatal(err)
@@ -92,7 +90,7 @@ func TestPushDirectory_ArchiveByClientVersion(t *testing.T) {
 				push += "--archive "
 			}
 			logged := calls(t, log)
-			want := []string{"--project " + IncusProject + " --version", push + src + " c1/tmp/", push + src + " c1/"}
+			want := []string{"--project " + IncusProject + " file push --help", push + src + " c1/tmp/", push + src + " c1/"}
 			if len(logged) != 4 || !slices.Equal(logged[:3], want) {
 				t.Fatalf("incus calls = %q, want %q + a staged push", logged, want)
 			}
@@ -103,10 +101,10 @@ func TestPushDirectory_ArchiveByClientVersion(t *testing.T) {
 	}
 }
 
-// A failed version probe keeps the push that works on every client.
-func TestPushDirectory_VersionProbeFailurePushesWithoutArchive(t *testing.T) {
+// A failed help probe keeps the push that works on every client.
+func TestPushDirectory_HelpProbeFailurePushesWithoutArchive(t *testing.T) {
 	resetPushArchive(t)
-	log := fakeIncusScript(t, `case "$*" in *--version) exit 1;; esac`)
+	log := fakeIncusScript(t, `case "$*" in *"push --help") exit 1;; esac`)
 	src := filepath.Join(t.TempDir(), "src")
 	if err := os.Mkdir(src, 0o755); err != nil {
 		t.Fatal(err)
@@ -117,7 +115,7 @@ func TestPushDirectory_VersionProbeFailurePushesWithoutArchive(t *testing.T) {
 	}
 	want := "--project " + IncusProject + " file push -r " + src + " c1/"
 	if logged := calls(t, log); len(logged) != 2 || logged[1] != want {
-		t.Errorf("incus calls = %q, want [version probe, %q]", logged, want)
+		t.Errorf("incus calls = %q, want [help probe, %q]", logged, want)
 	}
 }
 

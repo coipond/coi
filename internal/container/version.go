@@ -145,12 +145,17 @@ func FormatMinVersionError(v *IncusVersion) string {
 }
 
 // pushArchiveSupported reports, once per process, whether the incus client
-// has `file push --archive` (7.5+). It is a client flag, so the client
-// version decides, not the server's.
+// has `file push --archive`. It is a client flag, so the client's own help
+// decides: 7.5 added it, and LTS releases such as 7.0.2 backported it along
+// with 7.5's root-owned default, so a version number would miss them. A
+// failed probe reports false, which keeps the push every client has.
 var pushArchiveSupported = newPushArchiveCheck()
 
 func newPushArchiveCheck() func() bool {
-	return newClientVersionCheck(7, 5)
+	return sync.OnceValue(func() bool {
+		out, err := IncusOutput("file", "push", "--help")
+		return err == nil && strings.Contains(out, "--archive")
+	})
 }
 
 // pullNoDereferenceSupported reports, once per process, whether the incus

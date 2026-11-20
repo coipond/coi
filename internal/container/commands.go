@@ -368,8 +368,8 @@ func IncusFilePush(source, destination string) error {
 // IncusFilePushWithOwnerContext pushes a file into a container with explicit
 // ownership and mode applied by the push itself. Without these flags the
 // result depends on the Incus version: up to 7.4 the file keeps the source's
-// owner and mode, from 7.5 a new file is root-owned with the source mode minus
-// the umask. Pushing with the flags leaves no window or failure path where the
+// owner and mode, from 7.5 (and in LTS releases with the backport, such as
+// 7.0.2) a new file is root-owned with the source mode minus the umask. Pushing with the flags leaves no window or failure path where the
 // file exists with the wrong attributes.
 func IncusFilePushWithOwnerContext(ctx context.Context, source, destination string, uid, gid int, mode string) error {
 	cmdArgs := buildIncusCommand("file", "push",
