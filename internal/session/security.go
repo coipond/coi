@@ -51,7 +51,7 @@ var errSymlinkedPath = errors.New("refusing to mount through a symlink")
 // still applies the immutable attribute to the full set.
 func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) ([]string, error) {
 	dirs := realDirs{}
-	protectedPaths = ExpandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec, dirs)
+	protectedPaths = expandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec, dirs)
 	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, scan, writableHooks, dirs)
 	if len(protectedPaths) == 0 {
 		return protectedPaths, nil
@@ -523,14 +523,19 @@ const commonDirPlaceholder = "./\n"
 // non-nil, nothing is expanded if disable_protection is set, and a file the user
 // explicitly listed in writable_paths is not re-added (without this, the
 // expansion would silently override an opt-out that the static-list subtraction
-// had already applied). sec may be nil (expand unconditionally). dirs caches
-// the parent dirs checked in this setup; it may be nil.
+// had already applied). sec may be nil (expand unconditionally).
 //
 // Idempotent: a discovered path already present in paths is not re-added, so
 // calling this more than once on the same list (or on an already-expanded list)
 // never produces a duplicate — a duplicate would collide on the derived Incus
 // device name and fail the second mount.
-func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig, dirs realDirs) []string {
+func ExpandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig) []string {
+	return expandGitWorktreeProtectedPaths(workspacePath, paths, sec, nil)
+}
+
+// expandGitWorktreeProtectedPaths is ExpandGitWorktreeProtectedPaths with dirs,
+// the cache of the parent dirs checked in this setup; dirs may be nil.
+func expandGitWorktreeProtectedPaths(workspacePath string, paths []string, sec *config.SecurityConfig, dirs realDirs) []string {
 	if sec != nil && sec.DisableProtection {
 		return paths // protection disabled — do not resurrect worktree configs
 	}

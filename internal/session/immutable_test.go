@@ -574,8 +574,9 @@ func TestImmutableOptOut(t *testing.T) {
 	}
 }
 
-// A path below a symlinked dir is skipped with a warning before any ioctl; a
-// path below a missing dir is skipped silently.
+// TestApplyImmutableSkipsSymlinkedParent verifies that a path below a
+// symlinked dir is skipped with a warning before any ioctl, and a path below a
+// missing dir is skipped silently.
 func TestApplyImmutableSkipsSymlinkedParent(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("immutable is Linux-only")

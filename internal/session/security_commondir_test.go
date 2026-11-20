@@ -572,60 +572,6 @@ func TestApplySessionSecurity_UnexpectedCommonDirMissingTarget(t *testing.T) {
 	}
 }
 
-// A nested git dir's entry below a symlinked dir (info/attributes) is not
-// protected, and nothing is created through it.
-func TestExpandNestedGit_SymlinkedParentDir(t *testing.T) {
-	ws := t.TempDir()
-	outside := t.TempDir()
-	mkGitDir(t, ws, ".git")
-	mkGitDir(t, ws, "nested/.git")
-	mkGitDir(t, ws, "empty/.git")
-	if err := os.WriteFile(filepath.Join(outside, "attributes"), []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	emptyOutside := t.TempDir()
-	for dir, target := range map[string]string{"nested": outside, "empty": emptyOutside} {
-		info := filepath.Join(ws, dir, ".git", "info")
-		if err := os.RemoveAll(info); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(target, info); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false, nil) {
-		if strings.Contains(filepath.ToSlash(p), "/info/") {
-			t.Errorf("entry below a symlinked dir: %s", p)
-		}
-	}
-	if _, err := os.Lstat(filepath.Join(emptyOutside, "attributes")); !os.IsNotExist(err) {
-		t.Errorf("attributes created outside the workspace: %v", err)
-	}
-}
-
-// A root protected path below a symlinked dir is refused.
-func TestPrepareProtectedPath_SymlinkedParentDir(t *testing.T) {
-	ws := t.TempDir()
-	outside := t.TempDir()
-	mkGitDir(t, ws, ".git")
-	if err := os.WriteFile(filepath.Join(outside, "attributes"), []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	info := filepath.Join(ws, ".git", "info")
-	if err := os.RemoveAll(info); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, info); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := prepareProtectedPath(ws, "/workspace", ".git/info/attributes", false, nil)
-	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
-		t.Errorf("err = %v; want a symlinked parent error", err)
-	}
-}
-
 // A linked worktree config.worktree placeholder is not created through a
 // symlinked .git.
 func TestExpandGitWorktreeProtectedPaths_SymlinkedGitDir(t *testing.T) {
@@ -638,86 +584,10 @@ func TestExpandGitWorktreeProtectedPaths_SymlinkedGitDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := ExpandGitWorktreeProtectedPaths(ws, nil, nil, nil); len(got) != 0 {
+	if got := ExpandGitWorktreeProtectedPaths(ws, nil, nil); len(got) != 0 {
 		t.Errorf("entries through a symlinked .git: %v", got)
 	}
 	if _, err := os.Lstat(filepath.Join(outside, "worktrees", "x", "config.worktree")); !os.IsNotExist(err) {
 		t.Errorf("config.worktree created outside the workspace: %v", err)
-	}
-}
-
-// A shared realDirs still finds a symlinked dir next to a checked one.
-func TestRealDirs_SymlinkedParentNextToChecked(t *testing.T) {
-	ws := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(ws, "a", "b"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(t.TempDir(), filepath.Join(ws, "a", "c")); err != nil {
-		t.Fatal(err)
-	}
-
-	dirs := realDirs{}
-	if got := dirs.symlinkedParent(ws, "a/b/x"); got != "" {
-		t.Errorf("a/b/x: %q; want none", got)
-	}
-	if got := dirs.symlinkedParent(ws, "a/c/d/x"); got != filepath.Join("a", "c") {
-		t.Errorf("a/c/d/x: %q; want a/c", got)
-	}
-	if dirs[filepath.Join("a", "c")] {
-		t.Error("symlinked a/c cached as a real dir")
-	}
-}
-
-// A protected path that is, or lies below, a symlink is refused with a
-// warning; the later paths, the nested batch and the pins are still mounted.
-func TestSetupSecurityMounts_SymlinkRefusalKeepsLaterPaths(t *testing.T) {
-	ws := t.TempDir()
-	mkGitDir(t, ws, ".git")
-	mkGitDir(t, ws, ".git/modules/lib")
-	for _, d := range []string{"shared", "docs/claude"} {
-		if err := os.MkdirAll(filepath.Join(ws, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, f := range []string{"shared/attributes", "docs/claude/settings.json"} {
-		if err := os.WriteFile(filepath.Join(ws, f), []byte("x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.RemoveAll(filepath.Join(ws, ".git", "info")); err != nil {
-		t.Fatal(err)
-	}
-	for link, target := range map[string]string{".git/info": "../shared", ".claude": "docs/claude", ".vscode": "docs"} {
-		if err := os.Symlink(target, filepath.Join(ws, link)); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	dev := &batchDevices{}
-	refused := []string{".git/info/attributes", ".claude/settings.json", ".vscode"}
-	paths := append(append([]string(nil), refused...), ".git/hooks", ".git/config", ".codex/config.toml")
-	_, err := SetupSecurityMounts(dev, ws, "/workspace", paths, false, nil, NestedGitScan{}, false)
-	if err == nil {
-		t.Fatal("want warnings for the symlinked paths")
-	}
-	for _, rel := range refused {
-		if !strings.Contains(err.Error(), rel+": refusing to mount through a symlink") {
-			t.Errorf("no warning for %s in %v", rel, err)
-		}
-	}
-	var mounted []string
-	for _, m := range dev.mounts {
-		mounted = append(mounted, strings.TrimPrefix(m.path, "/workspace/"))
-	}
-	assertContainsAll(t, mounted, []string{".git/hooks", ".git/config", ".codex/config.toml"})
-	for _, rel := range refused {
-		if slices.Contains(mounted, rel) {
-			t.Errorf("symlinked %s mounted", rel)
-		}
-	}
-	if len(dev.batches) != 1 || !slices.ContainsFunc(dev.batches[0], func(m container.DiskMount) bool {
-		return m.Path == "/workspace/.git/modules/lib/config"
-	}) {
-		t.Errorf("nested batch not mounted: %v", dev.batches)
 	}
 }

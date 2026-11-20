@@ -156,6 +156,38 @@ func TestExpandNestedGit_OptOutsAndSymlinks(t *testing.T) {
 	}
 }
 
+// A nested git dir's entry below a symlinked dir (info/attributes) is not
+// protected, and nothing is created through it.
+func TestExpandNestedGit_SymlinkedParentDir(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	mkGitDir(t, ws, "nested/.git")
+	mkGitDir(t, ws, "empty/.git")
+	if err := os.WriteFile(filepath.Join(outside, "attributes"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	emptyOutside := t.TempDir()
+	for dir, target := range map[string]string{"nested": outside, "empty": emptyOutside} {
+		info := filepath.Join(ws, dir, ".git", "info")
+		if err := os.RemoveAll(info); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, info); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, p := range expandNestedGit(ws, nil, nil, NestedGitScan{}, false, nil) {
+		if strings.Contains(filepath.ToSlash(p), "/info/") {
+			t.Errorf("entry below a symlinked dir: %s", p)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(emptyOutside, "attributes")); !os.IsNotExist(err) {
+		t.Errorf("attributes created outside the workspace: %v", err)
+	}
+}
+
 // A real submodule checkout: its git dir under .git/modules and its .git file
 // are mounted read-only, their parent dirs pinned, with collision-free device
 // names.
