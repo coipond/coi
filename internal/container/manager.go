@@ -1071,8 +1071,9 @@ func copyFile(src, dst string) error {
 
 // PushDirectory pushes a directory to the container recursively, so that
 // containerPath is the pushed directory itself (not a directory inside it).
-// Every entry keeps its source UID, GID and mode: an Incus 7.5+ client makes
-// them root-owned and applies the umask unless the push passes --archive.
+// Every entry keeps its source UID, GID and mode: an Incus 7.5+ client (or an
+// LTS one with the backport, such as 7.0.2) makes them root-owned and applies
+// the umask unless the push passes --archive.
 func (m *Manager) PushDirectory(localPath, containerPath string) error {
 	// Check if source directory exists
 	if info, err := os.Stat(localPath); err != nil || !info.IsDir() {
