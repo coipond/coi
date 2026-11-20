@@ -188,7 +188,10 @@ priority = 5
 
 
 def test_limits_work_with_persistent_containers(coi_binary, workspace_dir, cleanup_containers):
-    """Test that limits work with persistent containers."""
+    """Test that limits work with persistent containers.
+
+    The second launch reuses the same container (same volatile.uuid).
+    """
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "config.toml").write_text(
@@ -204,26 +207,35 @@ limit = "2GiB"
 """
     )
 
+    container_name = calculate_container_name(workspace_dir, 1)
+
     # Launch persistent container with limits
     config = run_and_show_config(coi_binary, workspace_dir)
 
     assert 'limits.cpu: "2"' in config, "CPU limit should be set"
     assert "limits.memory: 2GiB" in config, "Memory limit should be set"
+    uuids = [container_config_get(container_name, "volatile.uuid")]
 
     # Run again with persistent container (should reuse)
     config = run_and_show_config(coi_binary, workspace_dir)
     assert 'limits.cpu: "2"' in config, "CPU limit should persist"
     assert "limits.memory: 2GiB" in config, "Memory limit should persist"
+    uuids.append(container_config_get(container_name, "volatile.uuid"))
+    assert None not in uuids and len(set(uuids)) == 1, (
+        f"Each launch should reuse the same container: {uuids}"
+    )
 
 
 def test_limits_follow_config_on_persistent_restart(coi_binary, workspace_dir, cleanup_containers):
     """Test that a restarted persistent container gets the current config's limits.
 
     A raised limit is set and a removed one is unset on the next start.
+    Both launches reuse the same container (same volatile.uuid).
     """
     config_dir = Path(workspace_dir) / ".coi"
     config_dir.mkdir(exist_ok=True)
     config_file = config_dir / "config.toml"
+    container_name = calculate_container_name(workspace_dir, 1)
 
     config_file.write_text(
         """
@@ -240,6 +252,7 @@ max_processes = 500
     config = run_and_show_config(coi_binary, workspace_dir)
     assert 'limits.cpu: "1"' in config, "CPU limit should be set"
     assert 'limits.processes: "500"' in config, "Process limit should be set"
+    uuids = [container_config_get(container_name, "volatile.uuid")]
 
     config_file.write_text(
         """
@@ -253,6 +266,10 @@ count = "2"
     config = run_and_show_config(coi_binary, workspace_dir)
     assert 'limits.cpu: "2"' in config, "Raised CPU limit should apply on restart"
     assert "limits.processes" not in config, "Removed process limit should be unset"
+    uuids.append(container_config_get(container_name, "volatile.uuid"))
+    assert None not in uuids and len(set(uuids)) == 1, (
+        f"Each launch should reuse the same container: {uuids}"
+    )
 
 
 def test_process_limit_follows_config_on_persistent_restart(

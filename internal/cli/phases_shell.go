@@ -79,6 +79,9 @@ func (a *App) resolveWorkspacePhase(cmd *cobra.Command, s *shellState) session.P
 				if err != nil {
 					return nil, err
 				}
+				if cmd.Flags().Changed("workspace") && absWorkspace != resolved.Workspace {
+					fmt.Fprintf(os.Stderr, "Warning: alias '%s' uses workspace %s; ignoring -w %s\n", s.aliasArg, resolved.Workspace, a.workspace)
+				}
 				absWorkspace = resolved.Workspace
 
 				if err := a.cfg.OverlayProjectConfig(absWorkspace); err != nil {
@@ -583,7 +586,11 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 				}
 			}
 			if g := s.result.Grants; g != nil {
-				fmt.Fprintf(os.Stderr, "\n%s", g.WithEnv(envSources, launch).Render())
+				report, err := grantsReport(g.WithEnv(envSources, launch), grantsJSON)
+				if err != nil {
+					return nil, err
+				}
+				fmt.Fprintf(os.Stderr, "\n%s", report)
 			}
 			fmt.Fprintf(os.Stderr, "\nStarting session...\n")
 			fmt.Fprintf(os.Stderr, "Session ID: %s\n", s.sessionID)
@@ -634,6 +641,19 @@ func (a *App) runToolPhase(s *shellState) session.Phase {
 	}
 }
 
+// grantsReport is the startup grants report: the text block, or with asJSON
+// one JSON line.
+func grantsReport(g *session.Grants, asJSON bool) (string, error) {
+	if !asJSON {
+		return g.Render(), nil
+	}
+	b, err := g.JSON()
+	if err != nil {
+		return "", fmt.Errorf("grants report: %w", err)
+	}
+	return string(b) + "\n", nil
+}
+
 // registerShellAlias saves the [container] alias, if any, into the alias
 // registry with the profile this launch chose by --profile, the alias or a
 // resume. A profile that came only from [defaults] profile is not saved, so the
@@ -666,10 +686,7 @@ func (a *App) registerShellAlias(absWorkspace string) error {
 // set a.profile; ApplyProfile merges additively, so applying a second profile
 // on top would stack the two.
 func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorkspace string) (string, *session.SessionMetadata, error) {
-	resumeID := a.resume
-	if a.continueSession != "" {
-		resumeID = a.continueSession
-	}
+	resumeID, warning := pickResumeID(a.resume, a.continueSession)
 
 	defaultProfile, err := a.defaultProfileFallbackName(cmd)
 	if err != nil {
@@ -694,6 +711,9 @@ func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorksp
 	} else if resumeID != "" {
 		if !session.SessionExists(sessionsDir, resumeID) {
 			return "", nil, fmt.Errorf("session '%s' not found - check available sessions with: coi list --all", resumeID)
+		}
+		if warning != "" {
+			fmt.Fprintln(os.Stderr, warning)
 		}
 		fmt.Fprintf(os.Stderr, "Resuming session: %s\n", resumeID)
 	}
@@ -721,4 +741,24 @@ func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorksp
 		a.persistent = config.BoolVal(a.cfg.Container.Persistent)
 	}
 	return resumeID, metadata, nil
+}
+
+// pickResumeID merges --resume and --continue (its alias) into one session ID
+// ("auto" to auto-detect) and returns a warning when they conflict: a session
+// ID wins over a bare flag (auto), and --resume wins over --continue.
+func pickResumeID(resume, continueSession string) (string, string) {
+	if resume == "" || continueSession == "" || resume == continueSession {
+		if resume != "" {
+			return resume, ""
+		}
+		return continueSession, ""
+	}
+	if resume == "auto" {
+		return continueSession, fmt.Sprintf("Warning: resuming session %s from --continue; ignoring bare --resume", continueSession)
+	}
+	ignored := "--continue=" + continueSession
+	if continueSession == "auto" {
+		ignored = "bare --continue"
+	}
+	return resume, fmt.Sprintf("Warning: resuming session %s from --resume; ignoring %s", resume, ignored)
 }

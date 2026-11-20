@@ -84,6 +84,7 @@ func TestWorkspaceHashFormat(t *testing.T) {
 }
 
 func TestContainerName(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
 	tests := []struct {
 		name          string
 		workspacePath string
@@ -135,6 +136,7 @@ func TestContainerName(t *testing.T) {
 }
 
 func TestContainerNameDifferentSlots(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
 	path := "/test/workspace"
 	name1 := ContainerName(path, "", 1)
 	name2 := ContainerName(path, "", 2)
@@ -158,6 +160,7 @@ func TestContainerNameDifferentSlots(t *testing.T) {
 }
 
 func TestParseContainerName(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
 	tests := []struct {
 		name          string
 		containerName string

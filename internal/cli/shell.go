@@ -31,6 +31,7 @@ var (
 	debugShell    bool
 	background    bool
 	containerName string
+	grantsJSON    bool
 )
 
 var shellCmd = &cobra.Command{
@@ -64,6 +65,7 @@ Examples:
   coi shell --continue=<session-id> # Same as --resume (alias)
   coi shell --slot 2                # Use specific slot
   coi shell --debug                 # Launch bash for debugging
+  coi shell --background --json     # Effective grants as one JSON line on stderr
 `,
 	Args: cobra.MaximumNArgs(1),
 	RunE: app.shellCommand,
@@ -73,6 +75,7 @@ func init() {
 	shellCmd.Flags().BoolVar(&debugShell, "debug", false, "Launch interactive bash instead of AI tool (for debugging)")
 	shellCmd.Flags().BoolVar(&background, "background", false, "Run AI tool in background tmux session (detached)")
 	shellCmd.Flags().StringVar(&containerName, "container", "", "Use existing container (for testing)")
+	shellCmd.Flags().BoolVar(&grantsJSON, "json", false, "Print the effective grants report as one JSON line on stderr instead of text (names only, never values)")
 }
 
 func (a *App) shellCommand(cmd *cobra.Command, args []string) error {
