@@ -687,23 +687,30 @@ func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityC
 		out = append(out, rel)
 	}
 	for _, gitDir := range found.gitDirs {
-		for _, entry := range nestedGitDirEntries {
-			if entry == "hooks" && writableHooks {
-				continue
-			}
-			rel := filepath.Join(gitDir, entry)
-			if materializeNestedGitEntry(workspacePath, rel, entry == "hooks", dirs) {
-				add(rel)
-			}
-		}
-		for _, rel := range linkedWorktreeEntries(workspacePath, gitDir, dirs) {
-			add(rel)
-		}
+		addGitDirEntries(workspacePath, gitDir, writableHooks, dirs, func(rel string, _ bool) { add(rel) })
 	}
 	for _, f := range found.gitFiles {
 		add(f)
 	}
 	return out
+}
+
+// addGitDirEntries calls add for each protected entry of the git dir at
+// gitDirRel below root: its nestedGitDirEntries (hooks unless writableHooks),
+// materialized, and its linked worktree entries.
+func addGitDirEntries(root, gitDirRel string, writableHooks bool, dirs realDirs, add func(rel string, isDir bool)) {
+	for _, entry := range nestedGitDirEntries {
+		if entry == "hooks" && writableHooks {
+			continue
+		}
+		rel := filepath.Join(gitDirRel, entry)
+		if materializeNestedGitEntry(root, rel, entry == "hooks", dirs) {
+			add(rel, entry == "hooks")
+		}
+	}
+	for _, rel := range linkedWorktreeEntries(root, gitDirRel, dirs) {
+		add(rel, false)
+	}
 }
 
 // scanNestedGit finds the git dirs and .git files below the workspace root.
@@ -713,21 +720,32 @@ func expandNestedGit(workspacePath string, paths []string, sec *config.SecurityC
 // is covered too.
 func scanNestedGit(workspacePath string) nestedGitFound {
 	var found nestedGitFound
-	var addGitDir func(string)
-	addGitDir = func(gitDirRel string) {
+	addGitDir := func(gitDirRel string) {
 		found.gitDirs = append(found.gitDirs, gitDirRel)
 		if f, ok := submoduleGitFile(workspacePath, gitDirRel); ok {
 			found.gitFiles = append(found.gitFiles, f)
 		}
-		walkGitModules(workspacePath, filepath.Join(gitDirRel, "modules"), 1, addGitDir)
+	}
+	addRepo := func(gitDirRel string) {
+		addGitDir(gitDirRel)
+		walkModuleGitDirs(workspacePath, gitDirRel, addGitDir)
 	}
 	addGitFile := func(rel string) { found.gitFiles = append(found.gitFiles, rel) }
 
 	if isRealDir(filepath.Join(workspacePath, ".git")) {
-		walkGitModules(workspacePath, filepath.Join(".git", "modules"), 1, addGitDir)
+		walkModuleGitDirs(workspacePath, ".git", addGitDir)
 	}
-	walkNestedGit(workspacePath, "", 0, addGitFile, addGitDir)
+	walkNestedGit(workspacePath, "", 0, addGitFile, addRepo)
 	return found
+}
+
+// walkModuleGitDirs calls addGitDir for each submodule git dir below the git
+// dir at gitDirRel (<gitDirRel>/modules/**, nested modules included).
+func walkModuleGitDirs(root, gitDirRel string, addGitDir func(string)) {
+	walkGitModules(root, filepath.Join(gitDirRel, "modules"), 1, func(rel string) {
+		addGitDir(rel)
+		walkModuleGitDirs(root, rel, addGitDir)
+	})
 }
 
 // submoduleGitFile returns the .git file of the checkout named by the
