@@ -518,8 +518,12 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 
 	m.logger.Println("  Allowing only allowlisted destinations")
 	m.logger.Println("  DNS blocked: /etc/hosts is the container's only name resolution")
-	m.logger.Println("  Blocking all RFC1918 private networks")
-	m.logger.Println("  Blocking cloud metadata endpoints")
+	if config.BoolVal(m.config.AllowLocalNetworkAccess) {
+		m.logger.Println("  Allowing RFC1918 private networks (allow_local_network_access)")
+	} else {
+		m.logger.Println("  Blocking all RFC1918 private networks")
+		m.logger.Println("  Blocking cloud metadata endpoints")
+	}
 
 	// Re-resolve periodically so the addresses do not drift too far from DNS. The
 	// firewall and the hosts file are updated together, so they can never disagree
