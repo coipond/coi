@@ -13,11 +13,11 @@ import (
 
 // fakeCodexSetupManager extends the package's shared in-memory fake
 // (fakeAutoCtxManager, see setup_context_autoctx_test.go) with the two things
-// the codex setup path additionally needs: ExecArgs (mkdir/chmod from
-// seedHostFile) and CreateFile call tracking, so tests can assert that NO
-// synthesized settings writes happen for codex. The files map, PushFile,
-// Chown, and ExecCommand handling (mkdir -p, cat, and a permissive default
-// for chown -R) are inherited. Note the inherited ExecCommand returns ("",
+// the codex setup path additionally needs: ExecArgs (chmod from seedHostFile,
+// mkdir -p from injectCredentials) and CreateFile call tracking, so tests can
+// assert that NO synthesized settings writes happen for codex. The files map,
+// PushFile, Chown, and ExecCommand handling (cat, and a permissive default for
+// homeMkdirCmd and chown -R) are inherited. Note the inherited ExecCommand returns ("",
 // nil) for unrecognized command strings — un-overridden interface METHODS
 // panic via the embedded nil interface, but unknown command strings do not.
 type fakeCodexSetupManager struct {
@@ -30,7 +30,7 @@ func newFakeCodexSetupManager() *fakeCodexSetupManager {
 }
 
 func (f *fakeCodexSetupManager) ExecArgs(args []string, _ container.ExecCommandOptions) error {
-	// mkdir -p / chmod from seedHostFile
+	// chmod from seedHostFile, mkdir -p from injectCredentials
 	return nil
 }
 
