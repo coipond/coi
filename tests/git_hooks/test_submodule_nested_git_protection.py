@@ -12,7 +12,9 @@ Tests that:
   git dir and of nested repos at depth 1 and 3 are read-only, and so is the
   submodule checkout's .git file
 - commondir and config.worktree of linked worktrees of a submodule and of a
-  nested repo are read-only
+  nested repo are read-only, and such git-made layouts give no commondir warning
+- a commondir of a submodule or nested git dir that names another dir is kept,
+  read-only, and the launch warns naming it
 - a nested repo at depth 4 is not protected
 - [git] writable_hooks = true leaves those hooks dirs writable, config read-only
 - [security] writable_paths opts single nested entries out of protection
@@ -36,6 +38,7 @@ SUBMODULE_GIT_FILE = "lib/.git"
 DEPTH1_GIT_DIR = "d1/.git"
 DEPTH3_GIT_DIR = "x/y/d3/.git"
 DEPTH4_GIT_DIR = "p/q/r/d4/.git"
+COMMONDIR_WARNING = "Warning: unexpected git commondir, kept as it is; check it:"
 PROTECTED_GIT_DIRS = (SUBMODULE_GIT_DIR, DEPTH1_GIT_DIR, DEPTH3_GIT_DIR)
 GIT_DIR_ENTRIES = ("hooks", "config", "config.worktree", "info/attributes", "commondir")
 LINKED_WORKTREE_ADMIN_DIRS = (
@@ -86,6 +89,11 @@ def _probe_writes(coi_binary, workspace_dir, paths, env=None):
 
     A dir gets a new coi-probe file, a file an empty append.
     """
+    return _probe_writes_with_result(coi_binary, workspace_dir, paths, env)[0]
+
+
+def _probe_writes_with_result(coi_binary, workspace_dir, paths, env=None):
+    """_probe_writes that also returns the coi run result."""
     ws = Path(workspace_dir)
     lines = []
     for rel in paths:
@@ -106,7 +114,7 @@ def _probe_writes(coi_binary, workspace_dir, paths, env=None):
         if status in ("OK", "ERR") and rel in paths:
             found[rel] = (status == "OK", error)
     assert set(found) == set(paths), f"missing probe results: {result.stdout + result.stderr}"
-    return found
+    return found, result
 
 
 def _assert_read_only(ws, found, rel):
@@ -158,12 +166,37 @@ def test_linked_worktrees_of_nested_git_read_only(
         f"{a}/{e}" for a in LINKED_WORKTREE_ADMIN_DIRS for e in ("commondir", "config.worktree")
     ]
 
-    found = _probe_writes(coi_binary, workspace_dir, protected)
+    found, result = _probe_writes_with_result(coi_binary, workspace_dir, protected)
 
     for rel in protected:
         _assert_read_only(ws, found, rel)
     for admin, original in originals.items():
         assert (ws / admin / "commondir").read_text() == original, f"{admin}/commondir changed"
+    assert "unexpected git commondir" not in result.stderr, f"unexpected warning: {result.stderr}"
+
+
+def test_unexpected_commondir_kept_and_warned(
+    coi_binary, workspace_dir, tmp_path, cleanup_containers
+):
+    """A commondir naming another dir is kept read-only and named in the launch warning."""
+    ws = _git_workspace(workspace_dir, tmp_path)
+    target = ws / "other"
+    target.mkdir()
+    planted = f"{target}\n"
+    git_dirs = (SUBMODULE_GIT_DIR, DEPTH1_GIT_DIR)
+    for d in git_dirs:
+        (ws / d / "commondir").write_text(planted)
+    make_workspace_writable(workspace_dir)
+    paths = [f"{d}/commondir" for d in git_dirs]
+
+    found, result = _probe_writes_with_result(coi_binary, workspace_dir, paths)
+
+    warnings = [line for line in result.stderr.splitlines() if COMMONDIR_WARNING in line]
+    assert len(warnings) == 1, f"expected one commondir warning, got: {result.stderr}"
+    for rel in paths:
+        _assert_read_only(ws, found, rel)
+        assert f"{rel} -> {target.resolve()}" in warnings[0], f"warning must name {rel}"
+        assert (ws / rel).read_text() == planted, f"{rel} changed"
 
 
 def test_writable_hooks_applies_to_nested_git(
@@ -214,5 +247,5 @@ def test_disable_protection_applies_to_nested_git(
 
     for rel in paths:
         _assert_writable(ws, found, rel)
-    for entry in ("config.worktree", "info/attributes"):
+    for entry in ("config.worktree", "info/attributes", "commondir"):
         assert not (ws / DEPTH1_GIT_DIR / entry).exists(), f"{entry} must not be created"
