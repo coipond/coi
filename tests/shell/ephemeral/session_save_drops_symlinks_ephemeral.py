@@ -23,6 +23,7 @@ from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    child_output,
     exec_in,
     session_for_container,
     spawn_coi,
@@ -49,14 +50,6 @@ SYMLINKS = [
     "coi-dir-link",
     os.path.join("coi-sub", "coi-esc-evil"),
 ]
-
-
-def _drain_output(child):
-    lf = child.logfile_read
-    for attr in ("get_raw_output", "get_output", "get_display_stripped"):
-        if hasattr(lf, attr):
-            return getattr(lf, attr)()
-    return ""
 
 
 def _save_session(coi_binary, workspace_dir, setup):
@@ -86,7 +79,7 @@ def _save_session(coi_binary, workspace_dir, setup):
             child.expect(EOF, timeout=60)
         except TIMEOUT:
             pass
-        output = _drain_output(child)
+        output = child_output(child)
     finally:
         try:
             child.close(force=False)

@@ -689,6 +689,16 @@ def exec_as_code_user(container_name, *argv, timeout=30, cwd=None):
     )
 
 
+def child_output(child):
+    """Return everything a spawn_coi child printed: the raw terminal output
+    (TerminalEmulator) or the captured log (LogCapture), else ""."""
+    lf = child.logfile_read
+    for attr in ("get_raw_output", "get_output"):
+        if hasattr(lf, attr):
+            return getattr(lf, attr)()
+    return ""
+
+
 def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
     """Run `sudo poweroff` in the coi shell's bash pane (which saves the
     session), wait for coi to exit and the container to go, and force-delete
