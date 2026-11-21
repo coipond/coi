@@ -1971,3 +1971,57 @@ def run_audit(coi_binary, *args, cwd=None, timeout=60):
         timeout=timeout,
         cwd=cwd,
     )
+
+
+def image_fingerprint(alias):
+    """Return the fingerprint of the image `alias` points to, or None."""
+    r = subprocess.run(
+        ["incus", "image", "list", "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if r.returncode != 0:
+        return None
+    for img in json.loads(r.stdout):
+        if any(a["name"] == alias for a in img.get("aliases") or []):
+            return img["fingerprint"]
+    return None
+
+
+@contextlib.contextmanager
+def stale_ubuntu_cache_alias(alias, target="coi-default"):
+    """Add `alias` (a superseded coi-ubuntu-<ver> cache name) to the `target`
+    image for the block, and remove it afterwards if coi left it. Yields the
+    target's fingerprint, or None when the alias can't be staged (no target,
+    or an instance was created from it, so coi would rightly keep it)."""
+    fingerprint = image_fingerprint(target)
+    if fingerprint is None:
+        yield None
+        return
+    r = subprocess.run(
+        ["incus", "list", "--all-projects", "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    in_use = r.returncode != 0 or any(
+        (inst.get("config") or {}).get("volatile.base_image") == fingerprint
+        for inst in json.loads(r.stdout)
+    )
+    if in_use:
+        yield None
+        return
+    subprocess.run(["incus", "image", "alias", "delete", alias], capture_output=True, timeout=30)
+    subprocess.run(
+        ["incus", "image", "alias", "create", alias, fingerprint],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    try:
+        yield fingerprint
+    finally:
+        subprocess.run(
+            ["incus", "image", "alias", "delete", alias], capture_output=True, timeout=30
+        )
