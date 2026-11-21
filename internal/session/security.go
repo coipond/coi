@@ -740,12 +740,27 @@ func scanNestedGit(workspacePath string) nestedGitFound {
 }
 
 // walkModuleGitDirs calls addGitDir for each submodule git dir below the git
-// dir at gitDirRel (<gitDirRel>/modules/**, nested modules included).
+// dir at gitDirRel: <gitDirRel>/modules/** and each linked worktree's
+// <gitDirRel>/worktrees/<name>/modules/**, nested modules included.
 func walkModuleGitDirs(root, gitDirRel string, addGitDir func(string)) {
-	walkGitModules(root, filepath.Join(gitDirRel, "modules"), 1, func(rel string) {
+	visit := func(rel string) {
 		addGitDir(rel)
 		walkModuleGitDirs(root, rel, addGitDir)
-	})
+	}
+	walkGitModules(root, filepath.Join(gitDirRel, "modules"), 1, visit)
+	wtRoot := filepath.Join(root, gitDirRel, "worktrees")
+	if !isRealDir(wtRoot) {
+		return
+	}
+	entries, err := os.ReadDir(wtRoot)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			walkGitModules(root, filepath.Join(gitDirRel, "worktrees", e.Name(), "modules"), 1, visit)
+		}
+	}
 }
 
 // submoduleGitFile returns the .git file of the checkout named by the
