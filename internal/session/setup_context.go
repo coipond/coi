@@ -238,21 +238,31 @@ const (
 	autoContextMissingMarker = "coi:missing"
 )
 
-// autoContextReadCmd creates the auto-context file's missing directories under
-// homeDir and prints the file's current content (after an exists/missing
-// marker line) in one exec. The exec runs as root, so each directory it
-// creates is handed to the home's owner: a root-owned ~/.config/goose stops
-// goose saving its config.
-func autoContextReadCmd(destPath, homeDir string) string {
+// homeMkdirCmd creates dir and its missing parents. coi's execs run as root,
+// so each directory it creates under homeDir is handed to the home's owner: a
+// root-owned ~/.config/goose stops goose saving its config, and a root-owned
+// ~/.claude or ~/.codex (an image without them) stops the tool writing there.
+// Existing directories keep their owner. A dir outside homeDir gets mkdir -p.
+func homeMkdirCmd(dir, homeDir string) string {
+	if !strings.HasPrefix(dir, homeDir+"/") {
+		return "mkdir -p " + shellEscape(dir)
+	}
 	owner := homeFileOwner(homeDir)
 	var dirs []string
-	for dir := filepath.Dir(destPath); dir != homeDir && strings.HasPrefix(dir, homeDir+"/"); dir = filepath.Dir(dir) {
+	for ; dir != homeDir && strings.HasPrefix(dir, homeDir+"/"); dir = filepath.Dir(dir) {
 		dirs = append([]string{shellEscape(dir)}, dirs...)
 	}
+	return fmt.Sprintf(`for d in %s; do [ -d "$d" ] || { mkdir "$d" && chown %d:%d "$d"; } || exit 1; done`,
+		strings.Join(dirs, " "), owner, owner)
+}
+
+// autoContextReadCmd creates the auto-context file's missing directories under
+// homeDir (homeMkdirCmd) and prints the file's current content (after an
+// exists/missing marker line) in one exec.
+func autoContextReadCmd(destPath, homeDir string) string {
 	mkdirs := ""
-	if len(dirs) > 0 {
-		mkdirs = fmt.Sprintf(`for d in %s; do [ -d "$d" ] || { mkdir "$d" && chown %d:%d "$d"; } || exit 1; done && `,
-			strings.Join(dirs, " "), owner, owner)
+	if dir := filepath.Dir(destPath); strings.HasPrefix(dir, homeDir+"/") {
+		mkdirs = homeMkdirCmd(dir, homeDir) + " && "
 	}
 	return fmt.Sprintf("%sif [ -f %s ]; then echo %s; cat %s; else echo %s; fi",
 		mkdirs, shellEscape(destPath), autoContextExistsMarker,

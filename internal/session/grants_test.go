@@ -39,11 +39,13 @@ func (f *fakeGrantsManager) NestingSetLocally() (set, ok bool) {
 	return !f.fromProfile, !f.sourceUnknown
 }
 
-func (f *fakeGrantsManager) ExecArgs(args []string, _ container.ExecCommandOptions) error {
-	if f.mkdirFail && args[0] == "mkdir" {
-		return errors.New("mkdir failed")
+func (f *fakeGrantsManager) ExecArgs([]string, container.ExecCommandOptions) error { return nil }
+
+func (f *fakeGrantsManager) ExecCommand(string, container.ExecCommandOptions) (string, error) {
+	if f.mkdirFail {
+		return "", errors.New("mkdir failed")
 	}
-	return nil
+	return "", nil
 }
 
 func (f *fakeGrantsManager) PushFile(src, _ string) error {
