@@ -12,12 +12,19 @@ import (
 // `alias`, so createImage can run without a real Incus. Returns the log path.
 func fakeIncus(t *testing.T, alias string) string {
 	t.Helper()
+	return fakeIncusCases(t, `  *"image list"*) echo '[{"fingerprint":"f00d","aliases":[{"name":"`+alias+`"}]}]' ;;`)
+}
+
+// fakeIncusCases is fakeIncus with the stub's `case "$*" in` arms given by
+// the caller. Returns the log path.
+func fakeIncusCases(t *testing.T, cases string) string {
+	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls.log")
 	script := `#!/bin/sh
 echo "$*" >> "` + logPath + `"
 case "$*" in
-  *"image list"*) echo '[{"fingerprint":"f00d","aliases":[{"name":"` + alias + `"}]}]' ;;
+` + cases + `
 esac
 exit 0
 `

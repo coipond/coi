@@ -163,9 +163,7 @@ func runInlineBuild(cfg *config.Config, imageName string) error {
 			return nil
 		}
 		fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", imageName)
-		if dir, err := coiDataDir(); err == nil {
-			image.RecordBuild(dir, imageName, coiBaseImage)
-		}
+		recordBuild(imageName, coiBaseImage)
 		return nil
 	}
 
@@ -206,9 +204,7 @@ func runInlineBuild(cfg *config.Config, imageName string) error {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", imageName)
-	if dir, err := coiDataDir(); err == nil {
-		image.RecordBuild(dir, imageName, baseImage)
-	}
+	recordBuild(imageName, baseImage)
 	return nil
 }
 
@@ -219,6 +215,17 @@ func coiDataDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".coi"), nil
+}
+
+// recordBuild records imageName's base in ~/.coi/image-meta.json, then removes
+// the Ubuntu base caches no recorded build needs.
+func recordBuild(imageName, baseImage string) {
+	dir, err := coiDataDir()
+	if err != nil {
+		return
+	}
+	image.RecordBuild(dir, imageName, baseImage)
+	image.PruneUbuntuCache(dir, stderrLogFn)
 }
 
 // CheckAndReportStaleBase checks whether imageName's recorded base was rebuilt

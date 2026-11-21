@@ -1072,6 +1072,13 @@ func DeleteImage(aliasName string) error {
 	return IncusExecQuiet("image", "delete", aliasName)
 }
 
+// DeleteImageAlias deletes an image alias, leaving the image and its other
+// aliases in place.
+func DeleteImageAlias(aliasName string) error {
+	knownImages.Delete(aliasName)
+	return IncusExecQuiet("image", "alias", "delete", aliasName)
+}
+
 // knownImages remembers aliases ImageExists has already found in this
 // process, so a launch that checks the same image twice (the CLI's auto-build
 // check, then session setup) pays for one image list, not two. Only positive
