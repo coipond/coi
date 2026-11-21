@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/coipond/coi/internal/config"
@@ -163,9 +164,7 @@ func runInlineBuild(cfg *config.Config, imageName string) error {
 			return nil
 		}
 		fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", imageName)
-		if dir, err := coiDataDir(); err == nil {
-			image.RecordBuild(dir, imageName, coiBaseImage)
-		}
+		recordBuildAndPrune(cfg, imageName, coiBaseImage)
 		return nil
 	}
 
@@ -206,9 +205,7 @@ func runInlineBuild(cfg *config.Config, imageName string) error {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", imageName)
-	if dir, err := coiDataDir(); err == nil {
-		image.RecordBuild(dir, imageName, baseImage)
-	}
+	recordBuildAndPrune(cfg, imageName, baseImage)
 	return nil
 }
 
@@ -219,6 +216,46 @@ func coiDataDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".coi"), nil
+}
+
+// pruneUbuntuCache is image.PruneUbuntuCache; tests replace it.
+var pruneUbuntuCache = image.PruneUbuntuCache
+
+// recordBuildAndPrune records imageName's base in ~/.coi/image-meta.json,
+// then removes the Ubuntu base caches no build needs.
+func recordBuildAndPrune(cfg *config.Config, imageName, baseImage string) {
+	dir, err := coiDataDir()
+	if err != nil {
+		return
+	}
+	image.RecordBuild(dir, imageName, baseImage)
+	pruneUbuntuCache(dir, configuredBases(cfg), stderrLogFn)
+}
+
+// pruneAfterBuildAll removes the Ubuntu base caches no build needs once
+// `coi build --all` has built at least one image.
+func pruneAfterBuildAll(cfg *config.Config, built int) {
+	if built == 0 {
+		return
+	}
+	if dir, err := coiDataDir(); err == nil {
+		pruneUbuntuCache(dir, configuredBases(cfg), stderrLogFn)
+	}
+}
+
+// configuredBases returns every [container.build] base set in cfg or one of
+// its profiles. A profile that fails to load is skipped.
+func configuredBases(cfg *config.Config) []string {
+	var bases []string
+	if cfg.Container.Build.Base != "" {
+		bases = append(bases, cfg.Container.Build.Base)
+	}
+	for _, name := range cfg.ProfileNames() {
+		if p := cfg.GetProfile(name); p != nil && p.Container.Build.Base != "" && !slices.Contains(bases, p.Container.Build.Base) {
+			bases = append(bases, p.Container.Build.Base)
+		}
+	}
+	return bases
 }
 
 // CheckAndReportStaleBase checks whether imageName's recorded base was rebuilt
