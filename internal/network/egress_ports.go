@@ -14,9 +14,10 @@ import (
 // "198.51.100.0/24:22", "svc:8000-8100" — which allowlist mode enforces via nft
 // concatenated sets (ipv4_addr . inet_service). Private (RFC1918, link-local)
 // entries are rejected unless allow_local_network_access, which opens the whole
-// RFC1918 LAN, so their ports limit nothing; an address of the host itself is
-// the exception (allowlistHostAccepts). These helpers parse the `dest:ports`
-// syntax and render the address·port tuples that go into those sets.
+// RFC1918 LAN, so an RFC1918 entry's ports limit nothing; link-local entries
+// and an address of the host itself (allowlistHostAccepts) keep their ports.
+// These helpers parse the `dest:ports` syntax and render the address·port
+// tuples that go into those sets.
 
 // portRange is an inclusive destination-port interval. A single port has Lo==Hi.
 type portRange struct{ Lo, Hi uint16 }
