@@ -65,8 +65,9 @@ def test_slot_explicit_occupied_and_invalid(
     coi_binary, cleanup_containers, workspace_dir, tmp_path
 ):
     """
-    --slot -1 is a usage error; an occupied --slot moves to the next free slot;
-    resume returns to the session's original slot.
+    --slot -1 is a usage error; an occupied --slot (or alias-N) moves to the
+    next free slot, else to the lowest free one, and fails when all 10 slots
+    are in use; resume returns to the session's original slot.
 
     Flow:
     1. coi shell / coi run --slot -1: exit 2, the usage message, no container
