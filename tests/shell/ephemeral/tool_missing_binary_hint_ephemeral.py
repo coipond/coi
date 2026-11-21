@@ -2,12 +2,12 @@
 Test for coi shell - a configured tool missing from the container.
 
 Tests that:
-1. With a `[tool] binary` that is not in the container, the tmux pane shows
+1. With a `[tool] binary` command name not on the container's PATH, the tmux pane shows
    coi's hint naming the binary, the tool and [container.build] agents.
 2. bash's own "command not found" does not appear in the pane.
 
 Flow:
-- trusted config sets `[tool] binary` to a path that does not exist
+- trusted config sets `[tool] binary` to a command name not on PATH
 - coi shell --background (tmux), COI_USE_DUMMY unset so argv[0] stays the binary
 - read the session's pane with tmux capture-pane
 """
@@ -21,7 +21,9 @@ from support.helpers import (
     write_trusted_coi_config,
 )
 
-MISSING = "/workspace/no-such-agent"
+# A bare name, looked up on PATH: bash says "command not found" for it
+# (for a missing absolute path it says "No such file or directory").
+MISSING = "coi-no-such-agent"
 HINT = f"coi: {MISSING} not found in this container."
 
 

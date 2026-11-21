@@ -2,7 +2,7 @@
 Test for coi run --prompt - a configured tool missing from the container.
 
 Tests that:
-1. A `[tool] binary` that is not in the container makes `coi run --prompt`
+1. A `[tool] binary` command name not on the container's PATH makes `coi run --prompt`
    print coi's hint naming the binary, the tool and [container.build] agents.
 2. bash's own "command not found" does not appear.
 3. coi exits 127 (bash's "command not found" status).
@@ -12,7 +12,9 @@ import subprocess
 
 from support.helpers import write_trusted_coi_config
 
-MISSING = "/workspace/no-such-agent"
+# A bare name, looked up on PATH: bash says "command not found" for it
+# (for a missing absolute path it says "No such file or directory").
+MISSING = "coi-no-such-agent"
 
 
 def test_run_prompt_tool_not_installed(coi_binary, cleanup_containers, workspace_dir):
