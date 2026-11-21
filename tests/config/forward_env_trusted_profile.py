@@ -3,8 +3,9 @@ Test for coi run - forward_env in a trusted profile is forwarded.
 
 Profiles under ~/.coi/profiles or next to $COI_CONFIG are user-controlled,
 so their forward_env reaches the container. This is the positive pair of
-forward_env_project_profile_ignored.py: without it, that test cannot tell
-"stripped" from "profile forward_env not wired".
+forward_env_project_profile_ignored.py: it shows profile forward_env is
+applied at all, so an empty value there means the project profile was
+filtered out.
 
 Tests that:
 1. forward_env from ~/.coi/profiles/NAME/config.toml is forwarded
