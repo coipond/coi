@@ -18,9 +18,8 @@ import os
 import re
 import subprocess
 import tarfile
-from pathlib import Path
 
-BUILD_SH = Path(__file__).resolve().parents[2] / "profiles" / "default" / "build.sh"
+from support.build_sh import BUILD_SH, build_sh_var
 
 # Sources ONLY the opencode_asset_arch function from build.sh, then calls it, so
 # we exercise the real shipped logic (not a copy). `uname` is faked via PATH.
@@ -116,17 +115,9 @@ def _run_tag_helper(tmp_path, git_script):
     )
 
 
-def _fallback_version():
-    versions = re.findall(
-        r'^OPENCODE_FALLBACK_VERSION="([^"]+)"', BUILD_SH.read_text(), re.MULTILINE
-    )
-    assert len(versions) == 1, f"expected one OPENCODE_FALLBACK_VERSION, got {versions}"
-    return versions[0]
-
-
 def test_opencode_fallback_version_is_v1():
     """The fallback tag is an explicit v1 release."""
-    assert re.fullmatch(r"v1\.\d+\.\d+", _fallback_version())
+    assert re.fullmatch(r"v1\.\d+\.\d+", build_sh_var("OPENCODE_FALLBACK_VERSION"))
 
 
 def test_opencode_v1_release_tag_picks_newest_stable_v1(tmp_path):
@@ -150,7 +141,7 @@ def test_opencode_v1_release_tag_falls_back_when_lookup_fails(tmp_path):
     and the fallback is logged."""
     result = _run_tag_helper(tmp_path, "#!/bin/sh\nexit 128\n")
     assert result.returncode == 0, f"opencode_v1_release_tag failed: {result.stderr}"
-    assert result.stdout.strip() == _fallback_version()
+    assert result.stdout.strip() == build_sh_var("OPENCODE_FALLBACK_VERSION")
     assert "WARNING: could not list opencode v1 tags" in result.stderr
 
 
@@ -159,7 +150,7 @@ def test_opencode_v1_release_tag_falls_back_when_no_v1_tag(tmp_path):
     listing = "0000000000000000000000000000000000000000\trefs/tags/v2.1.0\n"
     result = _run_tag_helper(tmp_path, f"#!/bin/sh\nprintf '{listing}'\n")
     assert result.returncode == 0, f"opencode_v1_release_tag failed: {result.stderr}"
-    assert result.stdout.strip() == _fallback_version()
+    assert result.stdout.strip() == build_sh_var("OPENCODE_FALLBACK_VERSION")
 
 
 def test_install_opencode_downloads_a_release_tag():
@@ -250,7 +241,7 @@ def test_install_opencode_installs_resolved_tag(tmp_path):
 def test_install_opencode_falls_back_when_resolved_download_fails(tmp_path):
     """A resolved tag without a downloadable asset falls back to the fallback
     tag after 3 attempts, and the fallback is logged."""
-    fallback = _fallback_version()
+    fallback = build_sh_var("OPENCODE_FALLBACK_VERSION")
     result, urls = _run_install(tmp_path, [fallback, "v1.99.0"], [fallback])
     assert result.returncode == 0, f"install_opencode failed: {result.stdout}{result.stderr}"
     assert [u.split("/")[-2] for u in urls] == ["v1.99.0"] * 3 + [fallback], urls
@@ -260,7 +251,7 @@ def test_install_opencode_falls_back_when_resolved_download_fails(tmp_path):
 
 def test_install_opencode_fails_when_no_tag_downloads(tmp_path):
     """When the resolved and fallback tags both fail, the build fails."""
-    fallback = _fallback_version()
+    fallback = build_sh_var("OPENCODE_FALLBACK_VERSION")
     result, urls = _run_install(tmp_path, [fallback, "v1.99.0"], [])
     assert result.returncode != 0, f"expected failure, got rc=0: {result.stdout}"
     assert [u.split("/")[-2] for u in urls] == ["v1.99.0"] * 3 + [fallback] * 3, urls
@@ -270,7 +261,7 @@ def test_install_opencode_fails_when_no_tag_downloads(tmp_path):
 def test_install_opencode_no_second_round_when_resolved_is_fallback(tmp_path):
     """When the resolved tag is the fallback tag, a failed download is not
     retried as a fallback."""
-    fallback = _fallback_version()
+    fallback = build_sh_var("OPENCODE_FALLBACK_VERSION")
     result, urls = _run_install(tmp_path, [fallback], [])
     assert result.returncode != 0, f"expected failure, got rc=0: {result.stdout}"
     assert [u.split("/")[-2] for u in urls] == [fallback] * 3, urls
