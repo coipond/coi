@@ -2,6 +2,8 @@ package network
 
 import (
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,6 +248,68 @@ func TestOtherContainersRunning(t *testing.T) {
 			if got != tt.wantResult {
 				t.Errorf("otherContainersRunning(%q, %q) = %v, want %v",
 					tt.json, tt.exclude, got, tt.wantResult)
+			}
+		})
+	}
+}
+
+// TestLogAllowlistPrivateAccess verifies the allowlist session log matches the
+// RFC1918 and metadata rules for allow_local_network_access.
+func TestLogAllowlistPrivateAccess(t *testing.T) {
+	const (
+		blockRFC1918  = "Blocking all RFC1918 private networks"
+		blockMetadata = "Blocking cloud metadata endpoints"
+		allowRFC1918  = "Allowing RFC1918 private networks"
+	)
+	on, off := true, false
+	tests := []struct {
+		name    string
+		cfg     config.NetworkConfig
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "local access off",
+			cfg:     config.NetworkConfig{AllowLocalNetworkAccess: &off},
+			want:    []string{blockRFC1918, blockMetadata},
+			notWant: []string{allowRFC1918},
+		},
+		{
+			name:    "local access on",
+			cfg:     config.NetworkConfig{AllowLocalNetworkAccess: &on},
+			want:    []string{allowRFC1918 + " (allow_local_network_access)"},
+			notWant: []string{blockRFC1918, blockMetadata, "on ports"},
+		},
+		{
+			name: "local access on with allowed_ports",
+			cfg: config.NetworkConfig{
+				AllowLocalNetworkAccess: &on,
+				AllowedPorts:            []int{443, 8080},
+			},
+			want:    []string{allowRFC1918 + " on ports [443 8080] (allow_local_network_access)"},
+			notWant: []string{blockRFC1918, blockMetadata},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sl := logger.New("allowlist-log", t.TempDir())
+			m := &Manager{config: &tt.cfg, logger: sl}
+			m.logAllowlistPrivateAccess()
+			_ = sl.Close()
+
+			out, err := os.ReadFile(sl.OutPath())
+			if err != nil {
+				t.Fatalf("read session log: %v", err)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(string(out), w) {
+					t.Errorf("log missing %q; got: %q", w, out)
+				}
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(string(out), nw) {
+					t.Errorf("log has %q; got: %q", nw, out)
+				}
 			}
 		})
 	}

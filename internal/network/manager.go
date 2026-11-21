@@ -518,12 +518,7 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 
 	m.logger.Println("  Allowing only allowlisted destinations")
 	m.logger.Println("  DNS blocked: /etc/hosts is the container's only name resolution")
-	if config.BoolVal(m.config.AllowLocalNetworkAccess) {
-		m.logger.Println("  Allowing RFC1918 private networks (allow_local_network_access)")
-	} else {
-		m.logger.Println("  Blocking all RFC1918 private networks")
-		m.logger.Println("  Blocking cloud metadata endpoints")
-	}
+	m.logAllowlistPrivateAccess()
 
 	// Re-resolve periodically so the addresses do not drift too far from DNS. The
 	// firewall and the hosts file are updated together, so they can never disagree
@@ -532,6 +527,22 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 	m.startRefresher(ctx, m.resolver.GetMinTTL())
 
 	return nil
+}
+
+// logAllowlistPrivateAccess logs how allowlist mode treats RFC1918 and cloud
+// metadata, matching the rules ApplyAllowlist installs for
+// allow_local_network_access.
+func (m *Manager) logAllowlistPrivateAccess() {
+	if !config.BoolVal(m.config.AllowLocalNetworkAccess) {
+		m.logger.Println("  Blocking all RFC1918 private networks")
+		m.logger.Println("  Blocking cloud metadata endpoints")
+		return
+	}
+	if len(m.config.AllowedPorts) > 0 {
+		m.logger.Printf("  Allowing RFC1918 private networks on ports %v (allow_local_network_access)", m.config.AllowedPorts)
+		return
+	}
+	m.logger.Println("  Allowing RFC1918 private networks (allow_local_network_access)")
 }
 
 // installNames resolves the policy's hostnames and writes the result to the two
