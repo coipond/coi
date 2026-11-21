@@ -7,14 +7,20 @@ Tests alias registration, resolution, conflict detection, and cross-command supp
 import json
 import os
 import subprocess
+import time
 import uuid
+
+from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
     container_config_get,
     get_container_list,
     incus_status,
+    spawn_coi,
     start_background_shell,
+    wait_for_text_in_monitor,
+    with_live_screen,
     workspace_containers,
     write_workspace_container_config,
 )
@@ -356,6 +362,22 @@ class TestAliasEndingInSlotSuffix:
 
             # With its own container running, "<a>-2" acts on that container
             suffixed_slot1, _ = start_background_shell(coi_binary, workspace_b, env, slot=1)
+            child = spawn_coi(coi_binary, ["attach", suffixed, "--bash"], env=env, timeout=60)
+            with with_live_screen(child) as monitor:
+                time.sleep(3)
+                child.send("echo HOST_$(hostname)\r")
+                attached = wait_for_text_in_monitor(monitor, f"HOST_{suffixed_slot1}", timeout=30)
+            child.send("exit\r")
+            try:
+                child.expect(EOF, timeout=30)
+            except TIMEOUT:
+                pass
+            child.close(force=True)
+            assert attached, f"coi attach {suffixed} --bash should open a shell in {suffixed_slot1}"
+            assert incus_status(base_slot2) == "RUNNING", (
+                f"coi attach {suffixed} touched {base_slot2}"
+            )
+
             result = run_coi(coi_binary, ["kill", suffixed, "--force"], timeout=60)
             assert result.returncode == 0, f"coi kill {suffixed} failed: {result.stderr}"
             containers = get_container_list()
