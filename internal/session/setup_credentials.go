@@ -10,8 +10,9 @@ import (
 
 // seedHostFile copies a single host file into the container: a missing host
 // file logs and skips (the user may not have signed into that provider yet),
-// the destination directory is created, and the pushed file is chowned to
-// the container's code user (unless running as root) with an optional chmod.
+// the destination directory is created (homeMkdirCmd), and the pushed file is
+// chowned to the container's code user (unless running as root) with an
+// optional chmod.
 // This is the ONE file-seeding primitive shared by the generic
 // [[credentials]] entries and the builtin tools' setupCLIConfig essential-
 // file loop, so the two copy paths cannot drift. Directory-creation failure
@@ -25,7 +26,7 @@ func seedHostFile(mgr container.ContainerManager, hostPath, destPath, homeDir, m
 	}
 
 	destDir := filepath.Dir(destPath)
-	if err := mgr.ExecArgs([]string{"mkdir", "-p", destDir}, container.ExecCommandOptions{}); err != nil {
+	if _, err := mgr.ExecCommand(homeMkdirCmd(destDir, homeDir), container.ExecCommandOptions{Capture: true}); err != nil {
 		return false, fmt.Errorf("failed to create %s: %w", destDir, err)
 	}
 

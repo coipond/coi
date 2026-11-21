@@ -230,8 +230,7 @@ func setupCLIConfig(mgr container.ContainerManager, hostCLIConfigPath, homeDir s
 
 	// Create config directory in container
 	logger(fmt.Sprintf("Creating %s directory in container...", configDirName))
-	mkdirCmd := fmt.Sprintf("mkdir -p %s", stateDir)
-	if _, err := mgr.ExecCommand(mkdirCmd, container.ExecCommandOptions{Capture: true}); err != nil {
+	if _, err := mgr.ExecCommand(homeMkdirCmd(stateDir, homeDir), container.ExecCommandOptions{Capture: true}); err != nil {
 		return copied, fmt.Errorf("failed to create %s directory: %w", configDirName, err)
 	}
 

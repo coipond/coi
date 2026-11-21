@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/base64"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -348,13 +347,7 @@ func TestAutoContextReadCmd_ChownsCreatedDirs(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(home, ".config"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	bin := t.TempDir()
-	logPath := filepath.Join(bin, "chown.log")
-	script := "#!/bin/sh\necho \"$*\" >> " + shellEscape(logPath) + "\n"
-	if err := os.WriteFile(filepath.Join(bin, "chown"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := fakeChownOnPath(t)
 
 	dest := filepath.Join(home, ".config", "goose", ".goosehints")
 	out, err := exec.Command("bash", "-c", autoContextReadCmd(dest, home)).CombinedOutput()
@@ -367,12 +360,5 @@ func TestAutoContextReadCmd_ChownsCreatedDirs(t *testing.T) {
 	if fi, err := os.Stat(filepath.Dir(dest)); err != nil || !fi.IsDir() {
 		t.Fatalf("%s not created: %v", filepath.Dir(dest), err)
 	}
-	log, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("chown never ran: %v", err)
-	}
-	want := fmt.Sprintf("%d:%d %s\n", container.CodeUID, container.CodeUID, filepath.Dir(dest))
-	if string(log) != want {
-		t.Errorf("chown calls = %q, want %q", log, want)
-	}
+	assertChownCalls(t, logPath, filepath.Dir(dest))
 }
