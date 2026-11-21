@@ -17,9 +17,10 @@ import (
 // mkdir -p from injectCredentials) and CreateFile call tracking, so tests can
 // assert that NO synthesized settings writes happen for codex. The files map,
 // PushFile, Chown, and ExecCommand handling (cat, and a permissive default for
-// homeMkdirCmd and chown -R) are inherited. Note the inherited ExecCommand returns ("",
-// nil) for unrecognized command strings — un-overridden interface METHODS
-// panic via the embedded nil interface, but unknown command strings do not.
+// homeMkdirCmd and chown -R) are inherited. Note the inherited ExecCommand
+// returns ("", nil) for unrecognized command strings — un-overridden interface
+// METHODS panic via the embedded nil interface, but unknown command strings do
+// not.
 type fakeCodexSetupManager struct {
 	*fakeAutoCtxManager
 	createdFiles []string // paths written via CreateFile (settings injection writes)
