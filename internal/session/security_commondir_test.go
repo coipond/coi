@@ -691,3 +691,122 @@ func TestSetupCommonDirProtection_SubmoduleGitDirOptOutsAndSymlinks(t *testing.T
 		t.Errorf("disable_protection: got %v, %v; want nothing", got, err)
 	}
 }
+
+// The submodule git dirs git creates for a linked worktree
+// (<common>/worktrees/<wt>/modules/**) get the entries the common dir's own
+// modules/** git dirs get, in the one batch.
+func TestSetupCommonDirProtection_WorktreeSubmoduleGitDirs(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	gitCmd(t, dir, "init", "-q", sub)
+	gitCmd(t, sub, "commit", "-q", "--allow-empty", "-m", "init")
+	main := filepath.Join(dir, "main")
+	gitCmd(t, dir, "init", "-q", main)
+	gitCmd(t, main, "submodule", "add", "-q", sub, "a")
+	gitCmd(t, main, "commit", "-q", "-m", "add a")
+	wt := filepath.Join(dir, "wt")
+	gitCmd(t, main, "worktree", "add", "-q", wt)
+	gitCmd(t, wt, "submodule", "update", "-q", "--init")
+	common, err := filepath.EvalSymlinks(filepath.Join(main, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDir := filepath.Join("worktrees", "wt", "modules", "a")
+	if !isRealDir(filepath.Join(common, gitDir)) {
+		t.Skipf("git did not create %s", gitDir)
+	}
+
+	dev := &batchDevices{}
+	protected, err := SetupCommonDirProtection(dev, common, false, false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dev.mounts) != 0 || len(dev.batches) != 1 {
+		t.Fatalf("want 1 batch, got %d mounts, %d batches", len(dev.mounts), len(dev.batches))
+	}
+	for _, rel := range gitDirEntries(gitDir) {
+		if !slices.Contains(protected, rel) {
+			t.Errorf("%s not protected; got %v", rel, protected)
+		}
+		path := filepath.Join(common, rel)
+		if !slices.ContainsFunc(dev.batches[0], func(m container.DiskMount) bool { return m.Path == path && m.Readonly }) {
+			t.Errorf("expected a read-only mount at %s", path)
+		}
+	}
+}
+
+// Every linked worktree's submodule git dirs are covered, nested modules
+// included; writable_hooks and writable_paths apply, and a symlinked
+// worktree modules dir is skipped with nothing created through it.
+func TestSetupCommonDirProtection_WorktreeSubmoduleNestedAndSymlinks(t *testing.T) {
+	common := t.TempDir()
+	mkGitDir(t, common, ".")
+	mkGitDir(t, common, "worktrees/wt/modules/a")
+	mkGitDir(t, common, "worktrees/wt/modules/a/modules/b")
+	mkGitDir(t, common, "worktrees/other/modules/c")
+	mkGitDir(t, common, "modules/s")
+	mkGitDir(t, common, "modules/s/worktrees/w/modules/d")
+	outside := t.TempDir()
+	mkGitDir(t, outside, "mods/x")
+	if err := os.MkdirAll(filepath.Join(common, "worktrees", "linked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "mods"), filepath.Join(common, "worktrees", "linked", "modules")); err != nil {
+		t.Fatal(err)
+	}
+
+	protected, err := SetupCommonDirProtection(&batchDevices{}, common, false, false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, gitDir := range []string{"worktrees/wt/modules/a", "worktrees/wt/modules/a/modules/b", "worktrees/other/modules/c", "modules/s/worktrees/w/modules/d"} {
+		for _, rel := range gitDirEntries(gitDir) {
+			if !slices.Contains(protected, rel) {
+				t.Errorf("%s not protected; got %v", rel, protected)
+			}
+		}
+	}
+	for _, p := range protected {
+		if strings.HasPrefix(p, "worktrees/linked/modules/") {
+			t.Errorf("%s is below a symlink; got %v", p, protected)
+		}
+	}
+	for _, rel := range []string{"mods/x/config.worktree", "mods/x/commondir"} {
+		if _, err := os.Lstat(filepath.Join(outside, rel)); !os.IsNotExist(err) {
+			t.Errorf("%s created through a symlink: %v", rel, err)
+		}
+	}
+
+	sec := &config.SecurityConfig{WritablePaths: []string{"worktrees/wt/modules/a/config"}}
+	protected, err = SetupCommonDirProtection(&batchDevices{}, common, false, true, sec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, rel := range []string{"worktrees/wt/modules/a/hooks", "worktrees/wt/modules/a/config"} {
+		if slices.Contains(protected, rel) {
+			t.Errorf("%s must stay writable; got %v", rel, protected)
+		}
+	}
+}
+
+// In a workspace that is the main checkout, the submodule git dirs of its
+// linked worktrees (.git/worktrees/<wt>/modules/**) are protected too.
+func TestExpandNestedGit_WorktreeSubmoduleGitDirs(t *testing.T) {
+	tmp := t.TempDir()
+	mkGitDir(t, tmp, ".git")
+	mkGitDir(t, tmp, ".git/worktrees/wt/modules/a")
+	mkGitDir(t, tmp, ".git/worktrees/wt/modules/a/modules/b")
+
+	out := expandNestedGit(tmp, []string{".git/config"}, nil, NestedGitScan{}, false, nil)
+
+	want := append(gitDirEntries(".git/worktrees/wt/modules/a"), gitDirEntries(".git/worktrees/wt/modules/a/modules/b")...)
+	assertContainsAll(t, out, want)
+	for _, rel := range want {
+		if !isBatchedGitPath(rel) {
+			t.Errorf("%s must be mounted in the batch", rel)
+		}
+	}
+}
