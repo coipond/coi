@@ -393,6 +393,48 @@ class TestAliasEndingInSlotSuffix:
                 )
 
 
+class TestAliasWithContainerPrefix:
+    """Test that an alias starting with the container prefix resolves for running-container commands."""
+
+    def test_running_commands_resolve_prefixed_alias(
+        self, coi_binary, workspace_dir, cleanup_containers, dummy_image
+    ):
+        """Alias "<prefix>web..." reaches its container in attach, monitor, unfreeze and kill."""
+        prefix = os.environ.get("COI_CONTAINER_PREFIX", "coi-")
+        prefixed = f"{prefix}web{uuid.uuid4().hex[:8]}"
+        env = {**os.environ, "COI_USE_DUMMY": "1"}
+
+        write_workspace_container_config(workspace_dir, image=dummy_image, alias=prefixed)
+        container_name, _ = start_background_shell(coi_binary, workspace_dir, env, slot=1)
+        assert prefixed in get_aliases_registry()
+
+        child = spawn_coi(coi_binary, ["attach", prefixed, "--bash"], env=env, timeout=60)
+        with with_live_screen(child) as monitor:
+            time.sleep(3)
+            child.send("echo HOST_$(hostname)\r")
+            attached = wait_for_text_in_monitor(monitor, f"HOST_{container_name}", timeout=30)
+        child.send("exit\r")
+        try:
+            child.expect(EOF, timeout=30)
+        except TIMEOUT:
+            pass
+        child.close(force=True)
+        assert attached, f"coi attach {prefixed} --bash should open a shell in {container_name}"
+
+        result = run_coi(coi_binary, ["monitor", prefixed, "--json"], timeout=60)
+        assert result.returncode == 0, f"coi monitor {prefixed} failed: {result.stderr}"
+        assert f"Monitoring container: {container_name}" in result.stderr, result.stderr
+
+        # A running container is not frozen: the error names the resolved container
+        result = run_coi(coi_binary, ["unfreeze", prefixed], timeout=60)
+        assert result.returncode != 0, f"coi unfreeze {prefixed} should fail on a running container"
+        assert f"container {container_name} is not frozen" in result.stderr, result.stderr
+
+        result = run_coi(coi_binary, ["kill", prefixed, "--force"], timeout=60)
+        assert result.returncode == 0, f"coi kill {prefixed} failed: {result.stderr}"
+        assert container_name not in get_container_list(), f"{container_name} should be deleted"
+
+
 # ============================================================
 # Conflict detection tests
 # ============================================================
