@@ -13,6 +13,10 @@ Tests that:
    ("Slot 10 is occupied, using slot 1 instead")
 5. A --slot above the maximum (12) is used as given while free; occupied, it
    falls back the same way, to the lowest free slot (3)
+6. `coi shell <alias>-12` (the slot as an alias suffix) while slot 12 runs
+   falls back the same way ("Slot 12 is occupied, using slot 4 instead")
+7. With all 10 slots in use, an occupied --slot fails with "all 10 slots are
+   in use" and creates no container
 
 A fake HOME keeps the saved sessions (~/.coi/sessions-claude) to this test.
 """
@@ -20,7 +24,12 @@ A fake HOME keeps the saved sessions (~/.coi/sessions-claude) to this test.
 import os
 import subprocess
 
-from support.helpers import calculate_container_name, get_container_list, session_for_container
+from support.helpers import (
+    calculate_container_name,
+    get_container_list,
+    session_for_container,
+    write_workspace_container_config,
+)
 
 INVALID_SLOT_MESSAGE = "invalid --slot -1: use a positive slot number, or 0 to auto-allocate"
 
@@ -67,6 +76,10 @@ def test_slot_explicit_occupied_and_invalid(
     4. coi shell --background --slot 10, twice: the second moves to slot 1
     5. coi shell --background --slot 12, twice: slot 12 runs, then the second
        moves to slot 3 (1, 2 and 10 are taken)
+    6. alias in .coi/config.toml, coi shell --background <alias>-12 from the
+       workspace: moves to slot 4
+    7. coi shell --background --slot 5 to 9, then --slot 1: non-zero exit,
+       "all 10 slots are in use", no new container
     """
     fake_home = tmp_path / "fake_home"
     fake_home.mkdir()
@@ -75,6 +88,7 @@ def test_slot_explicit_occupied_and_invalid(
     slot1 = calculate_container_name(workspace_dir, 1)
     slot2 = calculate_container_name(workspace_dir, 2)
     slot3 = calculate_container_name(workspace_dir, 3)
+    slot4 = calculate_container_name(workspace_dir, 4)
     slot10 = calculate_container_name(workspace_dir, 10)
     slot12 = calculate_container_name(workspace_dir, 12)
 
@@ -160,6 +174,42 @@ def test_slot_explicit_occupied_and_invalid(
             f"expected the fallback to slot 3:\n{result.stderr}"
         )
         assert slot3 in _workspace_containers(workspace_dir), f"{slot3} should be running"
+
+        # === Phase 6: the same through an alias with a slot suffix ===
+
+        write_workspace_container_config(workspace_dir, alias="slotfallback")
+        result = subprocess.run(
+            [coi_binary, "shell", "--background", "slotfallback-12"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=env,
+            cwd=workspace_dir,
+        )
+        assert result.returncode == 0, f"coi shell slotfallback-12 failed:\n{result.stderr}"
+        assert "Slot 12 is occupied, using slot 4 instead" in result.stderr, (
+            f"expected the fallback to slot 4:\n{result.stderr}"
+        )
+        assert slot4 in _workspace_containers(workspace_dir), f"{slot4} should be running"
+
+        # === Phase 7: with all 10 slots in use an occupied slot fails ===
+
+        for slot in range(5, 10):
+            result = _shell(coi_binary, workspace_dir, env, "--slot", str(slot))
+            assert result.returncode == 0, f"coi shell --slot {slot} failed:\n{result.stderr}"
+        running = _workspace_containers(workspace_dir)
+        assert len(running) == 10, f"all 10 slots should be running, got: {sorted(running)}"
+
+        result = _shell(coi_binary, workspace_dir, env, "--slot", "1")
+        assert result.returncode != 0, (
+            f"--slot 1 with all slots in use should fail:\n{result.stderr}"
+        )
+        assert "all 10 slots are in use" in result.stderr, f"unexpected output:\n{result.stderr}"
+        assert _workspace_containers(workspace_dir) == running, "no container should be added"
     finally:
-        if slot12 in get_container_list():
-            _kill(coi_binary, env, slot12)
+        subprocess.run(
+            [coi_binary, "container", "delete", slot12, "--force"],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
