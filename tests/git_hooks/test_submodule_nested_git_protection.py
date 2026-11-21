@@ -8,9 +8,11 @@ protects them: submodule git dirs, and nested repos up to 3 levels below the
 workspace root.
 
 Tests that:
-- hooks, config, config.worktree and info/attributes of a submodule git dir and
-  of nested repos at depth 1 and 3 are read-only, and so is the submodule
-  checkout's .git file
+- hooks, config, config.worktree, info/attributes and commondir of a submodule
+  git dir and of nested repos at depth 1 and 3 are read-only, and so is the
+  submodule checkout's .git file
+- commondir and config.worktree of linked worktrees of a submodule and of a
+  nested repo are read-only
 - a nested repo at depth 4 is not protected
 - [git] writable_hooks = true leaves those hooks dirs writable, config read-only
 - [security] writable_paths opts single nested entries out of protection
@@ -35,7 +37,11 @@ DEPTH1_GIT_DIR = "d1/.git"
 DEPTH3_GIT_DIR = "x/y/d3/.git"
 DEPTH4_GIT_DIR = "p/q/r/d4/.git"
 PROTECTED_GIT_DIRS = (SUBMODULE_GIT_DIR, DEPTH1_GIT_DIR, DEPTH3_GIT_DIR)
-GIT_DIR_ENTRIES = ("hooks", "config", "config.worktree", "info/attributes")
+GIT_DIR_ENTRIES = ("hooks", "config", "config.worktree", "info/attributes", "commondir")
+LINKED_WORKTREE_ADMIN_DIRS = (
+    f"{SUBMODULE_GIT_DIR}/worktrees/libwt",
+    f"{DEPTH1_GIT_DIR}/worktrees/d1wt",
+)
 
 
 def _git_workspace(workspace_dir, tmp_path):
@@ -52,6 +58,27 @@ def _git_workspace(workspace_dir, tmp_path):
     assert (ws / SUBMODULE_GIT_FILE).is_file()
     make_workspace_writable(workspace_dir)
     return ws
+
+
+def _add_linked_worktrees(ws):
+    """Linked worktrees libwt of submodule lib and d1wt of nested repo d1."""
+    repo_d1 = ws / DEPTH1_GIT_DIR[: -len("/.git")]
+    subprocess.run(
+        [*GIT, "commit", "-q", "--allow-empty", "-m", "init"],
+        cwd=repo_d1,
+        check=True,
+        capture_output=True,
+    )
+    for repo, worktree in ((ws / "lib", ws / "libwt"), (repo_d1, ws / "d1wt")):
+        subprocess.run(
+            [*GIT, "worktree", "add", "-q", "--detach", str(worktree)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    for admin in LINKED_WORKTREE_ADMIN_DIRS:
+        assert (ws / admin / "commondir").is_file(), f"git made no {admin}/commondir"
+    make_workspace_writable(str(ws))
 
 
 def _probe_writes(coi_binary, workspace_dir, paths, env=None):
@@ -114,8 +141,29 @@ def test_submodule_and_nested_git_read_only(
         _assert_read_only(ws, found, rel)
     for rel in unprotected:
         _assert_writable(ws, found, rel)
-    for entry in ("config.worktree", "info/attributes"):
+    for d in PROTECTED_GIT_DIRS:
+        assert (ws / d / "commondir").read_text() == "./\n", f"{d}/commondir: placeholder changed"
+    for entry in ("config.worktree", "info/attributes", "commondir"):
         assert not (ws / DEPTH4_GIT_DIR / entry).exists(), f"depth 4 {entry} must not be created"
+
+
+def test_linked_worktrees_of_nested_git_read_only(
+    coi_binary, workspace_dir, tmp_path, cleanup_containers
+):
+    """Linked worktree commondir and config.worktree of submodule and nested git dirs are read-only."""
+    ws = _git_workspace(workspace_dir, tmp_path)
+    _add_linked_worktrees(ws)
+    originals = {a: (ws / a / "commondir").read_text() for a in LINKED_WORKTREE_ADMIN_DIRS}
+    protected = [
+        f"{a}/{e}" for a in LINKED_WORKTREE_ADMIN_DIRS for e in ("commondir", "config.worktree")
+    ]
+
+    found = _probe_writes(coi_binary, workspace_dir, protected)
+
+    for rel in protected:
+        _assert_read_only(ws, found, rel)
+    for admin, original in originals.items():
+        assert (ws / admin / "commondir").read_text() == original, f"{admin}/commondir changed"
 
 
 def test_writable_hooks_applies_to_nested_git(
