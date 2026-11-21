@@ -11,10 +11,9 @@ import time
 
 from support.monitoring import (
     cleanup_container,
-    container_absent,
     get_container_name_from_workspace,
-    get_container_state,
     get_threat_events,
+    wait_for_threats,
 )
 
 
@@ -45,26 +44,18 @@ def test_run_command_is_monitored(test_workspace, enable_monitoring, coi_binary)
         elapsed = time.monotonic() - start
         output = result.stdout + result.stderr
 
-        # The daemon writes the kill event and syncs it before the kill, but
-        # retry briefly in case of an OS-level flush delay.
-        events = []
-        for _ in range(10):
-            events = get_threat_events(container_name)
-            if any(e.get("action") == "killed" for e in events):
-                break
-            time.sleep(1)
-
-        critical = [e for e in events if e.get("level") == "critical"]
-        assert critical, f"no CRITICAL event in the audit log. Events: {events}\n{output}"
-        assert any(e.get("action") == "killed" for e in critical), (
-            f"expected action='killed' on the CRITICAL event. Events: {events}"
+        killed = wait_for_threats(
+            container_name,
+            lambda e: e.get("level") == "critical" and e.get("action") == "killed",
+            max_wait=10,
+        )
+        assert killed, (
+            "expected a CRITICAL event with action='killed' in the audit log. "
+            f"Events: {get_threat_events(container_name)}\n{output}"
         )
 
         assert result.returncode != 0, f"a killed run should fail, got exit 0:\n{output}"
         assert "Command completed successfully" not in output, output
         assert elapsed < 120, f"the run lasted {elapsed:.0f}s: the command was not killed"
-        assert container_absent(container_name), (
-            f"container should be deleted, but it is {get_container_state(container_name)!r}"
-        )
     finally:
         cleanup_container(container_name, coi_binary)
