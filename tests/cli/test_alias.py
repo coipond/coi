@@ -7,12 +7,21 @@ Tests alias registration, resolution, conflict detection, and cross-command supp
 import json
 import os
 import subprocess
+import time
+import uuid
+
+from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
     container_config_get,
     get_container_list,
     incus_status,
+    spawn_coi,
+    start_background_shell,
+    wait_for_text_in_monitor,
+    with_live_screen,
+    workspace_containers,
     write_workspace_container_config,
 )
 
@@ -310,6 +319,78 @@ class TestAliasSlotSuffix:
             assert container2 not in containers, "Slot 2 container should be deleted"
             # Slot 1 should still exist
             assert container1 in containers, "Slot 1 container should still exist"
+
+
+class TestAliasEndingInSlotSuffix:
+    """Test that an alias ending in -N resolves to itself, not to slot N of another alias."""
+
+    def test_alias_ending_in_slot_suffix(
+        self, coi_binary, workspace_dir, cleanup_containers, dummy_image, tmp_path
+    ):
+        """Aliases "<a>" and "<a>-2": "<a>-2" never reaches slot 2 of "<a>"."""
+        base = f"wholename{uuid.uuid4().hex[:8]}"
+        suffixed = f"{base}-2"
+        env = {**os.environ, "COI_USE_DUMMY": "1"}
+
+        write_workspace_container_config(workspace_dir, image=dummy_image, alias=base)
+        base_slot2, _ = start_background_shell(coi_binary, workspace_dir, env, slot=2)
+
+        workspace_b = str(tmp_path / "workspace_b")
+        os.makedirs(workspace_b)
+        write_workspace_container_config(workspace_b, image=dummy_image, alias=suffixed)
+
+        try:
+            # Register the "-2" alias; its ephemeral container is gone after the run
+            result = run_coi(coi_binary, ["run", "echo", "ok"], workspace_dir=workspace_b)
+            assert result.returncode == 0, f"coi run failed: {result.stderr}"
+            assert suffixed in get_aliases_registry()
+            assert not workspace_containers(workspace_b)
+
+            # A registered alias with no running container is not found
+            for argv in (["attach", suffixed, "--bash"], ["kill", suffixed, "--force"]):
+                result = run_coi(coi_binary, argv, timeout=60)
+                assert result.returncode != 0, f"coi {argv[0]} {suffixed} should fail"
+                assert "not found" in result.stderr.lower(), result.stderr
+                assert incus_status(base_slot2) == "RUNNING", (
+                    f"coi {argv[0]} {suffixed} must not act on slot 2 of {base}"
+                )
+
+            # -0 is never a slot
+            result = run_coi(coi_binary, ["kill", f"{base}-0", "--force"], timeout=60)
+            assert result.returncode != 0, f"coi kill {base}-0 should fail"
+            assert incus_status(base_slot2) == "RUNNING", f"coi kill {base}-0 killed {base_slot2}"
+
+            # With its own container running, "<a>-2" acts on that container
+            suffixed_slot1, _ = start_background_shell(coi_binary, workspace_b, env, slot=1)
+            child = spawn_coi(coi_binary, ["attach", suffixed, "--bash"], env=env, timeout=60)
+            with with_live_screen(child) as monitor:
+                time.sleep(3)
+                child.send("echo HOST_$(hostname)\r")
+                attached = wait_for_text_in_monitor(monitor, f"HOST_{suffixed_slot1}", timeout=30)
+            child.send("exit\r")
+            try:
+                child.expect(EOF, timeout=30)
+            except TIMEOUT:
+                pass
+            child.close(force=True)
+            assert attached, f"coi attach {suffixed} --bash should open a shell in {suffixed_slot1}"
+            assert incus_status(base_slot2) == "RUNNING", (
+                f"coi attach {suffixed} touched {base_slot2}"
+            )
+
+            result = run_coi(coi_binary, ["kill", suffixed, "--force"], timeout=60)
+            assert result.returncode == 0, f"coi kill {suffixed} failed: {result.stderr}"
+            containers = get_container_list()
+            assert suffixed_slot1 not in containers, f"{suffixed_slot1} should be deleted"
+            assert base_slot2 in containers, f"{base_slot2} of {base} should still exist"
+        finally:
+            for name in workspace_containers(workspace_b):
+                subprocess.run(
+                    [coi_binary, "container", "delete", name, "--force"],
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
 
 
 # ============================================================
