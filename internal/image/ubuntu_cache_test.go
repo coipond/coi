@@ -46,6 +46,7 @@ func TestPlanUbuntuCachePrune(t *testing.T) {
 				{Fingerprint: "a", Aliases: []string{"coi-default"}},
 				{Fingerprint: "b", Aliases: []string{"coi-ubuntu-custom"}},
 				{Fingerprint: "c", Aliases: []string{"my-coi-ubuntu-24.04"}},
+				{Fingerprint: "e", Aliases: []string{"coi-ubuntu-24.04-custom"}},
 				{Fingerprint: "d"},
 			},
 		},
@@ -74,8 +75,8 @@ func TestKeptUbuntuVersions(t *testing.T) {
 		{Aliases: []string{"child"}},
 		{Aliases: []string{"other-distr"}},
 	}
-	got := keptUbuntuVersions(meta, images)
-	want := map[string]bool{strings.TrimPrefix(BaseImage, "ubuntu:"): true, "24.04": true}
+	got := keptUbuntuVersions(meta, images, []string{"ubuntu:20.04", "images:debian/12"})
+	want := map[string]bool{strings.TrimPrefix(BaseImage, "ubuntu:"): true, "24.04": true, "20.04": true}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -88,7 +89,7 @@ func TestPruneUbuntuCache(t *testing.T) {
   *"image delete"*) echo boom >&2; exit 1 ;;`)
 
 	var logs []string
-	PruneUbuntuCache(t.TempDir(), func(s string) { logs = append(logs, s) })
+	PruneUbuntuCache(t.TempDir(), nil, func(s string) { logs = append(logs, s) })
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -114,7 +115,7 @@ func TestPruneUbuntuCacheKeepsRecordedBase(t *testing.T) {
 	dir := t.TempDir()
 	RecordBuild(dir, "custom", "ubuntu:24.04")
 
-	PruneUbuntuCache(dir, nil)
+	PruneUbuntuCache(dir, nil, nil)
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -125,5 +126,62 @@ func TestPruneUbuntuCacheKeepsRecordedBase(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, metaFileName)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPruneUbuntuCacheKeepsConfiguredBase(t *testing.T) {
+	logPath := fakeIncusCases(t, `  *"image list"*) echo '[{"fingerprint":"a","aliases":[{"name":"coi-ubuntu-24.04"}]}]' ;;
+  *"list --format=json --all-projects"*) echo '[]' ;;`)
+
+	PruneUbuntuCache(t.TempDir(), []string{"ubuntu:24.04"}, nil)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "delete") {
+		t.Errorf("configured base deleted:\n%s", data)
+	}
+}
+
+func TestPruneUbuntuCacheSharedImageLosesOnlyAlias(t *testing.T) {
+	logPath := fakeIncusCases(t, `  *"image list"*) echo '[{"fingerprint":"a","aliases":[{"name":"coi-ubuntu-24.04"},{"name":"my-base"}]}]' ;;
+  *"list --format=json --all-projects"*) echo '[]' ;;`)
+
+	var logs []string
+	PruneUbuntuCache(t.TempDir(), nil, func(s string) { logs = append(logs, s) })
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := string(data)
+	if !strings.Contains(calls, "image alias delete coi-ubuntu-24.04") {
+		t.Errorf("cache alias not deleted:\n%s", calls)
+	}
+	if strings.Contains(calls, "image delete") {
+		t.Errorf("shared image deleted:\n%s", calls)
+	}
+	if len(logs) != 1 || logs[0] != "Removed unused alias 'coi-ubuntu-24.04'" {
+		t.Errorf("got logs %q", logs)
+	}
+}
+
+func TestPruneUbuntuCacheStopsWhenInstancesUnknown(t *testing.T) {
+	logPath := fakeIncusCases(t, `  *"image list"*) echo '[{"fingerprint":"a","aliases":[{"name":"coi-ubuntu-24.04"}]}]' ;;
+  *"list --format=json --all-projects"*) echo denied >&2; exit 1 ;;`)
+
+	var logs []string
+	PruneUbuntuCache(t.TempDir(), nil, func(s string) { logs = append(logs, s) })
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "delete") {
+		t.Errorf("pruned without the instance list:\n%s", data)
+	}
+	if len(logs) != 1 || !strings.HasPrefix(logs[0], "Warning: could not list instances") {
+		t.Errorf("got logs %q", logs)
 	}
 }

@@ -26,11 +26,12 @@ type ubuntuCachePrune struct {
 }
 
 // PruneUbuntuCache removes coi-ubuntu-<ver> base caches that no build needs
-// any more: kept are the default BaseImage version and every ubuntu:<ver>
+// any more: kept are the default BaseImage version, every ubuntu:<ver> in
+// configured (the [container.build] base values), and every ubuntu:<ver>
 // base recorded in coiDir/image-meta.json for an image that still exists.
 // An image an instance was created from is kept; one with aliases of its own
 // loses only the cache alias. Failures are logged; it never fails a build.
-func PruneUbuntuCache(coiDir string, logger func(string)) {
+func PruneUbuntuCache(coiDir string, configured []string, logger func(string)) {
 	if logger == nil {
 		logger = func(string) {}
 	}
@@ -45,7 +46,7 @@ func PruneUbuntuCache(coiDir string, logger func(string)) {
 		return
 	}
 
-	keep := keptUbuntuVersions(loadMeta(filepath.Join(coiDir, metaFileName)), images)
+	keep := keptUbuntuVersions(loadMeta(filepath.Join(coiDir, metaFileName)), images, configured)
 	plan := planUbuntuCachePrune(images, keep, inUse)
 	for _, alias := range plan.Images {
 		if err := container.DeleteImage(alias); err != nil {
@@ -64,12 +65,14 @@ func PruneUbuntuCache(coiDir string, logger func(string)) {
 }
 
 // keptUbuntuVersions returns the Ubuntu versions whose cache a later build
-// may need: the default base, and the base of each recorded build whose
-// image still exists.
-func keptUbuntuVersions(meta map[string]BuildMeta, images []cachedImage) map[string]bool {
+// may need: the default base, the configured bases, and the base of each
+// recorded build whose image still exists.
+func keptUbuntuVersions(meta map[string]BuildMeta, images []cachedImage, configured []string) map[string]bool {
 	keep := map[string]bool{}
-	if v, ok := strings.CutPrefix(BaseImage, "ubuntu:"); ok {
-		keep[v] = true
+	for _, base := range append([]string{BaseImage}, configured...) {
+		if v, ok := strings.CutPrefix(base, "ubuntu:"); ok {
+			keep[v] = true
+		}
 	}
 	present := map[string]bool{}
 	for _, img := range images {

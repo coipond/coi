@@ -125,7 +125,7 @@ func (a *App) buildCommand(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", opts.AliasName)
 		fmt.Fprintf(os.Stderr, "  Version: %s\n", result.VersionAlias)
 		fmt.Fprintf(os.Stderr, "  Fingerprint: %s\n", result.Fingerprint)
-		recordBuild(opts.AliasName, coiBaseImage)
+		recordBuild(a.cfg, opts.AliasName, coiBaseImage)
 		return nil
 	}
 
@@ -176,7 +176,7 @@ func (a *App) buildCommand(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", imageName)
 	fmt.Fprintf(os.Stderr, "  Fingerprint: %s\n", result.Fingerprint)
-	recordBuild(imageName, baseImage)
+	recordBuild(a.cfg, imageName, baseImage)
 	return nil
 }
 
@@ -296,11 +296,7 @@ func (a *App) buildAllProfiles() error {
 		}
 	}
 
-	if built > 0 {
-		if dir, err := coiDataDir(); err == nil {
-			image.PruneUbuntuCache(dir, stderrLogFn)
-		}
-	}
+	pruneAfterBuildAll(a.cfg, built)
 
 	fmt.Fprintf(os.Stderr, "\n--- Build summary ---\n")
 	fmt.Fprintf(os.Stderr, "  Built:   %d\n", built)

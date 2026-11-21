@@ -205,6 +205,22 @@ func (c *Config) GetProfile(name string) *ProfileConfig {
 	return profile
 }
 
+// ProfileNames returns the names of every profile, read or still pending
+// under LoadOnDemand, sorted.
+func (c *Config) ProfileNames() []string {
+	names := make([]string, 0, len(c.Profiles)+len(c.pendingProfiles))
+	for name := range c.Profiles {
+		names = append(names, name)
+	}
+	for name := range c.pendingProfiles {
+		if _, ok := c.Profiles[name]; !ok {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
 // LookupProfile returns a profile by name, reading it first if LoadOnDemand
 // left it unread. It returns nil and no error if the profile is not found, and
 // a *ConfigError if the profile or one it inherits from fails to load.
