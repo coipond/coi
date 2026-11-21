@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 
@@ -900,36 +899,48 @@ func materializeNestedGitEntry(workspacePath, rel string, isDir bool, dirs realD
 // UnexpectedCommonDirs returns "<file> -> <dir>" for each protected commondir
 // of a git dir that names another dir: the root .git and the git dirs below it
 // (effective, relative to workspacePath, as SetupSecurityMounts returns it),
-// and the common dir of a worktree checkout when commonProtected (as
-// SetupCommonDirProtection returns it) holds its commondir. git writes a
+// and the common dir of a worktree checkout and its submodule git dirs
+// (commonProtected, as SetupCommonDirProtection returns it). git writes a
 // commondir only in a linked worktree's admin dir, and coi keeps an existing
 // file as it is.
 func UnexpectedCommonDirs(workspacePath string, effective []string, scan NestedGitScan, commonDir string, commonProtected []string) []string {
+	out := foreignCommonDirs(workspacePath, "", ".git", effective, func() []string {
+		return scan.resultFor(workspacePath).gitDirs
+	})
+	if commonDir != "" {
+		out = append(out, foreignCommonDirs(commonDir, commonDir, ".", commonProtected, func() []string {
+			var gitDirs []string
+			walkModuleGitDirs(commonDir, ".", func(d string) { gitDirs = append(gitDirs, d) })
+			return gitDirs
+		})...)
+	}
+	return out
+}
+
+// foreignCommonDirs returns "<file> -> <dir>" for each commondir in protected
+// (relative to root) of rootGitDir or of a git dir listed by gitDirs, named
+// relative to label. A commondir in a linked worktree's admin dir is skipped.
+func foreignCommonDirs(root, label, rootGitDir string, protected []string, gitDirs func() []string) []string {
 	var out []string
-	var gitDirs map[string]bool
-	for _, rel := range effective {
+	var known map[string]bool
+	for _, rel := range protected {
 		if filepath.Base(rel) != "commondir" {
 			continue
 		}
 		gitDir := filepath.Dir(rel)
-		if gitDir != ".git" {
-			if gitDirs == nil {
-				gitDirs = map[string]bool{}
-				for _, d := range scan.resultFor(workspacePath).gitDirs {
-					gitDirs[filepath.Clean(d)] = true
+		if gitDir != rootGitDir {
+			if known == nil {
+				known = map[string]bool{}
+				for _, d := range gitDirs() {
+					known[filepath.Clean(d)] = true
 				}
 			}
-			if !gitDirs[gitDir] {
+			if !known[gitDir] {
 				continue // a linked worktree's admin dir
 			}
 		}
-		if target, ok := foreignCommonDir(filepath.Join(workspacePath, gitDir)); ok {
-			out = append(out, fmt.Sprintf("%s -> %s", rel, target))
-		}
-	}
-	if commonDir != "" && slices.Contains(commonProtected, "commondir") {
-		if target, ok := foreignCommonDir(commonDir); ok {
-			out = append(out, fmt.Sprintf("%s -> %s", filepath.Join(commonDir, "commondir"), target))
+		if target, ok := foreignCommonDir(filepath.Join(root, gitDir)); ok {
+			out = append(out, fmt.Sprintf("%s -> %s", filepath.Join(label, rel), target))
 		}
 	}
 	return out

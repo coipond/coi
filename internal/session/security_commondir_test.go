@@ -528,6 +528,43 @@ func TestApplySessionSecurity_UnexpectedCommonDirInCommonDir(t *testing.T) {
 	}
 }
 
+// A commondir of a submodule git dir in the common dir of a worktree
+// checkout is checked too, nested ones and those of a linked worktree
+// included.
+func TestApplySessionSecurity_UnexpectedCommonDirInCommonDirSubmodule(t *testing.T) {
+	for _, gitDir := range []string{"modules/lib", "modules/lib/modules/b", "worktrees/wt/modules/c"} {
+		t.Run(gitDir, func(t *testing.T) {
+			dir, ws := commonDirRepo(t)
+			wt := filepath.Join(dir, "wt")
+			layout, err := ResolveGitWorktree(wt)
+			if err != nil || layout == nil {
+				t.Fatalf("ResolveGitWorktree = %v, %v", layout, err)
+			}
+			if gitDir != "modules/lib" {
+				mkGitDir(t, layout.CommonDir, gitDir)
+			}
+			target := filepath.Join(ws, "planted")
+			if err := os.Mkdir(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(layout.CommonDir, gitDir, "commondir")
+			planted := target + "\n"
+			if err := os.WriteFile(file, []byte(planted), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			warnings := commonDirWarnings(t, wt, layout)
+			want := file + " -> " + target
+			if len(warnings) != 1 || !strings.Contains(warnings[0], want) {
+				t.Errorf("warnings = %q, want one naming %q", warnings, want)
+			}
+			if data, err := os.ReadFile(file); err != nil || string(data) != planted {
+				t.Errorf("%s = %q, %v; want it kept as %q", file, data, err, planted)
+			}
+		})
+	}
+}
+
 // A commondir that reaches another dir through a symlink and ".." warns with
 // the dir git uses: git resolves the symlink before "..".
 func TestApplySessionSecurity_UnexpectedCommonDirThroughSymlink(t *testing.T) {
