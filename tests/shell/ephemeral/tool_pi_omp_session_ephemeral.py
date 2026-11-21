@@ -17,14 +17,13 @@ launched binary.
 
 import json
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
 
 from support.helpers import (
     calculate_container_name,
-    start_background_shell,
+    launch_recorded_tool,
     write_trusted_coi_config,
 )
 
@@ -49,26 +48,6 @@ out="$(dirname "$0")/{marker}"
 mv "$out.tmp" "$out"
 exec sleep 300
 """
-
-
-def _launch(coi_binary, workspace_dir, env, marker, *extra):
-    if marker.exists():
-        marker.unlink()
-    _, result = start_background_shell(
-        coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180, extra_args=extra
-    )
-
-    # The tool starts inside tmux shortly after the container is ready.
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline and not marker.exists():
-        time.sleep(1)
-    assert marker.exists(), f"the tool was not launched (no marker). coi stderr:\n{result.stderr}"
-
-    recorded = {}
-    for line in marker.read_text().splitlines():
-        key, _, value = line.partition("=")
-        recorded[key] = value
-    return recorded
 
 
 @pytest.mark.parametrize("tool_name", sorted(TOOLS))
@@ -113,7 +92,7 @@ def test_pi_omp_session_setup(coi_binary, cleanup_containers, workspace_dir, tmp
 
     # === Phase 1: new session ===
 
-    recorded = _launch(coi_binary, workspace_dir, env, marker)
+    recorded = launch_recorded_tool(coi_binary, workspace_dir, env, marker)
 
     assert recorded.get("append_system") == f"{CONTAINER_HOME}/SANDBOX_CONTEXT.md", (
         f"~/{spec['config_dir']}/APPEND_SYSTEM.md should link to ~/SANDBOX_CONTEXT.md: {recorded}"
@@ -143,7 +122,7 @@ def test_pi_omp_session_setup(coi_binary, cleanup_containers, workspace_dir, tmp
 
     # === Phase 2: resume ===
 
-    recorded = _launch(coi_binary, workspace_dir, env, marker, "--resume")
+    recorded = launch_recorded_tool(coi_binary, workspace_dir, env, marker, "--resume")
 
     assert "--continue" in recorded.get("argv", "").split(), (
         f"--resume should launch {tool_name} with --continue: {recorded}"
