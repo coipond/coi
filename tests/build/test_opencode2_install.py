@@ -16,9 +16,8 @@ import os
 import re
 import subprocess
 import tarfile
-from pathlib import Path
 
-BUILD_SH = Path(__file__).resolve().parents[2] / "profiles" / "default" / "build.sh"
+from support.build_sh import BUILD_SH, build_sh_var
 
 # Sources the fallback version, log, the arch helper and install_opencode2 from
 # build.sh, and runs the installer with the install paths moved under
@@ -35,16 +34,6 @@ source <(sed -n '/^install_opencode2()/,/^}/p' "$BUILD_SH" |
     sed -e "s|/home/\$CODE_USER|$TEST_ROOT/home|g" -e "s|/usr/local/bin|$TEST_ROOT/bin|g")
 install_opencode2
 """
-
-
-def _build_sh_var(name):
-    values = re.findall(rf'^{name}="([^"]+)"', BUILD_SH.read_text(), re.MULTILINE)
-    assert len(values) == 1, f"expected one {name}, got {values}"
-    return values[0]
-
-
-def _fallback_version():
-    return _build_sh_var("OPENCODE2_FALLBACK_VERSION")
 
 
 def _run_install(tmp_path, versions, downloadable):
@@ -100,16 +89,17 @@ def _run_install(tmp_path, versions, downloadable):
 
 def test_opencode2_fallback_version_is_v2():
     """The fallback is an explicit stable 2.x version."""
-    assert re.fullmatch(r"2\.\d+\.\d+", _fallback_version())
+    assert re.fullmatch(r"2\.\d+\.\d+", build_sh_var("OPENCODE2_FALLBACK_VERSION"))
 
 
 def test_opencode2_fallback_version_meets_minimum():
     """The fallback is at least OPENCODE2_MIN_VERSION (2.0.30, the first v2
     that reads `instructions`, coi's sandbox context)."""
-    minimum = _build_sh_var("OPENCODE2_MIN_VERSION")
+    minimum = build_sh_var("OPENCODE2_MIN_VERSION")
     assert minimum == "2.0.30"
-    version = tuple(int(p) for p in _fallback_version().split("."))
-    assert version >= tuple(int(p) for p in minimum.split(".")), _fallback_version()
+    fallback = build_sh_var("OPENCODE2_FALLBACK_VERSION")
+    version = tuple(int(p) for p in fallback.split("."))
+    assert version >= tuple(int(p) for p in minimum.split(".")), fallback
 
 
 def test_install_opencode2_picks_newest_stable_v2(tmp_path):
@@ -130,7 +120,7 @@ def test_install_opencode2_picks_newest_stable_v2(tmp_path):
 def test_install_opencode2_falls_back_when_lookup_fails(tmp_path):
     """A failed registry lookup does not fail the build: the fallback version
     is installed and the fallback is logged."""
-    fallback = _fallback_version()
+    fallback = build_sh_var("OPENCODE2_FALLBACK_VERSION")
     result, requested = _run_install(tmp_path, None, [fallback])
     assert result.returncode == 0, f"install_opencode2 failed: {result.stdout}{result.stderr}"
     assert requested == [fallback], requested
@@ -140,7 +130,7 @@ def test_install_opencode2_falls_back_when_lookup_fails(tmp_path):
 def test_install_opencode2_falls_back_below_minimum(tmp_path):
     """A newest v2 below OPENCODE2_MIN_VERSION is not installed: the fallback
     is, and the fallback is logged."""
-    fallback = _fallback_version()
+    fallback = build_sh_var("OPENCODE2_FALLBACK_VERSION")
     result, requested = _run_install(tmp_path, ["2.0.29", "2.0.3"], [fallback])
     assert result.returncode == 0, f"install_opencode2 failed: {result.stdout}{result.stderr}"
     assert requested == [fallback], requested
@@ -149,7 +139,7 @@ def test_install_opencode2_falls_back_below_minimum(tmp_path):
 
 def test_install_opencode2_falls_back_when_download_fails(tmp_path):
     """A resolved version without a tarball falls back after 3 attempts."""
-    fallback = _fallback_version()
+    fallback = build_sh_var("OPENCODE2_FALLBACK_VERSION")
     result, requested = _run_install(tmp_path, [fallback, "2.99.0"], [fallback])
     assert result.returncode == 0, f"install_opencode2 failed: {result.stdout}{result.stderr}"
     assert requested == ["2.99.0"] * 3 + [fallback], requested
@@ -159,7 +149,7 @@ def test_install_opencode2_falls_back_when_download_fails(tmp_path):
 def test_install_opencode2_fails_when_nothing_downloads(tmp_path):
     """When the resolved and the fallback versions both fail, the build fails;
     a resolved version equal to the fallback is not tried twice."""
-    fallback = _fallback_version()
+    fallback = build_sh_var("OPENCODE2_FALLBACK_VERSION")
     result, requested = _run_install(tmp_path, [fallback, "2.99.0"], [])
     assert result.returncode != 0, f"expected failure, got rc=0: {result.stdout}"
     assert requested == ["2.99.0"] * 3 + [fallback] * 3, requested
