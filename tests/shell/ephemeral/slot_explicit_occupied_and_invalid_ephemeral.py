@@ -9,6 +9,10 @@ Tests that:
    slot 2 instead" and starts slot 2
 3. Resuming the slot-2 session without --slot prints "Reusing original slot 2
    from session" and starts slot 2, even when slot 1 is free
+4. `coi shell --slot 10` while slot 10 runs falls back to the lowest free slot
+   ("Slot 10 is occupied, using slot 1 instead")
+5. A --slot above the maximum (12) is used as given while free; occupied, it
+   falls back the same way, to the lowest free slot (3)
 
 A fake HOME keeps the saved sessions (~/.coi/sessions-claude) to this test.
 """
@@ -60,6 +64,9 @@ def test_slot_explicit_occupied_and_invalid(
     2. coi shell --background --slot 1, twice: the second moves to slot 2
     3. coi kill both, then coi shell --background --resume=<slot-2 session>:
        "Reusing original slot 2 from session", slot 2 runs, slot 1 does not
+    4. coi shell --background --slot 10, twice: the second moves to slot 1
+    5. coi shell --background --slot 12, twice: slot 12 runs, then the second
+       moves to slot 3 (1, 2 and 10 are taken)
     """
     fake_home = tmp_path / "fake_home"
     fake_home.mkdir()
@@ -67,6 +74,9 @@ def test_slot_explicit_occupied_and_invalid(
     sessions_dir = fake_home / ".coi" / "sessions-claude"
     slot1 = calculate_container_name(workspace_dir, 1)
     slot2 = calculate_container_name(workspace_dir, 2)
+    slot3 = calculate_container_name(workspace_dir, 3)
+    slot10 = calculate_container_name(workspace_dir, 10)
+    slot12 = calculate_container_name(workspace_dir, 12)
 
     # === Phase 1: --slot -1 is rejected ===
 
@@ -119,3 +129,37 @@ def test_slot_explicit_occupied_and_invalid(
     )
     running = _workspace_containers(workspace_dir)
     assert running == {slot2}, f"only {slot2} should be running after resume, got: {running}"
+
+    # === Phase 4: an occupied top slot falls back to the lowest free one ===
+
+    result = _shell(coi_binary, workspace_dir, env, "--slot", "10")
+    assert result.returncode == 0, f"coi shell --slot 10 failed:\n{result.stderr}"
+    assert "is occupied" not in result.stderr, f"slot 10 should be free:\n{result.stderr}"
+    assert slot10 in _workspace_containers(workspace_dir), f"{slot10} should be running"
+
+    result = _shell(coi_binary, workspace_dir, env, "--slot", "10")
+    assert result.returncode == 0, f"second coi shell --slot 10 failed:\n{result.stderr}"
+    assert "Slot 10 is occupied, using slot 1 instead" in result.stderr, (
+        f"expected the fallback to slot 1:\n{result.stderr}"
+    )
+    running = _workspace_containers(workspace_dir)
+    assert running == {slot1, slot2, slot10}, f"expected slots 1, 2 and 10, got: {running}"
+
+    # === Phase 5: an occupied slot above the maximum falls back the same way ===
+
+    # cleanup_containers covers slots 1-10 only.
+    try:
+        result = _shell(coi_binary, workspace_dir, env, "--slot", "12")
+        assert result.returncode == 0, f"coi shell --slot 12 failed:\n{result.stderr}"
+        assert "is occupied" not in result.stderr, f"slot 12 should be free:\n{result.stderr}"
+        assert slot12 in get_container_list(), f"{slot12} should be running"
+
+        result = _shell(coi_binary, workspace_dir, env, "--slot", "12")
+        assert result.returncode == 0, f"second coi shell --slot 12 failed:\n{result.stderr}"
+        assert "Slot 12 is occupied, using slot 3 instead" in result.stderr, (
+            f"expected the fallback to slot 3:\n{result.stderr}"
+        )
+        assert slot3 in _workspace_containers(workspace_dir), f"{slot3} should be running"
+    finally:
+        if slot12 in get_container_list():
+            _kill(coi_binary, env, slot12)
