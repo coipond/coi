@@ -4,7 +4,6 @@ Test that profiles can be loaded from self-contained directories.
 Tests that:
 1. Profile loaded from .coi/profiles/NAME/config.toml is applied
 2. Profile environment from directory config is injected
-3. Profile forward_env from directory config works
 """
 
 import subprocess
