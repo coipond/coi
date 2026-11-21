@@ -125,7 +125,7 @@ func (a *App) buildCommand(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", opts.AliasName)
 		fmt.Fprintf(os.Stderr, "  Version: %s\n", result.VersionAlias)
 		fmt.Fprintf(os.Stderr, "  Fingerprint: %s\n", result.Fingerprint)
-		recordBuild(a.cfg, opts.AliasName, coiBaseImage)
+		recordBuildAndPrune(a.cfg, opts.AliasName, coiBaseImage)
 		return nil
 	}
 
@@ -176,7 +176,7 @@ func (a *App) buildCommand(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", imageName)
 	fmt.Fprintf(os.Stderr, "  Fingerprint: %s\n", result.Fingerprint)
-	recordBuild(a.cfg, imageName, baseImage)
+	recordBuildAndPrune(a.cfg, imageName, baseImage)
 	return nil
 }
 

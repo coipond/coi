@@ -9,29 +9,11 @@ import (
 	"github.com/coipond/coi/internal/config"
 )
 
-// loadOnDemandWithProfiles writes ~/.coi/profiles/<name>/config.toml files
-// under a temp HOME and loads the config as `coi shell` does.
+// loadOnDemandWithProfiles loads the config as `coi shell` does, from a temp
+// HOME set up by setupProfilesHome.
 func loadOnDemandWithProfiles(t *testing.T, userConfig string, profiles map[string]string) *config.Config {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("COI_CONFIG", "")
-	t.Chdir(t.TempDir())
-	for name, content := range profiles {
-		dir := filepath.Join(home, ".coi", "profiles", name)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.MkdirAll(filepath.Join(home, ".coi"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".coi", "config.toml"), []byte(userConfig), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	setupProfilesHome(t, profiles, userConfig)
 	cfg, err := config.LoadOnDemand()
 	if err != nil {
 		t.Fatal(err)
@@ -47,11 +29,11 @@ type pruneCall struct {
 func stubPruneUbuntuCache(t *testing.T) *[]pruneCall {
 	t.Helper()
 	var calls []pruneCall
-	orig := pruneUbuntuCacheFn
-	pruneUbuntuCacheFn = func(dir string, bases []string, _ func(string)) {
+	orig := pruneUbuntuCache
+	pruneUbuntuCache = func(dir string, bases []string, _ func(string)) {
 		calls = append(calls, pruneCall{dir, bases})
 	}
-	t.Cleanup(func() { pruneUbuntuCacheFn = orig })
+	t.Cleanup(func() { pruneUbuntuCache = orig })
 	return &calls
 }
 
@@ -75,7 +57,7 @@ func TestRecordBuildPrunesWithConfiguredBases(t *testing.T) {
 	})
 	calls := stubPruneUbuntuCache(t)
 
-	recordBuild(cfg, "coi-default", "ubuntu:26.04")
+	recordBuildAndPrune(cfg, "coi-default", "ubuntu:26.04")
 
 	dir, err := coiDataDir()
 	if err != nil {

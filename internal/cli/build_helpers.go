@@ -164,7 +164,7 @@ func runInlineBuild(cfg *config.Config, imageName string) error {
 			return nil
 		}
 		fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", imageName)
-		recordBuild(cfg, imageName, coiBaseImage)
+		recordBuildAndPrune(cfg, imageName, coiBaseImage)
 		return nil
 	}
 
@@ -205,7 +205,7 @@ func runInlineBuild(cfg *config.Config, imageName string) error {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "\nImage '%s' built successfully!\n", imageName)
-	recordBuild(cfg, imageName, baseImage)
+	recordBuildAndPrune(cfg, imageName, baseImage)
 	return nil
 }
 
@@ -218,18 +218,18 @@ func coiDataDir() (string, error) {
 	return filepath.Join(home, ".coi"), nil
 }
 
-// pruneUbuntuCacheFn is image.PruneUbuntuCache; tests replace it.
-var pruneUbuntuCacheFn = image.PruneUbuntuCache
+// pruneUbuntuCache is image.PruneUbuntuCache; tests replace it.
+var pruneUbuntuCache = image.PruneUbuntuCache
 
-// recordBuild records imageName's base in ~/.coi/image-meta.json, then removes
-// the Ubuntu base caches no build needs.
-func recordBuild(cfg *config.Config, imageName, baseImage string) {
+// recordBuildAndPrune records imageName's base in ~/.coi/image-meta.json,
+// then removes the Ubuntu base caches no build needs.
+func recordBuildAndPrune(cfg *config.Config, imageName, baseImage string) {
 	dir, err := coiDataDir()
 	if err != nil {
 		return
 	}
 	image.RecordBuild(dir, imageName, baseImage)
-	pruneUbuntuCacheFn(dir, configuredBases(cfg), stderrLogFn)
+	pruneUbuntuCache(dir, configuredBases(cfg), stderrLogFn)
 }
 
 // pruneAfterBuildAll removes the Ubuntu base caches no build needs once
@@ -239,7 +239,7 @@ func pruneAfterBuildAll(cfg *config.Config, built int) {
 		return
 	}
 	if dir, err := coiDataDir(); err == nil {
-		pruneUbuntuCacheFn(dir, configuredBases(cfg), stderrLogFn)
+		pruneUbuntuCache(dir, configuredBases(cfg), stderrLogFn)
 	}
 }
 

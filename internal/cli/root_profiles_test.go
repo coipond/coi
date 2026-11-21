@@ -47,6 +47,15 @@ func TestCommandNeedsAllProfiles(t *testing.T) {
 // ~/.coi/profiles/<name>/config.toml files and an optional ~/.coi/config.toml.
 func executeWithProfiles(t *testing.T, profiles map[string]string, userConfig string, args ...string) error {
 	t.Helper()
+	setupProfilesHome(t, profiles, userConfig)
+	return executeArgs(t, args...)
+}
+
+// setupProfilesHome points HOME at a temp dir holding the given
+// ~/.coi/profiles/<name>/config.toml files and an optional ~/.coi/config.toml,
+// clears COI_CONFIG and changes into an empty temp dir.
+func setupProfilesHome(t *testing.T, profiles map[string]string, userConfig string) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("COI_CONFIG", "")
@@ -68,7 +77,6 @@ func executeWithProfiles(t *testing.T, profiles map[string]string, userConfig st
 			t.Fatal(err)
 		}
 	}
-	return executeArgs(t, args...)
 }
 
 // executeArgs runs `coi <args>` with output discarded.
