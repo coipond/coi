@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, exec_in
 
 
 def test_push_directory_rename_foreign_owner(coi_binary, cleanup_containers, workspace_dir):
@@ -92,27 +92,12 @@ def test_push_directory_rename_foreign_owner(coi_binary, cleanup_containers, wor
 
         for rel, want in expected.items():
             remote = f"/root/push-owner-renamed/{rel}" if rel else "/root/push-owner-renamed"
-            result = subprocess.run(
-                [
-                    coi_binary,
-                    "container",
-                    "exec",
-                    container_name,
-                    "--",
-                    "stat",
-                    "-c",
-                    "%u %g",
-                    remote,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
+            code, output = exec_in(
+                coi_binary, container_name, f"stat -c '%u %g' {remote}", timeout=30
             )
-            assert result.returncode == 0, f"stat {remote} should succeed. stderr: {result.stderr}"
-            # coi container exec relays the command's output on stderr.
-            combined_output = (result.stdout + result.stderr).strip()
-            assert combined_output == want, (
-                f"{remote} should keep host UID/GID '{want}', got: {combined_output!r}"
+            assert code == 0, f"stat {remote} should succeed. output: {output}"
+            assert output.strip() == want, (
+                f"{remote} should keep host UID/GID '{want}', got: {output!r}"
             )
     finally:
         # === Phase 5: Cleanup ===

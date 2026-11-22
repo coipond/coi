@@ -66,7 +66,7 @@ func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
 // passes --archive, which older clients do not have. Every push form gets the
 // flag when the client's help lists it. A rename pushes a staged link with
 // -H when the help lists that (7.0+). The help is read once.
-func TestPushDirectory_ArchiveByClientHelp(t *testing.T) {
+func TestPushDirectory_ArchiveAndFollowByClientHelp(t *testing.T) {
 	const (
 		archiveHelp = "  -a, --archive  Preserve ownership, timestamps and mode (implies --recursive)"
 		followHelp  = "  -H, --follow   Follow command-line symbolic links in source path"
@@ -168,7 +168,7 @@ func TestPushDirectory_RenameStagesOnHost(t *testing.T) {
 // A copy staged by a non-root coi would carry coi's UID wherever the source
 // has another (e.g. root) owner, and a hard link fails across filesystems.
 // So a rename pushes the source tree itself through a staged link, with -H.
-func TestPushDirectory_RenameWithArchivePushesSourceTree(t *testing.T) {
+func TestPushDirectory_RenameWithFollowPushesSourceTree(t *testing.T) {
 	stubPushFlags(t, true, true)
 	log := fakeIncusScript(t, `for a; do prev=$cur; cur=$a; done
 readlink "$prev" > "$(dirname "$0")/link.txt"`)
