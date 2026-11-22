@@ -90,6 +90,23 @@ func stagePushLink(src, dst string) error {
 	return os.Symlink(resolved, dst)
 }
 
+// hasUnpushable reports whether the tree at src holds an entry that
+// `incus file push -r` refuses: a FIFO, socket or device.
+func hasUnpushable(src string) bool {
+	if resolved, err := filepath.EvalSymlinks(src); err == nil {
+		src = resolved
+	}
+	found := false
+	_ = filepath.WalkDir(src, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && !d.Type().IsRegular() && d.Type()&fs.ModeSymlink == 0 {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
 // copyFileExact copies src to dst with src's mode (not masked by the umask),
 // modification time and, when permitted, its owner.
 func copyFileExact(src, dst string, info fs.FileInfo) error {

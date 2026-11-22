@@ -34,8 +34,10 @@ def test_push_directory_rename_foreign_owner(coi_binary, cleanup_containers, wor
     help_out = subprocess.run(
         ["incus", "file", "push", "--help"], capture_output=True, text=True, timeout=30
     )
-    if "--archive" not in help_out.stdout:
-        pytest.skip("incus client without file push --archive: a renamed push sends a staged copy")
+    if "--follow" not in help_out.stdout:
+        pytest.skip(
+            "incus client without file push -H (pre-7.0): a renamed push sends a staged copy"
+        )
 
     container_name = calculate_container_name(workspace_dir, 1)
     tree = os.path.join(workspace_dir, "push-owner-dir")
@@ -107,9 +109,8 @@ def test_push_directory_rename_foreign_owner(coi_binary, cleanup_containers, wor
                 timeout=30,
             )
             assert result.returncode == 0, f"stat {remote} should succeed. stderr: {result.stderr}"
-            combined_output = result.stdout + result.stderr
-            assert want in combined_output, (
-                f"{remote} should keep host UID/GID '{want}', got:\n{combined_output}"
+            assert result.stdout.strip() == want, (
+                f"{remote} should keep host UID/GID '{want}', got: {result.stdout!r}"
             )
     finally:
         # === Phase 5: Cleanup ===

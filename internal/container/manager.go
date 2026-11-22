@@ -1090,8 +1090,7 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 	// name, push from a stage on the host under that name: exec (mktemp/mv
 	// in the container) would fail on a stopped container.
 	args := []string{"file", "push", "-r"}
-	archive := pushArchiveSupported()
-	if archive {
+	if pushArchiveSupported() {
 		args = append(args, "--archive")
 	}
 	target := path.Clean("/" + containerPath)
@@ -1110,10 +1109,11 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 		}
 		defer removeStage(stage)
 		src = filepath.Join(stage, name)
-		if archive {
-			// Every --archive client has -H, which pushes the tree a link
-			// points to under the link's name. A staged copy would be owned
-			// by a non-root coi wherever the source has another owner.
+		// -H pushes the tree a link points to under the link's name, so
+		// each entry keeps its owner: a copy staged by a non-root coi is
+		// owned by it. The client refuses FIFOs, sockets and devices, which
+		// the copy skips.
+		if pushFollowSupported() && !hasUnpushable(localPath) {
 			if err := stagePushLink(localPath, src); err != nil {
 				return fmt.Errorf("failed to stage %s for the push: %w", localPath, err)
 			}
