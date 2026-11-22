@@ -161,6 +161,11 @@ func (g *GooseTool) StateConfigFileName() string { return mustBundle("goose").St
 // AlwaysSetupConfig implements ToolWithConfigDirFiles.
 func (g *GooseTool) AlwaysSetupConfig() bool { return mustBundle("goose").AlwaysSetup }
 
+// MemoryPaths implements ToolWithMemoryPaths: the memory extension's global
+// memories, loaded into the instructions when a session starts. Sessions
+// live in the host data mounts (DataDirs), outside the container.
+func (g *GooseTool) MemoryPaths() []string { return []string{"memory"} }
+
 // AutoContextFile implements ToolWithAutoContextFile. goose loads
 // ~/.config/goose/.goosehints as global hints; a symlink out of
 // ~/.config/goose is skipped, so coi writes the managed block into the file.

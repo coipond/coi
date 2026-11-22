@@ -219,10 +219,11 @@ func (c *CodexTool) SandboxSettingsFileName() string { return mustBundle("codex"
 // Codex has no sibling state file (everything lives inside ~/.codex).
 func (c *CodexTool) StateConfigFileName() string { return mustBundle("codex").StateFile }
 
-// MemoryPaths implements ToolWithMemoryPaths: session rollouts and prompt
-// history. config.toml, auth.json and AGENTS.md stay.
+// MemoryPaths implements ToolWithMemoryPaths: session rollouts, prompt
+// history and memories (the opt-in memories feature). config.toml, auth.json
+// and AGENTS.md stay.
 func (c *CodexTool) MemoryPaths() []string {
-	return []string{"sessions", "archived_sessions", "history.jsonl"}
+	return []string{"sessions", "archived_sessions", "history.jsonl", "memories"}
 }
 
 // AlwaysSetupConfig implements ToolWithConfigDirFiles.

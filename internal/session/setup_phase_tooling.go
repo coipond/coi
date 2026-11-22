@@ -16,16 +16,25 @@ func (st *setupState) phaseResumeRestore(_ context.Context) (Teardown, error) {
 	// Skip if tool uses ENV-based auth (no config directory)
 	if st.opts.ResumeFromID != "" && st.opts.Tool != nil && st.opts.Tool.ConfigDirName() != "" {
 		// If we launched a new container (not reusing persistent one), restore
-		// config from saved session. A restarted container with [tool] memory
-		// = "fresh" restores too: a later fresh session removed this one's
-		// history from the container.
-		if (!st.skipLaunch || st.freshMemory()) && st.opts.SessionsDir != "" {
+		// config from saved session.
+		if !st.skipLaunch && st.opts.SessionsDir != "" {
 			pushed, err := restoreSessionData(st.result.Manager, st.opts.ResumeFromID, st.result.HomeDir, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger)
 			if err != nil {
 				st.opts.Logger(fmt.Sprintf("Warning: Could not restore session data: %v", err))
 			}
 			if pushed {
 				st.restoredFiles = restoredToolFiles(st.opts.SessionsDir, st.opts.ResumeFromID, st.result.HomeDir, st.opts.Tool)
+			}
+		} else if st.freshMemory() && st.opts.SessionsDir != "" {
+			// With [tool] memory = "fresh" the container may hold another
+			// session's memory (a later fresh session removed this one's), so
+			// put back exactly the resumed session's memory files. The rest of
+			// the config dir stays as the later sessions left it.
+			if err := clearToolMemory(st.result.Manager, st.result.HomeDir, st.opts.Tool, st.opts.Logger); err != nil {
+				return nil, err
+			}
+			if err := restoreToolMemory(st.result.Manager, st.opts.ResumeFromID, st.result.HomeDir, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger); err != nil {
+				st.opts.Logger(fmt.Sprintf("Warning: Could not restore session memory: %v", err))
 			}
 		}
 
@@ -90,11 +99,19 @@ func (st *setupState) seedToolConfig(tcf tool.ToolWithConfigDirFiles) {
 	st.toolFiles = copied
 }
 
-// freshMemory reports whether this launch restarted a persistent container
-// with [tool] memory = "fresh", where the tool's earlier memory must not
-// carry over (a running container is left alone: its tool may be live).
+// freshMemory reports whether this launch reuses a persistent container with
+// [tool] memory = "fresh", so the tool's earlier memory must not carry over:
+// a restarted container, or a running one (left by a plain exit) with no
+// tool session live in it. A live session is attached to, not reset. An
+// explicit --container attach uses the container as it is.
 func (st *setupState) freshMemory() bool {
-	return st.restarted && st.opts.FreshToolMemory && st.opts.Tool != nil
+	if !st.freshMemoryChecked {
+		st.freshMemoryChecked = true
+		st.freshMemoryReuse = st.opts.FreshToolMemory && st.opts.Persistent && st.opts.Tool != nil &&
+			st.skipLaunch && st.opts.ContainerName == "" &&
+			(st.restarted || !toolSessionLive(st.result.Manager, st.result.ContainerName, st.opts.Tool))
+	}
+	return st.freshMemoryReuse
 }
 
 // 11. Setup CLI tool config (skip if resuming — config already restored).

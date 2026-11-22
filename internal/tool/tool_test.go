@@ -1105,8 +1105,9 @@ func indexOf(slice []string, item string) int {
 // session.
 func TestMemoryPaths(t *testing.T) {
 	want := map[string][]string{
-		"claude": {"projects", "history.jsonl", "todos", "plans", "file-history", "shell-snapshots", "session-env", "paste-cache"},
-		"codex":  {"sessions", "archived_sessions", "history.jsonl"},
+		"claude": {"projects", "agent-memory", "history.jsonl", "todos", "tasks", "plans", "file-history", "shell-snapshots", "session-env", "paste-cache"},
+		"codex":  {"sessions", "archived_sessions", "history.jsonl", "memories"},
+		"goose":  {"memory"},
 	}
 	for name, paths := range want {
 		ti, err := Get(name)
@@ -1132,7 +1133,7 @@ func TestMemoryPaths(t *testing.T) {
 	}
 	// Their session stores live outside the container (workspace or host
 	// data mounts), so a reused container holds no memory of theirs.
-	for _, name := range []string{"pi", "omp", "opencode", "opencode2", "goose"} {
+	for _, name := range []string{"pi", "omp", "opencode", "opencode2"} {
 		ti, err := Get(name)
 		if err != nil {
 			t.Fatalf("Get(%q): %v", name, err)

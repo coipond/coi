@@ -22,6 +22,9 @@ type setupState struct {
 	// restarted is set when a stopped persistent container was started again
 	// (not for a running reuse or an explicit --container attach).
 	restarted     bool
+	// freshMemoryReuse caches freshMemory (it may probe the container once).
+	freshMemoryChecked bool
+	freshMemoryReuse   bool
 	hasCodeUser   bool
 	resolvedPorts []PublishedPort
 

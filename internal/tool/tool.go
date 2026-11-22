@@ -308,10 +308,11 @@ func (c *ClaudeTool) SandboxSettingsFileName() string {
 func (c *ClaudeTool) StateConfigFileName() string { return mustBundle("claude").StateFile }
 
 // MemoryPaths implements ToolWithMemoryPaths: transcripts and auto-memory
-// (projects/), prompt history, todos, plans, file checkpoints and per-session
-// shell state. Settings, credentials, plugins and the managed CLAUDE.md stay.
+// (projects/), subagent memory, prompt history, todos and tasks, plans, file
+// checkpoints and per-session shell state. Settings, credentials, plugins,
+// skills and the managed CLAUDE.md stay.
 func (c *ClaudeTool) MemoryPaths() []string {
-	return []string{"projects", "history.jsonl", "todos", "plans", "file-history", "shell-snapshots", "session-env", "paste-cache"}
+	return []string{"projects", "agent-memory", "history.jsonl", "todos", "tasks", "plans", "file-history", "shell-snapshots", "session-env", "paste-cache"}
 }
 
 // AlwaysSetupConfig implements ToolWithConfigDirFiles.
