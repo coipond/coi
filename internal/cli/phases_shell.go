@@ -185,6 +185,11 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				return nil, err
 			}
 			s.resumeID = resumeID
+			if resumeID != "" {
+				if err := session.RecoverSavedSession(sessionsDir, resumeID, ti); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: Could not recover saved session data: %v\n", err)
+				}
+			}
 			resumeFlagSet := cmd.Flags().Changed("resume") || cmd.Flags().Changed("continue")
 
 			// Inherit persistent flag and slot from session metadata.
