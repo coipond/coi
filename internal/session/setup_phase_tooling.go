@@ -15,8 +15,11 @@ import (
 func (st *setupState) phaseResumeRestore(_ context.Context) (Teardown, error) {
 	// Skip if tool uses ENV-based auth (no config directory)
 	if st.opts.ResumeFromID != "" && st.opts.Tool != nil && st.opts.Tool.ConfigDirName() != "" {
-		// If we launched a new container (not reusing persistent one), restore config from saved session
-		if !st.skipLaunch && st.opts.SessionsDir != "" {
+		// If we launched a new container (not reusing persistent one), restore
+		// config from saved session. A restarted container with [tool] memory
+		// = "fresh" restores too: a later fresh session removed this one's
+		// history from the container.
+		if (!st.skipLaunch || st.freshMemory()) && st.opts.SessionsDir != "" {
 			pushed, err := restoreSessionData(st.result.Manager, st.opts.ResumeFromID, st.result.HomeDir, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger)
 			if err != nil {
 				st.opts.Logger(fmt.Sprintf("Warning: Could not restore session data: %v", err))
@@ -87,8 +90,20 @@ func (st *setupState) seedToolConfig(tcf tool.ToolWithConfigDirFiles) {
 	st.toolFiles = copied
 }
 
+// freshMemory reports whether this launch restarted a persistent container
+// with [tool] memory = "fresh", where the tool's earlier memory must not
+// carry over (a running container is left alone: its tool may be live).
+func (st *setupState) freshMemory() bool {
+	return st.restarted && st.opts.FreshToolMemory && st.opts.Tool != nil
+}
+
 // 11. Setup CLI tool config (skip if resuming — config already restored).
 func (st *setupState) phaseSetupCLIConfig(_ context.Context) (Teardown, error) {
+	if st.freshMemory() && st.opts.ResumeFromID == "" {
+		if err := clearToolMemory(st.result.Manager, st.result.HomeDir, st.opts.Tool, st.opts.Logger); err != nil {
+			return nil, err
+		}
+	}
 	if st.opts.Tool != nil {
 		if tcf, ok := st.opts.Tool.(tool.ToolWithConfigDirFiles); ok {
 			if st.opts.CLIConfigPath != "" && st.opts.ResumeFromID == "" {

@@ -26,6 +26,18 @@ const (
 	NetworkModeAllowlist NetworkMode = "allowlist"
 )
 
+// ToolMemory is the [tool] memory setting: whether a new session in a
+// restarted persistent container keeps the tool's conversation history and
+// memory files from earlier sessions.
+type ToolMemory string
+
+const (
+	// ToolMemoryKeep keeps the tool's memory files (the default).
+	ToolMemoryKeep ToolMemory = "keep"
+	// ToolMemoryFresh removes them before a new (not resumed) session.
+	ToolMemoryFresh ToolMemory = "fresh"
+)
+
 // HardenedProfileSecretPaths is the default secret-mask set bundled by the
 // built-in "hardened" profile. Exported so docs/tests can reference one source.
 var HardenedProfileSecretPaths = []string{

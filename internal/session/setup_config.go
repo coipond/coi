@@ -220,6 +220,37 @@ func toolConfigSeeded(mgr containerCommandRunner, homeDir string, tcf tool.ToolW
 	return err == nil
 }
 
+// clearToolMemory removes the tool's memory files (tool.ToolWithMemoryPaths)
+// from the container, so a new session starts without the history of earlier
+// ones while the rest of the container stays. It runs as the code user: the
+// paths sit in a dir the agent controls, and root would follow a planted
+// symlink out of it. Paths are coi-controlled (home + config dir + fixed
+// names), so no shell-quoting is needed. Saved sessions on the host are not
+// touched.
+func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, logger func(string)) error {
+	tmp, ok := t.(tool.ToolWithMemoryPaths)
+	if !ok || t.ConfigDirName() == "" {
+		return nil
+	}
+	dir := filepath.Join(homeDir, t.ConfigDirName())
+	args := make([]string, 0, len(tmp.MemoryPaths()))
+	for _, p := range tmp.MemoryPaths() {
+		args = append(args, filepath.Join(dir, p))
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	logger(fmt.Sprintf("Starting %s without memory of earlier sessions ([tool] memory = \"fresh\")", t.Name()))
+	uid := container.CodeUID
+	if homeDir == "/root" {
+		uid = 0
+	}
+	if _, err := mgr.ExecCommand("rm -rf -- "+strings.Join(args, " "), container.ExecCommandOptions{User: &uid, Capture: true}); err != nil {
+		return fmt.Errorf("failed to clear %s memory: %w", t.Name(), err)
+	}
+	return nil
+}
+
 // setupCLIConfig copies tool config directory and injects sandbox settings. It
 // returns the host files it copied in (the tool's essential config files and
 // state file, e.g. Claude's .credentials.json and .claude.json), even on error,

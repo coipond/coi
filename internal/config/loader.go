@@ -154,6 +154,9 @@ func load(mode profileLoadMode) (_ *Config, err error) {
 			return nil, fmt.Errorf("profile %q: %w", name, err)
 		}
 	}
+	if err := validateToolMemory(cfg.Tool.Memory); err != nil {
+		return nil, err
+	}
 
 	// Ensure directories exist
 	if err := ensureDirectories(cfg); err != nil {
@@ -591,6 +594,16 @@ func validateSessionName(name string) error {
 		return nil
 	}
 	return fmt.Errorf("invalid [container] session_name %q: must match %s (letters, digits, '.', '_', '-'; start alphanumeric; max 64 chars)", name, sessionNameRe.String())
+}
+
+// validateToolMemory rejects a [tool] memory value other than "keep" or
+// "fresh" (empty means the default, keep).
+func validateToolMemory(m ToolMemory) error {
+	switch m {
+	case "", ToolMemoryKeep, ToolMemoryFresh:
+		return nil
+	}
+	return fmt.Errorf("invalid [tool] memory %q: must be %q or %q", m, ToolMemoryKeep, ToolMemoryFresh)
 }
 
 // sanitizeUntrustedSessionName strips [container] session_name from an

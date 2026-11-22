@@ -219,6 +219,12 @@ func (c *CodexTool) SandboxSettingsFileName() string { return mustBundle("codex"
 // Codex has no sibling state file (everything lives inside ~/.codex).
 func (c *CodexTool) StateConfigFileName() string { return mustBundle("codex").StateFile }
 
+// MemoryPaths implements ToolWithMemoryPaths: session rollouts and prompt
+// history. config.toml, auth.json and AGENTS.md stay.
+func (c *CodexTool) MemoryPaths() []string {
+	return []string{"sessions", "archived_sessions", "history.jsonl"}
+}
+
 // AlwaysSetupConfig implements ToolWithConfigDirFiles.
 // Codex needs credentials from ~/.codex (auth.json), so skip setup when the
 // host dir is missing — auto-context injection runs independently either way.
