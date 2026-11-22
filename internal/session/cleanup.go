@@ -314,7 +314,12 @@ func Cleanup(opts CleanupOptions) error {
 	// Containers are always launched as non-ephemeral, so they should exist even when stopped
 	exists, err := mgr.Exists()
 	if err != nil {
-		opts.Logger(fmt.Sprintf("Warning: Could not check container existence: %v", err))
+		// Incus can't answer: the container may still exist. Fail safe as
+		// the state check below does - no save, no network teardown, no
+		// delete.
+		opts.Logger(fmt.Sprintf("Warning: could not check the container (incus unreachable: %v) - leaving it untouched; session data was NOT saved. When incus is back, use 'coi attach' or 'coi shell --resume'", err))
+		closeSessionLogger(opts)
+		return nil
 	}
 
 	// Save session data immediately — no pre-delay regardless of persistence mode.
@@ -438,13 +443,18 @@ func Cleanup(opts CleanupOptions) error {
 		}
 	}
 
+	closeSessionLogger(opts)
+
+	return nil
+}
+
+// closeSessionLogger closes the session log, if any, and logs a close error
+func closeSessionLogger(opts CleanupOptions) {
 	if opts.SessionLogger != nil {
 		if err := opts.SessionLogger.Close(); err != nil && opts.Logger != nil {
 			opts.Logger(fmt.Sprintf("Warning: failed to close session log: %v", err))
 		}
 	}
-
-	return nil
 }
 
 // saveSessionData saves the tool config directory from the container
