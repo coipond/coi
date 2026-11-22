@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 )
@@ -210,6 +211,7 @@ func synthesizeHardenedProfile() ProfileConfig {
 //  2. ./.coi/config.toml        (current project)
 //
 // If COI_CONFIG environment variable is set, it is added as highest priority.
+// A file named twice is listed once, at its highest-priority position.
 func GetConfigPaths() []string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -226,11 +228,11 @@ func GetConfigPaths() []string {
 	}
 
 	// COI_CONFIG environment variable has highest priority
-	if envConfig := os.Getenv("COI_CONFIG"); envConfig != "" {
+	if envConfig := envConfigPath(); envConfig != "" {
 		paths = append(paths, envConfig)
 	}
 
-	return paths
+	return uniquePaths(paths)
 }
 
 // GetProfileParentDirs returns directories to scan for the "profiles/"
@@ -242,6 +244,8 @@ func GetConfigPaths() []string {
 //  1. ~/.coi                    (user home; co-located with sessions/storage/logs)
 //  2. ./.coi                    (current project)
 //  3. dirname($COI_CONFIG)      (if COI_CONFIG is set)
+//
+// A directory named twice is listed once, at its last position.
 func GetProfileParentDirs() []string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -258,11 +262,35 @@ func GetProfileParentDirs() []string {
 	}
 
 	// COI_CONFIG environment variable: scan its parent dir for profiles too
-	if envConfig := os.Getenv("COI_CONFIG"); envConfig != "" {
+	if envConfig := envConfigPath(); envConfig != "" {
 		dirs = append(dirs, filepath.Dir(envConfig))
 	}
 
-	return dirs
+	return uniquePaths(dirs)
+}
+
+// envConfigPath returns $COI_CONFIG as a clean absolute path (relative to the
+// working directory), or "" when it is unset.
+func envConfigPath() string {
+	envConfig := os.Getenv("COI_CONFIG")
+	if envConfig == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(envConfig); err == nil {
+		return abs
+	}
+	return filepath.Clean(envConfig)
+}
+
+// uniquePaths drops repeated clean paths, keeping each at its last position.
+func uniquePaths(paths []string) []string {
+	unique := make([]string, 0, len(paths))
+	for i, path := range paths {
+		if !slices.Contains(paths[i+1:], path) {
+			unique = append(unique, path)
+		}
+	}
+	return unique
 }
 
 // ptrBool returns a pointer to a bool value
