@@ -29,7 +29,7 @@ func runUnfreeze(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		// Unfreeze specific container (with alias resolution)
 		containerName := args[0]
-		if resolved, err := alias.ResolveAliasForRunning(containerName); err == nil {
+		if resolved, err := alias.ResolveAliasForFrozen(containerName); err == nil {
 			containerName = resolved
 		} else if !alias.IsContainerName(containerName) {
 			return err
