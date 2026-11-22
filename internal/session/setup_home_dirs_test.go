@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/coipond/coi/internal/container"
@@ -29,13 +30,20 @@ func fakeChownOnPath(t *testing.T) string {
 // order, to the code user.
 func assertChownCalls(t *testing.T, logPath string, dirs ...string) {
 	t.Helper()
+	assertChownCallsTo(t, logPath, container.CodeUID, dirs...)
+}
+
+// assertChownCallsTo checks that the logging chown handed exactly dirs, in
+// order, to owner.
+func assertChownCallsTo(t *testing.T, logPath string, owner int, dirs ...string) {
+	t.Helper()
 	log, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("chown never ran: %v", err)
 	}
 	var want strings.Builder
 	for _, d := range dirs {
-		fmt.Fprintf(&want, "%d:%d %s\n", container.CodeUID, container.CodeUID, d)
+		fmt.Fprintf(&want, "%d:%d %s\n", owner, owner, d)
 	}
 	if string(log) != want.String() {
 		t.Errorf("chown calls = %q, want %q", log, want.String())
@@ -109,4 +117,46 @@ func TestSetupCLIConfig_ChownsCreatedConfigDir(t *testing.T) {
 		t.Fatalf("setupCLIConfig: %v", err)
 	}
 	assertChownCalls(t, logPath, filepath.Join(home, ".claude"))
+}
+
+// TestHomeMkdirCmd_ExplicitOwner: each dir HomeMkdirCmd creates goes to the
+// given owner; an existing parent keeps its owner.
+func TestHomeMkdirCmd_ExplicitOwner(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := fakeChownOnPath(t)
+
+	dir := filepath.Join(home, ".coi", "runs", "x")
+	if out, err := (fakeShellManager{}).ExecCommand(HomeMkdirCmd(dir, home, 1234), container.ExecCommandOptions{}); err != nil {
+		t.Fatalf("HomeMkdirCmd: %v: %s", err, out)
+	}
+	assertChownCallsTo(t, logPath, 1234, filepath.Dir(dir), dir)
+}
+
+// TestHomeMkdirCmd_ConcurrentCreate: parallel execs creating the same missing
+// dirs must all succeed, though only one of them creates each dir.
+func TestHomeMkdirCmd_ConcurrentCreate(t *testing.T) {
+	fakeChownOnPath(t)
+	for round := 0; round < 50; round++ {
+		home := t.TempDir()
+		cmd := HomeMkdirCmd(filepath.Join(home, ".coi", "runs"), home, 1234)
+		var wg sync.WaitGroup
+		errs := make(chan error, 4)
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if out, err := (fakeShellManager{}).ExecCommand(cmd, container.ExecCommandOptions{}); err != nil {
+					errs <- fmt.Errorf("%w: %s", err, out)
+				}
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatalf("round %d: HomeMkdirCmd: %v", round, err)
+		}
+	}
 }
