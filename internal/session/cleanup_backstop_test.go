@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/tool"
 )
 
 // fakeNetworkManager records Teardown/SetupForContainer calls so tests can
@@ -106,6 +108,7 @@ func TestCleanup_IncusUnreachableLeavesContainerUntouched(t *testing.T) {
 			SaveSession:    true,
 			SessionID:      "s1",
 			SessionsDir:    t.TempDir(),
+			Tool:           tool.NewClaude(),
 			NetworkManager: fake,
 			Logger:         func(msg string) { logs = append(logs, msg) },
 		})
