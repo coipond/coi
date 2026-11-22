@@ -128,6 +128,23 @@ func TestSampleContainerRows_WorkspaceFromOtherToolsSave(t *testing.T) {
 	}
 }
 
+func TestSampleContainerRows_WorkspacePrefersConfiguredToolsSave(t *testing.T) {
+	claudeDir := useTopHome(t) // configured tool: claude
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An older claude save wins over a newer save of another tool.
+	writeSessionMetadata(t, claudeDir, session.SessionMetadata{SessionID: "s1", ContainerName: "coi-aaaaaaaa-1", Workspace: "/home/u/proj", SavedAt: "2026-10-01T10:00:00Z"})
+	opencodeDir := session.GetSessionsDir(filepath.Join(home, ".coi"), tool.NewOpencode())
+	writeSessionMetadata(t, opencodeDir, session.SessionMetadata{SessionID: "s2", ContainerName: "coi-aaaaaaaa-1", Workspace: "/home/u/stale", SavedAt: "2026-11-01T10:00:00Z"})
+	stubTopRunning(t, []incusTopEntry{{Name: "coi-aaaaaaaa-1", Status: "Running", Config: map[string]string{}}})
+
+	if ws := workspacesByName(t)["coi-aaaaaaaa-1"]; ws != "/home/u/proj" {
+		t.Errorf("workspace = %q; want /home/u/proj from the configured tool's save", ws)
+	}
+}
+
 func TestSampleContainerRows_WorkspaceFromNewestSave(t *testing.T) {
 	sessionsDir := useTopHome(t)
 	// The older run's session dir is read first.
