@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -114,6 +115,58 @@ func TestGetConfigPathsCOIConfigAbsoluteAndUnique(t *testing.T) {
 			}
 			if !isTrustedConfigPath(got[len(got)-1]) {
 				t.Errorf("COI_CONFIG path %s is not trusted", got[len(got)-1])
+			}
+		})
+	}
+}
+
+func TestLoadRelativeCOIConfigTrustsItsProfiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ws := t.TempDir()
+	profileDir := filepath.Join(ws, ".coi", "profiles", "p")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profileDir, "config.toml"), []byte("forward_env = [\"TOKEN\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(ws)
+	t.Setenv("COI_CONFIG", filepath.Join(".coi", "config.toml"))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	p := cfg.GetProfile("p")
+	if p == nil || len(p.ForwardEnv) != 1 {
+		t.Errorf("profile p = %+v, want forward_env kept (COI_CONFIG dir is trusted)", p)
+	}
+}
+
+func TestGetProfileParentDirsCOIConfigAbsoluteAndUnique(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ws := t.TempDir()
+	userDir := filepath.Join(home, ".coi")
+	projectDir := filepath.Join(ws, ".coi")
+
+	tests := []struct {
+		name      string
+		cwd       string
+		coiConfig string
+		want      []string
+	}{
+		{"cwd is home", home, "", []string{userDir}},
+		{"user config", ws, filepath.Join(home, ".coi", "config.toml"), []string{projectDir, userDir}},
+		{"relative project config", ws, "./.coi/config.toml", []string{userDir, projectDir}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(tt.cwd)
+			t.Setenv("COI_CONFIG", tt.coiConfig)
+			got := GetProfileParentDirs()
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("GetProfileParentDirs() = %v, want %v", got, tt.want)
 			}
 		})
 	}
