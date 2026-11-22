@@ -109,7 +109,7 @@ func (st *setupState) freshMemory() bool {
 		st.freshMemoryChecked = true
 		st.freshMemoryReuse = st.opts.FreshToolMemory && st.opts.Persistent && st.opts.Tool != nil &&
 			st.skipLaunch && st.opts.ContainerName == "" &&
-			(st.restarted || !toolSessionLive(st.result.Manager, st.result.ContainerName, st.opts.Tool))
+			(st.restarted || !toolSessionLive(st.result.Manager, st.result.ContainerName, st.result.HomeDir, st.opts.Tool))
 	}
 	return st.freshMemoryReuse
 }

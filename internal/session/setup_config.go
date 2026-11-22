@@ -241,30 +241,39 @@ func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, lo
 		return nil
 	}
 	logger(fmt.Sprintf("Starting %s without memory of earlier sessions ([tool] memory = \"fresh\")", t.Name()))
-	uid := container.CodeUID
-	if homeDir == "/root" {
-		uid = 0
-	}
+	uid := toolUID(homeDir)
 	if _, err := mgr.ExecCommand("rm -rf -- "+strings.Join(args, " "), container.ExecCommandOptions{User: &uid, Capture: true}); err != nil {
 		return fmt.Errorf("failed to clear %s memory: %w", t.Name(), err)
 	}
 	return nil
 }
 
+// toolUID is the user the tool runs as for homeDir: root for /root, else
+// the code user.
+func toolUID(homeDir string) int {
+	if homeDir == "/root" {
+		return 0
+	}
+	return container.CodeUID
+}
+
 // toolSessionLive reports whether the tool may still run in the container:
 // coi's tmux session for it exists, or a process with the tool's name runs
 // (a direct-mode session). A failed probe counts as live, so memory is never
-// removed under a running tool by mistake. The names are coi-controlled
-// (container name, sanitized [tool] binary), so no shell-quoting is needed.
-func toolSessionLive(mgr containerCommandRunner, containerName string, t tool.Tool) bool {
+// removed under a running tool by mistake. It runs as the tool's user: tmux
+// keeps one socket per uid, so root would not see the code user's session.
+// The names are coi-controlled (container name, sanitized [tool] binary), so
+// no shell-quoting is needed.
+func toolSessionLive(mgr containerCommandRunner, containerName, homeDir string, t tool.Tool) bool {
 	comm := filepath.Base(t.Binary())
 	if len(comm) > 15 {
 		comm = comm[:15] // the kernel's comm limit, which pgrep -x matches
 	}
+	uid := toolUID(homeDir)
 	out, err := mgr.ExecCommand(fmt.Sprintf(
 		"if tmux has-session -t %s 2>/dev/null || pgrep -x %s >/dev/null; then echo live; else echo idle; fi",
 		TmuxSessionTarget(containerName), comm,
-	), container.ExecCommandOptions{Capture: true})
+	), container.ExecCommandOptions{User: &uid, Capture: true})
 	return err != nil || strings.TrimSpace(out) != "idle"
 }
 

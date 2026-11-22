@@ -105,20 +105,24 @@ type memoryManager struct {
 	execs  []string
 	pushed []string
 	chowns []string
+	log    []string // execs and pushes in call order
 }
 
 func (m *memoryManager) ExecCommand(cmd string, _ container.ExecCommandOptions) (string, error) {
 	m.execs = append(m.execs, cmd)
+	m.log = append(m.log, cmd)
 	return m.probe, nil
 }
 
 func (m *memoryManager) PushDirectory(src, dest string) error {
 	m.pushed = append(m.pushed, "dir "+filepath.Base(src)+" -> "+dest)
+	m.log = append(m.log, "push "+dest)
 	return nil
 }
 
 func (m *memoryManager) PushFile(src, dest string) error {
 	m.pushed = append(m.pushed, "file "+filepath.Base(src)+" -> "+dest)
+	m.log = append(m.log, "push "+dest)
 	return nil
 }
 
@@ -141,13 +145,24 @@ func TestToolSessionLive(t *testing.T) {
 	for _, c := range cases {
 		m := &memoryExec{err: c.err}
 		r := &probeExec{memoryExec: m, out: c.probe}
-		if got := toolSessionLive(r, "coi-abc-1", ti); got != c.want {
+		if got := toolSessionLive(r, "coi-abc-1", "/home/code", ti); got != c.want {
 			t.Errorf("probe %q err %v: live = %v, want %v", c.probe, c.err, got, c.want)
 		}
 		if len(m.cmds) != 1 || !strings.Contains(m.cmds[0], "tmux has-session -t =coi-coi-abc-1") ||
 			!strings.Contains(m.cmds[0], "pgrep -x claude") {
 			t.Errorf("probe must check coi's tmux session and the tool process: %q", m.cmds)
 		}
+		// tmux keeps one socket per uid: root would not see the code
+		// user's session.
+		if u := m.users[0]; u == nil || *u != container.CodeUID {
+			t.Errorf("probe must run as the code user (uid %d), got %v", container.CodeUID, u)
+		}
+	}
+
+	m := &memoryExec{}
+	toolSessionLive(&probeExec{memoryExec: m, out: "idle"}, "coi-abc-1", "/root", ti)
+	if u := m.users[0]; u == nil || *u != 0 {
+		t.Errorf("probe for a /root home must run as root, got %v", u)
 	}
 }
 
@@ -242,5 +257,43 @@ func TestRestoreToolMemory_MissingSessionFails(t *testing.T) {
 	err := restoreToolMemory(&memoryManager{}, "gone", "/home/code", t.TempDir(), mustTool(t, "claude"), func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "no saved session data found for gone") {
 		t.Fatalf("want a missing-session error, got %v", err)
+	}
+}
+
+// A fresh resume on a reused container first removes whatever memory the
+// container holds (a later session's), then pushes back the resumed
+// session's: without the removal the resumed session would also see the
+// later session's history.
+func TestPhaseResumeRestore_FreshClearsBeforeRestore(t *testing.T) {
+	sessions := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sessions, "s1", ".claude", "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &memoryManager{probe: "idle"}
+	st := &setupState{
+		skipLaunch: true,
+		result:     &SetupResult{ContainerName: "coi-abc-1", Manager: m, HomeDir: "/home/code"},
+	}
+	st.opts.FreshToolMemory = true
+	st.opts.Persistent = true
+	st.opts.Tool = mustTool(t, "claude")
+	st.opts.ResumeFromID = "s1"
+	st.opts.SessionsDir = sessions
+	st.opts.Logger = func(string) {}
+
+	if _, err := st.phaseResumeRestore(t.Context()); err != nil {
+		t.Fatalf("phaseResumeRestore: %v", err)
+	}
+	rm, push := -1, -1
+	for i, e := range m.log {
+		if rm < 0 && strings.HasPrefix(e, "rm -rf -- ") && strings.Contains(e, "/home/code/.claude/projects") {
+			rm = i
+		}
+		if push < 0 && e == "push /home/code/.claude/projects" {
+			push = i
+		}
+	}
+	if rm < 0 || push < 0 || rm > push {
+		t.Errorf("want the memory removed, then the saved projects/ pushed; calls: %q", m.log)
 	}
 }
