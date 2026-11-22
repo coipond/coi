@@ -185,15 +185,18 @@ func (st *setupState) phasePreflightPorts(_ context.Context) (Teardown, error) {
 // saveStoppedLeftover saves the session data of a stopped ephemeral leftover
 // into the resumed session before the container is deleted: after a host
 // reboot or a killed coi the container holds the only copy of the session's
-// last turns. Only a container whose newest session metadata is the resumed
-// session's is saved, so another session's leftover on the same slot never
-// lands in it. A failed save keeps the container and the previous saved copy.
+// last turns. Container names have no tool part, so the leftover is saved
+// only when the newest session metadata naming it, across every tool's
+// sessions dir, is the resumed session's: another session's leftover on the
+// same slot never lands in it. A failed save keeps the container and the
+// previous saved copy.
 func (st *setupState) saveStoppedLeftover() error {
 	if st.opts.ResumeFromID == "" || st.opts.SessionsDir == "" || st.opts.Tool == nil || st.opts.Tool.ConfigDirName() == "" {
 		return nil
 	}
-	owner, metadata := newestSessionForContainer(st.opts.SessionsDir, st.result.ContainerName)
-	if owner != st.opts.ResumeFromID {
+	dirs := AllSessionsDirs(filepath.Dir(st.opts.SessionsDir), st.opts.Tool)
+	ownerDir, owner, metadata := newestSessionForContainer(dirs, st.result.ContainerName)
+	if ownerDir != st.opts.SessionsDir || owner != st.opts.ResumeFromID {
 		return nil
 	}
 	st.opts.Logger("Found stopped leftover container of the resumed session, saving its session data first...")
@@ -204,28 +207,31 @@ func (st *setupState) saveStoppedLeftover() error {
 	return nil
 }
 
-// newestSessionForContainer returns the saved session whose metadata names
-// containerName with the newest saved_at, or "" when none does.
-func newestSessionForContainer(sessionsDir, containerName string) (string, *SessionMetadata) {
-	sessions, err := ListSavedSessions(sessionsDir)
-	if err != nil {
-		return "", nil
-	}
-	var newest string
+// newestSessionForContainer returns the sessions dir and id of the saved
+// session in sessionsDirs whose metadata names containerName with the newest
+// saved_at, or "" when none does.
+func newestSessionForContainer(sessionsDirs []string, containerName string) (string, string, *SessionMetadata) {
+	var newestDir, newest string
 	var newestMetadata *SessionMetadata
 	var newestTime time.Time
-	for _, sessionID := range sessions {
-		metadata, err := LoadSessionMetadata(filepath.Join(sessionsDir, sessionID, "metadata.json"))
-		if err != nil || metadata.ContainerName != containerName {
-			continue
-		}
-		savedTime, err := time.Parse(time.RFC3339, metadata.SavedAt)
+	for _, dir := range sessionsDirs {
+		sessions, err := ListSavedSessions(dir)
 		if err != nil {
 			continue
 		}
-		if newest == "" || savedTime.After(newestTime) {
-			newest, newestMetadata, newestTime = sessionID, metadata, savedTime
+		for _, sessionID := range sessions {
+			metadata, err := LoadSessionMetadata(filepath.Join(dir, sessionID, "metadata.json"))
+			if err != nil || metadata.ContainerName != containerName {
+				continue
+			}
+			savedTime, err := time.Parse(time.RFC3339, metadata.SavedAt)
+			if err != nil {
+				continue
+			}
+			if newest == "" || savedTime.After(newestTime) {
+				newestDir, newest, newestMetadata, newestTime = dir, sessionID, metadata, savedTime
+			}
 		}
 	}
-	return newest, newestMetadata
+	return newestDir, newest, newestMetadata
 }

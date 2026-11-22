@@ -97,7 +97,7 @@ func listCommand(cmd *cobra.Command, args []string) error {
 		containers = filterContainersByStatus(containers, statusFilter)
 	}
 
-	containerWorkspaces, containerPersistent := containerSessionInfo(containers, allSessionsDirs(baseDir, toolInstance))
+	containerWorkspaces, containerPersistent := containerSessionInfo(containers, session.AllSessionsDirs(baseDir, toolInstance))
 
 	// Get saved sessions if --all
 	var sessions []SessionInfo
@@ -248,23 +248,6 @@ func containerSessionInfo(containers []ContainerInfo, sessionsDirs []string) (ma
 		}
 	}
 	return workspaces, persistent
-}
-
-// allSessionsDirs returns the sessions dir of every supported tool, without
-// duplicates: the configured tool's first, so its save wins over a stale one
-// of another tool for the same container name, then the rest by tool name.
-func allSessionsDirs(baseDir string, configured tool.Tool) []string {
-	dirs := []string{session.GetSessionsDir(baseDir, configured)}
-	for _, name := range tool.ListSupported() {
-		t, err := tool.Get(name)
-		if err != nil {
-			continue
-		}
-		if dir := session.GetSessionsDir(baseDir, t); !slices.Contains(dirs, dir) {
-			dirs = append(dirs, dir)
-		}
-	}
-	return dirs
 }
 
 // validStatusFilters is the single source of the --status vocabulary: it

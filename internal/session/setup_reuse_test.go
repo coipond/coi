@@ -115,7 +115,7 @@ func reconcileStoppedLeftover(sessions, resumeID string, mgr container.Container
 }
 
 func TestPhaseReconcileExisting_ResumeSavesStoppedLeftoverBeforeDelete(t *testing.T) {
-	sessions := t.TempDir()
+	sessions := filepath.Join(t.TempDir(), "sessions-claude")
 	writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
 	mgr := &stoppedLeftoverFake{files: map[string]string{"history.jsonl": "latest"}}
 
@@ -136,9 +136,45 @@ func TestPhaseReconcileExisting_ResumeSavesStoppedLeftoverBeforeDelete(t *testin
 }
 
 func TestPhaseReconcileExisting_ResumeSkipsAnotherSessionsLeftover(t *testing.T) {
-	sessions := t.TempDir()
-	writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
-	writeLeftoverSession(t, sessions, "newer", "coi-leftover-1", "2026-11-22T11:00:00Z", "other")
+	sessions := filepath.Join(t.TempDir(), "sessions-claude")
+	// The newer session's id sorts first, so a last-listed-wins pick fails.
+	writeLeftoverSession(t, sessions, "zzz", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
+	writeLeftoverSession(t, sessions, "aaa", "coi-leftover-1", "2026-11-22T11:00:00Z", "other")
+	mgr := &stoppedLeftoverFake{files: map[string]string{"history.jsonl": "latest"}}
+
+	if err := reconcileStoppedLeftover(sessions, "zzz", mgr); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(mgr.calls, ","); got != "delete" {
+		t.Errorf("calls = %s, want delete only", got)
+	}
+	assertSavedCopy(t, filepath.Join(sessions, "zzz", ".claude"), "old")
+}
+
+func TestPhaseReconcileExisting_ResumeSkipsAnotherToolsLeftover(t *testing.T) {
+	// Container names have no tool part; "abc" also covers the same id.
+	for _, id := range []string{"def", "abc"} {
+		t.Run("codex session "+id, func(t *testing.T) {
+			sessions := filepath.Join(t.TempDir(), "sessions-claude")
+			writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
+			writeLeftoverSession(t, filepath.Join(filepath.Dir(sessions), "sessions-codex"), id, "coi-leftover-1", "2026-11-22T11:00:00Z", "other")
+			mgr := &stoppedLeftoverFake{files: map[string]string{"history.jsonl": "latest"}}
+
+			if err := reconcileStoppedLeftover(sessions, "abc", mgr); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(mgr.calls, ","); got != "delete" {
+				t.Errorf("calls = %s, want delete only", got)
+			}
+			assertSavedCopy(t, filepath.Join(sessions, "abc", ".claude"), "old")
+		})
+	}
+}
+
+func TestPhaseReconcileExisting_ResumeSkipsLeftoverNoSessionNames(t *testing.T) {
+	sessions := filepath.Join(t.TempDir(), "sessions-claude")
+	// Resumed onto another slot (--slot): no metadata names coi-leftover-1.
+	writeLeftoverSession(t, sessions, "abc", "coi-leftover-2", "2026-11-22T10:00:00Z", "old")
 	mgr := &stoppedLeftoverFake{files: map[string]string{"history.jsonl": "latest"}}
 
 	if err := reconcileStoppedLeftover(sessions, "abc", mgr); err != nil {
@@ -151,7 +187,7 @@ func TestPhaseReconcileExisting_ResumeSkipsAnotherSessionsLeftover(t *testing.T)
 }
 
 func TestPhaseReconcileExisting_ResumeKeepsLeftoverWhenSaveFails(t *testing.T) {
-	sessions := t.TempDir()
+	sessions := filepath.Join(t.TempDir(), "sessions-claude")
 	writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
 	mgr := &stoppedLeftoverFake{pullErr: errors.New("permission denied")}
 
@@ -166,7 +202,7 @@ func TestPhaseReconcileExisting_ResumeKeepsLeftoverWhenSaveFails(t *testing.T) {
 }
 
 func TestPhaseReconcileExisting_NewSessionDeletesStoppedLeftoverUnsaved(t *testing.T) {
-	sessions := t.TempDir()
+	sessions := filepath.Join(t.TempDir(), "sessions-claude")
 	writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
 	mgr := &stoppedLeftoverFake{files: map[string]string{"history.jsonl": "latest"}}
 
