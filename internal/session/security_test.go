@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -32,6 +33,48 @@ func TestPathToDeviceName(t *testing.T) {
 				t.Errorf("pathToDeviceName(%q) = %q, expected %q", tt.path, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestPathToDeviceName_IncusValidity(t *testing.T) {
+	// Incus 7.6 IsDeviceName (IsAPIName plus the charset), capped at the 6.x
+	// limit of 63 characters.
+	valid := regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$`)
+	unchanged := map[string]string{
+		"Src_Dir2/Build-9":      "protect-Src_Dir2-Build-9",
+		strings.Repeat("x", 55): "protect-" + strings.Repeat("x", 55),
+	}
+	for p, want := range unchanged {
+		if got := pathToDeviceName(p); got != want {
+			t.Errorf("pathToDeviceName(%q) = %q, expected %q", p, got, want)
+		}
+	}
+
+	hashed := []string{
+		"node_modules/@scope/pkg",
+		"a:b",
+		"my dir",
+		"żółw",
+		"a+b",
+		"a~b",
+		"a[b",
+		"__pycache__",
+		"build-",
+		strings.Repeat("x", 56),
+	}
+	seen := map[string]string{}
+	for _, p := range hashed {
+		name := pathToDeviceName(p)
+		if !valid.MatchString(name) {
+			t.Errorf("pathToDeviceName(%q) = %q, not a valid Incus device name", p, name)
+		}
+		if !strings.HasPrefix(name, protectDevicePrefix) || len(name) != len(protectDevicePrefix)+16 {
+			t.Errorf("pathToDeviceName(%q) = %q, expected a hashed %q name", p, name, protectDevicePrefix)
+		}
+		if prev, ok := seen[name]; ok {
+			t.Errorf("pathToDeviceName(%q) and (%q) collide: %q", p, prev, name)
+		}
+		seen[name] = p
 	}
 }
 
