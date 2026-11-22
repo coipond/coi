@@ -79,6 +79,34 @@ func stagePushTree(src, dst string) error {
 	return nil
 }
 
+// stagePushLink makes dst a symlink to the real path of src, for a push with
+// -H: the client follows only a link given on the command line, so the link
+// must not point to another link.
+func stagePushLink(src, dst string) error {
+	resolved, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return err
+	}
+	return os.Symlink(resolved, dst)
+}
+
+// hasUnpushable reports whether the tree at src holds an entry that
+// `incus file push -r` refuses: a FIFO, socket or device.
+func hasUnpushable(src string) bool {
+	if resolved, err := filepath.EvalSymlinks(src); err == nil {
+		src = resolved
+	}
+	found := false
+	_ = filepath.WalkDir(src, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && !d.Type().IsRegular() && d.Type()&fs.ModeSymlink == 0 {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
 // copyFileExact copies src to dst with src's mode (not masked by the umask),
 // modification time and, when permitted, its owner.
 func copyFileExact(src, dst string, info fs.FileInfo) error {
