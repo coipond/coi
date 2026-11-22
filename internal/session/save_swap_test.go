@@ -21,9 +21,8 @@ func writeSavedCopy(t *testing.T, dir, content string) {
 	}
 }
 
-// assertSavedCopy fails unless dir holds the marker content and no swap
-// sibling of dir is left behind
-func assertSavedCopy(t *testing.T, dir, want string) {
+// assertSavedContent fails unless dir holds the marker content
+func assertSavedContent(t *testing.T, dir, want string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "history.jsonl"))
 	if err != nil {
@@ -32,6 +31,13 @@ func assertSavedCopy(t *testing.T, dir, want string) {
 	if string(got) != want {
 		t.Errorf("saved copy = %q, want %q", got, want)
 	}
+}
+
+// assertSavedCopy fails unless dir holds the marker content and no swap
+// sibling of dir is left behind
+func assertSavedCopy(t *testing.T, dir, want string) {
+	t.Helper()
+	assertSavedContent(t, dir, want)
 	for _, suffix := range []string{completeSuffix, previousSuffix} {
 		if pathExists(dir + suffix) {
 			t.Errorf("%s left behind", filepath.Base(dir+suffix))
@@ -128,10 +134,9 @@ func TestRecoverSavedSession(t *testing.T) {
 	assertSavedCopy(t, live, "new")
 }
 
-func TestFinishSavedConfigSwap_FailedRenameKeepsPreviousCopy(t *testing.T) {
-	live := filepath.Join(t.TempDir(), ".claude")
-	writeSavedCopy(t, live, "old")
-	writeSavedCopy(t, live+completeSuffix, "new")
+// failNewCopyRename makes renaming live's complete new copy into place fail
+func failNewCopyRename(t *testing.T, live string) {
+	t.Helper()
 	orig := renameSavedCopy
 	t.Cleanup(func() { renameSavedCopy = orig })
 	renameSavedCopy = func(from, to string) error {
@@ -140,41 +145,29 @@ func TestFinishSavedConfigSwap_FailedRenameKeepsPreviousCopy(t *testing.T) {
 		}
 		return orig(from, to)
 	}
+}
+
+func TestFinishSavedConfigSwap_FailedRenameKeepsPreviousCopy(t *testing.T) {
+	live := filepath.Join(t.TempDir(), ".claude")
+	writeSavedCopy(t, live, "old")
+	writeSavedCopy(t, live+completeSuffix, "new")
+	failNewCopyRename(t, live)
 
 	if err := finishSavedConfigSwap(live); err == nil {
 		t.Fatal("finishSavedConfigSwap succeeded with a failing rename")
 	}
-	got, err := os.ReadFile(filepath.Join(live, "history.jsonl"))
-	if err != nil {
-		t.Fatalf("previous copy missing: %v", err)
-	}
-	if string(got) != "old" {
-		t.Errorf("saved copy = %q, want %q", got, "old")
-	}
+	assertSavedContent(t, live, "old")
 }
 
 func TestSaveSessionData_FailedSwapKeepsPreviousCopy(t *testing.T) {
 	sessions := t.TempDir()
 	live := filepath.Join(sessions, "abc", ".claude")
 	writeSavedCopy(t, live, "old")
-	orig := renameSavedCopy
-	t.Cleanup(func() { renameSavedCopy = orig })
-	renameSavedCopy = func(from, to string) error {
-		if from == live+completeSuffix {
-			return errors.New("injected rename failure")
-		}
-		return orig(from, to)
-	}
+	failNewCopyRename(t, live)
 
 	mgr := &savePullFake{files: map[string]string{"history.jsonl": "new"}}
 	if err := saveSessionData(mgr, "coi-test", "abc", false, "", false, "/w", sessions, tool.NewClaude(), func(string) {}); err == nil {
 		t.Fatal("saveSessionData succeeded with a failing rename")
 	}
-	got, err := os.ReadFile(filepath.Join(live, "history.jsonl"))
-	if err != nil {
-		t.Fatalf("previous copy missing: %v", err)
-	}
-	if string(got) != "old" {
-		t.Errorf("saved copy = %q, want %q", got, "old")
-	}
+	assertSavedContent(t, live, "old")
 }
