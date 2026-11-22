@@ -191,7 +191,7 @@ func isTrustedConfigPath(path string) bool {
 			return true
 		}
 	}
-	if env := os.Getenv("COI_CONFIG"); env != "" && clean == filepath.Clean(env) {
+	if env := envConfigPath(); env != "" && clean == env {
 		return true
 	}
 	return false
@@ -766,7 +766,7 @@ func isTrustedProfileDir(dir string) bool {
 			return true
 		}
 	}
-	if env := os.Getenv("COI_CONFIG"); env != "" && clean == filepath.Clean(filepath.Dir(env)) {
+	if env := envConfigPath(); env != "" && clean == filepath.Dir(env) {
 		return true
 	}
 	return false
