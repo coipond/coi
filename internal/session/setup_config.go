@@ -222,11 +222,11 @@ func toolConfigSeeded(mgr containerCommandRunner, homeDir string, tcf tool.ToolW
 
 // clearToolMemory removes the tool's memory files (tool.ToolWithMemoryPaths)
 // from the container, so a new session starts without the history of earlier
-// ones while the rest of the container stays. It runs as the session user
-// (the code user, root only for a /root home): the paths sit in a dir the
-// agent controls, and root would follow a planted symlink out of it. Paths are coi-controlled (home + config dir + fixed
-// names), so no shell-quoting is needed. Saved sessions on the host are not
-// touched.
+// ones while the rest of the container stays. It runs as the session user (the
+// code user, root only for a /root home): the paths sit in a dir the agent
+// controls, and root would follow a planted symlink out of it. Paths are
+// coi-controlled (home + config dir + fixed names), so no shell-quoting is
+// needed. Saved sessions on the host are not touched.
 func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, logger func(string)) error {
 	tmp, ok := t.(tool.ToolWithMemoryPaths)
 	if !ok || t.ConfigDirName() == "" {

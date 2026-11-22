@@ -26,10 +26,9 @@ const (
 	NetworkModeAllowlist NetworkMode = "allowlist"
 )
 
-// ToolMemory is the [tool] memory setting: whether a new session in a
-// reused persistent container (restarted, or still running after an exit)
-// keeps the tool's conversation history and
-// memory files from earlier sessions.
+// ToolMemory is the [tool] memory setting: whether a new session in a reused
+// persistent container (restarted, or still running after an exit) keeps the
+// tool's conversation history and memory files from earlier sessions.
 type ToolMemory string
 
 const (
