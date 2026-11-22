@@ -1,7 +1,10 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,4 +65,116 @@ func TestToolConfigSeeded(t *testing.T) {
 			t.Error("want seeded=false when no essential config file is present")
 		}
 	})
+}
+
+// stoppedLeftoverFake is a stopped container whose config dir holds files; it
+// records the pull and delete calls in order
+type stoppedLeftoverFake struct {
+	container.ContainerManager
+	files   map[string]string
+	pullErr error
+	calls   []string
+}
+
+func (f *stoppedLeftoverFake) Exists() (bool, error)  { return true, nil }
+func (f *stoppedLeftoverFake) Running() (bool, error) { return false, nil }
+
+func (f *stoppedLeftoverFake) PullDirectory(containerPath, localPath string) error {
+	f.calls = append(f.calls, "pull")
+	if f.pullErr != nil {
+		return f.pullErr
+	}
+	return (&savePullFake{files: f.files}).PullDirectory(containerPath, localPath)
+}
+
+func (f *stoppedLeftoverFake) Delete(_ bool) error {
+	f.calls = append(f.calls, "delete")
+	return nil
+}
+
+// writeLeftoverSession saves session id with a saved config dir holding
+// content and metadata naming containerName, saved at savedAt
+func writeLeftoverSession(t *testing.T, sessions, id, containerName, savedAt, content string) {
+	t.Helper()
+	writeSavedCopy(t, filepath.Join(sessions, id, ".claude"), content)
+	m := SessionMetadata{SessionID: id, ContainerName: containerName, ProfileName: "work", Workspace: "/w", SavedAt: savedAt}
+	if err := saveMetadata(filepath.Join(sessions, id, "metadata.json"), m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// reconcileStoppedLeftover runs the reconcile phase of an ephemeral launch
+// resuming resumeID over mgr
+func reconcileStoppedLeftover(sessions, resumeID string, mgr container.ContainerManager) error {
+	st := &setupState{
+		opts:   SetupOptions{ResumeFromID: resumeID, SessionsDir: sessions, Tool: tool.NewClaude(), Logger: func(string) {}},
+		result: &SetupResult{Manager: mgr, ContainerName: "coi-leftover-1"},
+	}
+	_, err := st.phaseReconcileExisting(context.Background())
+	return err
+}
+
+func TestPhaseReconcileExisting_ResumeSavesStoppedLeftoverBeforeDelete(t *testing.T) {
+	sessions := t.TempDir()
+	writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
+	mgr := &stoppedLeftoverFake{files: map[string]string{"history.jsonl": "latest"}}
+
+	if err := reconcileStoppedLeftover(sessions, "abc", mgr); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(mgr.calls, ","); got != "pull,delete" {
+		t.Errorf("calls = %s, want pull,delete", got)
+	}
+	assertSavedCopy(t, filepath.Join(sessions, "abc", ".claude"), "latest")
+	m, err := LoadSessionMetadata(filepath.Join(sessions, "abc", "metadata.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ProfileName != "work" || m.Workspace != "/w" || m.ContainerName != "coi-leftover-1" {
+		t.Errorf("metadata = %+v, want the session's profile, workspace and container kept", m)
+	}
+}
+
+func TestPhaseReconcileExisting_ResumeSkipsAnotherSessionsLeftover(t *testing.T) {
+	sessions := t.TempDir()
+	writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
+	writeLeftoverSession(t, sessions, "newer", "coi-leftover-1", "2026-11-22T11:00:00Z", "other")
+	mgr := &stoppedLeftoverFake{files: map[string]string{"history.jsonl": "latest"}}
+
+	if err := reconcileStoppedLeftover(sessions, "abc", mgr); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(mgr.calls, ","); got != "delete" {
+		t.Errorf("calls = %s, want delete only", got)
+	}
+	assertSavedCopy(t, filepath.Join(sessions, "abc", ".claude"), "old")
+}
+
+func TestPhaseReconcileExisting_ResumeKeepsLeftoverWhenSaveFails(t *testing.T) {
+	sessions := t.TempDir()
+	writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
+	mgr := &stoppedLeftoverFake{pullErr: errors.New("permission denied")}
+
+	err := reconcileStoppedLeftover(sessions, "abc", mgr)
+	if err == nil || !strings.Contains(err.Error(), "leaving it in place") {
+		t.Fatalf("err = %v, want a failed save that keeps the container", err)
+	}
+	if got := strings.Join(mgr.calls, ","); got != "pull" {
+		t.Errorf("calls = %s, want pull and no delete", got)
+	}
+	assertSavedCopy(t, filepath.Join(sessions, "abc", ".claude"), "old")
+}
+
+func TestPhaseReconcileExisting_NewSessionDeletesStoppedLeftoverUnsaved(t *testing.T) {
+	sessions := t.TempDir()
+	writeLeftoverSession(t, sessions, "abc", "coi-leftover-1", "2026-11-22T10:00:00Z", "old")
+	mgr := &stoppedLeftoverFake{files: map[string]string{"history.jsonl": "latest"}}
+
+	if err := reconcileStoppedLeftover(sessions, "", mgr); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(mgr.calls, ","); got != "delete" {
+		t.Errorf("calls = %s, want delete only", got)
+	}
+	assertSavedCopy(t, filepath.Join(sessions, "abc", ".claude"), "old")
 }

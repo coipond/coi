@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/coipond/coi/internal/container"
@@ -104,6 +105,9 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 				st.restarted = st.opts.ContainerName == ""
 			} else {
 				// Delete the stopped leftover container
+				if err := st.saveStoppedLeftover(); err != nil {
+					return nil, err
+				}
 				st.opts.Logger("Found stopped leftover container from previous session, deleting...")
 				if err := st.result.Manager.Delete(true); err != nil {
 					return nil, fmt.Errorf("failed to delete leftover container: %w", err)
@@ -176,4 +180,52 @@ func (st *setupState) phasePreflightPorts(_ context.Context) (Teardown, error) {
 	}
 	st.resolvedPorts = resolvedPorts
 	return nil, nil
+}
+
+// saveStoppedLeftover saves the session data of a stopped ephemeral leftover
+// into the resumed session before the container is deleted: after a host
+// reboot or a killed coi the container holds the only copy of the session's
+// last turns. Only a container whose newest session metadata is the resumed
+// session's is saved, so another session's leftover on the same slot never
+// lands in it. A failed save keeps the container and the previous saved copy.
+func (st *setupState) saveStoppedLeftover() error {
+	if st.opts.ResumeFromID == "" || st.opts.SessionsDir == "" || st.opts.Tool == nil || st.opts.Tool.ConfigDirName() == "" {
+		return nil
+	}
+	owner, metadata := newestSessionForContainer(st.opts.SessionsDir, st.result.ContainerName)
+	if owner != st.opts.ResumeFromID {
+		return nil
+	}
+	st.opts.Logger("Found stopped leftover container of the resumed session, saving its session data first...")
+	if err := saveSessionData(st.result.Manager, st.result.ContainerName, owner, metadata.Persistent, metadata.ProfileName, metadata.ProfileFromDefault, metadata.Workspace, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger); err != nil {
+		return fmt.Errorf("failed to save session data from stopped container %s, leaving it in place (retry, or delete it with 'coi kill %s' to resume from the older saved copy): %w",
+			st.result.ContainerName, st.result.ContainerName, err)
+	}
+	return nil
+}
+
+// newestSessionForContainer returns the saved session whose metadata names
+// containerName with the newest saved_at, or "" when none does.
+func newestSessionForContainer(sessionsDir, containerName string) (string, *SessionMetadata) {
+	sessions, err := ListSavedSessions(sessionsDir)
+	if err != nil {
+		return "", nil
+	}
+	var newest string
+	var newestMetadata *SessionMetadata
+	var newestTime time.Time
+	for _, sessionID := range sessions {
+		metadata, err := LoadSessionMetadata(filepath.Join(sessionsDir, sessionID, "metadata.json"))
+		if err != nil || metadata.ContainerName != containerName {
+			continue
+		}
+		savedTime, err := time.Parse(time.RFC3339, metadata.SavedAt)
+		if err != nil {
+			continue
+		}
+		if newest == "" || savedTime.After(newestTime) {
+			newest, newestMetadata, newestTime = sessionID, metadata, savedTime
+		}
+	}
+	return newest, newestMetadata
 }
