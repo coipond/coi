@@ -47,6 +47,10 @@
     "docker": {
       "type": "boolean",
       "description": "Enable Docker/nested-container support (security.nesting, mknod/setxattr syscall interception, unprivileged low-port sysctl). Default: true. Set false to shrink the shared-kernel attack surface when Docker-in-container is not needed. Re-enabling (true) is honored from trusted scope only; false is a tightening and honored from any scope."
+    },
+    "keep_on_failed_save": {
+      "type": "boolean",
+      "description": "Keep a stopped non-persistent container when saving its session data fails (e.g. disk full) instead of deleting it, so 'coi shell --resume' can save it later. Default: false"
     }
   }
 }

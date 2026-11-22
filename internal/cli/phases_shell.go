@@ -470,6 +470,7 @@ func (a *App) shellCleanupOptions(s *shellState) session.CleanupOptions {
 		// same budget graceful shutdowns get everywhere else.
 		ShutdownTimeout:    a.cfg.Container.ShutdownTimeoutSeconds(),
 		ProfileFromDefault: a.profileFromDefault,
+		KeepOnFailedSave:   a.cfg.Container.KeepsOnFailedSave(),
 	}
 }
 

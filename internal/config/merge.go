@@ -392,6 +392,7 @@ func mergeContainerInto(dst *ContainerConfig, src *ContainerConfig) {
 	mergeScalar(&dst.StaleBaseCheck, src.StaleBaseCheck)
 	mergeScalar(&dst.SessionName, src.SessionName)
 	mergePtr(&dst.Docker, src.Docker)
+	mergePtr(&dst.KeepOnFailedSave, src.KeepOnFailedSave)
 	mergeBuildInto(&dst.Build, &src.Build)
 }
 
