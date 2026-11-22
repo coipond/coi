@@ -22,9 +22,10 @@ OPENCODE2_FALLBACK_VERSION="2.1.0"
 # reads from 2.0.30 on.
 OPENCODE2_MIN_VERSION="2.0.30"
 # goose is pinned: build.sh checks each release tarball against its sha256.
-GOOSE_VERSION="v1.57.0"
-GOOSE_SHA256_X86_64="10eb96cb6a159b6e1d38eeedbef6ab64cd28168aad91948f1fa5c34eefdf98e3"
-GOOSE_SHA256_AARCH64="c32605acfd560aeb2adbf17ec359cc0217e28022a7e647b35a6af5dcfca91749"
+# Renovate bumps GOOSE_VERSION; update both hashes from the release assets.
+GOOSE_VERSION="v1.59.2"
+GOOSE_SHA256_X86_64="c63cf82953e968d84b7542eb38a621dfdb5050b967728ed363517be5cdc666ea"
+GOOSE_SHA256_AARCH64="ec2e0aded1e2aba8d310727a5138f2e3cce0769f2611fbe196ed014c31ce370a"
 
 log() {
     echo "[coi] $*"
