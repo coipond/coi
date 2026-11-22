@@ -131,7 +131,7 @@ func TestInstallGoose_InstallsVerifiedTarball(t *testing.T) {
 	if res.err != nil {
 		t.Fatalf("install_goose failed: %v\n%s", res.err, res.out)
 	}
-	want := "https://github.com/aaif-goose/goose/releases/download/v1.57.0/goose-x86_64-unknown-linux-gnu.tar.gz"
+	want := "https://github.com/aaif-goose/goose/releases/download/v1.59.2/goose-x86_64-unknown-linux-gnu.tar.gz"
 	if got := res.downloads(t); len(got) != 1 || got[0] != want {
 		t.Errorf("downloads = %v, want [%s]", got, want)
 	}
@@ -173,7 +173,7 @@ func TestInstallGoose_Aarch64UsesItsOwnAssetAndHash(t *testing.T) {
 	if res.err != nil {
 		t.Fatalf("install_goose failed: %v\n%s", res.err, res.out)
 	}
-	want := "https://github.com/aaif-goose/goose/releases/download/v1.57.0/goose-aarch64-unknown-linux-gnu.tar.gz"
+	want := "https://github.com/aaif-goose/goose/releases/download/v1.59.2/goose-aarch64-unknown-linux-gnu.tar.gz"
 	if got := res.downloads(t); len(got) != 1 || got[0] != want {
 		t.Errorf("downloads = %v, want [%s]", got, want)
 	}
@@ -197,13 +197,13 @@ func TestInstallGoose_RejectsUnsupportedArch(t *testing.T) {
 	}
 }
 
-// The pinned hashes are the v1.57.0 release asset digests.
+// The pinned hashes are the v1.59.2 release asset digests.
 func TestInstallGoose_PinnedRelease(t *testing.T) {
 	script := string(embeddedCoiBuildScript)
 	for _, line := range []string{
-		`GOOSE_VERSION="v1.57.0"`,
-		`GOOSE_SHA256_X86_64="10eb96cb6a159b6e1d38eeedbef6ab64cd28168aad91948f1fa5c34eefdf98e3"`,
-		`GOOSE_SHA256_AARCH64="c32605acfd560aeb2adbf17ec359cc0217e28022a7e647b35a6af5dcfca91749"`,
+		`GOOSE_VERSION="v1.59.2"`,
+		`GOOSE_SHA256_X86_64="c63cf82953e968d84b7542eb38a621dfdb5050b967728ed363517be5cdc666ea"`,
+		`GOOSE_SHA256_AARCH64="ec2e0aded1e2aba8d310727a5138f2e3cce0769f2611fbe196ed014c31ce370a"`,
 	} {
 		if !strings.Contains(script, "\n"+line+"\n") {
 			t.Errorf("build.sh is missing %s", line)

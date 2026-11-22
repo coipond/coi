@@ -7,7 +7,22 @@
     "go.mod",
     "go.sum",
     "tests/support/requirements.txt",
+    "internal/image/build.sh",
     ".github/workflows/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "goose release pinned in build.sh",
+      "managerFilePatterns": [
+        "/^internal/image/build\\.sh$/"
+      ],
+      "matchStrings": [
+        "GOOSE_VERSION=\"(?<currentValue>v[^\"]+)\""
+      ],
+      "depNameTemplate": "aaif-goose/goose",
+      "datasourceTemplate": "github-releases"
+    }
   ],
   "packageRules": [
     {
@@ -22,6 +37,16 @@
       ],
       "groupName": "test dependencies",
       "commitMessageTopic": "test dependencies"
+    },
+    {
+      "description": "goose PRs need both sha256 values in build.sh updated by hand",
+      "matchDepNames": [
+        "aaif-goose/goose"
+      ],
+      "automerge": false,
+      "prBodyNotes": [
+        "Update `GOOSE_SHA256_X86_64` and `GOOSE_SHA256_AARCH64` in `internal/image/build.sh` to the release assets' sha256 digests, and the goose version and hashes in `internal/image/build_sh_goose_test.go`, before merging."
+      ]
     },
     {
       "description": "Major updates stay manual",
