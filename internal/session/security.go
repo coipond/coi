@@ -1152,10 +1152,10 @@ func pathToDeviceName(path string) string {
 	// Prefix for clarity + so the reuse-strip path (stripSecurityDevicePrefixes)
 	// removes it.
 	name = protectDevicePrefix + name
-	// Incus rejects device names longer than 64 characters, not starting and
-	// ending with a letter or digit, or (7.6+) with a character outside
-	// [A-Za-z0-9._-]: hash those, keep valid names unchanged for existing
-	// containers.
+	// Hash device names some supported Incus version rejects: over 63
+	// characters (6.x), not starting and ending with a letter or digit (7.0+),
+	// or with a character outside [A-Za-z0-9._-] (7.6+). Valid names stay
+	// unchanged for existing containers.
 	if !isValidDeviceName(name) {
 		sum := sha256.Sum256([]byte(path))
 		return protectDevicePrefix + hex.EncodeToString(sum[:])[:16]
@@ -1165,7 +1165,7 @@ func pathToDeviceName(path string) string {
 
 // isValidDeviceName reports whether Incus accepts name as a device name.
 func isValidDeviceName(name string) bool {
-	if name == "" || len(name) > 64 {
+	if name == "" || len(name) > 63 {
 		return false
 	}
 	if !isAlphanumeric(name[0]) || !isAlphanumeric(name[len(name)-1]) {

@@ -37,11 +37,12 @@ func TestPathToDeviceName(t *testing.T) {
 }
 
 func TestPathToDeviceName_IncusValidity(t *testing.T) {
-	// Incus 7.6 shared/validate IsDeviceName (IsAPIName plus the charset).
-	valid := regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$`)
+	// Incus 7.6 IsDeviceName (IsAPIName plus the charset), capped at the 6.x
+	// limit of 63 characters.
+	valid := regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$`)
 	unchanged := map[string]string{
 		"Src_Dir2/Build-9":      "protect-Src_Dir2-Build-9",
-		strings.Repeat("x", 56): "protect-" + strings.Repeat("x", 56),
+		strings.Repeat("x", 55): "protect-" + strings.Repeat("x", 55),
 	}
 	for p, want := range unchanged {
 		if got := pathToDeviceName(p); got != want {
@@ -59,7 +60,7 @@ func TestPathToDeviceName_IncusValidity(t *testing.T) {
 		"a[b",
 		"__pycache__",
 		"build-",
-		strings.Repeat("x", 57),
+		strings.Repeat("x", 56),
 	}
 	seen := map[string]string{}
 	for _, p := range hashed {
