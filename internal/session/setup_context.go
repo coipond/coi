@@ -257,7 +257,9 @@ func HomeMkdirCmd(dir, homeDir string, owner int) string {
 	for ; dir != homeDir && strings.HasPrefix(dir, homeDir+"/"); dir = filepath.Dir(dir) {
 		dirs = append([]string{shellEscape(dir)}, dirs...)
 	}
-	return fmt.Sprintf(`for d in %s; do [ -d "$d" ] || { mkdir "$d" && chown %d:%d "$d"; } || exit 1; done`,
+	// A dir another exec creates in between is accepted, not an error; only the
+	// exec whose mkdir succeeds chowns it.
+	return fmt.Sprintf(`for d in %s; do if mkdir "$d" 2>/dev/null; then chown %d:%d "$d" || exit 1; elif [ ! -d "$d" ]; then echo "cannot create $d" >&2; exit 1; fi; done`,
 		strings.Join(dirs, " "), owner, owner)
 }
 

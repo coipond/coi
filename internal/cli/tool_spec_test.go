@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/coipond/coi/internal/container"
@@ -269,5 +270,36 @@ func TestEnsureContainerRunsDir_ChownsCreatedDirs(t *testing.T) {
 				t.Errorf("chown calls = %q, want %q", log, want)
 			}
 		})
+	}
+}
+
+// TestEnsureContainerRunsDir_ConcurrentFirstCalls: parallel first calls on a
+// container without ~/.coi (one `coi tool spec` per session) must all
+// succeed, though only one of them creates ~/.coi.
+func TestEnsureContainerRunsDir_ConcurrentFirstCalls(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "chown"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	for round := 0; round < 50; round++ {
+		home := t.TempDir()
+		var wg sync.WaitGroup
+		errs := make(chan error, 4)
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := ensureContainerRunsDir(bashExecManager{}, home, 1234); err != nil {
+					errs <- err
+				}
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatalf("round %d: ensureContainerRunsDir: %v", round, err)
+		}
 	}
 }
