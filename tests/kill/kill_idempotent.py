@@ -5,7 +5,7 @@ Tests that:
 1. Launch a container
 2. Kill it
 3. Try to kill again
-4. Verify it handles gracefully
+4. Verify the second kill exits non-zero with a message
 """
 
 import subprocess
@@ -16,13 +16,13 @@ from support.helpers import calculate_container_name
 
 def test_kill_idempotent(coi_binary, cleanup_containers, workspace_dir):
     """
-    Test that killing a container twice is handled gracefully.
+    Test that killing a container twice fails on the second kill.
 
     Flow:
     1. Launch a container
     2. Kill it
     3. Try to kill again
-    4. Verify second kill handles the situation
+    4. Verify second kill exits non-zero with a message
     """
     container_name = calculate_container_name(workspace_dir, 1)
 
@@ -57,15 +57,14 @@ def test_kill_idempotent(coi_binary, cleanup_containers, workspace_dir):
         timeout=60,
     )
 
-    # Second kill may fail or show warning - both are acceptable
     combined_output = result.stdout + result.stderr
 
-    if result.returncode != 0:
-        # Failed is acceptable for already-killed container
-        assert (
-            "failed" in combined_output.lower()
-            or "warning" in combined_output.lower()
-            or "not exist" in combined_output.lower()
-            or "No containers" in combined_output
-        ), f"Should show appropriate message. Got:\n{combined_output}"
-    # Success with warning is also acceptable
+    assert result.returncode != 0, (
+        f"Second kill of a deleted container should fail. Got:\n{combined_output}"
+    )
+    assert (
+        "failed" in combined_output.lower()
+        or "warning" in combined_output.lower()
+        or "not exist" in combined_output.lower()
+        or "No containers" in combined_output
+    ), f"Should show appropriate message. Got:\n{combined_output}"
