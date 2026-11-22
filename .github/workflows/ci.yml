@@ -369,14 +369,14 @@ jobs:
         id: cache-coi-image
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: /tmp/coi-image.tar.gz
+          path: /tmp/coi-image.tar
           key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**', '.github/ci-image.toml') }}
 
       - name: Import Coi image from cache
         if: steps.cache-coi-image.outputs.cache-hit == 'true'
         run: |
           echo "Restoring Coi image from cache..."
-          incus image import /tmp/coi-image.tar.gz --alias coi-default
+          incus image import /tmp/coi-image.tar --alias coi-default
           ./coi image list
 
       - name: Build Coi image
@@ -405,14 +405,15 @@ jobs:
             sleep "$backoff"
           done
           ./coi image list
-          # Export image for caching
+          # Export image for caching. setup-incus sets images.compression_algorithm: none,
+          # so incus writes /tmp/coi-image.tar (actions/cache compresses it itself).
           incus image export coi-default /tmp/coi-image
 
       - name: Save Coi image to cache
         if: steps.cache-coi-image.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: /tmp/coi-image.tar.gz
+          path: /tmp/coi-image.tar
           key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**', '.github/ci-image.toml') }}
 
       - name: Free disk space for image-intensive tests
@@ -543,7 +544,7 @@ jobs:
       - name: Restore Coi image from cache (restore-only; core-build owns saves)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: /tmp/coi-image.tar.gz
+          path: /tmp/coi-image.tar
           key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**', '.github/ci-image.toml') }}
 
       - name: Restore base Ubuntu image from cache (restore-only)
@@ -554,7 +555,7 @@ jobs:
 
       - name: Stage image tarballs under $HOME (the guest sees only the ~ mount, not /tmp)
         run: |
-          cp /tmp/coi-image.tar.gz "$HOME/" 2>/dev/null || echo "no cached coi image (will build inside the guest)"
+          cp /tmp/coi-image.tar "$HOME/" 2>/dev/null || echo "no cached coi image (will build inside the guest)"
           cp /tmp/ubuntu-base-image.tar.gz "$HOME/" 2>/dev/null || echo "no cached base image (smoke tests don't need it)"
 
       - name: Create the stand-in Mac home (mounted at /Users/runner, #853)
@@ -592,7 +593,7 @@ jobs:
         # otherwise lingers ~20+ min on TCP timeouts before exiting 255.
         run: |
           timeout 2400 limactl shell --workdir "$GITHUB_WORKSPACE" coi -- bash "$GITHUB_WORKSPACE/scripts/lima-guest-setup.sh" \
-            "$GITHUB_WORKSPACE" "$HOME/coi-image.tar.gz" "$HOME/ubuntu-base-image.tar.gz"
+            "$GITHUB_WORKSPACE" "$HOME/coi-image.tar" "$HOME/ubuntu-base-image.tar.gz"
 
       - name: Run smoke tests inside the Lima guest
         run: |
