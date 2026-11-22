@@ -12,6 +12,7 @@ import (
 	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/monitor"
 	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/tool"
 )
 
 // useTopHome points HOME at a temp dir with the default tool configured and
@@ -93,7 +94,7 @@ func TestSampleContainerRows_WorkspaceFromConfigKey(t *testing.T) {
 func TestSampleContainerRows_WorkspaceFallbackWithoutKey(t *testing.T) {
 	sessionsDir := useTopHome(t)
 	// Dirs are read in name order: an unwanted save first must not end the
-	// scan, and the first wanted save ends it before the later one.
+	// scan, and with no saved_at the first wanted save is kept.
 	writeSavedSession(t, sessionsDir, "s1", "coi-cccccccc-1", "/home/u/other", false)
 	writeSavedSession(t, sessionsDir, "s2", "coi-bbbbbbbb-1", "/home/u/legacy", false)
 	writeSavedSession(t, sessionsDir, "s3", "coi-bbbbbbbb-1", "/home/u/later", false)
@@ -108,6 +109,51 @@ func TestSampleContainerRows_WorkspaceFallbackWithoutKey(t *testing.T) {
 		if got[name] != ws {
 			t.Errorf("%s workspace = %q; want %q", name, got[name], ws)
 		}
+	}
+}
+
+func TestSampleContainerRows_WorkspaceFromOtherToolsSave(t *testing.T) {
+	useTopHome(t) // configured tool: claude
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Launched by opencode: its save is only in opencode's sessions dir.
+	opencodeDir := session.GetSessionsDir(filepath.Join(home, ".coi"), tool.NewOpencode())
+	writeSavedSession(t, opencodeDir, "s1", "coi-aaaaaaaa-1", "/home/u/proj", true)
+	stubTopRunning(t, []incusTopEntry{{Name: "coi-aaaaaaaa-1", Status: "Running", Config: map[string]string{}}})
+
+	if ws := workspacesByName(t)["coi-aaaaaaaa-1"]; ws != "/home/u/proj" {
+		t.Errorf("workspace = %q; want /home/u/proj from the opencode save", ws)
+	}
+}
+
+func TestSampleContainerRows_WorkspacePrefersConfiguredToolsSave(t *testing.T) {
+	claudeDir := useTopHome(t) // configured tool: claude
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An older claude save wins over a newer save of another tool.
+	writeSessionMetadata(t, claudeDir, session.SessionMetadata{SessionID: "s1", ContainerName: "coi-aaaaaaaa-1", Workspace: "/home/u/proj", SavedAt: "2026-10-01T10:00:00Z"})
+	opencodeDir := session.GetSessionsDir(filepath.Join(home, ".coi"), tool.NewOpencode())
+	writeSessionMetadata(t, opencodeDir, session.SessionMetadata{SessionID: "s2", ContainerName: "coi-aaaaaaaa-1", Workspace: "/home/u/stale", SavedAt: "2026-11-01T10:00:00Z"})
+	stubTopRunning(t, []incusTopEntry{{Name: "coi-aaaaaaaa-1", Status: "Running", Config: map[string]string{}}})
+
+	if ws := workspacesByName(t)["coi-aaaaaaaa-1"]; ws != "/home/u/proj" {
+		t.Errorf("workspace = %q; want /home/u/proj from the configured tool's save", ws)
+	}
+}
+
+func TestSampleContainerRows_WorkspaceFromNewestSave(t *testing.T) {
+	sessionsDir := useTopHome(t)
+	// The older run's session dir is read first.
+	writeSessionMetadata(t, sessionsDir, session.SessionMetadata{SessionID: "1a2b", ContainerName: "coi-aaaaaaaa-1", Workspace: "/home/u/old", SavedAt: "2026-10-01T10:00:00Z"})
+	writeSessionMetadata(t, sessionsDir, session.SessionMetadata{SessionID: "9f8e", ContainerName: "coi-aaaaaaaa-1", Workspace: "/home/u/new", SavedAt: "2026-11-01T10:00:00Z"})
+	stubTopRunning(t, []incusTopEntry{{Name: "coi-aaaaaaaa-1", Status: "Running", Config: map[string]string{}}})
+
+	if ws := workspacesByName(t)["coi-aaaaaaaa-1"]; ws != "/home/u/new" {
+		t.Errorf("workspace = %q; want /home/u/new from the newest save", ws)
 	}
 }
 
