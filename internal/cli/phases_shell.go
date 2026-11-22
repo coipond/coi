@@ -362,7 +362,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				SessionsDir:           sessionsDir,
 				CLIConfigPath:         cliConfigPath,
 				Tool:                  ti,
-				PermissionMode:        a.cfg.Tool.PermissionMode,
+				PermissionMode:        string(a.cfg.Tool.PermissionMode),
 				DisableShift:          a.cfg.Incus.DisableShift,
 				LimitsConfig:          limitsConfig,
 				IncusProject:          a.cfg.Incus.Project,

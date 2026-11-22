@@ -992,9 +992,9 @@ func TestMergeBoolZeroValueBug(t *testing.T) {
 func TestPermissionModeMerge(t *testing.T) {
 	tests := []struct {
 		name         string
-		baseMode     string
-		otherMode    string
-		expectedMode string
+		baseMode     PermissionMode
+		otherMode    PermissionMode
+		expectedMode PermissionMode
 	}{
 		{
 			name:         "empty base + interactive other = interactive",

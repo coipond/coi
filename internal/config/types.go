@@ -672,7 +672,7 @@ type ProfileConfig struct {
 type ToolConfig struct {
 	Name            string           `toml:"name"`              // Tool name: "claude", "aider", "cursor", etc.
 	Binary          string           `toml:"binary"`            // Binary name to execute (if empty, uses tool name)
-	PermissionMode  string           `toml:"permission_mode"`   // Permission mode: "bypass" (default) or "interactive"
+	PermissionMode  PermissionMode   `toml:"permission_mode"`   // Permission mode: "bypass" (default) or "interactive"
 	ContextFile     string           `toml:"context_file"`      // Path to custom context .md file (supports ~ expansion; trusted scope only — reads a host file into the container)
 	AutoContext     *bool            `toml:"auto_context"`      // Auto-inject sandbox context into tool's native system (default: true)
 	ContextJSON     *bool            `toml:"context_json"`      // Write ~/SANDBOX_CONTEXT.json for programmatic consumers (default: true)
