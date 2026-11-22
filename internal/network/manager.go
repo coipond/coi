@@ -405,15 +405,26 @@ func (m *Manager) setupRestricted(ctx context.Context, containerName string) err
 
 	m.logger.Printf("nft rules applied for container %s", containerName)
 
-	// Log what is blocked
-	if config.BoolVal(m.config.BlockPrivateNetworks) {
+	m.logRestrictedPrivateAccess()
+
+	return nil
+}
+
+// logRestrictedPrivateAccess logs how restricted mode treats RFC1918 and cloud
+// metadata, matching the rules addRestrictedRules installs:
+// allow_local_network_access wins over block_private_networks.
+func (m *Manager) logRestrictedPrivateAccess() {
+	switch {
+	case config.BoolVal(m.config.AllowLocalNetworkAccess) && len(m.config.AllowedPorts) > 0:
+		m.logger.Printf("  Allowing RFC1918 private networks on ports %v (allow_local_network_access)", m.config.AllowedPorts)
+	case config.BoolVal(m.config.AllowLocalNetworkAccess):
+		m.logger.Println("  Allowing RFC1918 private networks (allow_local_network_access)")
+	case config.BoolVal(m.config.BlockPrivateNetworks):
 		m.logger.Println("  Blocking private networks (RFC1918)")
 	}
 	if config.BoolVal(m.config.BlockMetadataEndpoint) {
 		m.logger.Println("  Blocking cloud metadata endpoints")
 	}
-
-	return nil
 }
 
 // setupAllowlist configures allowlist mode.
