@@ -127,3 +127,28 @@ func TestRecoverSavedSession(t *testing.T) {
 	}
 	assertSavedCopy(t, live, "new")
 }
+
+func TestFinishSavedConfigSwap_FailedRenameKeepsPreviousCopy(t *testing.T) {
+	live := filepath.Join(t.TempDir(), ".claude")
+	writeSavedCopy(t, live, "old")
+	writeSavedCopy(t, live+completeSuffix, "new")
+	orig := renameSavedCopy
+	t.Cleanup(func() { renameSavedCopy = orig })
+	renameSavedCopy = func(from, to string) error {
+		if from == live+completeSuffix {
+			return errors.New("injected rename failure")
+		}
+		return orig(from, to)
+	}
+
+	if err := finishSavedConfigSwap(live); err == nil {
+		t.Fatal("finishSavedConfigSwap succeeded with a failing rename")
+	}
+	got, err := os.ReadFile(filepath.Join(live, "history.jsonl"))
+	if err != nil {
+		t.Fatalf("previous copy missing: %v", err)
+	}
+	if string(got) != "old" {
+		t.Errorf("saved copy = %q, want %q", got, "old")
+	}
+}

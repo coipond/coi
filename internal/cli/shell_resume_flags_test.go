@@ -63,7 +63,7 @@ func TestResolveResumeAndProfile_ResumeIDBeatsContinue(t *testing.T) {
 			var resumeID string
 			stderr := captureOutput(t, &os.Stderr, func() {
 				var err error
-				if resumeID, _, err = a.resolveResumeAndProfile(cmd, sessionsDir, ws); err != nil {
+				if resumeID, _, err = a.resolveResumeAndProfile(cmd, sessionsDir, ws, nil); err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
 			})
@@ -89,7 +89,7 @@ func TestResolveResumeAndProfile_SameIDNoWarning(t *testing.T) {
 	}
 
 	stderr := captureOutput(t, &os.Stderr, func() {
-		resumeID, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, ws)
+		resumeID, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, ws, nil)
 		if err != nil || resumeID != "sessA" {
 			t.Errorf("resumeID = %q, err = %v; want sessA", resumeID, err)
 		}
@@ -112,7 +112,7 @@ func TestResolveResumeAndProfile_UnknownResumeIDNoWarning(t *testing.T) {
 	}
 
 	stderr := captureOutput(t, &os.Stderr, func() {
-		if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, ws); err == nil || !strings.Contains(err.Error(), "not found") {
+		if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, ws, nil); err == nil || !strings.Contains(err.Error(), "not found") {
 			t.Errorf("err = %v, want session not found", err)
 		}
 	})

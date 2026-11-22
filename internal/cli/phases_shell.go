@@ -180,16 +180,11 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 			}
 			s.sessionsDir = sessionsDir
 
-			resumeID, metadata, err := a.resolveResumeAndProfile(cmd, sessionsDir, s.absWorkspace)
+			resumeID, metadata, err := a.resolveResumeAndProfile(cmd, sessionsDir, s.absWorkspace, ti)
 			if err != nil {
 				return nil, err
 			}
 			s.resumeID = resumeID
-			if resumeID != "" {
-				if err := session.RecoverSavedSession(sessionsDir, resumeID, ti); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: Could not recover saved session data: %v\n", err)
-				}
-			}
 			resumeFlagSet := cmd.Flags().Changed("resume") || cmd.Flags().Changed("continue")
 
 			// Inherit persistent flag and slot from session metadata.
@@ -689,8 +684,9 @@ func (a *App) registerShellAlias(absWorkspace string) error {
 // explicit --profile > alias-saved profile > the resumed session's profile >
 // [defaults] profile. The explicit and alias profiles were applied earlier and
 // set a.profile; ApplyProfile merges additively, so applying a second profile
-// on top would stack the two.
-func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorkspace string) (string, *session.SessionMetadata, error) {
+// on top would stack the two. It also puts back t's saved config dir of the
+// resumed session when a save was interrupted mid-swap.
+func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorkspace string, t tool.Tool) (string, *session.SessionMetadata, error) {
 	resumeID, warning := pickResumeID(a.resume, a.continueSession)
 
 	defaultProfile, err := a.defaultProfileFallbackName(cmd)
@@ -725,6 +721,9 @@ func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorksp
 
 	var metadata *session.SessionMetadata
 	if resumeID != "" {
+		if err := session.RecoverSavedSession(sessionsDir, resumeID, t); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Could not recover saved session data: %v\n", err)
+		}
 		if m, err := session.LoadSessionMetadata(filepath.Join(sessionsDir, resumeID, "metadata.json")); err == nil {
 			metadata = m
 		}

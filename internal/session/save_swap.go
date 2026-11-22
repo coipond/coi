@@ -19,6 +19,9 @@ const (
 	previousSuffix = ".coi-old"
 )
 
+// renameSavedCopy renames a saved config dir; tests replace it to fail a step
+var renameSavedCopy = os.Rename
+
 // finishSavedConfigSwap completes an interrupted swap of the saved config dir
 // liveDir: a complete new copy replaces liveDir, and a previous copy comes
 // back when liveDir is missing and no new copy exists.
@@ -34,12 +37,12 @@ func finishSavedConfigSwap(liveDir string) error {
 
 	if pathExists(newDir) {
 		if pathExists(liveDir) {
-			if err := os.Rename(liveDir, oldDir); err != nil {
+			if err := renameSavedCopy(liveDir, oldDir); err != nil {
 				return fmt.Errorf("failed to move previous saved copy aside: %w", err)
 			}
 		}
-		if err := os.Rename(newDir, liveDir); err != nil {
-			_ = os.Rename(oldDir, liveDir)
+		if err := renameSavedCopy(newDir, liveDir); err != nil {
+			_ = renameSavedCopy(oldDir, liveDir)
 			return fmt.Errorf("failed to store new saved copy: %w", err)
 		}
 		// The new copy is in place; a leftover previous copy goes next time.
@@ -48,7 +51,7 @@ func finishSavedConfigSwap(liveDir string) error {
 	}
 
 	if !pathExists(liveDir) && pathExists(oldDir) {
-		if err := os.Rename(oldDir, liveDir); err != nil {
+		if err := renameSavedCopy(oldDir, liveDir); err != nil {
 			return fmt.Errorf("failed to restore previous saved copy: %w", err)
 		}
 	}
