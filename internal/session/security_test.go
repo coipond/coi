@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -32,6 +33,33 @@ func TestPathToDeviceName(t *testing.T) {
 				t.Errorf("pathToDeviceName(%q) = %q, expected %q", tt.path, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestPathToDeviceName_InvalidCharsHashed(t *testing.T) {
+	paths := []string{
+		"node_modules/@scope/pkg",
+		"a:b",
+		"my dir",
+		"żółw",
+		"a+b",
+		strings.Repeat("x", 60),
+	}
+	// Incus 7.6 shared/validate IsDeviceName.
+	valid := regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	seen := map[string]string{}
+	for _, p := range paths {
+		name := pathToDeviceName(p)
+		if !valid.MatchString(name) {
+			t.Errorf("pathToDeviceName(%q) = %q, not a valid Incus device name", p, name)
+		}
+		if !strings.HasPrefix(name, protectDevicePrefix) {
+			t.Errorf("pathToDeviceName(%q) = %q, missing %q prefix", p, name, protectDevicePrefix)
+		}
+		if prev, ok := seen[name]; ok {
+			t.Errorf("pathToDeviceName(%q) and (%q) collide: %q", p, prev, name)
+		}
+		seen[name] = p
 	}
 }
 

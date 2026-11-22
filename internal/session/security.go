@@ -1151,7 +1151,29 @@ func pathToDeviceName(path string) string {
 	name = strings.TrimPrefix(name, "-")
 	// Prefix for clarity + so the reuse-strip path (stripSecurityDevicePrefixes)
 	// removes it.
-	return protectDevicePrefix + name
+	name = protectDevicePrefix + name
+	// Incus 7.6+ rejects device names outside [A-Za-z0-9._-] or longer than 64
+	// characters: hash those, keep valid names unchanged for existing
+	// containers.
+	if !isValidDeviceName(name) {
+		sum := sha256.Sum256([]byte(path))
+		return protectDevicePrefix + hex.EncodeToString(sum[:])[:16]
+	}
+	return name
+}
+
+// isValidDeviceName reports whether Incus accepts name as a device name.
+func isValidDeviceName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '.' && c != '_' && c != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // GetProtectedPathsForLogging returns a human-readable list of protected paths
