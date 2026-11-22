@@ -542,7 +542,9 @@ func TestResolveAliasForFrozen(t *testing.T) {
  {"name":"coi-cccccccc-1","status":"Frozen","config":{"user.coi.alias":"coi-web"}},
  {"name":"coi-dddddddd-1","status":"Frozen","config":{"user.coi.alias":"db"}},
  {"name":"coi-dddddddd-2","status":"Frozen","config":{"user.coi.alias":"db"}},
- {"name":"coi-eeeeeeee-1","status":"Stopped","config":{"user.coi.alias":"old"}}
+ {"name":"coi-eeeeeeee-1","status":"Stopped","config":{"user.coi.alias":"old"}},
+ {"name":"coi-ffffffff-1","status":"Running","config":{"user.coi.alias":"two"}},
+ {"name":"coi-ffffffff-2","status":"Running","config":{"user.coi.alias":"two"}}
 ]`)
 
 	tests := map[string]string{
@@ -568,6 +570,7 @@ func TestResolveAliasForFrozen(t *testing.T) {
 	errs := map[string]string{
 		"db":  "matches 2 frozen containers",
 		"old": "no frozen container matches",
+		"two": "matches 2 running containers", // names the fallback's status
 	}
 	for arg, want := range errs {
 		if got, err := ResolveAliasForFrozen(arg); err == nil || !strings.Contains(err.Error(), want) {

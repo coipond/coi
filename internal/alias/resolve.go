@@ -40,20 +40,30 @@ func IsContainerName(arg string) bool {
 // before a slot suffix, is registered and no container has that exact name.
 // Errors if the alias matches 0 or >1 running containers (listing them for disambiguation).
 func ResolveAliasForRunning(arg string) (string, error) {
-	return resolveAlias(arg, "running", container.StatusIsRunning)
+	return resolveAlias(arg, runningMatch)
 }
 
 // ResolveAliasForFrozen resolves an alias (or alias-N) to a frozen container
 // name, like ResolveAliasForRunning. When no frozen container has the alias,
 // it resolves to a running one, so the caller can report it is not frozen.
 func ResolveAliasForFrozen(arg string) (string, error) {
-	return resolveAlias(arg, "frozen", container.StatusIsFrozen, container.StatusIsRunning)
+	return resolveAlias(arg, frozenMatch, runningMatch)
 }
+
+// statusMatch accepts container statuses; state names them in errors.
+type statusMatch struct {
+	state string
+	match func(status string) bool
+}
+
+var (
+	runningMatch = statusMatch{"running", container.StatusIsRunning}
+	frozenMatch  = statusMatch{"frozen", container.StatusIsFrozen}
+)
 
 // resolveAlias resolves arg to a container whose status matches. matches are
 // tried in order: the first that accepts a container with the alias wins.
-// state names the first match in errors.
-func resolveAlias(arg, state string, matches ...func(status string) bool) (string, error) {
+func resolveAlias(arg string, matches ...statusMatch) (string, error) {
 	// 1. Container name that is no registered alias → pass through
 	if IsContainerName(arg) {
 		return arg, nil
@@ -72,16 +82,16 @@ func resolveAlias(arg, state string, matches ...func(status string) bool) (strin
 	// N > 0) only when no matching container has that alias and no
 	// registered alias has that name.
 	alias, slotNum := arg, 0
-	containers := all.withAlias(alias, matches)
+	containers, state := all.withAlias(alias, matches)
 	if len(containers) == 0 && !mayBeRegisteredAlias(arg) {
 		if a, s := splitAliasSlot(arg); s > 0 {
 			alias, slotNum = a, s
-			containers = all.withAlias(alias, matches)
+			containers, state = all.withAlias(alias, matches)
 		}
 	}
 
 	if len(containers) == 0 {
-		return "", fmt.Errorf("container or alias %q not found — no %s container matches", alias, state)
+		return "", fmt.Errorf("container or alias %q not found — no %s container matches", alias, matches[0].state)
 	}
 
 	// If a slot suffix was given, filter to matching slot. The slot names
@@ -184,9 +194,9 @@ type aliasedContainer struct {
 }
 
 // matchesAny reports whether any of matches accepts the container's status.
-func (c aliasedContainer) matchesAny(matches []func(status string) bool) bool {
-	for _, match := range matches {
-		if match(c.status) {
+func (c aliasedContainer) matchesAny(matches []statusMatch) bool {
+	for _, m := range matches {
+		if m.match(c.status) {
 			return true
 		}
 	}
@@ -196,20 +206,21 @@ func (c aliasedContainer) matchesAny(matches []func(status string) bool) bool {
 type aliasedContainers []aliasedContainer
 
 // withAlias returns the names of the containers whose alias is alias and
-// whose status the first of matches that accepts any of them accepts.
-func (cs aliasedContainers) withAlias(alias string, matches []func(status string) bool) []string {
-	for _, match := range matches {
+// whose status the first of matches that accepts any of them accepts, and
+// that match's state.
+func (cs aliasedContainers) withAlias(alias string, matches []statusMatch) ([]string, string) {
+	for _, m := range matches {
 		var names []string
 		for _, c := range cs {
-			if c.alias == alias && match(c.status) {
+			if c.alias == alias && m.match(c.status) {
 				names = append(names, c.name)
 			}
 		}
 		if len(names) > 0 {
-			return names
+			return names, m.state
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 // has reports whether a container of any status is named name.
