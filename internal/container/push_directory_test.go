@@ -2,10 +2,12 @@ package container
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -23,24 +25,26 @@ func fakeIncusScript(t *testing.T, body string) string {
 	return log
 }
 
-// stubPushArchive fixes pushArchiveSupported for one test.
-func stubPushArchive(t *testing.T, ok bool) {
+// stubPushFlags fixes pushArchiveSupported and pushFollowSupported for one
+// test.
+func stubPushFlags(t *testing.T, archive, follow bool) {
 	t.Helper()
-	orig := pushArchiveSupported
-	pushArchiveSupported = func() bool { return ok }
-	t.Cleanup(func() { pushArchiveSupported = orig })
+	origArchive, origFollow := pushArchiveSupported, pushFollowSupported
+	pushArchiveSupported = func() bool { return archive }
+	pushFollowSupported = func() bool { return follow }
+	t.Cleanup(func() { pushArchiveSupported, pushFollowSupported = origArchive, origFollow })
 }
 
-// resetPushArchive gives one test a fresh, unprobed pushArchiveSupported.
-func resetPushArchive(t *testing.T) {
+// resetPushFlags gives one test fresh, unprobed push flag checks.
+func resetPushFlags(t *testing.T) {
 	t.Helper()
-	orig := pushArchiveSupported
-	pushArchiveSupported = newPushArchiveCheck()
-	t.Cleanup(func() { pushArchiveSupported = orig })
+	origArchive, origFollow := pushArchiveSupported, pushFollowSupported
+	pushArchiveSupported, pushFollowSupported = newPushFlagChecks()
+	t.Cleanup(func() { pushArchiveSupported, pushFollowSupported = origArchive, origFollow })
 }
 
 func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
-	stubPushArchive(t, false)
+	stubPushFlags(t, false, false)
 	log := fakeIncusScript(t, "exit 0")
 	src := filepath.Join(t.TempDir(), "src")
 	if err := os.Mkdir(src, 0o755); err != nil {
@@ -60,19 +64,26 @@ func TestPushDirectory_SameNamePushesToParent(t *testing.T) {
 // An Incus 7.5+ client, and an LTS client with the backport (7.0.2), makes a
 // recursively pushed tree root-owned with umask-masked modes unless the push
 // passes --archive, which older clients do not have. Every push form gets the
-// flag when the client's help lists it; the help is read once.
-func TestPushDirectory_ArchiveByClientHelp(t *testing.T) {
+// flag when the client's help lists it. A rename pushes a staged link with
+// -H when the help lists that (7.0+). The help is read once.
+func TestPushDirectory_ArchiveAndFollowByClientHelp(t *testing.T) {
+	const (
+		archiveHelp = "  -a, --archive  Preserve ownership, timestamps and mode (implies --recursive)"
+		followHelp  = "  -H, --follow   Follow command-line symbolic links in source path"
+	)
 	tests := []struct {
 		name    string
 		help    string
 		archive bool
+		follow  bool
 	}{
-		{"7.0.1 and 7.4 without the flag", "  -p, --create-dirs   Create any directories necessary", false},
-		{"7.0.2 and 7.5+ with the flag", "  -a, --archive       Preserve ownership, timestamps and mode (implies --recursive)", true},
+		{"6.x without either flag", "  -p, --create-dirs   Create any directories necessary", false, false},
+		{"7.0.1 and 7.4 with -H only", followHelp, false, true},
+		{"7.0.2 and 7.5+ with both flags", archiveHelp + " " + followHelp, true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resetPushArchive(t)
+			resetPushFlags(t)
 			log := fakeIncusScript(t, `case "$*" in *"push --help") echo "`+tt.help+`";; esac`)
 			src := filepath.Join(t.TempDir(), "src")
 			if err := os.Mkdir(src, 0o755); err != nil {
@@ -94,6 +105,9 @@ func TestPushDirectory_ArchiveByClientHelp(t *testing.T) {
 			if len(logged) != 4 || !slices.Equal(logged[:3], want) {
 				t.Fatalf("incus calls = %q, want %q + a staged push", logged, want)
 			}
+			if tt.follow {
+				push += "-H "
+			}
 			if staged := logged[3]; !strings.HasPrefix(staged, push) || !strings.HasSuffix(staged, "/renamed c1/tmp/") {
 				t.Errorf("staged push = %q, want %q<stage>/renamed c1/tmp/", staged, push)
 			}
@@ -103,7 +117,7 @@ func TestPushDirectory_ArchiveByClientHelp(t *testing.T) {
 
 // A failed help probe keeps the push that works on every client.
 func TestPushDirectory_HelpProbeFailurePushesWithoutArchive(t *testing.T) {
-	resetPushArchive(t)
+	resetPushFlags(t)
 	log := fakeIncusScript(t, `case "$*" in *"push --help") exit 1;; esac`)
 	src := filepath.Join(t.TempDir(), "src")
 	if err := os.Mkdir(src, 0o755); err != nil {
@@ -119,10 +133,11 @@ func TestPushDirectory_HelpProbeFailurePushesWithoutArchive(t *testing.T) {
 	}
 }
 
-// A rename stages a copy on the host under the target name and only uses
-// `incus file push`, so it also works on a stopped container (no exec).
+// Without -H, a rename stages a copy on the host under the target name and
+// only uses `incus file push`, so it also works on a stopped container (no
+// exec).
 func TestPushDirectory_RenameStagesOnHost(t *testing.T) {
-	stubPushArchive(t, false)
+	stubPushFlags(t, false, false)
 	log := fakeIncusScript(t, `case "$*" in *"file push"*) ls -R "$6" > "$(dirname "$0")/staged.txt";; esac`)
 	src := filepath.Join(t.TempDir(), "src")
 	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
@@ -146,6 +161,93 @@ func TestPushDirectory_RenameStagesOnHost(t *testing.T) {
 	stage := strings.Fields(logged[0])[5]
 	if _, err := os.Stat(stage); !os.IsNotExist(err) {
 		t.Errorf("staged copy %s should be removed after the push", stage)
+	}
+}
+
+// The push sends each entry's owner as the client sees it.
+// A copy staged by a non-root coi would carry coi's UID wherever the source
+// has another (e.g. root) owner, and a hard link fails across filesystems.
+// So a rename pushes the source tree itself through a staged link, with -H.
+func TestPushDirectory_RenameWithFollowPushesSourceTree(t *testing.T) {
+	stubPushFlags(t, true, true)
+	log := fakeIncusScript(t, `for a; do prev=$cur; cur=$a; done
+readlink "$prev" > "$(dirname "$0")/link.txt"`)
+	source := filepath.Join(t.TempDir(), "src")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink in the tree is pushed as a link, so it keeps the -H push.
+	if err := os.Symlink("missing", filepath.Join(source, "link")); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "via-link")
+	if err := os.Symlink(source, src); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewManager("c1").PushDirectory(src, "/tmp/renamed"); err != nil {
+		t.Fatalf("PushDirectory() error = %v", err)
+	}
+	logged := calls(t, log)
+	push := "--project " + IncusProject + " file push -r --archive -H "
+	if len(logged) != 1 || !strings.HasPrefix(logged[0], push) || !strings.HasSuffix(logged[0], "/renamed c1/tmp/") {
+		t.Fatalf("incus calls = %q, want [%q<stage>/renamed c1/tmp/]", logged, push)
+	}
+	want, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(log), "link.txt")); err != nil || strings.TrimSpace(string(b)) != want {
+		t.Errorf("staged link points to %q, %v; want the real source %q", b, err, want)
+	}
+	stage := filepath.Dir(strings.Fields(logged[0])[7])
+	if _, err := os.Lstat(stage); !os.IsNotExist(err) {
+		t.Errorf("stage %s should be removed after the push", stage)
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Errorf("source %s should be kept: %v", source, err)
+	}
+}
+
+// The client refuses a FIFO, socket or device in a pushed tree, so such a
+// tree is still pushed from a staged copy, which skips them. A symlinked
+// source is checked through the link.
+func TestPushDirectory_RenameWithFIFOStagesCopy(t *testing.T) {
+	for _, viaLink := range []bool{false, true} {
+		t.Run(fmt.Sprintf("via link %v", viaLink), func(t *testing.T) {
+			stubPushFlags(t, true, true)
+			log := fakeIncusScript(t, `for a; do prev=$cur; cur=$a; done
+ls -A "$prev" > "$(dirname "$0")/staged.txt"`)
+			src := filepath.Join(t.TempDir(), "src")
+			if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("a"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(filepath.Join(src, "sub", "fifo"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if viaLink {
+				link := filepath.Join(t.TempDir(), "via-link")
+				if err := os.Symlink(src, link); err != nil {
+					t.Fatal(err)
+				}
+				src = link
+			}
+
+			if err := NewManager("c1").PushDirectory(src, "/tmp/renamed"); err != nil {
+				t.Fatalf("PushDirectory() error = %v", err)
+			}
+			logged := calls(t, log)
+			push := "--project " + IncusProject + " file push -r --archive /"
+			if len(logged) != 1 || !strings.HasPrefix(logged[0], push) || !strings.HasSuffix(logged[0], "/renamed c1/tmp/") {
+				t.Fatalf("incus calls = %q, want [%q...<stage>/renamed c1/tmp/] (no -H)", logged, push)
+			}
+			if b, err := os.ReadFile(filepath.Join(filepath.Dir(log), "staged.txt")); err != nil || string(b) != "a.txt\nsub\n" {
+				t.Errorf("staged copy holds %q, %v; want a.txt and sub", b, err)
+			}
+		})
 	}
 }
 

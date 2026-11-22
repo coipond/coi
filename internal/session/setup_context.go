@@ -238,21 +238,27 @@ const (
 	autoContextMissingMarker = "coi:missing"
 )
 
-// homeMkdirCmd creates dir and its missing parents. coi's execs run as root,
-// so each directory it creates under homeDir is handed to the home's owner: a
-// root-owned ~/.config/goose stops goose saving its config, and a root-owned
-// ~/.claude or ~/.codex (an image without them) stops the tool writing there.
-// Existing directories keep their owner. A dir outside homeDir gets mkdir -p.
+// homeMkdirCmd is HomeMkdirCmd with the owner from homeFileOwner.
 func homeMkdirCmd(dir, homeDir string) string {
+	return HomeMkdirCmd(dir, homeDir, homeFileOwner(homeDir))
+}
+
+// HomeMkdirCmd creates dir and its missing parents. coi's execs run as root,
+// so each directory it creates under homeDir is handed to owner: a root-owned
+// ~/.config/goose stops goose saving its config, and a root-owned ~/.claude or
+// ~/.codex (an image without them) stops the tool writing there. Existing
+// directories keep their owner. A dir another exec creates at the same time
+// (parallel `coi tool spec` calls on one container) is accepted, not an
+// error. A dir outside homeDir gets mkdir -p.
+func HomeMkdirCmd(dir, homeDir string, owner int) string {
 	if !strings.HasPrefix(dir, homeDir+"/") {
 		return "mkdir -p " + shellEscape(dir)
 	}
-	owner := homeFileOwner(homeDir)
 	var dirs []string
 	for ; dir != homeDir && strings.HasPrefix(dir, homeDir+"/"); dir = filepath.Dir(dir) {
 		dirs = append([]string{shellEscape(dir)}, dirs...)
 	}
-	return fmt.Sprintf(`for d in %s; do [ -d "$d" ] || { mkdir "$d" && chown %d:%d "$d"; } || exit 1; done`,
+	return fmt.Sprintf(`for d in %s; do if mkdir "$d" 2>/dev/null; then chown %d:%d "$d" || exit 1; elif [ ! -d "$d" ]; then echo "cannot create $d" >&2; exit 1; fi; done`,
 		strings.Join(dirs, " "), owner, owner)
 }
 

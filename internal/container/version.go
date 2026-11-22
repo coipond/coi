@@ -149,13 +149,21 @@ func FormatMinVersionError(v *IncusVersion) string {
 // decides: 7.5 added it, and LTS releases such as 7.0.2 backported it along
 // with 7.5's root-owned default, so a version number would miss them. A
 // failed probe reports false, which keeps the push every client has.
-var pushArchiveSupported = newPushArchiveCheck()
+//
+// pushFollowSupported reports, from the same help, whether the client has
+// `file push -H` (--follow), added in 7.0.
+var pushArchiveSupported, pushFollowSupported = newPushFlagChecks()
 
-func newPushArchiveCheck() func() bool {
-	return sync.OnceValue(func() bool {
+func newPushFlagChecks() (archive, follow func() bool) {
+	help := sync.OnceValue(func() string {
 		out, err := IncusOutput("file", "push", "--help")
-		return err == nil && strings.Contains(out, "--archive")
+		if err != nil {
+			return ""
+		}
+		return out
 	})
+	return func() bool { return strings.Contains(help(), "--archive") },
+		func() bool { return strings.Contains(help(), "--follow") }
 }
 
 // pullNoDereferenceSupported reports, once per process, whether the incus

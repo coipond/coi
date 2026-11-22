@@ -521,3 +521,68 @@ func TestIsContainerName_RegisteredPrefixedAlias(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveAliasForFrozen(t *testing.T) {
+	t.Setenv("COI_CONTAINER_PREFIX", "")
+	tmpHome := withTempHome(t)
+	reg, err := LoadFrom(filepath.Join(tmpHome, ".coi", "aliases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register("coi-web", "/ws/web", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	fakeIncus(t, `[
+ {"name":"coi-aaaaaaaa-1","status":"Frozen","config":{"user.coi.alias":"app"}},
+ {"name":"coi-aaaaaaaa-2","status":"Running","config":{"user.coi.alias":"app"}},
+ {"name":"coi-bbbbbbbb-1","status":"Running","config":{"user.coi.alias":"site"}},
+ {"name":"coi-cccccccc-1","status":"Frozen","config":{"user.coi.alias":"coi-web"}},
+ {"name":"coi-dddddddd-1","status":"Frozen","config":{"user.coi.alias":"db"}},
+ {"name":"coi-dddddddd-2","status":"Frozen","config":{"user.coi.alias":"db"}},
+ {"name":"coi-eeeeeeee-1","status":"Stopped","config":{"user.coi.alias":"old"}},
+ {"name":"coi-ffffffff-1","status":"Running","config":{"user.coi.alias":"two"}},
+ {"name":"coi-ffffffff-2","status":"Running","config":{"user.coi.alias":"two"}}
+]`)
+
+	tests := map[string]string{
+		"app":            "coi-aaaaaaaa-1", // the frozen one wins over a running one
+		"app-2":          "coi-aaaaaaaa-2", // a slot reaches a running one
+		"site":           "coi-bbbbbbbb-1", // no frozen one: the running one
+		"coi-web":        "coi-cccccccc-1", // prefixed alias
+		"db-2":           "coi-dddddddd-2",
+		"coi-eeeeeeee-1": "coi-eeeeeeee-1", // a container name passes through
+	}
+	for arg, want := range tests {
+		t.Run(arg, func(t *testing.T) {
+			got, err := ResolveAliasForFrozen(arg)
+			if err != nil {
+				t.Fatalf("ResolveAliasForFrozen(%q) error: %v", arg, err)
+			}
+			if got != want {
+				t.Errorf("ResolveAliasForFrozen(%q) = %q, want %q", arg, got, want)
+			}
+		})
+	}
+
+	errs := map[string]string{
+		"db":  "matches 2 frozen containers",
+		"old": "no frozen container matches",
+		"two": "matches 2 running containers", // names the fallback's status
+	}
+	for arg, want := range errs {
+		if got, err := ResolveAliasForFrozen(arg); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ResolveAliasForFrozen(%q) = %q, %v; want error containing %q", arg, got, err, want)
+		}
+	}
+
+	// Running-container commands keep resolving to running containers only
+	if got, err := ResolveAliasForRunning("app"); err != nil || got != "coi-aaaaaaaa-2" {
+		t.Errorf("ResolveAliasForRunning(\"app\") = %q, %v; want %q", got, err, "coi-aaaaaaaa-2")
+	}
+	if got, err := ResolveAliasForRunning("coi-web"); err == nil {
+		t.Errorf("ResolveAliasForRunning(\"coi-web\") = %q, want error for a frozen container", got)
+	}
+}

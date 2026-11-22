@@ -262,12 +262,13 @@ func toolSpecUserHome(mgr container.ContainerManager) (uid int, home string, err
 }
 
 // ensureContainerRunsDir creates ~/.coi/runs in the container owned by the run
-// user (uid) and returns its path. Shared by `coi tool spec` and the headless
-// `coi run --prompt` path so the runs-dir convention and ownership stay in one
-// place.
+// user (uid) and returns its path. A missing ~/.coi is created owned by uid
+// too. Shared by `coi tool spec` and the headless `coi run --prompt` path so
+// the runs-dir convention and ownership stay in one place.
 func ensureContainerRunsDir(mgr container.ContainerManager, homeDir string, uid int) (string, error) {
 	runsDir := filepath.Join(homeDir, ".coi", "runs")
-	if _, err := mgr.ExecCommand(fmt.Sprintf("mkdir -p %s && chown %d:%d %s",
+	if _, err := mgr.ExecCommand(fmt.Sprintf("%s && mkdir -p %s && chown %d:%d %s",
+		session.HomeMkdirCmd(filepath.Dir(runsDir), homeDir, uid),
 		shellQuote(runsDir), uid, uid, shellQuote(runsDir)),
 		container.ExecCommandOptions{Capture: true}); err != nil {
 		return "", fmt.Errorf("failed to create runs dir: %w", err)

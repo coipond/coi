@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -199,5 +204,53 @@ func TestCountTrue(t *testing.T) {
 		if got := countTrue(c.in...); got != c.want {
 			t.Errorf("countTrue(%v) = %d, want %d", c.in, got, c.want)
 		}
+	}
+}
+
+// bashExecManager runs container execs in a local bash, so commands act on a
+// temp dir standing in for the container home. session's fakeShellManager is
+// test-only there, so it cannot be reused here.
+type bashExecManager struct {
+	container.ContainerManager
+}
+
+func (bashExecManager) ExecCommand(cmd string, _ container.ExecCommandOptions) (string, error) {
+	out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
+	return string(out), err
+}
+
+// TestEnsureContainerRunsDir_ChownsCreatedDirs: a missing ~/.coi and the runs
+// dir go to the resolved run uid (not container.CodeUID); runs is chowned
+// even when it exists, an existing ~/.coi keeps its owner.
+func TestEnsureContainerRunsDir_ChownsCreatedDirs(t *testing.T) {
+	const uid = 1234
+	home := t.TempDir()
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "chown.log")
+	script := "#!/bin/sh\necho \"$*\" >> " + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "chown"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	coiDir := filepath.Join(home, ".coi")
+	runsDir := filepath.Join(coiDir, "runs")
+	for range 2 {
+		got, err := ensureContainerRunsDir(bashExecManager{}, home, uid)
+		if err != nil {
+			t.Fatalf("ensureContainerRunsDir: %v", err)
+		}
+		if got != runsDir {
+			t.Errorf("runsDir = %q, want %q", got, runsDir)
+		}
+	}
+
+	want := fmt.Sprintf("%[1]d:%[1]d %[2]s\n%[1]d:%[1]d %[3]s\n%[1]d:%[1]d %[3]s\n", uid, coiDir, runsDir)
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("chown never ran: %v", err)
+	}
+	if string(log) != want {
+		t.Errorf("chown calls = %q, want %q", log, want)
 	}
 }
