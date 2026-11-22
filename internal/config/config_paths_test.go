@@ -104,14 +104,8 @@ func TestGetConfigPathsCOIConfigAbsoluteAndUnique(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("COI_CONFIG", tt.coiConfig)
 			got := GetConfigPaths()
-			if len(got) != len(tt.want) {
+			if !slices.Equal(got, tt.want) {
 				t.Fatalf("GetConfigPaths() = %v, want %v", got, tt.want)
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("GetConfigPaths() = %v, want %v", got, tt.want)
-					break
-				}
 			}
 			if !isTrustedConfigPath(got[len(got)-1]) {
 				t.Errorf("COI_CONFIG path %s is not trusted", got[len(got)-1])

@@ -244,6 +244,8 @@ func GetConfigPaths() []string {
 //  1. ~/.coi                    (user home; co-located with sessions/storage/logs)
 //  2. ./.coi                    (current project)
 //  3. dirname($COI_CONFIG)      (if COI_CONFIG is set)
+//
+// A directory named twice is listed once, at its last position.
 func GetProfileParentDirs() []string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
