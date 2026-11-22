@@ -78,7 +78,7 @@ func TestResolveResumeAndProfile_AliasProfileBeatsResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resumeID, metadata, err := a.resolveResumeAndProfile(cmd, sessionsDir, s.absWorkspace, nil)
+	resumeID, metadata, err := a.resolveResumeAndProfile(cmd, sessionsDir, s.absWorkspace)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestResolveResumeAndProfile_ResumeProfileReplacesDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws", nil); err != nil {
+	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertProfileApplied(t, a, "resumed", baseImage, "2", "")
@@ -117,7 +117,7 @@ func TestResolveResumeAndProfile_ExplicitProfileBeatsResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws", nil); err != nil {
+	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertProfileApplied(t, a, "work", "coi-work", "4", "8GiB")
@@ -132,7 +132,7 @@ func TestResolveResumeAndProfile_ResumeProfileAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws", nil); err != nil {
+	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertProfileApplied(t, a, "resumed", baseImage, "2", "")
@@ -142,7 +142,7 @@ func TestResolveResumeAndProfile_ResumeProfileAlone(t *testing.T) {
 func TestResolveResumeAndProfile_DefaultWithoutResume(t *testing.T) {
 	a, cmd, sessionsDir := newResumeTestApp(t, "work")
 
-	resumeID, metadata, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws", nil)
+	resumeID, metadata, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestResolveResumeAndProfile_AutoResumeUsesDefaultSessionName(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	resumeID, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws", nil)
+	resumeID, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,8 +187,7 @@ func TestResolveResumeAndProfile_RecoversInterruptedSave(t *testing.T) {
 	if err := cmd.Flags().Set("resume", "sess1"); err != nil {
 		t.Fatal(err)
 	}
-	ti := tool.NewClaude()
-	live := filepath.Join(sessionsDir, "sess1", ti.ConfigDirName())
+	live := filepath.Join(sessionsDir, "sess1", tool.NewClaude().ConfigDirName())
 	for dir, content := range map[string]string{live + ".coi-new": "new", live + ".coi-old": "old"} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
@@ -198,7 +197,7 @@ func TestResolveResumeAndProfile_RecoversInterruptedSave(t *testing.T) {
 		}
 	}
 
-	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws", ti); err != nil {
+	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(live, "history.jsonl"))

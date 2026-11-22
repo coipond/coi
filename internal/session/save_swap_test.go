@@ -152,3 +152,29 @@ func TestFinishSavedConfigSwap_FailedRenameKeepsPreviousCopy(t *testing.T) {
 		t.Errorf("saved copy = %q, want %q", got, "old")
 	}
 }
+
+func TestSaveSessionData_FailedSwapKeepsPreviousCopy(t *testing.T) {
+	sessions := t.TempDir()
+	live := filepath.Join(sessions, "abc", ".claude")
+	writeSavedCopy(t, live, "old")
+	orig := renameSavedCopy
+	t.Cleanup(func() { renameSavedCopy = orig })
+	renameSavedCopy = func(from, to string) error {
+		if from == live+completeSuffix {
+			return errors.New("injected rename failure")
+		}
+		return orig(from, to)
+	}
+
+	mgr := &savePullFake{files: map[string]string{"history.jsonl": "new"}}
+	if err := saveSessionData(mgr, "coi-test", "abc", false, "", false, "/w", sessions, tool.NewClaude(), func(string) {}); err == nil {
+		t.Fatal("saveSessionData succeeded with a failing rename")
+	}
+	got, err := os.ReadFile(filepath.Join(live, "history.jsonl"))
+	if err != nil {
+		t.Fatalf("previous copy missing: %v", err)
+	}
+	if string(got) != "old" {
+		t.Errorf("saved copy = %q, want %q", got, "old")
+	}
+}

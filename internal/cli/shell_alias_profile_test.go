@@ -18,7 +18,7 @@ func launchAndRegister(t *testing.T, a *App, cmd *cobra.Command, sessionsDir, ws
 	if _, err := a.resolveWorkspacePhase(cmd, s).Run(t.Context()); err != nil {
 		t.Fatalf("resolve-workspace: %v", err)
 	}
-	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, s.absWorkspace, nil); err != nil {
+	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, s.absWorkspace); err != nil {
 		t.Fatalf("resolveResumeAndProfile: %v", err)
 	}
 	if err := a.registerShellAlias(s.absWorkspace); err != nil {
