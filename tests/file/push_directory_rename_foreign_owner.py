@@ -109,8 +109,10 @@ def test_push_directory_rename_foreign_owner(coi_binary, cleanup_containers, wor
                 timeout=30,
             )
             assert result.returncode == 0, f"stat {remote} should succeed. stderr: {result.stderr}"
-            assert result.stdout.strip() == want, (
-                f"{remote} should keep host UID/GID '{want}', got: {result.stdout!r}"
+            # coi container exec relays the command's output on stderr.
+            combined_output = (result.stdout + result.stderr).strip()
+            assert combined_output == want, (
+                f"{remote} should keep host UID/GID '{want}', got: {combined_output!r}"
             )
     finally:
         # === Phase 5: Cleanup ===
