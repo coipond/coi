@@ -544,6 +544,14 @@ def press_enter(child, line_ending="\x0d"):
     child.send(line_ending)
 
 
+def exit_cli_to_bash(child):
+    """Type `exit` into the tool so the coi shell drops to its bash pane.
+    Returns at once: wait for bash with a command that prints a marker."""
+    child.send("exit")
+    time.sleep(0.3)
+    child.send("\x0d")
+
+
 def send_prompt(child, prompt, delay=0.2):
     """
     Send a prompt to Claude Code with proper timing.

@@ -2,8 +2,7 @@
 Test for coi shell --resume - a stopped leftover container is saved before it is deleted.
 
 After a host reboot or a killed coi, an ephemeral session's container is left
-Stopped and holds the session's newest tool config. --resume used to delete it
-and restore the older saved copy.
+Stopped and holds the session's newest tool config.
 
 Tests that:
 - --resume saves the stopped leftover's session data before deleting it
@@ -26,6 +25,7 @@ from pexpect import EOF, TIMEOUT
 from support.helpers import (
     calculate_container_name,
     child_output,
+    exit_cli_to_bash,
     incus_status,
     poweroff_and_wait,
     spawn_coi,
@@ -38,12 +38,6 @@ from support.helpers import (
 OLD = "COI_LEFTOVER_OLD_3c1e"
 NEW = "COI_LEFTOVER_NEW_8d2b"
 SENTINEL_PATH = "$HOME/.claude/coi-leftover-sentinel.txt"
-
-
-def _exit_cli_to_bash(child):
-    child.send("exit")
-    time.sleep(0.3)
-    child.send("\x0d")
 
 
 def _run_in_bash(child, command, marker, timeout=60):
@@ -66,7 +60,7 @@ def _start_shell(coi_binary, workspace_dir, env, args):
     child = spawn_coi(coi_binary, ["shell", *args], cwd=workspace_dir, env=env, timeout=120)
     wait_for_container_ready(child, timeout=60)
     wait_for_prompt(child, timeout=90)
-    _exit_cli_to_bash(child)
+    exit_cli_to_bash(child)
     return child
 
 

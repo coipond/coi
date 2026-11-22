@@ -104,10 +104,10 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 				st.skipLaunch = true
 				st.restarted = st.opts.ContainerName == ""
 			} else {
-				// Delete the stopped leftover container
 				if err := st.saveStoppedLeftover(); err != nil {
 					return nil, err
 				}
+				// Delete the stopped leftover container
 				st.opts.Logger("Found stopped leftover container from previous session, deleting...")
 				if err := st.result.Manager.Delete(true); err != nil {
 					return nil, fmt.Errorf("failed to delete leftover container: %w", err)
