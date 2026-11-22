@@ -123,7 +123,7 @@ with session persistence, workspace isolation, and multi-slot support.
 By default runs Claude Code. Other tools can be configured via the tool.name config option.
 
 Examples:
-  coi                          # Start interactive AI coding session (same as 'coi shell')
+  coi                          # Start interactive AI coding session (same as 'coi shell' with no arguments)
   coi shell --slot 2           # Use specific slot
   coi run -- npm test          # Run a command in the sandbox
   coi run                      # Run the workspace run script (coi-run)
