@@ -30,6 +30,8 @@ from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    container_cat,
+    container_path_exists,
     exec_in,
     spawn_coi,
     wait_for_container_ready,
@@ -93,16 +95,6 @@ def _start(coi_binary, workspace_dir, env, *args):
     return child
 
 
-def _present(coi_binary, container, path):
-    rc, _ = exec_in(coi_binary, container, f"test -e {path}", user=1000)
-    return rc == 0
-
-
-def _read(coi_binary, container, path):
-    _, out = exec_in(coi_binary, container, f"cat {path}", user=1000)
-    return out.strip()
-
-
 @pytest.mark.parametrize("stop", ["exit", "poweroff"])
 @pytest.mark.parametrize("tool_name", sorted(TOOLS))
 def test_fresh_tool_memory_persistent(
@@ -141,9 +133,9 @@ def test_fresh_tool_memory_persistent(
 
         # === Phase 2: a new session keeps the container, not the memory ===
         child = _start(coi_binary, workspace_dir, env)
-        installed_kept = _present(coi_binary, container, INSTALLED)
-        cred_kept = _present(coi_binary, container, spec["cred"])
-        memory_left = [p for p in spec["memory"] if _present(coi_binary, container, p)]
+        installed_kept = container_path_exists(coi_binary, container, INSTALLED)
+        cred_kept = container_path_exists(coi_binary, container, spec["cred"])
+        memory_left = [p for p in spec["memory"] if container_path_exists(coi_binary, container, p)]
         later = spec["later"]
         rc, out = exec_in(
             coi_binary,
@@ -161,9 +153,11 @@ def test_fresh_tool_memory_persistent(
 
         # === Phase 3: --resume brings the first session's memory back ===
         child = _start(coi_binary, workspace_dir, env, f"--resume={first_session}")
-        memory_missing = [p for p in spec["memory"] if not _present(coi_binary, container, p)]
-        setup_after_resume = _read(coi_binary, container, spec["setup"])
-        later_after_resume = _present(coi_binary, container, spec["later"])
+        memory_missing = [
+            p for p in spec["memory"] if not container_path_exists(coi_binary, container, p)
+        ]
+        _, setup_after_resume = container_cat(coi_binary, container, spec["setup"], user=1000)
+        later_after_resume = container_path_exists(coi_binary, container, spec["later"])
         _leave(child, "poweroff")
 
         assert not memory_missing, (
@@ -172,7 +166,7 @@ def test_fresh_tool_memory_persistent(
         assert not later_after_resume, (
             f"--resume {first_session} must not keep the later session's memory: {spec['later']}"
         )
-        assert setup_after_resume == "new", (
+        assert setup_after_resume.strip() == "new", (
             f"--resume must not revert {spec['setup']} to the saved copy: {setup_after_resume!r}"
         )
     finally:

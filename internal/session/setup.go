@@ -80,7 +80,7 @@ type SetupOptions struct {
 	Image                 string
 	StoragePool           string // [container] storage_pool: Incus storage pool for the container (empty = Incus default pool)
 	Persistent            bool   // Keep container between sessions (don't delete on cleanup)
-	FreshToolMemory       bool   // [tool] memory = "fresh": drop the tool's memory files on a new session in a restarted persistent container
+	FreshToolMemory       bool   // [tool] memory = "fresh": drop the tool's memory files on a new session in a reused persistent container
 	ResumeFromID          string
 	Slot                  int
 	MountConfig           *MountConfig         // Multi-mount support

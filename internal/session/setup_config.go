@@ -222,9 +222,9 @@ func toolConfigSeeded(mgr containerCommandRunner, homeDir string, tcf tool.ToolW
 
 // clearToolMemory removes the tool's memory files (tool.ToolWithMemoryPaths)
 // from the container, so a new session starts without the history of earlier
-// ones while the rest of the container stays. It runs as the code user: the
-// paths sit in a dir the agent controls, and root would follow a planted
-// symlink out of it. Paths are coi-controlled (home + config dir + fixed
+// ones while the rest of the container stays. It runs as the session user
+// (the code user, root only for a /root home): the paths sit in a dir the
+// agent controls, and root would follow a planted symlink out of it. Paths are coi-controlled (home + config dir + fixed
 // names), so no shell-quoting is needed. Saved sessions on the host are not
 // touched.
 func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, logger func(string)) error {
@@ -241,20 +241,11 @@ func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, lo
 		return nil
 	}
 	logger(fmt.Sprintf("Starting %s without memory of earlier sessions ([tool] memory = \"fresh\")", t.Name()))
-	uid := toolUID(homeDir)
+	uid := homeFileOwner(homeDir)
 	if _, err := mgr.ExecCommand("rm -rf -- "+strings.Join(args, " "), container.ExecCommandOptions{User: &uid, Capture: true}); err != nil {
 		return fmt.Errorf("failed to clear %s memory: %w", t.Name(), err)
 	}
 	return nil
-}
-
-// toolUID is the user the tool runs as for homeDir: root for /root, else
-// the code user.
-func toolUID(homeDir string) int {
-	if homeDir == "/root" {
-		return 0
-	}
-	return container.CodeUID
 }
 
 // toolSessionLive reports whether the tool may still run in the container:
@@ -269,7 +260,7 @@ func toolSessionLive(mgr containerCommandRunner, containerName, homeDir string, 
 	if len(comm) > 15 {
 		comm = comm[:15] // the kernel's comm limit, which pgrep -x matches
 	}
-	uid := toolUID(homeDir)
+	uid := homeFileOwner(homeDir)
 	out, err := mgr.ExecCommand(fmt.Sprintf(
 		"if tmux has-session -t %s 2>/dev/null || pgrep -x %s >/dev/null; then echo live; else echo idle; fi",
 		TmuxSessionTarget(containerName), comm,

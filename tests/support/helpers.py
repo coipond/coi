@@ -1461,6 +1461,18 @@ def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
     return result.returncode, result.stdout + result.stderr
 
 
+def container_cat(coi_binary, container_name, path, user=None):
+    """Return (ok, content) of a file in the container; ok is False when cat fails."""
+    rc, out = exec_in(coi_binary, container_name, f"cat {path}", user=user)
+    return rc == 0, out
+
+
+def container_path_exists(coi_binary, container_name, path, user=None):
+    """Return whether path exists in the container."""
+    rc, _ = exec_in(coi_binary, container_name, f"test -e {path}", user=user)
+    return rc == 0
+
+
 def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):
     """
     Poll nftables until the default-deny rule is active for a container.

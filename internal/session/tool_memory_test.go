@@ -12,19 +12,6 @@ import (
 	"github.com/coipond/coi/internal/tool"
 )
 
-// memoryExec records the command and user of each ExecCommand call.
-type memoryExec struct {
-	cmds  []string
-	users []*int
-	err   error
-}
-
-func (m *memoryExec) ExecCommand(cmd string, opts container.ExecCommandOptions) (string, error) {
-	m.cmds = append(m.cmds, cmd)
-	m.users = append(m.users, opts.User)
-	return "", m.err
-}
-
 func mustTool(t *testing.T, name string) tool.Tool {
 	t.Helper()
 	ti, err := tool.Get(name)
@@ -36,14 +23,14 @@ func mustTool(t *testing.T, name string) tool.Tool {
 
 func TestClearToolMemory_RemovesOnlyMemoryPaths(t *testing.T) {
 	ti := mustTool(t, "claude")
-	m := &memoryExec{}
+	m := &memoryManager{}
 	if err := clearToolMemory(m, "/home/code", ti, func(string) {}); err != nil {
 		t.Fatalf("clearToolMemory: %v", err)
 	}
-	if len(m.cmds) != 1 {
-		t.Fatalf("want one exec, got %d: %q", len(m.cmds), m.cmds)
+	if len(m.execs) != 1 {
+		t.Fatalf("want one exec, got %d: %q", len(m.execs), m.execs)
 	}
-	cmd := m.cmds[0]
+	cmd := m.execs[0]
 	if !strings.HasPrefix(cmd, "rm -rf -- ") {
 		t.Errorf("want an rm -rf command, got %q", cmd)
 	}
@@ -67,12 +54,12 @@ func TestClearToolMemory_RemovesOnlyMemoryPaths(t *testing.T) {
 }
 
 func TestClearToolMemory_RootHomeRunsAsRoot(t *testing.T) {
-	m := &memoryExec{}
+	m := &memoryManager{}
 	if err := clearToolMemory(m, "/root", mustTool(t, "codex"), func(string) {}); err != nil {
 		t.Fatalf("clearToolMemory: %v", err)
 	}
-	if len(m.cmds) != 1 || !strings.Contains(m.cmds[0], " /root/.codex/sessions") {
-		t.Fatalf("want codex sessions removed under /root, got %q", m.cmds)
+	if len(m.execs) != 1 || !strings.Contains(m.execs[0], " /root/.codex/sessions") {
+		t.Fatalf("want codex sessions removed under /root, got %q", m.execs)
 	}
 	if u := m.users[0]; u == nil || *u != 0 {
 		t.Errorf("want uid 0 for /root, got %v", u)
@@ -80,38 +67,41 @@ func TestClearToolMemory_RootHomeRunsAsRoot(t *testing.T) {
 }
 
 func TestClearToolMemory_ToolWithoutMemoryPathsIsNoop(t *testing.T) {
-	m := &memoryExec{}
+	m := &memoryManager{}
 	if err := clearToolMemory(m, "/home/code", mustTool(t, "pi"), func(string) {}); err != nil {
 		t.Fatalf("clearToolMemory: %v", err)
 	}
-	if len(m.cmds) != 0 {
-		t.Errorf("want no exec for a tool without memory paths, got %q", m.cmds)
+	if len(m.execs) != 0 {
+		t.Errorf("want no exec for a tool without memory paths, got %q", m.execs)
 	}
 }
 
 func TestClearToolMemory_ExecErrorFails(t *testing.T) {
-	m := &memoryExec{err: errors.New("exit status 1")}
+	m := &memoryManager{err: errors.New("exit status 1")}
 	err := clearToolMemory(m, "/home/code", mustTool(t, "claude"), func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "failed to clear claude memory") {
 		t.Fatalf("want a clear-memory error, got %v", err)
 	}
 }
 
-// memoryManager is a ContainerManager fake: ExecCommand answers the
-// tool-session probe, pushes and chowns are recorded.
+// memoryManager is a ContainerManager fake: ExecCommand records the command
+// and user and answers probe and err; pushes and chowns are recorded.
 type memoryManager struct {
 	container.ContainerManager
 	probe  string
+	err    error
 	execs  []string
+	users  []*int
 	pushed []string
 	chowns []string
 	log    []string // execs and pushes in call order
 }
 
-func (m *memoryManager) ExecCommand(cmd string, _ container.ExecCommandOptions) (string, error) {
+func (m *memoryManager) ExecCommand(cmd string, opts container.ExecCommandOptions) (string, error) {
 	m.execs = append(m.execs, cmd)
+	m.users = append(m.users, opts.User)
 	m.log = append(m.log, cmd)
-	return m.probe, nil
+	return m.probe, m.err
 }
 
 func (m *memoryManager) PushDirectory(src, dest string) error {
@@ -143,14 +133,13 @@ func TestToolSessionLive(t *testing.T) {
 		{"", errors.New("exit status 1"), true},
 	}
 	for _, c := range cases {
-		m := &memoryExec{err: c.err}
-		r := &probeExec{memoryExec: m, out: c.probe}
-		if got := toolSessionLive(r, "coi-abc-1", "/home/code", ti); got != c.want {
+		m := &memoryManager{probe: c.probe, err: c.err}
+		if got := toolSessionLive(m, "coi-abc-1", "/home/code", ti); got != c.want {
 			t.Errorf("probe %q err %v: live = %v, want %v", c.probe, c.err, got, c.want)
 		}
-		if len(m.cmds) != 1 || !strings.Contains(m.cmds[0], "tmux has-session -t =coi-coi-abc-1") ||
-			!strings.Contains(m.cmds[0], "pgrep -x claude") {
-			t.Errorf("probe must check coi's tmux session and the tool process: %q", m.cmds)
+		if len(m.execs) != 1 || !strings.Contains(m.execs[0], "tmux has-session -t =coi-coi-abc-1") ||
+			!strings.Contains(m.execs[0], "pgrep -x claude") {
+			t.Errorf("probe must check coi's tmux session and the tool process: %q", m.execs)
 		}
 		// tmux keeps one socket per uid: root would not see the code
 		// user's session.
@@ -159,22 +148,11 @@ func TestToolSessionLive(t *testing.T) {
 		}
 	}
 
-	m := &memoryExec{}
-	toolSessionLive(&probeExec{memoryExec: m, out: "idle"}, "coi-abc-1", "/root", ti)
+	m := &memoryManager{}
+	toolSessionLive(m, "coi-abc-1", "/root", ti)
 	if u := m.users[0]; u == nil || *u != 0 {
 		t.Errorf("probe for a /root home must run as root, got %v", u)
 	}
-}
-
-// probeExec returns out from a memoryExec.
-type probeExec struct {
-	*memoryExec
-	out string
-}
-
-func (p *probeExec) ExecCommand(cmd string, opts container.ExecCommandOptions) (string, error) {
-	_, err := p.memoryExec.ExecCommand(cmd, opts)
-	return p.out, err
 }
 
 func TestSetupStateFreshMemory(t *testing.T) {

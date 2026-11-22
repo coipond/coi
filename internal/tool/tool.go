@@ -508,7 +508,7 @@ type ToolWithDataDirs interface {
 
 // ToolWithMemoryPaths is an optional interface for tools that keep their
 // conversation history and memory inside the container. [tool] memory =
-// "fresh" removes these paths before a new session in a restarted persistent
+// "fresh" removes these paths before a new session in a reused persistent
 // container; everything else in the config dir (settings, credentials,
 // plugins) stays.
 type ToolWithMemoryPaths interface {
