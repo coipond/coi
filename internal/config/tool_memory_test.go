@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -57,5 +60,28 @@ func TestToolMemory_ProfileSchema(t *testing.T) {
 	}
 	if err := schema.ValidateProfileMap(map[string]any{"tool": map[string]any{"memory": "forget"}}); err == nil {
 		t.Error("memory = forget should fail the profile schema")
+	}
+}
+
+func TestToolMemory_LoadRejectsInvalidValue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[tool]\nmemory = \"Fresh\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COI_CONFIG", path)
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), `invalid [tool] memory "Fresh"`) {
+		t.Fatalf("want an invalid [tool] memory error, got %v", err)
+	}
+}
+
+// A project config may set it: fresh only narrows what a reused container
+// keeps of the tool's memory.
+func TestToolMemory_HonoredFromProjectConfig(t *testing.T) {
+	cfg := loadWithConfigs(t, "", "[tool]\nmemory = \"fresh\"\n", nil)
+	if cfg.Tool.Memory != ToolMemoryFresh {
+		t.Errorf("Tool.Memory = %q, want %q from the project config", cfg.Tool.Memory, ToolMemoryFresh)
 	}
 }

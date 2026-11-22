@@ -2,6 +2,9 @@ package session
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -94,28 +97,150 @@ func TestClearToolMemory_ExecErrorFails(t *testing.T) {
 	}
 }
 
+// memoryManager is a ContainerManager fake: ExecCommand answers the
+// tool-session probe, pushes and chowns are recorded.
+type memoryManager struct {
+	container.ContainerManager
+	probe  string
+	execs  []string
+	pushed []string
+	chowns []string
+}
+
+func (m *memoryManager) ExecCommand(cmd string, _ container.ExecCommandOptions) (string, error) {
+	m.execs = append(m.execs, cmd)
+	return m.probe, nil
+}
+
+func (m *memoryManager) PushDirectory(src, dest string) error {
+	m.pushed = append(m.pushed, "dir "+filepath.Base(src)+" -> "+dest)
+	return nil
+}
+
+func (m *memoryManager) PushFile(src, dest string) error {
+	m.pushed = append(m.pushed, "file "+filepath.Base(src)+" -> "+dest)
+	return nil
+}
+
+func (m *memoryManager) Chown(path string, _, _ int) error {
+	m.chowns = append(m.chowns, path)
+	return nil
+}
+
+func TestToolSessionLive(t *testing.T) {
+	ti := mustTool(t, "claude")
+	cases := []struct {
+		probe string
+		err   error
+		want  bool
+	}{
+		{"idle\n", nil, false},
+		{"live\n", nil, true},
+		{"", errors.New("exit status 1"), true},
+	}
+	for _, c := range cases {
+		m := &memoryExec{err: c.err}
+		r := &probeExec{memoryExec: m, out: c.probe}
+		if got := toolSessionLive(r, "coi-abc-1", ti); got != c.want {
+			t.Errorf("probe %q err %v: live = %v, want %v", c.probe, c.err, got, c.want)
+		}
+		if len(m.cmds) != 1 || !strings.Contains(m.cmds[0], "tmux has-session -t =coi-coi-abc-1") ||
+			!strings.Contains(m.cmds[0], "pgrep -x claude") {
+			t.Errorf("probe must check coi's tmux session and the tool process: %q", m.cmds)
+		}
+	}
+}
+
+// probeExec returns out from a memoryExec.
+type probeExec struct {
+	*memoryExec
+	out string
+}
+
+func (p *probeExec) ExecCommand(cmd string, opts container.ExecCommandOptions) (string, error) {
+	_, err := p.memoryExec.ExecCommand(cmd, opts)
+	return p.out, err
+}
+
 func TestSetupStateFreshMemory(t *testing.T) {
 	claude := mustTool(t, "claude")
 	cases := []struct {
-		name      string
-		restarted bool
-		fresh     bool
-		ti        tool.Tool
-		want      bool
+		name       string
+		restarted  bool
+		skipLaunch bool
+		persistent bool
+		fresh      bool
+		named      string
+		probe      string
+		ti         tool.Tool
+		want       bool
 	}{
-		{"restarted and fresh", true, true, claude, true},
-		{"restarted, keep", true, false, claude, false},
-		{"fresh but new or running container", false, true, claude, false},
-		{"no tool", true, true, nil, false},
+		{"restarted and fresh", true, true, true, true, "", "live", claude, true},
+		{"running, no live tool (plain exit)", false, true, true, true, "", "idle", claude, true},
+		{"running with a live tool", false, true, true, true, "", "live", claude, false},
+		{"restarted, keep", true, true, true, false, "", "idle", claude, false},
+		{"new container", false, false, true, true, "", "idle", claude, false},
+		{"not persistent (running resume)", false, true, false, true, "", "idle", claude, false},
+		{"explicit --container", false, true, true, true, "coi-x-1", "idle", claude, false},
+		{"no tool", true, true, true, true, "", "idle", nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			st := &setupState{restarted: c.restarted}
+			m := &memoryManager{probe: c.probe}
+			st := &setupState{
+				restarted:  c.restarted,
+				skipLaunch: c.skipLaunch,
+				result:     &SetupResult{ContainerName: "coi-abc-1", Manager: m},
+			}
 			st.opts.FreshToolMemory = c.fresh
+			st.opts.Persistent = c.persistent
+			st.opts.ContainerName = c.named
 			st.opts.Tool = c.ti
 			if got := st.freshMemory(); got != c.want {
 				t.Errorf("freshMemory() = %v, want %v", got, c.want)
 			}
+			st.freshMemory()
+			if len(m.execs) > 1 {
+				t.Errorf("the probe must run at most once, ran %d times", len(m.execs))
+			}
 		})
+	}
+}
+
+// Resume on a reused container puts back only the memory paths: later
+// settings, plugins and skills in the container stay.
+func TestRestoreToolMemory_PushesOnlyMemoryPaths(t *testing.T) {
+	sessions := t.TempDir()
+	saved := filepath.Join(sessions, "s1", ".claude")
+	for _, d := range []string{"projects/-workspace", "plugins", "skills"} {
+		if err := os.MkdirAll(filepath.Join(saved, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"history.jsonl", "settings.json", "CLAUDE.md"} {
+		if err := os.WriteFile(filepath.Join(saved, f), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := &memoryManager{}
+	if err := restoreToolMemory(m, "s1", "/home/code", sessions, mustTool(t, "claude"), func(string) {}); err != nil {
+		t.Fatalf("restoreToolMemory: %v", err)
+	}
+	want := []string{
+		"dir projects -> /home/code/.claude/projects",
+		"file history.jsonl -> /home/code/.claude/history.jsonl",
+	}
+	if !reflect.DeepEqual(m.pushed, want) {
+		t.Errorf("pushed = %q, want %q", m.pushed, want)
+	}
+	if !reflect.DeepEqual(m.chowns, []string{"/home/code/.claude/projects", "/home/code/.claude/history.jsonl"}) {
+		t.Errorf("chowns = %q", m.chowns)
+	}
+}
+
+func TestRestoreToolMemory_MissingSessionFails(t *testing.T) {
+	err := restoreToolMemory(&memoryManager{}, "gone", "/home/code", t.TempDir(), mustTool(t, "claude"), func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "no saved session data found for gone") {
+		t.Fatalf("want a missing-session error, got %v", err)
 	}
 }

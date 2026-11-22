@@ -21,12 +21,12 @@ type setupState struct {
 	skipLaunch bool
 	// restarted is set when a stopped persistent container was started again
 	// (not for a running reuse or an explicit --container attach).
-	restarted     bool
+	restarted bool
 	// freshMemoryReuse caches freshMemory (it may probe the container once).
 	freshMemoryChecked bool
 	freshMemoryReuse   bool
-	hasCodeUser   bool
-	resolvedPorts []PublishedPort
+	hasCodeUser        bool
+	resolvedPorts      []PublishedPort
 
 	// What setup actually granted, for the startup grants report
 	// (SetupResult.Grants): the sockets forwarded, the [[credentials]] and tool

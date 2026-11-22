@@ -4,18 +4,20 @@ session without the tool's memory of earlier sessions, but keeps the rest of
 the container.
 
 Tests that, for claude and codex (the dummy stands in for the tool's launch,
-coi still handles the tool's real config dir):
-1. A new session (no --resume) in the restarted persistent container keeps a
+coi still handles the tool's real config dir), both after a plain exit (the
+container keeps running) and after a poweroff (it is restarted):
+1. A new session (no --resume) in the reused persistent container keeps a
    file installed outside the workspace and the seeded credentials
 2. The tool's history and memory files from the first session are gone
 3. --resume of the first session brings its memory back from the saved
-   session on the host
+   session on the host, and keeps a config file the second session changed
 
 Flow:
-  1. memory = "fresh", persistent; start, install a file, plant history and
-     memory files; exit and power off (the container is kept, the session saved)
-  2. coi shell (no --resume): install and credentials there, memory gone
-  3. exit and power off; coi shell --resume <session 1>: memory restored
+  1. memory = "fresh", persistent; start, install a file, plant history,
+     memory and a config file; leave (exit or poweroff)
+  2. coi shell (no --resume): install and credentials there, memory gone;
+     change the config file; leave
+  3. coi shell --resume <session 1>: memory restored, config file unchanged
 """
 
 import subprocess
@@ -39,6 +41,7 @@ TOOLS = {
     "claude": {
         "seed": {".claude/.credentials.json": '{"marker": "fresh-memory"}'},
         "cred": "/home/code/.claude/.credentials.json",
+        "setup": "/home/code/.claude/setup-marker.txt",
         "memory": [
             "/home/code/.claude/history.jsonl",
             "/home/code/.claude/projects/-workspace/memory/MEMORY.md",
@@ -51,6 +54,7 @@ TOOLS = {
             ".codex/config.toml": 'model = "gpt-5-codex"\n',
         },
         "cred": "/home/code/.codex/auth.json",
+        "setup": "/home/code/.codex/setup-marker.txt",
         "memory": [
             "/home/code/.codex/history.jsonl",
             "/home/code/.codex/sessions/2026/01/01/rollout-old.jsonl",
@@ -59,12 +63,13 @@ TOOLS = {
 }
 
 
-def _exit_and_poweroff(child):
+def _leave(child, stop):
+    """Exit the tool, then exit bash (container keeps running) or power off."""
     child.send("exit")
     time.sleep(0.3)
     child.send("\x0d")
-    time.sleep(2)
-    child.send("sudo poweroff")
+    time.sleep(3)
+    child.send("sudo poweroff" if stop == "poweroff" else "exit")
     time.sleep(0.3)
     child.send("\x0d")
     try:
@@ -89,9 +94,15 @@ def _present(coi_binary, container, path):
     return rc == 0
 
 
+def _read(coi_binary, container, path):
+    _, out = exec_in(coi_binary, container, f"cat {path}", user=1000)
+    return out.strip()
+
+
+@pytest.mark.parametrize("stop", ["exit", "poweroff"])
 @pytest.mark.parametrize("tool_name", sorted(TOOLS))
 def test_fresh_tool_memory_persistent(
-    coi_binary, cleanup_containers, workspace_dir, tmp_path, tool_name
+    coi_binary, cleanup_containers, workspace_dir, tmp_path, tool_name, stop
 ):
     spec = TOOLS[tool_name]
     container = calculate_container_name(workspace_dir, 1)
@@ -112,11 +123,12 @@ def test_fresh_tool_memory_persistent(
         # === Phase 1: install something and leave memory behind ===
         child = _start(coi_binary, workspace_dir, env)
         plant = " && ".join(
-            f"mkdir -p $(dirname {p}) && echo old > {p}" for p in [INSTALLED, *spec["memory"]]
+            f"mkdir -p $(dirname {p}) && echo old > {p}"
+            for p in [INSTALLED, spec["setup"], *spec["memory"]]
         )
         rc, out = exec_in(coi_binary, container, plant, user=1000)
         assert rc == 0, f"planting files failed: {out}"
-        _exit_and_poweroff(child)
+        _leave(child, stop)
         time.sleep(3)
 
         sessions = [p.name for p in sessions_dir.iterdir() if (p / "metadata.json").is_file()]
@@ -128,7 +140,9 @@ def test_fresh_tool_memory_persistent(
         installed_kept = _present(coi_binary, container, INSTALLED)
         cred_kept = _present(coi_binary, container, spec["cred"])
         memory_left = [p for p in spec["memory"] if _present(coi_binary, container, p)]
-        _exit_and_poweroff(child)
+        rc, out = exec_in(coi_binary, container, f"echo new > {spec['setup']}", user=1000)
+        assert rc == 0, f"changing the config file failed: {out}"
+        _leave(child, stop)
         time.sleep(3)
 
         assert installed_kept, f"{INSTALLED} should survive in the persistent container"
@@ -138,10 +152,14 @@ def test_fresh_tool_memory_persistent(
         # === Phase 3: --resume brings the first session's memory back ===
         child = _start(coi_binary, workspace_dir, env, f"--resume={first_session}")
         memory_missing = [p for p in spec["memory"] if not _present(coi_binary, container, p)]
-        _exit_and_poweroff(child)
+        setup_after_resume = _read(coi_binary, container, spec["setup"])
+        _leave(child, "poweroff")
 
         assert not memory_missing, (
             f"--resume {first_session} should restore its memory: missing {memory_missing}"
+        )
+        assert setup_after_resume == "new", (
+            f"--resume must not revert {spec['setup']} to the saved copy: {setup_after_resume!r}"
         )
     finally:
         time.sleep(2)
