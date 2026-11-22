@@ -2,6 +2,7 @@ package container
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -175,6 +176,10 @@ readlink "$prev" > "$(dirname "$0")/link.txt"`)
 	if err := os.Mkdir(source, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A symlink in the tree is pushed as a link, so it keeps the -H push.
+	if err := os.Symlink("missing", filepath.Join(source, "link")); err != nil {
+		t.Fatal(err)
+	}
 	src := filepath.Join(t.TempDir(), "via-link")
 	if err := os.Symlink(source, src); err != nil {
 		t.Fatal(err)
@@ -205,32 +210,44 @@ readlink "$prev" > "$(dirname "$0")/link.txt"`)
 }
 
 // The client refuses a FIFO, socket or device in a pushed tree, so such a
-// tree is still pushed from a staged copy, which skips them.
+// tree is still pushed from a staged copy, which skips them. A symlinked
+// source is checked through the link.
 func TestPushDirectory_RenameWithFIFOStagesCopy(t *testing.T) {
-	stubPushFlags(t, true, true)
-	log := fakeIncusScript(t, `for a; do prev=$cur; cur=$a; done
+	for _, viaLink := range []bool{false, true} {
+		t.Run(fmt.Sprintf("via link %v", viaLink), func(t *testing.T) {
+			stubPushFlags(t, true, true)
+			log := fakeIncusScript(t, `for a; do prev=$cur; cur=$a; done
 ls -A "$prev" > "$(dirname "$0")/staged.txt"`)
-	src := filepath.Join(t.TempDir(), "src")
-	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("a"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := syscall.Mkfifo(filepath.Join(src, "sub", "fifo"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+			src := filepath.Join(t.TempDir(), "src")
+			if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("a"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(filepath.Join(src, "sub", "fifo"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if viaLink {
+				link := filepath.Join(t.TempDir(), "via-link")
+				if err := os.Symlink(src, link); err != nil {
+					t.Fatal(err)
+				}
+				src = link
+			}
 
-	if err := NewManager("c1").PushDirectory(src, "/tmp/renamed"); err != nil {
-		t.Fatalf("PushDirectory() error = %v", err)
-	}
-	logged := calls(t, log)
-	push := "--project " + IncusProject + " file push -r --archive /"
-	if len(logged) != 1 || !strings.HasPrefix(logged[0], push) || !strings.HasSuffix(logged[0], "/renamed c1/tmp/") {
-		t.Fatalf("incus calls = %q, want [%q...<stage>/renamed c1/tmp/] (no -H)", logged, push)
-	}
-	if b, err := os.ReadFile(filepath.Join(filepath.Dir(log), "staged.txt")); err != nil || string(b) != "a.txt\nsub\n" {
-		t.Errorf("staged copy holds %q, %v; want a.txt and sub", b, err)
+			if err := NewManager("c1").PushDirectory(src, "/tmp/renamed"); err != nil {
+				t.Fatalf("PushDirectory() error = %v", err)
+			}
+			logged := calls(t, log)
+			push := "--project " + IncusProject + " file push -r --archive /"
+			if len(logged) != 1 || !strings.HasPrefix(logged[0], push) || !strings.HasSuffix(logged[0], "/renamed c1/tmp/") {
+				t.Fatalf("incus calls = %q, want [%q...<stage>/renamed c1/tmp/] (no -H)", logged, push)
+			}
+			if b, err := os.ReadFile(filepath.Join(filepath.Dir(log), "staged.txt")); err != nil || string(b) != "a.txt\nsub\n" {
+				t.Errorf("staged copy holds %q, %v; want a.txt and sub", b, err)
+			}
+		})
 	}
 }
 
