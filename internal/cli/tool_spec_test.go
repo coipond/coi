@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/coipond/coi/internal/container"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -199,5 +204,70 @@ func TestCountTrue(t *testing.T) {
 		if got := countTrue(c.in...); got != c.want {
 			t.Errorf("countTrue(%v) = %d, want %d", c.in, got, c.want)
 		}
+	}
+}
+
+// bashExecManager runs container execs in a local bash, so commands act on a
+// temp dir standing in for the container home.
+type bashExecManager struct {
+	container.ContainerManager
+}
+
+func (bashExecManager) ExecCommand(cmd string, _ container.ExecCommandOptions) (string, error) {
+	out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
+	return string(out), err
+}
+
+// TestEnsureContainerRunsDir_ChownsCreatedDirs: a container without ~/.coi
+// must not be left with a root-owned ~/.coi; an existing ~/.coi keeps its
+// owner. The owner is the resolved run uid, not container.CodeUID.
+func TestEnsureContainerRunsDir_ChownsCreatedDirs(t *testing.T) {
+	const uid = 1234
+	for _, tc := range []struct {
+		name      string
+		coiExists bool
+	}{
+		{"missing ~/.coi", false},
+		{"existing ~/.coi", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			coiDir := filepath.Join(home, ".coi")
+			if tc.coiExists {
+				if err := os.Mkdir(coiDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bin := t.TempDir()
+			logPath := filepath.Join(bin, "chown.log")
+			script := "#!/bin/sh\necho \"$*\" >> " + shellQuote(logPath) + "\n"
+			if err := os.WriteFile(filepath.Join(bin, "chown"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			runsDir, err := ensureContainerRunsDir(bashExecManager{}, home, uid)
+			if err != nil {
+				t.Fatalf("ensureContainerRunsDir: %v", err)
+			}
+			if want := filepath.Join(coiDir, "runs"); runsDir != want {
+				t.Errorf("runsDir = %q, want %q", runsDir, want)
+			}
+			if info, err := os.Stat(runsDir); err != nil || !info.IsDir() {
+				t.Fatalf("runs dir not created: %v", err)
+			}
+
+			want := fmt.Sprintf("%d:%d %s\n", uid, uid, runsDir)
+			if !tc.coiExists {
+				want = fmt.Sprintf("%d:%d %s\n", uid, uid, coiDir) + want
+			}
+			log, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("chown never ran: %v", err)
+			}
+			if string(log) != want {
+				t.Errorf("chown calls = %q, want %q", log, want)
+			}
+		})
 	}
 }

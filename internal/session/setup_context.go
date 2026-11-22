@@ -244,10 +244,15 @@ const (
 // ~/.claude or ~/.codex (an image without them) stops the tool writing there.
 // Existing directories keep their owner. A dir outside homeDir gets mkdir -p.
 func homeMkdirCmd(dir, homeDir string) string {
+	return HomeMkdirCmd(dir, homeDir, homeFileOwner(homeDir))
+}
+
+// HomeMkdirCmd is homeMkdirCmd with an explicit owner, for callers that
+// resolved the session user's uid in the container (ResolveCodeUID).
+func HomeMkdirCmd(dir, homeDir string, owner int) string {
 	if !strings.HasPrefix(dir, homeDir+"/") {
 		return "mkdir -p " + shellEscape(dir)
 	}
-	owner := homeFileOwner(homeDir)
 	var dirs []string
 	for ; dir != homeDir && strings.HasPrefix(dir, homeDir+"/"); dir = filepath.Dir(dir) {
 		dirs = append([]string{shellEscape(dir)}, dirs...)
