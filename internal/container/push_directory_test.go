@@ -94,6 +94,9 @@ func TestPushDirectory_ArchiveByClientHelp(t *testing.T) {
 			if len(logged) != 4 || !slices.Equal(logged[:3], want) {
 				t.Fatalf("incus calls = %q, want %q + a staged push", logged, want)
 			}
+			if tt.archive {
+				push += "-H "
+			}
 			if staged := logged[3]; !strings.HasPrefix(staged, push) || !strings.HasSuffix(staged, "/renamed c1/tmp/") {
 				t.Errorf("staged push = %q, want %q<stage>/renamed c1/tmp/", staged, push)
 			}
@@ -146,6 +149,47 @@ func TestPushDirectory_RenameStagesOnHost(t *testing.T) {
 	stage := strings.Fields(logged[0])[5]
 	if _, err := os.Stat(stage); !os.IsNotExist(err) {
 		t.Errorf("staged copy %s should be removed after the push", stage)
+	}
+}
+
+// With --archive, the push sends each entry's owner as the client sees it.
+// A copy staged by a non-root coi would carry coi's UID wherever the source
+// has another (e.g. root) owner, and a hard link fails across filesystems.
+// So a rename pushes the source tree itself through a staged link, with -H.
+func TestPushDirectory_RenameWithArchivePushesSourceTree(t *testing.T) {
+	stubPushArchive(t, true)
+	log := fakeIncusScript(t, `for a; do prev=$cur; cur=$a; done
+readlink "$prev" > "$(dirname "$0")/link.txt"`)
+	source := filepath.Join(t.TempDir(), "src")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "via-link")
+	if err := os.Symlink(source, src); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewManager("c1").PushDirectory(src, "/tmp/renamed"); err != nil {
+		t.Fatalf("PushDirectory() error = %v", err)
+	}
+	logged := calls(t, log)
+	push := "--project " + IncusProject + " file push -r --archive -H "
+	if len(logged) != 1 || !strings.HasPrefix(logged[0], push) || !strings.HasSuffix(logged[0], "/renamed c1/tmp/") {
+		t.Fatalf("incus calls = %q, want [%q<stage>/renamed c1/tmp/]", logged, push)
+	}
+	want, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(log), "link.txt")); err != nil || strings.TrimSpace(string(b)) != want {
+		t.Errorf("staged link points to %q, %v; want the real source %q", b, err, want)
+	}
+	stage := filepath.Dir(strings.Fields(logged[0])[7])
+	if _, err := os.Lstat(stage); !os.IsNotExist(err) {
+		t.Errorf("stage %s should be removed after the push", stage)
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Errorf("source %s should be kept: %v", source, err)
 	}
 }
 

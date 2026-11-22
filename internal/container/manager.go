@@ -1087,10 +1087,11 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 
 	// Incus creates <dest>/<local name>, so push to the parent, e.g. /local/dir
 	// to container:/remote/ creates /remote/dir. When the target has another
-	// name, push a copy staged on the host under that name: exec (mktemp/mv
+	// name, push from a stage on the host under that name: exec (mktemp/mv
 	// in the container) would fail on a stopped container.
 	args := []string{"file", "push", "-r"}
-	if pushArchiveSupported() {
+	archive := pushArchiveSupported()
+	if archive {
 		args = append(args, "--archive")
 	}
 	target := path.Clean("/" + containerPath)
@@ -1109,7 +1110,15 @@ func (m *Manager) PushDirectory(localPath, containerPath string) error {
 		}
 		defer removeStage(stage)
 		src = filepath.Join(stage, name)
-		if err := stagePushTree(localPath, src); err != nil {
+		if archive {
+			// Every --archive client has -H, which pushes the tree a link
+			// points to under the link's name. A staged copy would be owned
+			// by a non-root coi wherever the source has another owner.
+			if err := stagePushLink(localPath, src); err != nil {
+				return fmt.Errorf("failed to stage %s for the push: %w", localPath, err)
+			}
+			args = append(args, "-H")
+		} else if err := stagePushTree(localPath, src); err != nil {
 			return fmt.Errorf("failed to stage %s for the push: %w", localPath, err)
 		}
 	}

@@ -79,6 +79,17 @@ func stagePushTree(src, dst string) error {
 	return nil
 }
 
+// stagePushLink makes dst a symlink to the real path of src, for a push with
+// -H: the client follows only a link given on the command line, so the link
+// must not point to another link.
+func stagePushLink(src, dst string) error {
+	resolved, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return err
+	}
+	return os.Symlink(resolved, dst)
+}
+
 // copyFileExact copies src to dst with src's mode (not masked by the umask),
 // modification time and, when permitted, its owner.
 func copyFileExact(src, dst string, info fs.FileInfo) error {
