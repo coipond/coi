@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -1135,15 +1136,13 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 	return nil
 }
 
+// deviceNameRe matches the device names every supported Incus version
+// accepts: at most 63 characters (6.x), starting and ending with a letter or
+// digit (7.0+), only [A-Za-z0-9._-] (7.6+).
+var deviceNameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$`)
+
 // pathToDeviceName converts a path to a valid Incus device name
 func pathToDeviceName(path string) string {
-	// Nested git and linked worktree paths come from repo-controlled names:
-	// hash them so they cannot collide with each other or exceed the device
-	// name limit.
-	if isNestedGitPath(path) || isWorktreeGitPath(path) {
-		sum := sha256.Sum256([]byte(path))
-		return protectDevicePrefix + hex.EncodeToString(sum[:])[:16]
-	}
 	// Replace path separators and dots with dashes
 	name := strings.ReplaceAll(path, "/", "-")
 	name = strings.ReplaceAll(name, ".", "")
@@ -1152,36 +1151,15 @@ func pathToDeviceName(path string) string {
 	// Prefix for clarity + so the reuse-strip path (stripSecurityDevicePrefixes)
 	// removes it.
 	name = protectDevicePrefix + name
-	// Hash device names some supported Incus version rejects: over 63
-	// characters (6.x), not starting and ending with a letter or digit (7.0+),
-	// or with a character outside [A-Za-z0-9._-] (7.6+). Valid names stay
-	// unchanged for existing containers.
-	if !isValidDeviceName(name) {
+	// Nested git and linked worktree paths come from repo-controlled names:
+	// hash them so they cannot collide with each other or exceed the device
+	// name limit. Hash names Incus rejects too; valid names stay unchanged for
+	// existing containers.
+	if isNestedGitPath(path) || isWorktreeGitPath(path) || !deviceNameRe.MatchString(name) {
 		sum := sha256.Sum256([]byte(path))
 		return protectDevicePrefix + hex.EncodeToString(sum[:])[:16]
 	}
 	return name
-}
-
-// isValidDeviceName reports whether Incus accepts name as a device name.
-func isValidDeviceName(name string) bool {
-	if name == "" || len(name) > 63 {
-		return false
-	}
-	if !isAlphanumeric(name[0]) || !isAlphanumeric(name[len(name)-1]) {
-		return false
-	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if !isAlphanumeric(c) && c != '.' && c != '_' && c != '-' {
-			return false
-		}
-	}
-	return true
-}
-
-func isAlphanumeric(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 // GetProtectedPathsForLogging returns a human-readable list of protected paths
