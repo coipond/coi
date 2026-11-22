@@ -448,6 +448,7 @@ func Cleanup(opts CleanupOptions) error {
 	return nil
 }
 
+// closeSessionLogger closes the session log, if any, and logs a close error
 func closeSessionLogger(opts CleanupOptions) {
 	if opts.SessionLogger != nil {
 		if err := opts.SessionLogger.Close(); err != nil && opts.Logger != nil {
