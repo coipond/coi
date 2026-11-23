@@ -157,10 +157,14 @@ func writeFilesystem(sb *strings.Builder, snapshot MonitorSnapshot) {
 	// Filesystem stats
 	if snapshot.Filesystem.Available {
 		sb.WriteString("FILESYSTEM\n")
-		fmt.Fprintf(sb, "  Workspace Reads:  %.2f MB (%.2f MB/sec)\n",
-			snapshot.Filesystem.TotalReadMB, snapshot.Filesystem.ReadRateMBPerSec)
+		reads := "Container I/O Reads:"
+		if snapshot.Filesystem.WorkspaceDevice != "" {
+			reads = "Workspace Reads:"
+		}
+		fmt.Fprintf(sb, "  %-20s %.2f MB (%.2f MB/sec)\n",
+			reads, snapshot.Filesystem.TotalReadMB, snapshot.Filesystem.ReadRateMBPerSec)
 		if snapshot.Filesystem.FilesAccessed > 0 {
-			fmt.Fprintf(sb, "  Files Accessed:   %d\n", snapshot.Filesystem.FilesAccessed)
+			fmt.Fprintf(sb, "  %-20s %d\n", "Files Accessed:", snapshot.Filesystem.FilesAccessed)
 		}
 	} else {
 		sb.WriteString("FILESYSTEM\n  Not available\n")
