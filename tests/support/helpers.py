@@ -2035,3 +2035,23 @@ def stale_ubuntu_cache_alias(alias, target="coi-default"):
         subprocess.run(
             ["incus", "image", "alias", "delete", alias], capture_output=True, timeout=30
         )
+
+
+# Run as the code user in a session without sudo ([security] passwordless_sudo
+# = false, the hardened profile): every sudo use and the /etc/crontab write
+# must fail and leave /etc/crontab unchanged. The output must hold every
+# NO_SUDO_PROBE_MARKERS entry.
+NO_SUDO_PROBE = """
+sudo -n true && echo SUDO_TRUE_OK || echo SUDO_TRUE_DENIED
+sudo -n sysctl -w net.ipv6.conf.all.disable_ipv6=0 && echo SYSCTL_OK || echo SYSCTL_DENIED
+sudo -n sh -c 'echo "# coi-e2e-no-sudo" >> /etc/crontab' && echo CRONTAB_SUDO_OK || echo CRONTAB_SUDO_DENIED
+{ echo '# coi-e2e-no-sudo' >> /etc/crontab; } 2>/dev/null && echo CRONTAB_OK || echo CRONTAB_DENIED
+echo "CRONTAB_LINES=$(grep -c coi-e2e-no-sudo /etc/crontab)"
+"""
+NO_SUDO_PROBE_MARKERS = (
+    "SUDO_TRUE_DENIED",
+    "SYSCTL_DENIED",
+    "CRONTAB_SUDO_DENIED",
+    "CRONTAB_DENIED",
+    "CRONTAB_LINES=0",
+)

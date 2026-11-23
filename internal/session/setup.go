@@ -51,7 +51,7 @@ type SecurityOptions struct {
 	Docker                    bool                   // [container] docker: nesting + syscall interception + low-port sysctl (precedence vs ReduceKernelSurface resolved by container.HardeningPolicy.DockerEnabled)
 	ReduceKernelSurface       bool                   // [security] reduce_kernel_surface: deny high-risk kernel-escape syscalls; wins over Docker
 	ReduceKernelSurfaceStrict bool                   // [security] reduce_kernel_surface_strict: additionally deny perf_event_open (implies ReduceKernelSurface)
-	DisableSudo               bool                   // [security] passwordless_sudo = false: no sudo for the code user this session
+	NoSudo                    bool                   // [security] passwordless_sudo = false: no sudo for the code user this session
 }
 
 // NetworkOptions groups network isolation and host<->container forwarding.
@@ -919,7 +919,7 @@ func contextInfoFor(result *SetupResult, opts SetupOptions) tool.ContextInfo {
 		ContainerName:      result.ContainerName,
 		ProfileContext:     profileContext,
 		DockerUnavailable:  dockerUnavailable(result, opts),
-		SudoUnavailable:    opts.Security.DisableSudo,
+		SudoUnavailable:    opts.Security.NoSudo,
 	}
 }
 

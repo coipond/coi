@@ -52,23 +52,6 @@ func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) 
 	return nil, nil
 }
 
-// 5.2 Apply [security] passwordless_sudo before anything runs as the code
-// user. Turning sudo off fails the session when it does not take; turning it
-// back on rides along with the context exec (a no-op unless an earlier
-// session turned it off).
-func (st *setupState) phaseSudoPolicy(_ context.Context) (Teardown, error) {
-	if st.opts.Security.DisableSudo {
-		if st.result.RunAsRoot {
-			return nil, fmt.Errorf("security.passwordless_sudo = false: the session would run as root (no %s user in the image)", container.CodeUser)
-		}
-		return nil, DisableSudo(st.result.Manager, st.opts.Logger)
-	}
-	if st.skipLaunch {
-		st.pendingGuestOps = append(st.pendingGuestOps, restoreSudoOp())
-	}
-	return nil, nil
-}
-
 // 5.1 The container now exists and is running: let the caller release the
 // launch lock (see AcquireLaunchLock).
 func (st *setupState) phaseContainerUp(_ context.Context) (Teardown, error) {
@@ -141,6 +124,23 @@ func (st *setupState) phaseRemapUID(_ context.Context) (Teardown, error) {
 		if err := remapContainerUser(st.result, st.opts); err != nil {
 			return nil, err
 		}
+	}
+	return nil, nil
+}
+
+// 6.5.1 Apply [security] passwordless_sudo before anything runs as the code
+// user. Turning sudo off fails the session when it does not take; turning it
+// back on rides along with the context exec (a no-op unless an earlier
+// session turned it off).
+func (st *setupState) phaseSudoPolicy(_ context.Context) (Teardown, error) {
+	if st.opts.Security.NoSudo {
+		if st.result.RunAsRoot {
+			return nil, fmt.Errorf("security.passwordless_sudo = false: the session would run as root (no %s user in the image)", container.CodeUser)
+		}
+		return nil, DisableSudo(st.result.Manager, st.opts.Logger)
+	}
+	if st.skipLaunch {
+		st.pendingGuestOps = append(st.pendingGuestOps, restoreSudoOp())
 	}
 	return nil, nil
 }

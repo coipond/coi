@@ -909,10 +909,10 @@ func (a *App) seedSecurityOptions() session.SecurityOptions {
 		// The strict tier is intentionally not threaded here: this seed
 		// path only drives the Docker-availability line, which depends
 		// solely on DockerEnabled() — and ReduceKernelSurface already
-		// reflects the strict tier (it implies the base flag). DisableSudo
+		// reflects the strict tier (it implies the base flag). NoSudo
 		// drives the sudo lines (and also turns Docker off).
 		Docker:              a.cfg.Container.IsDockerEnabled(),
 		ReduceKernelSurface: a.cfg.Security.IsReduceKernelSurfaceEnabled(),
-		DisableSudo:         !a.cfg.Security.IsPasswordlessSudoEnabled(),
+		NoSudo:              !a.cfg.Security.IsPasswordlessSudoEnabled(),
 	}
 }

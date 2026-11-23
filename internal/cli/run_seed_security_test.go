@@ -13,10 +13,10 @@ func TestSeedSecurityOptions_DisableSudo(t *testing.T) {
 	no := false
 	cfg := config.GetDefaultConfig()
 	cfg.Security.PasswordlessSudo = &no
-	if !(&App{cfg: cfg}).seedSecurityOptions().DisableSudo {
+	if !(&App{cfg: cfg}).seedSecurityOptions().NoSudo {
 		t.Error("passwordless_sudo = false must reach the run's context")
 	}
-	if (&App{cfg: config.GetDefaultConfig()}).seedSecurityOptions().DisableSudo {
+	if (&App{cfg: config.GetDefaultConfig()}).seedSecurityOptions().NoSudo {
 		t.Error("sudo on by default")
 	}
 }

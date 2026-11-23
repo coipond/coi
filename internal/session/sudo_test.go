@@ -14,7 +14,7 @@ import (
 func TestPhaseSudoPolicy_DisableFailsClosed(t *testing.T) {
 	r := &guestOpsRecorder{}
 	st := &setupState{
-		opts:   SetupOptions{Logger: func(string) {}, Security: SecurityOptions{DisableSudo: true}},
+		opts:   SetupOptions{Logger: func(string) {}, Security: SecurityOptions{NoSudo: true}},
 		result: &SetupResult{Manager: r},
 	}
 	if _, err := st.phaseSudoPolicy(context.Background()); err != nil {
@@ -112,7 +112,7 @@ func TestSetupPhases_SudoPolicyOrder(t *testing.T) {
 func TestPhaseSudoPolicy_RefusesRoot(t *testing.T) {
 	r := &guestOpsRecorder{}
 	st := &setupState{
-		opts:   SetupOptions{Logger: func(string) {}, Security: SecurityOptions{DisableSudo: true}},
+		opts:   SetupOptions{Logger: func(string) {}, Security: SecurityOptions{NoSudo: true}},
 		result: &SetupResult{Manager: r, RunAsRoot: true},
 	}
 	if _, err := st.phaseSudoPolicy(context.Background()); err == nil || !strings.Contains(err.Error(), "root") {
@@ -132,9 +132,9 @@ func TestDisableSudoCmd_RequiresCodeUser(t *testing.T) {
 
 // The context says there is no sudo and no Docker with sudo off.
 func TestContextInfo_SudoOff(t *testing.T) {
-	info := contextInfoFor(&SetupResult{}, SetupOptions{Security: SecurityOptions{Docker: true, DisableSudo: true}})
+	info := contextInfoFor(&SetupResult{}, SetupOptions{Security: SecurityOptions{Docker: true, NoSudo: true}})
 	if !info.SudoUnavailable {
-		t.Error("DisableSudo must reach the context")
+		t.Error("NoSudo must reach the context")
 	}
 	if !info.DockerUnavailable {
 		t.Error("no sudo must also mean no Docker")
@@ -165,12 +165,12 @@ func TestPhaseReconcileExisting_RunningDockerWithoutSudo(t *testing.T) {
 		calls++
 		return violations, nil
 	}
-	newState := func(disableSudo bool) *setupState {
+	newState := func(noSudo bool) *setupState {
 		return &setupState{
 			opts: SetupOptions{
 				ContainerName: "c1",
 				Logger:        func(string) {},
-				Security:      SecurityOptions{Docker: true, DisableSudo: disableSudo},
+				Security:      SecurityOptions{Docker: true, NoSudo: noSudo},
 			},
 			result: &SetupResult{Manager: runningFake{}, ContainerName: "c1"},
 		}
@@ -218,7 +218,7 @@ func TestPhaseReconcileExisting_StoppedContainerDockerWithoutSudo(t *testing.T) 
 		opts: SetupOptions{
 			ContainerName: "c1",
 			Logger:        func(string) {},
-			Security:      SecurityOptions{Docker: true, DisableSudo: true},
+			Security:      SecurityOptions{Docker: true, NoSudo: true},
 		},
 		result: &SetupResult{Manager: stoppedFake{}, ContainerName: "c1"},
 	}

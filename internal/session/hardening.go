@@ -13,7 +13,7 @@ func hardeningPolicyFrom(opts *SetupOptions) container.HardeningPolicy {
 		Docker:                    opts.Security.Docker,
 		ReduceKernelSurface:       opts.Security.ReduceKernelSurface,
 		ReduceKernelSurfaceStrict: opts.Security.ReduceKernelSurfaceStrict,
-		NoSudo:                    opts.Security.DisableSudo,
+		NoSudo:                    opts.Security.NoSudo,
 	}
 }
 

@@ -14,20 +14,14 @@ import subprocess
 from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
+    NO_SUDO_PROBE,
+    NO_SUDO_PROBE_MARKERS,
     calculate_container_name,
     exec_in,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
 )
-
-PROBE = """
-sudo -n true && echo SUDO_TRUE_OK || echo SUDO_TRUE_DENIED
-sudo -n sysctl -w net.ipv6.conf.all.disable_ipv6=0 && echo SYSCTL_OK || echo SYSCTL_DENIED
-sudo -n sh -c 'echo "# coi-e2e-no-sudo" >> /etc/crontab' && echo CRONTAB_SUDO_OK || echo CRONTAB_SUDO_DENIED
-{ echo '# coi-e2e-no-sudo' >> /etc/crontab; } 2>/dev/null && echo CRONTAB_OK || echo CRONTAB_DENIED
-echo "CRONTAB_LINES=$(grep -c coi-e2e-no-sudo /etc/crontab)"
-"""
 
 CONTEXT_PROBE = """
 test -f ~/SANDBOX_CONTEXT.json || exit 1
@@ -59,15 +53,9 @@ def test_hardened_shell_no_sudo(coi_binary, cleanup_containers, workspace_dir):
         wait_for_container_ready(child, timeout=90)
         wait_for_prompt(child, timeout=90)
 
-        rc, out = exec_in(coi_binary, container_name, PROBE, user=1000)
+        rc, out = exec_in(coi_binary, container_name, NO_SUDO_PROBE, user=1000)
         assert rc == 0, f"probe should run:\n{out}"
-        for want in (
-            "SUDO_TRUE_DENIED",
-            "SYSCTL_DENIED",
-            "CRONTAB_SUDO_DENIED",
-            "CRONTAB_DENIED",
-            "CRONTAB_LINES=0",
-        ):
+        for want in NO_SUDO_PROBE_MARKERS:
             assert want in out, f"Missing {want}. Output:\n{out}"
 
         rc, out = exec_in(coi_binary, container_name, CONTEXT_PROBE, user=1000)
