@@ -30,7 +30,9 @@ const runtimeHostPortsKey = "user.coi.host_ports"
 // A name entry follows the addresses the firewall installs for it: Start
 // re-reads the container's IP cache, which the allowlist refresher saves with
 // every answer it installs. Every address seen for the name stays permitted, as
-// the firewall keeps a rotated-out address for a grace period.
+// the firewall keeps a rotated-out address for a grace period. The runtime
+// entries are read from the container only when a suspicious port has no other
+// permit, at most once per runtimeHostPortsTTL.
 type ExplicitPortPermits struct {
 	containerName string
 	static        []explicitPortPermit
@@ -39,9 +41,16 @@ type ExplicitPortPermits struct {
 	mu   sync.RWMutex
 	seen map[string]bool // name + " " + address, already in live
 	live []explicitPortPermit
-	// runtime holds the `coi hosts add --ports` entries; nil until read.
-	runtime []explicitPortPermit
+
+	// runtimeMu guards the `coi hosts add --ports` entries and when they were
+	// last read (zero: never).
+	runtimeMu   sync.Mutex
+	runtime     []explicitPortPermit
+	runtimeRead time.Time
 }
+
+// runtimeHostPortsTTL is how long a read of the runtime host ports is reused.
+const runtimeHostPortsTTL = 5 * time.Second
 
 type explicitPortPermit struct {
 	dst   *net.IPNet
@@ -94,9 +103,12 @@ func NewExplicitPortPermits(containerName string, hosts []config.HostEntry, poli
 	return p
 }
 
-// Start reads the name addresses and runtime host ports now and then every
-// interval until ctx is done.
+// Start reads the name addresses now and then every interval until ctx is
+// done. Without a name entry with ports there is nothing to read.
 func (p *ExplicitPortPermits) Start(ctx context.Context, interval time.Duration) {
+	if len(p.namePorts) == 0 {
+		return
+	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -112,19 +124,24 @@ func (p *ExplicitPortPermits) Start(ctx context.Context, interval time.Duration)
 }
 
 func (p *ExplicitPortPermits) refresh() {
-	if len(p.namePorts) > 0 {
-		if domains, err := loadNameAddresses(p.containerName); err == nil {
-			p.addNameAddresses(domains)
+	if domains, err := loadNameAddresses(p.containerName); err == nil {
+		p.addNameAddresses(domains)
+	}
+}
+
+// runtimePermits reports whether a `coi hosts add --ports` entry permits
+// ip:port, reading the entries from the container when the last read is older
+// than runtimeHostPortsTTL. A failed read keeps the last good entries.
+func (p *ExplicitPortPermits) runtimePermits(ip net.IP, port int) bool {
+	p.runtimeMu.Lock()
+	defer p.runtimeMu.Unlock()
+	if time.Since(p.runtimeRead) >= runtimeHostPortsTTL {
+		p.runtimeRead = time.Now()
+		if value, err := readRuntimeHostPorts(p.containerName); err == nil {
+			p.runtime = hostEntryPermits(parseRuntimeHostPorts(value))
 		}
 	}
-	value, err := readRuntimeHostPorts(p.containerName)
-	if err != nil {
-		return // keep the last good read
-	}
-	runtime := hostEntryPermits(parseRuntimeHostPorts(value))
-	p.mu.Lock()
-	p.runtime = runtime
-	p.mu.Unlock()
+	return permitsAny(p.runtime, ip, port)
 }
 
 func (p *ExplicitPortPermits) addNameAddresses(domains map[string][]string) {
@@ -159,8 +176,9 @@ func (p *ExplicitPortPermits) Permits(proto, ipStr string, port int) bool {
 		return true
 	}
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return permitsAny(p.live, ip, port) || permitsAny(p.runtime, ip, port)
+	live := permitsAny(p.live, ip, port)
+	p.mu.RUnlock()
+	return live || p.runtimePermits(ip, port)
 }
 
 func permitsAny(entries []explicitPortPermit, ip net.IP, port int) bool {

@@ -248,6 +248,7 @@ func TestResolveDomainsToHostCIDRs_PolicyCarriesPortPermits(t *testing.T) {
 // The monitors' explicit permit check counts only port-explicit entries, not
 // a host entry without ports.
 func TestStartExplicitPortPermits(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no incus: the runtime host ports read fails
 	permits, stop := startExplicitPortPermits(t.Context(), "c", []config.HostEntry{
 		{IP: "192.168.1.50", Ports: []int{8080}},
 		{IP: "192.168.1.60"},
