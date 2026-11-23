@@ -336,6 +336,34 @@ func TestIODevice(t *testing.T) {
 	}
 }
 
+func TestIODeviceStackLimit(t *testing.T) {
+	devs := map[string]fakeBlockDev{
+		"8:0":   {},
+		"252:0": {slaves: []string{"252:1"}},
+		"252:1": {slaves: []string{"252:0"}},
+	}
+	// A stack of maxDeviceDepth+2 dm devices over 8:0, from 253:0 down.
+	for i := range maxDeviceDepth + 2 {
+		below := fmt.Sprintf("253:%d", i+1)
+		if i == maxDeviceDepth+1 {
+			below = "8:0"
+		}
+		devs[fmt.Sprintf("253:%d", i)] = fakeBlockDev{slaves: []string{below}}
+	}
+	devs["259:0"] = fakeBlockDev{}
+	fakeSysDevBlock(t, devs)
+	if got := ioDevice(unix.Mkdev(259, 0), unix.Mkdev(253, 2)); got != "259:0" {
+		t.Errorf("stack within the limit: ioDevice = %q, want 259:0", got)
+	}
+	// Fatal before the cycle, which would recurse without the limit.
+	if got := ioDevice(unix.Mkdev(259, 0), unix.Mkdev(253, 0)); got != "" {
+		t.Fatalf("stack deeper than the limit: ioDevice = %q, want whole container", got)
+	}
+	if got := ioDevice(unix.Mkdev(259, 0), unix.Mkdev(252, 0)); got != "" {
+		t.Errorf("slaves cycle: ioDevice = %q, want whole container", got)
+	}
+}
+
 func TestIODeviceLoop(t *testing.T) {
 	image := filepath.Join(t.TempDir(), "pool.img")
 	if err := os.WriteFile(image, nil, 0o644); err != nil {
