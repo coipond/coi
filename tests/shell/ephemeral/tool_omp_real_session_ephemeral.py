@@ -16,12 +16,11 @@ the launched binary.
 """
 
 import shutil
-import time
 from pathlib import Path
 
 from support.helpers import (
+    launch_recorded_tool,
     make_workspace_writable,
-    start_background_shell,
     write_trusted_coi_config,
 )
 
@@ -68,7 +67,7 @@ def test_omp_writes_session_to_workspace(coi_binary, cleanup_containers, workspa
     Flow:
     1. Fake HOME with ~/.omp/agent/models.yml naming a fake provider
     2. [tool] name = "omp", binary = the wrapper (trusted scope)
-    3. coi shell --background; wait for the wrapper's marker
+    3. coi shell --background; wait for the wrapper's marker (exit=<code>)
     4. Check omp exited 0 and a session .jsonl is in the host workspace
     """
     fake_home = tmp_path / "fake_home"
@@ -87,19 +86,16 @@ def test_omp_writes_session_to_workspace(coi_binary, cleanup_containers, workspa
     env.pop("COI_USE_DUMMY", None)
     env["HOME"] = str(fake_home)
 
-    start_background_shell(coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180)
-
-    marker = workspace / MARKER
-    deadline = time.monotonic() + 420
-    while time.monotonic() < deadline and not marker.exists():
-        time.sleep(2)
-
     log_path = workspace / LOG
+    try:
+        recorded = launch_recorded_tool(
+            coi_binary, workspace_dir, env, workspace / MARKER, marker_timeout=420
+        )
+    except AssertionError as e:
+        log = log_path.read_text() if log_path.exists() else "(no log)"
+        raise AssertionError(f"{e}\nomp log:\n{log}") from e
     log = log_path.read_text() if log_path.exists() else "(no log)"
-    assert marker.exists(), f"omp did not finish its turn. log:\n{log}"
-    assert marker.read_text().strip() == "exit=0", (
-        f"omp -p failed ({marker.read_text()}). log:\n{log}"
-    )
+    assert recorded.get("exit") == "0", f"omp -p failed ({recorded}). log:\n{log}"
 
     sessions = list((workspace / ".omp-sessions").glob("**/*.jsonl"))
     assert sessions, (
