@@ -327,7 +327,7 @@ def test_boot_service_never_gets_out_before_rules(coi_binary, workspace_dir, cle
 
     # A unit that starts early in boot and, every 0.1 s for 60 s, re-enables
     # IPv6 and tries the host and the outside host over IPv4 and IPv6, logging
-    # the time of each round. The listeners count what got in.
+    # the start time of each round. The listeners count what got in.
     probe = f"""#!/bin/bash
 end=$((SECONDS+60))
 while [ $SECONDS -lt $end ]; do
@@ -335,11 +335,11 @@ while [ $SECONDS -lt $end ]; do
     net.ipv6.conf.eth0.disable_ipv6=0 2>/dev/null
   ip -6 addr add {CTR_V6}/64 dev eth0 nodad 2>/dev/null
   ip -6 route replace default via {HOST_V6} dev eth0 2>/dev/null
+  echo "$(date +%s.%N)" >> /var/log/boot-probe.log
   for url in http://{gateway}:{port}/ http://{OUT_V4}:{OUT_PORT}/ \\
       http://[{HOST_V6}]:{v6_port}/ http://[{OUT_V6}]:{OUT_PORT}/; do
     curl -s -o /dev/null --connect-timeout 1 "$url"
   done
-  echo "$(date +%s.%N)" >> /var/log/boot-probe.log
   sleep 0.1
 done
 """
