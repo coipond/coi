@@ -50,6 +50,28 @@ func reportSudoRestore(out string, logger func(string)) {
 	}
 }
 
+// effectiveKernelSurfaceViolations is container.EffectiveKernelSurfaceViolations,
+// a seam for tests.
+var effectiveKernelSurfaceViolations = container.EffectiveKernelSurfaceViolations
+
+// refuseRunningDockerWithoutSudo fails a no-sudo session that would attach to
+// a RUNNING container still set up for Docker: its nesting cannot be changed
+// while it runs, and the docker socket (group code) gives root back.
+func refuseRunningDockerWithoutSudo(containerName string, p container.HardeningPolicy) error {
+	if !p.NoSudo {
+		return nil
+	}
+	v, err := effectiveKernelSurfaceViolations(containerName, p)
+	if err != nil {
+		return fmt.Errorf("security.passwordless_sudo = false: could not read the Docker settings of running container %s: %w", containerName, err)
+	}
+	if len(v) > 0 {
+		return fmt.Errorf("security.passwordless_sudo = false: running container %s still has Docker support (%s), and the docker socket gives root; stop it (coi shutdown %s) and launch again",
+			containerName, strings.Join(v, ", "), containerName)
+	}
+	return nil
+}
+
 // DisableSudo runs the session without sudo for the code user ([security]
 // passwordless_sudo = false). Fail closed: an error means the code user may
 // still have sudo, and the session must not start.

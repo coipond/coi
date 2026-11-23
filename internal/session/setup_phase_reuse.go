@@ -61,6 +61,11 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 							st.result.ContainerName, src, st.result.ContainerName)
 					}
 				}
+				// Also for an explicit --container: without sudo, Docker on
+				// a running container would still hand out root.
+				if err := refuseRunningDockerWithoutSudo(st.result.ContainerName, hardeningPolicyFrom(&st.opts)); err != nil {
+					return nil, err
+				}
 				st.opts.Logger("Container already running, reusing...")
 				// A RUNNING container's kernel-surface settings cannot be
 				// changed (nesting is rejected, the deny list is racy), so

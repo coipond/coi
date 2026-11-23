@@ -330,3 +330,19 @@ func TestHardeningPolicy_NoSudoDisablesDocker(t *testing.T) {
 		t.Error("Docker stays on with sudo")
 	}
 }
+
+// No reads when the policy keeps Docker: nothing can widen it.
+func TestEffectiveKernelSurfaceViolations_DockerOn(t *testing.T) {
+	v, err := EffectiveKernelSurfaceViolations("never-read", HardeningPolicy{Docker: true})
+	if err != nil || v != nil {
+		t.Errorf("got %v, %v; want no read and no violations", v, err)
+	}
+}
+
+// With NoSudo a running container's nesting counts as a violation.
+func TestKernelSurfaceViolations_NoSudo(t *testing.T) {
+	v := kernelSurfaceViolations(map[string]string{"security.nesting": "true"}, HardeningPolicy{Docker: true, NoSudo: true})
+	if len(v) != 1 || v[0] != "security.nesting=true" {
+		t.Errorf("violations = %v, want security.nesting=true", v)
+	}
+}

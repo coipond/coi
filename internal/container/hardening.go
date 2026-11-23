@@ -304,6 +304,22 @@ func kernelSurfaceViolations(expanded map[string]string, p HardeningPolicy) []st
 	return violations
 }
 
+// EffectiveKernelSurfaceViolations reads the container's EXPANDED config
+// (instance-local plus profiles) and lists the keys that widen its surface
+// beyond the policy, e.g. security.nesting=true when the policy has Docker
+// off. Unlike VerifyKernelSurfacePolicy it does not assume a profile is the
+// cause, so it fits a running container that was never reconciled.
+func EffectiveKernelSurfaceViolations(containerName string, p HardeningPolicy) ([]string, error) {
+	if p.DockerEnabled() {
+		return nil, nil
+	}
+	expanded, err := readKernelSurfaceConfig(containerName, true)
+	if err != nil {
+		return nil, err
+	}
+	return kernelSurfaceViolations(expanded, p), nil
+}
+
 // incusTruthy reports whether an Incus boolean config value is effectively
 // true, accepting the spellings Incus itself accepts (true/1/yes/on,
 // case-insensitive).

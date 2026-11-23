@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/container"
 )
 
 // passwordless_sudo = false: one root exec parks the rule, leaves the sudo
@@ -139,5 +141,58 @@ func TestContextInfo_SudoOff(t *testing.T) {
 	}
 	if contextInfoFor(&SetupResult{}, SetupOptions{Security: SecurityOptions{Docker: true}}).SudoUnavailable {
 		t.Error("sudo on by default")
+	}
+}
+
+// runningFake is a running, existing container with no devices.
+type runningFake struct {
+	container.ContainerManager
+}
+
+func (runningFake) Exists() (bool, error)          { return true, nil }
+func (runningFake) Running() (bool, error)         { return true, nil }
+func (runningFake) ListDevices() ([]string, error) { return nil, nil }
+
+// A no-sudo session refuses to attach to a running container that still has
+// Docker (nesting), also with an explicit --container; with sudo, or without
+// Docker, the attach goes ahead.
+func TestPhaseReconcileExisting_RunningDockerWithoutSudo(t *testing.T) {
+	orig := effectiveKernelSurfaceViolations
+	t.Cleanup(func() { effectiveKernelSurfaceViolations = orig })
+	var violations []string
+	calls := 0
+	effectiveKernelSurfaceViolations = func(string, container.HardeningPolicy) ([]string, error) {
+		calls++
+		return violations, nil
+	}
+	newState := func(disableSudo bool) *setupState {
+		return &setupState{
+			opts: SetupOptions{
+				ContainerName: "c1",
+				Logger:        func(string) {},
+				Security:      SecurityOptions{Docker: true, DisableSudo: disableSudo},
+			},
+			result: &SetupResult{Manager: runningFake{}, ContainerName: "c1"},
+		}
+	}
+
+	violations = []string{"security.nesting=true"}
+	_, err := newState(true).phaseReconcileExisting(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "security.nesting=true") || !strings.Contains(err.Error(), "coi shutdown c1") {
+		t.Errorf("want a refusal naming nesting and coi shutdown, got %v", err)
+	}
+
+	violations = nil
+	if _, err := newState(true).phaseReconcileExisting(context.Background()); err != nil {
+		t.Errorf("no Docker left: want the attach, got %v", err)
+	}
+
+	calls = 0
+	violations = []string{"security.nesting=true"}
+	if _, err := newState(false).phaseReconcileExisting(context.Background()); err != nil {
+		t.Errorf("sudo on: want the attach, got %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("sudo on: the config must not be read, got %d reads", calls)
 	}
 }
