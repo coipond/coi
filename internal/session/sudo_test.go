@@ -196,3 +196,49 @@ func TestPhaseReconcileExisting_RunningDockerWithoutSudo(t *testing.T) {
 		t.Errorf("sudo on: the config must not be read, got %d reads", calls)
 	}
 }
+
+// stoppedFake is a stopped, existing container.
+type stoppedFake struct {
+	container.ContainerManager
+}
+
+func (stoppedFake) Exists() (bool, error)  { return true, nil }
+func (stoppedFake) Running() (bool, error) { return false, nil }
+
+// A stopped container named with --container skips the kernel-surface
+// reconcile, so a no-sudo session refuses it while it still has Docker,
+// before starting it.
+func TestPhaseReconcileExisting_StoppedContainerDockerWithoutSudo(t *testing.T) {
+	orig := effectiveKernelSurfaceViolations
+	t.Cleanup(func() { effectiveKernelSurfaceViolations = orig })
+	effectiveKernelSurfaceViolations = func(string, container.HardeningPolicy) ([]string, error) {
+		return []string{"security.nesting=true"}, nil
+	}
+	st := &setupState{
+		opts: SetupOptions{
+			ContainerName: "c1",
+			Logger:        func(string) {},
+			Security:      SecurityOptions{Docker: true, DisableSudo: true},
+		},
+		result: &SetupResult{Manager: stoppedFake{}, ContainerName: "c1"},
+	}
+	_, err := st.phaseReconcileExisting(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "security.nesting=true") || !strings.Contains(err.Error(), "incus config unset c1") {
+		t.Errorf("want a refusal naming nesting and the unset, got %v", err)
+	}
+}
+
+// The check reads nothing with sudo on and reports a read failure.
+func TestRefuseDockerWithoutSudo(t *testing.T) {
+	orig := effectiveKernelSurfaceViolations
+	t.Cleanup(func() { effectiveKernelSurfaceViolations = orig })
+	effectiveKernelSurfaceViolations = func(string, container.HardeningPolicy) ([]string, error) {
+		return nil, errors.New("incus down")
+	}
+	if err := refuseDockerWithoutSudo("c1", container.HardeningPolicy{Docker: true}, "x"); err != nil {
+		t.Errorf("sudo on: want no read, got %v", err)
+	}
+	if err := refuseDockerWithoutSudo("c1", container.HardeningPolicy{NoSudo: true}, "x"); err == nil || !strings.Contains(err.Error(), "incus down") {
+		t.Errorf("a failed read must fail closed, got %v", err)
+	}
+}

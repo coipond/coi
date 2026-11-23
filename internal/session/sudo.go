@@ -54,20 +54,21 @@ func reportSudoRestore(out string, logger func(string)) {
 // a seam for tests.
 var effectiveKernelSurfaceViolations = container.EffectiveKernelSurfaceViolations
 
-// refuseRunningDockerWithoutSudo fails a no-sudo session that would attach to
-// a RUNNING container still set up for Docker: its nesting cannot be changed
-// while it runs, and the docker socket (group code) gives root back.
-func refuseRunningDockerWithoutSudo(containerName string, p container.HardeningPolicy) error {
+// refuseDockerWithoutSudo fails a no-sudo session that would use a container
+// coi does not reconcile (a running one, or a stopped one named with
+// --container) while it is still set up for Docker: the docker socket (group
+// code) gives root back. remedy tells the user what to do instead.
+func refuseDockerWithoutSudo(containerName string, p container.HardeningPolicy, remedy string) error {
 	if !p.NoSudo {
 		return nil
 	}
 	v, err := effectiveKernelSurfaceViolations(containerName, p)
 	if err != nil {
-		return fmt.Errorf("security.passwordless_sudo = false: could not read the Docker settings of running container %s: %w", containerName, err)
+		return fmt.Errorf("security.passwordless_sudo = false: could not read the Docker settings of container %s: %w", containerName, err)
 	}
 	if len(v) > 0 {
-		return fmt.Errorf("security.passwordless_sudo = false: running container %s still has Docker support (%s), and the docker socket gives root; stop it (coi shutdown %s) and launch again",
-			containerName, strings.Join(v, ", "), containerName)
+		return fmt.Errorf("security.passwordless_sudo = false: container %s still has Docker support (%s), and the docker socket gives root; %s",
+			containerName, strings.Join(v, ", "), remedy)
 	}
 	return nil
 }
