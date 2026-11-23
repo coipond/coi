@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // IPCache stores resolved domain IPs with timestamp
@@ -72,22 +74,23 @@ func (c *CacheManager) Load(containerName string) (*IPCache, error) {
 
 // Save writes the IP cache for a container
 func (c *CacheManager) Save(containerName string, cache *IPCache) error {
-	// Ensure cache directory exists
-	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create cache directory: %w", err)
-	}
-
-	cachePath := filepath.Join(c.cacheDir, fmt.Sprintf("%s.json", containerName))
-
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal cache: %w", err)
 	}
+	return c.writeFile(fmt.Sprintf("%s.json", containerName), data)
+}
 
-	// Temp file + rename: the refresher rewrites this while a launch of the same
-	// container may be reading it, and a plain WriteFile (truncate, then write)
-	// lets that reader see a torn file.
-	tmp, err := os.CreateTemp(c.cacheDir, ".cache-*.json.tmp")
+// writeFile writes data to name in the cache directory (mode 0644), creating
+// the directory. Temp file + rename: the refresher rewrites the IP cache while a
+// launch of the same container may be reading it, and a monitor reads the host
+// ports record while `coi hosts add` rewrites it; a plain WriteFile (truncate,
+// then write) lets that reader see a torn file.
+func (c *CacheManager) writeFile(name string, data []byte) error {
+	if err := os.MkdirAll(c.cacheDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(c.cacheDir, ".cache-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create cache temp file: %w", err)
 	}
@@ -104,10 +107,51 @@ func (c *CacheManager) Save(containerName string, cache *IPCache) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("failed to close cache file: %w", err)
 	}
-	if err := os.Rename(tmpName, cachePath); err != nil {
+	if err := os.Rename(tmpName, filepath.Join(c.cacheDir, name)); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
+	return nil
+}
 
+// hostPortsFile names a container's runtime host ports record: the
+// `coi hosts add --ports` entries, so the monitors in the session's own coi
+// process see those runtime permits. ClearRuntimeHostPorts removes it at every
+// session setup, with the firewall it describes.
+func hostPortsFile(containerName string) string {
+	return containerName + ".host-ports.json"
+}
+
+// LoadHostPorts reads a container's runtime host ports record (nil when there
+// is none).
+func (c *CacheManager) LoadHostPorts(containerName string) ([]config.HostEntry, error) {
+	data, err := os.ReadFile(filepath.Join(c.cacheDir, hostPortsFile(containerName)))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read host ports record: %w", err)
+	}
+	var entries []config.HostEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("failed to parse host ports record: %w", err)
+	}
+	return entries, nil
+}
+
+// SaveHostPorts writes a container's runtime host ports record.
+func (c *CacheManager) SaveHostPorts(containerName string, entries []config.HostEntry) error {
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return fmt.Errorf("failed to marshal host ports record: %w", err)
+	}
+	return c.writeFile(hostPortsFile(containerName), data)
+}
+
+// DeleteHostPorts removes a container's runtime host ports record.
+func (c *CacheManager) DeleteHostPorts(containerName string) error {
+	if err := os.Remove(filepath.Join(c.cacheDir, hostPortsFile(containerName))); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete host ports record: %w", err)
+	}
 	return nil
 }
 

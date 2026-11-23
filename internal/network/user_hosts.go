@@ -3,8 +3,6 @@ package network
 import (
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/coipond/coi/internal/config"
@@ -294,47 +292,18 @@ func AddUserHost(containerName string, mode config.NetworkMode, allowLocalNetwor
 // container's rules (purgeStaleRulesForIP), runtime host accepts included, and
 // open mode refuses per-host ports, so no runtime port permit survives setup.
 func ClearRuntimeHostPorts(containerName string) error {
-	if err := os.Remove(runtimeHostPortsPath(containerName)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to clear runtime host ports: %w", err)
-	}
-	return nil
+	return defaultCacheManager().DeleteHostPorts(containerName)
 }
 
-// recordRuntimeHostPorts adds entry's ports to the container's runtime host
-// ports record, for the security monitors (ExplicitPortPermits). Written to a
-// temp file and renamed, so a monitor never reads a torn record.
+// recordRuntimeHostPorts adds entry to the container's runtime host ports
+// record, for the security monitors (ExplicitPortPermits).
 func recordRuntimeHostPorts(containerName string, entry config.HostEntry) error {
-	cur, err := readRuntimeHostPorts(containerName)
-	if err != nil {
-		return fmt.Errorf("failed to read runtime host ports: %w", err)
-	}
-	value := formatRuntimeHostPorts(append(parseRuntimeHostPorts(cur), entry))
-	if err := writeFileAtomic(runtimeHostPortsPath(containerName), []byte(value)); err != nil {
-		return fmt.Errorf("failed to record runtime host ports: %w", err)
-	}
-	return nil
-}
-
-// writeFileAtomic writes data to path (mode 0600) through a temp file and a
-// rename, creating the directory.
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".host-ports-*.tmp")
+	cache := defaultCacheManager()
+	entries, err := cache.LoadHostPorts(containerName)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name()) // no-op once the rename succeeds
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return cache.SaveHostPorts(containerName, append(entries, entry))
 }
 
 // effectiveContainerMode returns the mode the container is ACTUALLY enforcing,

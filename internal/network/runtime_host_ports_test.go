@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,59 +15,64 @@ import (
 )
 
 // fakeRecordEnv gives the test its own HOME and an incus on PATH that logs its
-// calls and answers nothing. It returns containerName's runtime host ports
-// record path (its directory created) and the incus log.
-func fakeRecordEnv(t *testing.T, containerName string) (keyPath, logPath string) {
+// calls and answers nothing. It returns the incus log.
+func fakeRecordEnv(t *testing.T) (logPath string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	logPath = fakeIncus(t)
-	keyPath = runtimeHostPortsPath(containerName)
-	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return keyPath, logPath
+	return fakeIncus(t)
 }
 
-func readKey(t *testing.T, keyPath string) string {
+// readRecord renders containerName's runtime host ports record as
+// "<ip>:<ports> ..." ("" when there is none).
+func readRecord(t *testing.T, containerName string) string {
 	t.Helper()
-	b, err := os.ReadFile(keyPath)
-	if os.IsNotExist(err) {
-		return ""
-	}
+	entries, err := defaultCacheManager().LoadHostPorts(containerName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(b)
+	var out []string
+	for _, e := range entries {
+		out = append(out, fmt.Sprintf("%s:%v", e.IP, e.Ports))
+	}
+	return strings.Join(out, " ")
+}
+
+// seedRecord writes a runtime host ports record left by an earlier session.
+func seedRecord(t *testing.T, containerName string) {
+	t.Helper()
+	if err := defaultCacheManager().SaveHostPorts(containerName, []config.HostEntry{{IP: "203.0.113.10", Ports: []int{8080}}}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // A second `coi hosts add --ports` keeps the first entry's ports.
 func TestRecordRuntimeHostPorts_Merges(t *testing.T) {
 	c := "coi-rhp-merge"
-	keyPath, _ := fakeRecordEnv(t, c)
+	fakeRecordEnv(t)
 	if err := recordRuntimeHostPorts(c, config.HostEntry{IP: "192.168.1.50", Ports: []int{8080}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := recordRuntimeHostPorts(c, config.HostEntry{IP: "192.168.1.60", Ports: []int{1234, 443}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := readKey(t, keyPath), "192.168.1.50=8080 192.168.1.60=1234,443"; got != want {
-		t.Errorf("key = %q, want %q", got, want)
+	if got, want := readRecord(t, c), "192.168.1.50:[8080] 192.168.1.60:[1234 443]"; got != want {
+		t.Errorf("record = %q, want %q", got, want)
 	}
 }
 
+// Clearing removes the record, also when there is none, without an incus call.
 func TestClearRuntimeHostPorts(t *testing.T) {
-	keyPath, logPath := fakeRecordEnv(t, "coi-rhp-clear")
-	if err := ClearRuntimeHostPorts("coi-rhp-clear"); err != nil {
+	c := "coi-rhp-clear"
+	logPath := fakeRecordEnv(t)
+	if err := ClearRuntimeHostPorts(c); err != nil {
 		t.Errorf("clear without a record: %v", err)
 	}
-	if err := os.WriteFile(keyPath, []byte("203.0.113.10=8080"), 0o600); err != nil {
+	seedRecord(t, c)
+	if err := ClearRuntimeHostPorts(c); err != nil {
 		t.Fatal(err)
 	}
-	if err := ClearRuntimeHostPorts("coi-rhp-clear"); err != nil {
-		t.Fatal(err)
-	}
-	if got := readKey(t, keyPath); got != "" {
-		t.Errorf("key after clear = %q, want none", got)
+	if got := readRecord(t, c); got != "" {
+		t.Errorf("record after clear = %q, want none", got)
 	}
 	// Every session setup runs this: it must not cost an incus call.
 	if calls, _ := os.ReadFile(logPath); len(calls) != 0 {
@@ -77,15 +83,14 @@ func TestClearRuntimeHostPorts(t *testing.T) {
 // Session setup drops a record left by an earlier session, also when the
 // config has no [[network.hosts]] (the firewall it described is gone).
 func TestSetupForContainer_ClearsRuntimeHostPorts(t *testing.T) {
-	keyPath, _ := fakeRecordEnv(t, "coi-rhp-setup")
-	if err := os.WriteFile(keyPath, []byte("203.0.113.10=8080"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	c := "coi-rhp-setup"
+	fakeRecordEnv(t)
+	seedRecord(t, c)
 	useSudo := false
 	cfg := &config.NetworkConfig{Mode: config.NetworkModeOpen, UseSudo: &useSudo}
-	_ = NewManager(cfg, logger.NewDiscard()).SetupForContainer(context.Background(), "coi-rhp-setup")
-	if got := readKey(t, keyPath); got != "" {
-		t.Errorf("key after setup = %q, want none", got)
+	_ = NewManager(cfg, logger.NewDiscard()).SetupForContainer(context.Background(), c)
+	if got := readRecord(t, c); got != "" {
+		t.Errorf("record after setup = %q, want none", got)
 	}
 }
 
@@ -95,9 +100,9 @@ func TestAddUserHost_RecordsPorts(t *testing.T) {
 		t.Skip("no /sys/class/net/lo")
 	}
 	c := "coi-rhp-add"
-	keyPath, logPath := fakeRecordEnv(t, c)
+	logPath := fakeRecordEnv(t)
 	sudoDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(sudoDir, "sudo"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil { //nolint:gosec // test fake must be executable
+	if err := os.WriteFile(filepath.Join(sudoDir, "sudo"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", sudoDir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -109,20 +114,20 @@ func TestAddUserHost_RecordsPorts(t *testing.T) {
 		log, _ := os.ReadFile(logPath)
 		t.Fatalf("AddUserHost: %v\nincus calls:\n%s", err, log)
 	}
-	if got := readKey(t, keyPath); got != "192.168.1.50=8080" {
-		t.Errorf("key = %q, want 192.168.1.50=8080", got)
+	if got := readRecord(t, c); got != "192.168.1.50:[8080]" {
+		t.Errorf("record = %q, want 192.168.1.50:[8080]", got)
 	}
 
 	// Without ports there is nothing to record.
-	if err := os.Remove(keyPath); err != nil {
+	if err := ClearRuntimeHostPorts(c); err != nil {
 		t.Fatal(err)
 	}
 	entry = config.HostEntry{IP: "192.168.1.60", Hostnames: []string{"other.lan"}}
 	if err := AddUserHost(c, config.NetworkModeRestricted, false, entry, []int{443}); err != nil {
 		t.Fatal(err)
 	}
-	if got := readKey(t, keyPath); got != "" {
-		t.Errorf("key = %q, want none", got)
+	if got := readRecord(t, c); got != "" {
+		t.Errorf("record = %q, want none", got)
 	}
 }
 
@@ -133,7 +138,7 @@ func TestRuntimeHostPorts_HomeUnset(t *testing.T) {
 	fakeIncus(t)
 	c := "coi-rhp-nohome-" + strconv.Itoa(os.Getpid())
 	t.Cleanup(func() {
-		_ = os.Remove(runtimeHostPortsPath(c))
+		_ = defaultCacheManager().DeleteHostPorts(c)
 		_ = defaultCacheManager().Delete(c)
 	})
 
@@ -142,15 +147,18 @@ func TestRuntimeHostPorts_HomeUnset(t *testing.T) {
 	if err := m.SetupForContainer(context.Background(), c); err != nil {
 		t.Fatalf("setup without $HOME: %v", err)
 	}
-	if dir := filepath.Dir(runtimeHostPortsPath(c)); dir != m.cacheManager.cacheDir || !strings.HasPrefix(dir, "/tmp/") {
-		t.Errorf("record dir %q, IP cache dir %q, want one /tmp dir", dir, m.cacheManager.cacheDir)
+	if !strings.HasPrefix(m.cacheManager.cacheDir, "/tmp/") {
+		t.Errorf("IP cache dir %q, want the /tmp fallback", m.cacheManager.cacheDir)
 	}
 
 	if err := recordRuntimeHostPorts(c, config.HostEntry{IP: "192.168.1.50", Ports: []int{8080}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := readRuntimeHostPorts(c); err != nil || got != "192.168.1.50=8080" {
-		t.Errorf("record = %q, %v", got, err)
+	if got, err := m.cacheManager.LoadHostPorts(c); err != nil || len(got) != 1 {
+		t.Errorf("record in the IP cache dir = %v, %v", got, err)
+	}
+	if got, err := readRuntimeHostPorts(c); err != nil || len(got) != 1 {
+		t.Errorf("monitor's record read = %v, %v", got, err)
 	}
 	if err := ClearRuntimeHostPorts(c); err != nil {
 		t.Errorf("clear without $HOME: %v", err)

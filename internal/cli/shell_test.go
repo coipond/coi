@@ -300,11 +300,11 @@ func TestApplyNetworkIsolation_OpenClearsRuntimeHostPorts(t *testing.T) {
 	fakeIncusLog(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	record := filepath.Join(home, ".coi", "network-cache", "c.host-ports")
+	record := filepath.Join(home, ".coi", "network-cache", "c.host-ports.json")
 	if err := os.MkdirAll(filepath.Dir(record), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(record, []byte("203.0.113.10=8080"), 0o600); err != nil {
+	if err := os.WriteFile(record, []byte(`[{"IP":"203.0.113.10","Ports":[8080]}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	a := &App{cfg: &config.Config{Network: config.NetworkConfig{Mode: config.NetworkModeOpen}}}

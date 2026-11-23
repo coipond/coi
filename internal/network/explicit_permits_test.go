@@ -8,6 +8,8 @@ import (
 	"github.com/coipond/coi/internal/config"
 )
 
+// Only host entries with ports and allowed_domains entries with :ports permit,
+// each on its own ports only.
 func TestExplicitPortPermits(t *testing.T) {
 	policy, err := NewAllowPolicy([]string{
 		"203.0.113.10:8080",
@@ -27,7 +29,7 @@ func TestExplicitPortPermits(t *testing.T) {
 		{IP: "192.168.1.50", Ports: []int{8080}},
 		{IP: "192.168.1.60"},
 	}
-	stubRefreshSources(t, nil, "")
+	stubPermitSources(t, nil, nil)
 	p := NewExplicitPortPermits("c", hosts, policy, resolved)
 	for _, tc := range []struct {
 		proto string
@@ -61,7 +63,7 @@ func TestExplicitPortPermits(t *testing.T) {
 
 // Outside allowlist mode there is no policy; only host entries count.
 func TestExplicitPortPermits_NoPolicy(t *testing.T) {
-	stubRefreshSources(t, nil, "")
+	stubPermitSources(t, nil, nil)
 	p := NewExplicitPortPermits("c", []config.HostEntry{{IP: "10.0.0.5", Ports: []int{8080}}}, nil, nil)
 	if !p.Permits("tcp", "10.0.0.5", 8080) {
 		t.Error("host entry with ports should permit its port")
@@ -74,13 +76,14 @@ func TestExplicitPortPermits_NoPolicy(t *testing.T) {
 	}
 }
 
-// stubRefreshSources replaces what refresh reads for the test.
-func stubRefreshSources(t *testing.T, domains map[string][]string, runtime string) {
+// stubPermitSources replaces the name addresses (read by refresh) and the
+// runtime host ports record (read by runtimePermits) for the test.
+func stubPermitSources(t *testing.T, domains map[string][]string, runtime []config.HostEntry) {
 	t.Helper()
 	origLoad, origRead := loadNameAddresses, readRuntimeHostPorts
 	t.Cleanup(func() { loadNameAddresses, readRuntimeHostPorts = origLoad, origRead })
 	loadNameAddresses = func(string) (map[string][]string, error) { return domains, nil }
-	readRuntimeHostPorts = func(string) (string, error) { return runtime, nil }
+	readRuntimeHostPorts = func(string) ([]config.HostEntry, error) { return runtime, nil }
 }
 
 // A name permit follows the addresses the firewall installs for the name, also
@@ -91,15 +94,15 @@ func TestExplicitPortPermits_NameFollowsFirewallAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stubRefreshSources(t, nil, "")
+	stubPermitSources(t, nil, nil)
 	p := NewExplicitPortPermits("c", nil, policy, map[string][]string{"proxy.example.com": {"203.0.113.30"}})
 	if p.Permits("tcp", "203.0.113.31", 8080) {
 		t.Fatal("an address the firewall has not installed yet must not be permitted")
 	}
-	stubRefreshSources(t, map[string][]string{
+	stubPermitSources(t, map[string][]string{
 		"proxy.example.com": {"203.0.113.31"},
 		"api.example.com":   {"203.0.113.40"},
-	}, "")
+	}, nil)
 	p.refresh()
 	for _, tc := range []struct {
 		ip   string
@@ -126,9 +129,13 @@ func TestExplicitPortPermits_NameFollowsFirewallAddresses(t *testing.T) {
 // `coi hosts add --ports` permits are read from their host record when a port
 // has no other permit, at most once per runtimeHostPortsTTL.
 func TestExplicitPortPermits_RuntimeHosts(t *testing.T) {
-	stubRefreshSources(t, nil, "")
-	reads, value := 0, "10.0.0.9=8080,443 bad 10.0.0.10=x 10.0.0.11="
-	readRuntimeHostPorts = func(string) (string, error) { reads++; return value, nil }
+	stubPermitSources(t, nil, nil)
+	reads, record := 0, []config.HostEntry{
+		{IP: "10.0.0.9", Ports: []int{8080, 443}},
+		{IP: "10.0.0.10"},
+		{IP: "not-an-ip", Ports: []int{8080}},
+	}
+	readRuntimeHostPorts = func(string) ([]config.HostEntry, error) { reads++; return record, nil }
 	p := NewExplicitPortPermits("c", nil, nil, nil)
 	for _, tc := range []struct {
 		ip   string
@@ -138,8 +145,7 @@ func TestExplicitPortPermits_RuntimeHosts(t *testing.T) {
 		{"10.0.0.9", 8080, true},
 		{"10.0.0.9", 443, true},
 		{"10.0.0.9", 4444, false},
-		{"10.0.0.10", 8080, false},
-		{"10.0.0.11", 8080, false},
+		{"10.0.0.10", 8080, false}, // an entry without ports
 	} {
 		if got := p.Permits("tcp", tc.ip, tc.port); got != tc.want {
 			t.Errorf("%s:%d = %t, want %t", tc.ip, tc.port, got, tc.want)
@@ -149,13 +155,13 @@ func TestExplicitPortPermits_RuntimeHosts(t *testing.T) {
 		t.Errorf("reads within the TTL = %d, want 1", reads)
 	}
 
-	value = "10.0.0.12=8080"
+	record = []config.HostEntry{{IP: "10.0.0.12", Ports: []int{8080}}}
 	p.runtimeRead = time.Now().Add(-runtimeHostPortsTTL)
 	if !p.Permits("tcp", "10.0.0.12", 8080) || reads != 2 {
 		t.Errorf("an expired read must be renewed (reads = %d)", reads)
 	}
 
-	readRuntimeHostPorts = func(string) (string, error) { reads++; return "", errors.New("read failed") }
+	readRuntimeHostPorts = func(string) ([]config.HostEntry, error) { reads++; return nil, errors.New("read failed") }
 	p.runtimeRead = time.Now().Add(-runtimeHostPortsTTL)
 	if !p.Permits("tcp", "10.0.0.12", 8080) {
 		t.Error("a failed read must keep the last good permits")
@@ -163,12 +169,12 @@ func TestExplicitPortPermits_RuntimeHosts(t *testing.T) {
 }
 
 // Without a name entry with ports, Start reads nothing, and a port with a
-// config permit never reads the container.
+// config permit never reads the runtime host ports record.
 func TestExplicitPortPermits_NoReadsWhenNotNeeded(t *testing.T) {
-	stubRefreshSources(t, nil, "")
+	stubPermitSources(t, nil, nil)
 	loads, reads := 0, 0
 	loadNameAddresses = func(string) (map[string][]string, error) { loads++; return nil, nil }
-	readRuntimeHostPorts = func(string) (string, error) { reads++; return "", nil }
+	readRuntimeHostPorts = func(string) ([]config.HostEntry, error) { reads++; return nil, nil }
 	p := NewExplicitPortPermits("c", []config.HostEntry{{IP: "10.0.0.5", Ports: []int{8080}}}, nil, nil)
 	p.Start(t.Context(), time.Millisecond)
 	if !p.Permits("tcp", "10.0.0.5", 8080) {
@@ -176,21 +182,5 @@ func TestExplicitPortPermits_NoReadsWhenNotNeeded(t *testing.T) {
 	}
 	if loads != 0 || reads != 0 {
 		t.Errorf("loads = %d, reads = %d, want none", loads, reads)
-	}
-}
-
-func TestRuntimeHostPorts_RoundTrip(t *testing.T) {
-	entries := []config.HostEntry{
-		{IP: "10.0.0.9", Ports: []int{8080, 443}},
-		{IP: "10.0.0.10"},
-		{IP: "192.168.1.5", Ports: []int{22}},
-	}
-	value := formatRuntimeHostPorts(entries)
-	if value != "10.0.0.9=8080,443 192.168.1.5=22" {
-		t.Errorf("format = %q", value)
-	}
-	got := parseRuntimeHostPorts(value)
-	if len(got) != 2 || got[0].IP != "10.0.0.9" || len(got[0].Ports) != 2 || got[1].IP != "192.168.1.5" || got[1].Ports[0] != 22 {
-		t.Errorf("parse = %+v", got)
 	}
 }

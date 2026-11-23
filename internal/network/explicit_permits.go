@@ -2,26 +2,13 @@ package network
 
 import (
 	"context"
-	"fmt"
 	"net"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coipond/coi/internal/config"
 )
-
-// runtimeHostPortsPath is the host file that records the ports of each
-// `coi hosts add --ports` entry of a container ("<ip>=<port>,<port> ..."), so
-// the monitors in the session's own coi process see that runtime permit. It
-// sits next to the container's IP cache. ClearRuntimeHostPorts removes it at
-// every session setup, with the firewall it describes.
-func runtimeHostPortsPath(containerName string) string {
-	return filepath.Join(defaultCacheManager().cacheDir, containerName+".host-ports")
-}
 
 // ExplicitPortPermits answers "did the user name this exact port for this
 // destination?" for the monitors' suspicious-port check. Unlike EgressPermits it
@@ -55,6 +42,8 @@ type ExplicitPortPermits struct {
 // runtimeHostPortsTTL is how long a read of the runtime host ports is reused.
 const runtimeHostPortsTTL = 5 * time.Second
 
+// explicitPortPermit is one destination (address or CIDR) and its explicit
+// ports.
 type explicitPortPermit struct {
 	dst   *net.IPNet
 	ports []portRange
@@ -71,13 +60,9 @@ var loadNameAddresses = func(containerName string) (map[string][]string, error) 
 }
 
 // readRuntimeHostPorts returns the container's runtime host ports record
-// (empty when there is none).
-var readRuntimeHostPorts = func(containerName string) (string, error) {
-	data, err := os.ReadFile(runtimeHostPortsPath(containerName))
-	if os.IsNotExist(err) {
-		return "", nil
-	}
-	return string(data), err
+// (nil when there is none).
+var readRuntimeHostPorts = func(containerName string) ([]config.HostEntry, error) {
+	return defaultCacheManager().LoadHostPorts(containerName)
 }
 
 // NewExplicitPortPermits collects the explicit port permits of containerName
@@ -86,7 +71,7 @@ var readRuntimeHostPorts = func(containerName string) (string, error) {
 // addresses the monitor resolved for it at start; Start adds later ones.
 func NewExplicitPortPermits(containerName string, hosts []config.HostEntry, policy *AllowPolicy, resolved map[string][]string) *ExplicitPortPermits {
 	p := &ExplicitPortPermits{containerName: containerName, namePorts: map[string][]portRange{}, seen: map[string]bool{}}
-	p.static = hostEntryPermits(hosts)
+	p.static = explicitHostPermits(hosts)
 	if policy == nil {
 		return p
 	}
@@ -127,6 +112,7 @@ func (p *ExplicitPortPermits) Start(ctx context.Context, interval time.Duration)
 	}()
 }
 
+// refresh adds the name addresses the firewall installed since the last read.
 func (p *ExplicitPortPermits) refresh() {
 	if domains, err := loadNameAddresses(p.containerName); err == nil {
 		p.addNameAddresses(domains)
@@ -141,13 +127,15 @@ func (p *ExplicitPortPermits) runtimePermits(ip net.IP, port int) bool {
 	defer p.runtimeMu.Unlock()
 	if time.Since(p.runtimeRead) >= runtimeHostPortsTTL {
 		p.runtimeRead = time.Now()
-		if value, err := readRuntimeHostPorts(p.containerName); err == nil {
-			p.runtime = hostEntryPermits(parseRuntimeHostPorts(value))
+		if entries, err := readRuntimeHostPorts(p.containerName); err == nil {
+			p.runtime = explicitHostPermits(entries)
 		}
 	}
 	return permitsAny(p.runtime, ip, port)
 }
 
+// addNameAddresses permits each new address of a name entry on the name's
+// ports.
 func (p *ExplicitPortPermits) addNameAddresses(domains map[string][]string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -185,6 +173,7 @@ func (p *ExplicitPortPermits) Permits(proto, ipStr string, port int) bool {
 	return live || p.runtimePermits(ip, port)
 }
 
+// permitsAny reports whether one of entries permits ip:port.
 func permitsAny(entries []explicitPortPermit, ip net.IP, port int) bool {
 	for _, e := range entries {
 		if !e.dst.Contains(ip) {
@@ -199,8 +188,9 @@ func permitsAny(entries []explicitPortPermit, ip net.IP, port int) bool {
 	return false
 }
 
-// hostEntryPermits returns the permits of the host entries that carry ports.
-func hostEntryPermits(hosts []config.HostEntry) []explicitPortPermit {
+// explicitHostPermits returns the permits of the host entries that carry
+// ports.
+func explicitHostPermits(hosts []config.HostEntry) []explicitPortPermit {
 	var out []explicitPortPermit
 	for _, h := range hosts {
 		if len(h.Ports) == 0 {
@@ -208,45 +198,6 @@ func hostEntryPermits(hosts []config.HostEntry) []explicitPortPermit {
 		}
 		if dst := parseHostOrCIDR(h.IP); dst != nil {
 			out = append(out, explicitPortPermit{dst: dst, ports: intsToPortRanges(h.Ports)})
-		}
-	}
-	return out
-}
-
-// formatRuntimeHostPorts renders entries with ports as a runtime host ports
-// record.
-func formatRuntimeHostPorts(entries []config.HostEntry) string {
-	var fields []string
-	for _, e := range entries {
-		if len(e.Ports) == 0 {
-			continue
-		}
-		ports := make([]string, len(e.Ports))
-		for i, port := range e.Ports {
-			ports[i] = strconv.Itoa(port)
-		}
-		fields = append(fields, fmt.Sprintf("%s=%s", e.IP, strings.Join(ports, ",")))
-	}
-	return strings.Join(fields, " ")
-}
-
-// parseRuntimeHostPorts reads a runtime host ports record. A malformed field is
-// skipped, which can only leave a port without its permit.
-func parseRuntimeHostPorts(value string) []config.HostEntry {
-	var out []config.HostEntry
-	for _, field := range strings.Fields(value) {
-		ip, list, ok := strings.Cut(field, "=")
-		if !ok {
-			continue
-		}
-		var ports []int
-		for _, s := range strings.Split(list, ",") {
-			if port, err := strconv.Atoi(s); err == nil && port >= 1 && port <= 65535 {
-				ports = append(ports, port)
-			}
-		}
-		if len(ports) > 0 {
-			out = append(out, config.HostEntry{IP: ip, Ports: ports})
 		}
 	}
 	return out
