@@ -83,6 +83,7 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 	essentialFiles, stateFile := toolHostFiles(hostCLIConfigPath, homeDir, tcf)
 
 	// Copy essential config files from host — only those that exist on host
+	madeDirs := map[string]bool{stateDir: true}
 	for _, f := range essentialFiles {
 		if hostCLIConfigPath == "" {
 			break
@@ -91,11 +92,13 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 			logger(fmt.Sprintf("  - Refreshing %s", filepath.Base(f.ContainerPath)))
 			// A file in a subdir (goose's chatgpt_codex/tokens.json) may be new
 			// to the saved session, and PushFile does not create its parent.
-			if dir := filepath.Dir(f.ContainerPath); dir != stateDir {
+			// One mkdir per distinct dir: omp's files all share agent/.
+			if dir := filepath.Dir(f.ContainerPath); !madeDirs[dir] {
 				if err := mgr.ExecArgs([]string{"mkdir", "-p", dir}, container.ExecCommandOptions{}); err != nil {
 					logger(fmt.Sprintf("  - Warning: Failed to create %s: %v", dir, err))
 					continue
 				}
+				madeDirs[dir] = true
 			}
 			if err := mgr.PushFile(f.HostPath, f.ContainerPath); err != nil {
 				logger(fmt.Sprintf("  - Warning: Failed to copy %s: %v", filepath.Base(f.ContainerPath), err))
