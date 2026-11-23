@@ -685,7 +685,8 @@ func (a *App) registerShellAlias(absWorkspace string) error {
 // explicit --profile > alias-saved profile > the resumed session's profile >
 // [defaults] profile. The explicit and alias profiles were applied earlier and
 // set a.profile; ApplyProfile merges additively, so applying a second profile
-// on top would stack the two.
+// on top would stack the two. It also puts back the configured tool's saved
+// config dir of the resumed session when a save was interrupted mid-swap.
 func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorkspace string) (string, *session.SessionMetadata, error) {
 	resumeID, warning := pickResumeID(a.resume, a.continueSession)
 
@@ -721,6 +722,11 @@ func (a *App) resolveResumeAndProfile(cmd *cobra.Command, sessionsDir, absWorksp
 
 	var metadata *session.SessionMetadata
 	if resumeID != "" {
+		if t, err := getConfiguredTool(a.cfg); err == nil {
+			if err := session.RecoverSavedSession(sessionsDir, resumeID, t); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Could not recover saved session data: %v\n", err)
+			}
+		}
 		if m, err := session.LoadSessionMetadata(filepath.Join(sessionsDir, resumeID, "metadata.json")); err == nil {
 			metadata = m
 		}

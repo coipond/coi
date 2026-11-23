@@ -480,7 +480,10 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 	// the new one is complete: deleting the old copy up front lost the only
 	// backup whenever the pull then failed.
 	localConfigDir := filepath.Join(localSessionDir, configDirName)
-	stagingDir := localConfigDir + ".coi-new"
+	if err := finishSavedConfigSwap(localConfigDir); err != nil {
+		return fmt.Errorf("failed to recover interrupted save: %w", err)
+	}
+	stagingDir := localConfigDir + pullingSuffix
 	if err := os.RemoveAll(stagingDir); err != nil {
 		return fmt.Errorf("failed to clear staging directory: %w", err)
 	}
@@ -553,13 +556,11 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 	}
 
 	// Swap the new copy in.
-	if _, err := os.Stat(localConfigDir); err == nil {
-		logger("Removing old session data before saving new state")
-		if err := os.RemoveAll(localConfigDir); err != nil {
-			return fmt.Errorf("failed to remove old %s directory: %w", configDirName, err)
-		}
+	if err := os.Rename(stagingDir, localConfigDir+completeSuffix); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return fmt.Errorf("failed to store pulled %s directory: %w", configDirName, err)
 	}
-	if err := os.Rename(stagingDir, localConfigDir); err != nil {
+	if err := finishSavedConfigSwap(localConfigDir); err != nil {
 		return fmt.Errorf("failed to store pulled %s directory: %w", configDirName, err)
 	}
 
