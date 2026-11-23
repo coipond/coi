@@ -80,9 +80,7 @@ func TestCleanup_FailedSaveKeepsContainerWhenConfigured(t *testing.T) {
 	}
 }
 
-// The setting only applies to a failed save: a saved session's stopped
-// container is still removed.
-func TestCleanup_KeepOnFailedSaveDeletesAfterSuccessfulSave(t *testing.T) {
+func TestCleanup_KeepOnFailedSaveDeletesWithoutSaveError(t *testing.T) {
 	name := "coi-failed-save-test-2"
 	logPath := fakeLimitsIncusStatus(t, name, "", "STOPPED")
 	var logs []string

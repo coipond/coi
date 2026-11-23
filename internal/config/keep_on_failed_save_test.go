@@ -10,7 +10,7 @@ import (
 
 func TestKeepOnFailedSave_DefaultsOff(t *testing.T) {
 	cfg := GetDefaultConfig()
-	if cfg.Container.KeepsOnFailedSave() {
+	if cfg.Container.IsKeepOnFailedSaveEnabled() {
 		t.Error("keep_on_failed_save should default to off")
 	}
 }
@@ -20,7 +20,7 @@ func TestKeepOnFailedSave_ParsesFromTOML(t *testing.T) {
 	if _, err := toml.Decode("[container]\nkeep_on_failed_save = true\n", &c); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !c.Container.KeepsOnFailedSave() {
+	if !c.Container.IsKeepOnFailedSaveEnabled() {
 		t.Error("keep_on_failed_save = true not parsed")
 	}
 }
@@ -34,7 +34,7 @@ func TestKeepOnFailedSave_AppliedFromProfile(t *testing.T) {
 	if err := cfg.ApplyProfile("keep"); err != nil {
 		t.Fatalf("ApplyProfile: %v", err)
 	}
-	if !cfg.Container.KeepsOnFailedSave() {
+	if !cfg.Container.IsKeepOnFailedSaveEnabled() {
 		t.Error("profile keep_on_failed_save not applied")
 	}
 }
@@ -49,7 +49,7 @@ func TestKeepOnFailedSave_ProfileFalseOverridesGlobalTrue(t *testing.T) {
 	if err := cfg.ApplyProfile("nokeep"); err != nil {
 		t.Fatalf("ApplyProfile: %v", err)
 	}
-	if cfg.Container.KeepsOnFailedSave() {
+	if cfg.Container.IsKeepOnFailedSaveEnabled() {
 		t.Error("profile keep_on_failed_save = false must override a global true")
 	}
 }

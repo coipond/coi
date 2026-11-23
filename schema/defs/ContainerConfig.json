@@ -50,7 +50,7 @@
     },
     "keep_on_failed_save": {
       "type": "boolean",
-      "description": "Keep a stopped non-persistent container when saving its session data fails (e.g. disk full) instead of deleting it, so 'coi shell --resume' can save it later. Default: false"
+      "description": "Keep a stopped non-persistent container when saving its session data fails (e.g. disk full) instead of deleting it, so 'coi shell --resume=<session id>' (the id coi prints) can save it later. Default: false."
     }
   }
 }
