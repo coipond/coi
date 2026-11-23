@@ -42,7 +42,7 @@ func TestCollector_KeepPermittedFlows(t *testing.T) {
 	poll := func(c *Collector, allowed []string, conns ...Connection) NetworkStats {
 		stats := NetworkStats{Connections: conns}
 		for i := range stats.Connections {
-			if reason := checkSuspicious(stats.Connections[i], config.NetworkModeAllowlist, allowed, nil, nil); reason != "" {
+			if reason := checkSuspicious(stats.Connections[i], config.NetworkModeAllowlist, allowed, nil, nil, nil); reason != "" {
 				stats.Connections[i].Suspicious = true
 				stats.Connections[i].SuspectReason = reason
 				stats.SuspiciousCount++
@@ -101,7 +101,7 @@ func TestCollector_KeepPermittedFlows(t *testing.T) {
 // checkWith runs checkSuspicious with what c passes to CollectNetworkStats.
 func checkWith(c *Collector, remote, proto string) string {
 	conn := Connection{Protocol: proto, LocalAddr: "10.47.0.5:41000", RemoteAddr: remote, State: "ESTABLISHED"}
-	return checkSuspicious(conn, c.networkMode, c.currentAllowedCIDRs(), c.permitted, c.gateway)
+	return checkSuspicious(conn, c.networkMode, c.currentAllowedCIDRs(), c.permitted, c.portPermitted, c.gateway)
 }
 
 // A collector told no mode (`coi monitor`) has no gateway or permit check, so

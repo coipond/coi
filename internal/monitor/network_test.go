@@ -158,7 +158,7 @@ func TestCheckSuspicious_SuspiciousPort(t *testing.T) {
 		RemoteAddr: "8.8.8.8:4444",
 		State:      "ESTABLISHED",
 	}
-	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil)
+	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil, nil)
 	if reason == "" {
 		t.Error("expected port 4444 to be flagged as suspicious, got empty reason")
 	}
@@ -171,7 +171,7 @@ func TestCheckSuspicious_MetadataEndpoint(t *testing.T) {
 		RemoteAddr: "169.254.169.254:80",
 		State:      "ESTABLISHED",
 	}
-	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil)
+	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil, nil)
 	if reason != "Cloud metadata endpoint access" {
 		t.Errorf("want 'Cloud metadata endpoint access' got %q", reason)
 	}
@@ -184,7 +184,7 @@ func TestCheckSuspicious_LISTEN_NotFlagged(t *testing.T) {
 		RemoteAddr: "0.0.0.0:0",
 		State:      "LISTEN",
 	}
-	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil)
+	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil, nil)
 	if reason != "" {
 		t.Errorf("LISTEN state should not be flagged, got %q", reason)
 	}
@@ -194,7 +194,7 @@ func TestCheckSuspicious_LISTEN_NotFlagged(t *testing.T) {
 func TestCheckSuspicious_Loopback_NotFlagged(t *testing.T) {
 	for _, remote := range []string{"127.0.0.1:8080", "127.0.0.53:53", "::1:53", "0.0.0.0:80", ":::0", "::ffff:127.0.0.1:53", "127.0.0.2:8080", "127.0.1.1:5432"} {
 		conn := Connection{Protocol: "udp", LocalAddr: "127.0.0.1:39386", RemoteAddr: remote, State: "ESTABLISHED"}
-		if reason := checkSuspicious(conn, config.NetworkModeAllowlist, []string{"1.1.1.1/32"}, nil, nil); reason != "" {
+		if reason := checkSuspicious(conn, config.NetworkModeAllowlist, []string{"1.1.1.1/32"}, nil, nil, nil); reason != "" {
 			t.Errorf("%s should not be flagged, got %q", remote, reason)
 		}
 	}
@@ -208,17 +208,17 @@ func TestCheckSuspicious_RFC1918_RestrictedMode(t *testing.T) {
 		State:      "ESTABLISHED",
 	}
 	// Restricted mode has no allowlist.
-	reason := checkSuspicious(conn, config.NetworkModeRestricted, nil, nil, nil)
+	reason := checkSuspicious(conn, config.NetworkModeRestricted, nil, nil, nil, nil)
 	if !strings.Contains(reason, "Private address") {
 		t.Errorf("RFC1918 address should be flagged in restricted mode, got %q", reason)
 	}
 
 	conn.RemoteAddr = "100.101.1.2:22" // RFC 6598 shared address space (Tailscale)
-	if reason := checkSuspicious(conn, config.NetworkModeRestricted, nil, nil, nil); !strings.Contains(reason, "Private address") {
+	if reason := checkSuspicious(conn, config.NetworkModeRestricted, nil, nil, nil, nil); !strings.Contains(reason, "Private address") {
 		t.Errorf("100.64.0.0/10 address should be flagged in restricted mode, got %q", reason)
 	}
 	conn.RemoteAddr = "100.128.0.1:22"
-	if reason := checkSuspicious(conn, config.NetworkModeRestricted, nil, nil, nil); strings.Contains(reason, "Private address") {
+	if reason := checkSuspicious(conn, config.NetworkModeRestricted, nil, nil, nil, nil); strings.Contains(reason, "Private address") {
 		t.Errorf("100.128.0.1 is public, got %q", reason)
 	}
 }
@@ -238,7 +238,7 @@ func TestCheckSuspicious_RFC1918_ByMode(t *testing.T) {
 		{config.NetworkModeAllowlist, []string{"140.82.112.3/32"}, permitted, false},
 		{config.NetworkModeOpen, nil, nil, false},
 	} {
-		reason := checkSuspicious(conn, tc.mode, tc.allowed, tc.permitted, nil)
+		reason := checkSuspicious(conn, tc.mode, tc.allowed, tc.permitted, nil, nil)
 		if flagged := strings.Contains(reason, "Private address"); flagged != tc.flagged {
 			t.Errorf("mode %q permitted=%t: got %q, want flagged=%t", tc.mode, tc.permitted != nil, reason, tc.flagged)
 		}
@@ -253,7 +253,7 @@ func TestCheckSuspicious_FirewallPermittedDestination(t *testing.T) {
 	allowed := []string{"140.82.112.3/32"}
 	permitted := func(_, ip string, port int) bool { return ip == "10.50.0.100" && (port == 443 || port == 4444) }
 	check := func(remote string) string {
-		return checkSuspicious(Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: remote, State: "ESTABLISHED"}, config.NetworkModeAllowlist, allowed, permitted, nil)
+		return checkSuspicious(Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: remote, State: "ESTABLISHED"}, config.NetworkModeAllowlist, allowed, permitted, nil, nil)
 	}
 	if reason := check("10.50.0.100:443"); reason != "" {
 		t.Errorf("permitted LAN service should not be flagged, got %q", reason)
@@ -269,6 +269,33 @@ func TestCheckSuspicious_FirewallPermittedDestination(t *testing.T) {
 	}
 }
 
+// An explicit permit for host:port skips the suspicious-port check for that
+// exact host:port only, in every mode.
+func TestCheckSuspicious_ExplicitPortPermit(t *testing.T) {
+	portPermitted := func(_, ip string, port int) bool {
+		return (ip == "203.0.113.10" || ip == "192.168.1.50") && port == 8080
+	}
+	firewall := func(_, ip string, _ int) bool { return ip == "192.168.1.50" }
+	for _, tc := range []struct {
+		mode    config.NetworkMode
+		remote  string
+		flagged bool
+	}{
+		{config.NetworkModeRestricted, "203.0.113.10:8080", false},
+		{config.NetworkModeOpen, "203.0.113.10:8080", false},
+		{config.NetworkModeRestricted, "192.168.1.50:8080", false},
+		{config.NetworkModeRestricted, "203.0.113.10:4444", true},
+		{config.NetworkModeRestricted, "203.0.113.11:8080", true},
+		{config.NetworkModeOpen, "203.0.113.11:8080", true},
+	} {
+		conn := Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: tc.remote, State: "ESTABLISHED"}
+		reason := checkSuspicious(conn, tc.mode, nil, firewall, portPermitted, nil)
+		if tc.flagged != strings.Contains(reason, "Suspicious port") || (!tc.flagged && reason != "") {
+			t.Errorf("mode %q %s: got %q, want flagged=%t", tc.mode, tc.remote, reason, tc.flagged)
+		}
+	}
+}
+
 func TestCheckSuspicious_RFC1918_OpenMode(t *testing.T) {
 	conn := Connection{
 		Protocol:   "tcp",
@@ -276,7 +303,7 @@ func TestCheckSuspicious_RFC1918_OpenMode(t *testing.T) {
 		RemoteAddr: "192.168.1.1:80",
 		State:      "ESTABLISHED",
 	}
-	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil)
+	reason := checkSuspicious(conn, config.NetworkModeOpen, nil, nil, nil, nil)
 	if reason != "" {
 		t.Errorf("RFC1918 should not be flagged in open mode, got %q", reason)
 	}
@@ -290,12 +317,12 @@ func TestCheckSuspicious_UnconnectedUDP(t *testing.T) {
 		{Protocol: "udp6", LocalAddr: ":::5353", RemoteAddr: ":::0", State: "CLOSE"},
 		{Protocol: "udp", LocalAddr: "10.0.0.2:68", RemoteAddr: "0.0.0.0:0", State: "CLOSE"},
 	} {
-		if reason := checkSuspicious(conn, config.NetworkModeAllowlist, allowed, nil, nil); reason != "" {
+		if reason := checkSuspicious(conn, config.NetworkModeAllowlist, allowed, nil, nil, nil); reason != "" {
 			t.Errorf("%s %s should not be flagged, got %q", conn.Protocol, conn.RemoteAddr, reason)
 		}
 	}
 	conn := Connection{Protocol: "udp", LocalAddr: "10.0.0.2:41000", RemoteAddr: "10.0.0.5:53", State: "ESTABLISHED"}
-	if reason := checkSuspicious(conn, config.NetworkModeAllowlist, allowed, nil, nil); !strings.Contains(reason, "Private address") {
+	if reason := checkSuspicious(conn, config.NetworkModeAllowlist, allowed, nil, nil, nil); !strings.Contains(reason, "Private address") {
 		t.Errorf("a connected UDP socket to a private host must still be flagged, got %q", reason)
 	}
 }
@@ -307,7 +334,7 @@ func TestCheckSuspicious_GatewayDNSAndDHCP(t *testing.T) {
 	asked := 0
 	gateway := func() string { asked++; return "10.250.0.1" }
 	check := func(proto, remote string) string {
-		return checkSuspicious(Connection{Protocol: proto, LocalAddr: "10.250.0.5:41000", RemoteAddr: remote, State: "ESTABLISHED"}, config.NetworkModeAllowlist, allowed, nil, gateway)
+		return checkSuspicious(Connection{Protocol: proto, LocalAddr: "10.250.0.5:41000", RemoteAddr: remote, State: "ESTABLISHED"}, config.NetworkModeAllowlist, allowed, nil, nil, gateway)
 	}
 	for _, tc := range []struct{ proto, remote string }{
 		{"udp", "10.250.0.1:53"},
@@ -332,15 +359,15 @@ func TestCheckSuspicious_GatewayDNSAndDHCP(t *testing.T) {
 	if asked != 2 {
 		t.Errorf("gateway asked %d times, want 2 (port 53 only)", asked)
 	}
-	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, config.NetworkModeAllowlist, allowed, nil, nil); !strings.Contains(reason, "Private address") {
+	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, config.NetworkModeAllowlist, allowed, nil, nil, nil); !strings.Contains(reason, "Private address") {
 		t.Errorf("without a known gateway, gateway:53 must still be flagged, got %q", reason)
 	}
 	asked = 0
-	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, config.NetworkModeRestricted, nil, nil, gateway); reason != "" || asked != 1 {
+	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, config.NetworkModeRestricted, nil, nil, nil, gateway); reason != "" || asked != 1 {
 		t.Errorf("in restricted mode, gateway:53 got %q and asked the gateway %d times, want none and 1", reason, asked)
 	}
 	asked = 0
-	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, config.NetworkModeOpen, nil, nil, gateway); reason != "" || asked != 0 {
+	if reason := checkSuspicious(Connection{Protocol: "udp", LocalAddr: "10.250.0.5:41000", RemoteAddr: "10.250.0.1:53", State: "ESTABLISHED"}, config.NetworkModeOpen, nil, nil, nil, gateway); reason != "" || asked != 0 {
 		t.Errorf("in open mode, gateway:53 got %q and asked the gateway %d times, want neither", reason, asked)
 	}
 }

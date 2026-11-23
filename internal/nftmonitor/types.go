@@ -44,6 +44,11 @@ type Config struct {
 	OnThreat             func(ThreatEvent)
 	OnAction             func(action, message string) // Called when container is paused/killed
 	OnError              func(error)                  // Called on non-fatal errors (avoids stdout corruption)
+
+	// ExplicitPortPermit, when set, reports whether the user permitted proto
+	// traffic to that exact ip:port ([[network.hosts]] ports, an allowed_domains
+	// :ports entry). Only such a connection skips the suspicious-port check.
+	ExplicitPortPermit func(proto, ip string, port int) bool
 }
 
 // ThreatEvent represents a detected network threat

@@ -9,17 +9,17 @@ import (
 )
 
 func TestResolveDomainsToHostCIDRs_EmptyInput(t *testing.T) {
-	if got := resolveDomainsToHostCIDRs(nil); got != nil {
+	if got, _, _ := resolveDomainsToHostCIDRs(nil); got != nil {
 		t.Errorf("expected nil for nil input, got %v", got)
 	}
-	if got := resolveDomainsToHostCIDRs([]string{}); got != nil {
+	if got, _, _ := resolveDomainsToHostCIDRs([]string{}); got != nil {
 		t.Errorf("expected nil for empty slice, got %v", got)
 	}
 }
 
 func TestResolveDomainsToHostCIDRs_IPv4Input(t *testing.T) {
 	// Raw IPv4 addresses resolve immediately without DNS and return /32 CIDRs.
-	got := resolveDomainsToHostCIDRs([]string{"1.2.3.4", "5.6.7.8"})
+	got, _, _ := resolveDomainsToHostCIDRs([]string{"1.2.3.4", "5.6.7.8"})
 	if len(got) == 0 {
 		t.Fatal("expected non-empty CIDRs for IPv4 inputs")
 	}
@@ -32,7 +32,7 @@ func TestResolveDomainsToHostCIDRs_IPv4Input(t *testing.T) {
 
 func TestResolveDomainsToHostCIDRs_CIDRPassthrough(t *testing.T) {
 	// CIDRs must come back unchanged — no /32 appended.
-	got := resolveDomainsToHostCIDRs([]string{"54.231.0.0/17", "10.0.0.0/8"})
+	got, _, _ := resolveDomainsToHostCIDRs([]string{"54.231.0.0/17", "10.0.0.0/8"})
 	if len(got) == 0 {
 		t.Fatal("expected non-empty result for CIDR inputs")
 	}
@@ -60,7 +60,7 @@ func TestResolveDomainsToHostCIDRs_CIDRPassthrough(t *testing.T) {
 
 func TestResolveDomainsToHostCIDRs_MixedInputs(t *testing.T) {
 	// Raw IPs get /32; CIDRs stay as-is.
-	got := resolveDomainsToHostCIDRs([]string{"1.2.3.4", "10.0.0.0/8"})
+	got, _, _ := resolveDomainsToHostCIDRs([]string{"1.2.3.4", "10.0.0.0/8"})
 	if len(got) == 0 {
 		t.Fatal("expected non-empty result")
 	}

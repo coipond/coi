@@ -465,6 +465,38 @@ func TestNetworkDetector_FirewallPermittedDestination(t *testing.T) {
 	}
 }
 
+// An explicit permit for host:port skips the suspicious-port check for that
+// exact host:port only. A firewall permit without it does not.
+func TestNetworkDetector_ExplicitPortPermit(t *testing.T) {
+	nd := NewNetworkDetector(&Config{
+		ContainerIP:          "10.47.62.50",
+		GatewayIP:            "10.47.62.1",
+		PermittedDestination: func(_, ip string, _ int) bool { return ip == "203.0.113.10" },
+		ExplicitPortPermit:   func(_, ip string, port int) bool { return ip == "203.0.113.10" && port == 8080 },
+	})
+	event := func(dst string, port int) *NetworkEvent {
+		return &NetworkEvent{
+			Timestamp: time.Now(), ContainerIP: "10.47.62.50", SrcIP: "10.47.62.50",
+			DstIP: dst, DstPort: port, Protocol: "TCP",
+		}
+	}
+	if threat := nd.Analyze(event("203.0.113.10", 8080)); threat != nil {
+		t.Errorf("explicitly permitted host:8080 should not alert, got %q", threat.Title)
+	}
+	for _, tc := range []struct {
+		dst  string
+		port int
+	}{
+		{"203.0.113.10", 4444}, // same host, a suspicious port it has no permit for
+		{"203.0.113.11", 8080}, // unlisted host
+	} {
+		threat := nd.Analyze(event(tc.dst, tc.port))
+		if threat == nil || threat.Level != ThreatLevelCritical || threat.Title != "Connection to suspicious port" {
+			t.Errorf("%s:%d: want a critical suspicious-port alert, got %v", tc.dst, tc.port, threat)
+		}
+	}
+}
+
 // Helper function tests
 func TestIsSuspiciousPort(t *testing.T) {
 	suspiciousPorts := []int{4444, 5555, 1234, 31337, 12345, 6666, 6667, 6697, 8080}
