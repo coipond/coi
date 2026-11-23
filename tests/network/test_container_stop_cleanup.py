@@ -13,11 +13,11 @@ IP the container gets then: through `coi shell` and, since the same fix, through
 a bare `coi container start` too, which used to bring the container back with no
 firewall at all.
 
-The IPv6 block matches the container's veth by name, and every start gets a new
-veth. A stop that skips cleanup (`incus stop`, a poweroff inside the container)
-leaves a coi6-<name> rule naming a dead veth; setup used to see that comment,
-skip, and leave the new veth with no IPv6 block. The tests below check the rule
-names the container's current veth, not just that the comment exists.
+The IPv6 block is a chain hooked on the container's veth, and every start gets
+a new veth. A stop that skips cleanup (`incus stop`, a poweroff inside the
+container) can leave the coi6-<name> chain on a dead veth; setup must not take
+it as installed and leave the new veth with no IPv6 block. The tests below check
+the chain hooks the container's current veth, not just that it exists.
 """
 
 import json
@@ -83,7 +83,7 @@ def _count_rules_for_ip(ip):
 
 def _ip6_chain():
     r = subprocess.run(
-        ["sudo", "-n", "nft", "list", "chain", "ip6", "coi", "forward"],
+        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
         capture_output=True,
         text=True,
         timeout=10,
@@ -92,14 +92,12 @@ def _ip6_chain():
 
 
 def _ip6_block_veths(name):
-    """The veths named by the container's coi6-<name> rules, one per rule."""
-    comment = f'comment "coi6-{name}"'
-    veths = []
-    for line in _ip6_chain().splitlines():
-        if comment in line:
-            m = re.search(r'iifname "([^"]+)"', line)
-            veths.append(m.group(1) if m else line.strip())
-    return veths
+    """The veths the container's coi6-<name> chains hook, one per chain."""
+    m = re.search(
+        rf"chain coi6-{re.escape(name)} {{\n\s*type filter hook ingress device \"([^\"]+)\"",
+        _ip6_chain(),
+    )
+    return [m.group(1)] if m else []
 
 
 def _current_veth(name):
@@ -107,7 +105,7 @@ def _current_veth(name):
 
 
 def _assert_ip6_block_on_current_veth(name, timeout=20):
-    """Exactly one coi6-<name> rule, and it drops the veth the container has now."""
+    """Exactly one coi6-<name> chain, and it hooks the veth the container has now."""
     deadline = time.time() + timeout
     veth, rules = "", []
     while time.time() < deadline:
@@ -238,18 +236,10 @@ def test_container_start_after_stop_reapplies_firewall(
             f"coi container start should re-apply the coi-<ip> rules (ip={new_ip!r})"
         )
         _assert_ip6_block_on_current_veth(name)
-        boot_block = f'comment "coi-boot-{name}"'
-        assert _poll_until(
-            lambda: (
-                boot_block
-                not in subprocess.run(
-                    ["sudo", "-n", "nft", "list", "chain", "ip", "coi", "forward"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                ).stdout
-            )
-        ), "the boot block should be lifted once the rules are in place"
+        boot_block = f"chain coi-boot-{name} {{"
+        assert _poll_until(lambda: boot_block not in _ip6_chain()), (
+            "the boot block should be lifted once the rules are in place"
+        )
     finally:
         os.unlink(config_file)
 
@@ -257,7 +247,7 @@ def test_container_start_after_stop_reapplies_firewall(
 def test_ip6_block_follows_new_veth_after_unclean_stop(
     coi_binary, workspace_dir, cleanup_containers
 ):
-    """A coi6 rule left on a dead veth must be replaced, not taken as already installed."""
+    """A coi6 chain left on a dead veth must be replaced, not taken as already installed."""
     reason = _skip_unless_ready()
     if reason:
         pytest.skip(reason)
@@ -271,13 +261,14 @@ def test_ip6_block_follows_new_veth_after_unclean_stop(
         old_veth = _current_veth(name)
 
         # Stop behind coi's back, as `incus stop` or a poweroff inside the
-        # container does: no coi code runs, so the coi6 rule stays on the old veth.
+        # container does: no coi code runs, so the coi6 chain stays on the old veth
+        # (kernels before name-based netdev hooks delete it with the veth).
         r = subprocess.run(
             ["incus", "stop", name, "--force"], capture_output=True, text=True, timeout=60
         )
         assert r.returncode == 0, f"incus stop failed: {r.stderr}"
-        assert _ip6_block_veths(name) == [old_veth], (
-            "precondition: the coi6 rule should be left behind on the old veth"
+        assert _ip6_block_veths(name) in ([old_veth], []), (
+            "precondition: the coi6 chain should be left on the old veth or gone"
         )
 
         again, _ = start_background_shell(coi_binary, workspace_dir, env, debug=False)
@@ -315,18 +306,10 @@ def test_container_launch_applies_firewall(coi_binary, workspace_dir, cleanup_co
         ip, count = _wait_for_rules_for_ip(coi_binary, name)
         assert ip and count > 0, f"coi container launch should apply the coi-<ip> rules (ip={ip!r})"
         _assert_ip6_block_on_current_veth(name)
-        boot_block = f'comment "coi-boot-{name}"'
-        assert _poll_until(
-            lambda: (
-                boot_block
-                not in subprocess.run(
-                    ["sudo", "-n", "nft", "list", "chain", "ip", "coi", "forward"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                ).stdout
-            )
-        ), "the boot block should be lifted once the rules are in place"
+        boot_block = f"chain coi-boot-{name} {{"
+        assert _poll_until(lambda: boot_block not in _ip6_chain()), (
+            "the boot block should be lifted once the rules are in place"
+        )
     finally:
         os.unlink(config_file)
 

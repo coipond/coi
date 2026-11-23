@@ -38,7 +38,7 @@ def _skip_unless_ready():
 
 def _ip6_chain():
     r = subprocess.run(
-        ["sudo", "-n", "nft", "list", "chain", "ip6", "coi", "forward"],
+        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
         capture_output=True,
         text=True,
         timeout=10,
@@ -99,9 +99,10 @@ def test_default_clean_reclaims_stopped_container_ipv6_block(
             pytest.skip(
                 f"container not in STOPPED state after stop (got {status!r}); cannot exercise reap path"
             )
-        assert comment in _ip6_chain(), (
-            f"precondition: {comment} should still be present (orphaned) after stop"
-        )
+        if comment not in _ip6_chain():
+            # Kernels before name-based netdev hooks delete the chain with its
+            # device: nothing is left to reap.
+            pytest.skip("kernel removed the netdev chain with the veth")
 
         # Default reap path (NOT --orphans) must now clean the block.
         clean = subprocess.run(

@@ -165,10 +165,10 @@ def test_ipv6_not_disabled_in_open_mode(coi_binary, workspace_dir, cleanup_conta
         os.unlink(config_file)
 
 
-def _nft_ip6_coi_forward():
-    """Return the host-side ``ip6 coi forward`` chain text (empty if absent)."""
+def _nft_netdev_coi():
+    """Return the host-side ``netdev coi`` table text (empty if absent)."""
     result = subprocess.run(
-        ["sudo", "-n", "nft", "-a", "list", "chain", "ip6", "coi", "forward"],
+        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
         capture_output=True,
         text=True,
         timeout=10,
@@ -178,11 +178,11 @@ def _nft_ip6_coi_forward():
 
 
 def _wait_for_ip6_drop(container_name, timeout=20):
-    """Poll until the per-container host-side IPv6 drop rule appears."""
-    comment = f"coi6-{container_name}"
+    """Poll until the per-container host-side IPv6 drop chain appears."""
+    chain = f"chain coi6-{container_name} {{"
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if comment in _nft_ip6_coi_forward():
+        if chain in _nft_netdev_coi():
             return True
         time.sleep(0.5)
     return False
@@ -193,20 +193,20 @@ def test_ipv6_host_drop_present_in_restricted_mode(coi_binary, workspace_dir, cl
     RESTRICTED mode must install a HOST-SIDE IPv6 drop rule.
 
     The in-container disable_ipv6 sysctl is reversible by in-container root, so
-    the enforced boundary is a drop rule in the host's ``ip6 coi forward`` chain
-    keyed on the container's veth — which the container cannot touch.
+    the enforced boundary is a drop chain in the host's ``netdev coi`` table
+    hooked on the ingress of the container's veth — which the container cannot touch.
     """
     container_name, config_file = _start_background_container(
         coi_binary, workspace_dir, "restricted"
     )
     try:
         assert _wait_for_ip6_drop(container_name), (
-            f"host-side IPv6 drop (coi6-{container_name}) not found in ip6 coi forward "
-            f"chain:\n{_nft_ip6_coi_forward()}"
+            f"host-side IPv6 drop (coi6-{container_name}) not found in netdev coi "
+            f"table:\n{_nft_netdev_coi()}"
         )
-        chain = _nft_ip6_coi_forward()
-        assert "drop" in chain, f"expected a drop action in ip6 coi forward:\n{chain}"
-        assert "iifname" in chain, f"expected an iifname match in ip6 coi forward:\n{chain}"
+        table = _nft_netdev_coi()
+        assert "meta protocol ip6" in table, f"expected an IPv6 drop in netdev coi:\n{table}"
+        assert "hook ingress device" in table, f"expected an ingress hook in netdev coi:\n{table}"
     finally:
         os.unlink(config_file)
 
@@ -222,7 +222,7 @@ def test_ipv6_host_drop_present_in_allowlist_mode(coi_binary, workspace_dir, cle
     try:
         assert _wait_for_ip6_drop(container_name), (
             f"host-side IPv6 drop (coi6-{container_name}) not found in allowlist mode:\n"
-            f"{_nft_ip6_coi_forward()}"
+            f"{_nft_netdev_coi()}"
         )
     finally:
         os.unlink(config_file)
@@ -238,7 +238,7 @@ def test_ipv6_host_drop_absent_in_open_mode(coi_binary, workspace_dir, cleanup_c
         # Open-mode setup completes before `coi shell --background` returns; give a
         # brief margin, then confirm no per-container IPv6 drop was installed.
         time.sleep(3)
-        assert f"coi6-{container_name}" not in _nft_ip6_coi_forward(), (
+        assert f"coi6-{container_name}" not in _nft_netdev_coi(), (
             "open mode should not install a host-side IPv6 drop rule"
         )
     finally:

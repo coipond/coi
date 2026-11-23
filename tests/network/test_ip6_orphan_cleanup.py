@@ -1,9 +1,10 @@
 """
-`coi clean --orphans` must remove orphaned ip6 coi drop rules.
+`coi clean --orphans` must remove orphaned IPv6 drop chains.
 
-Restricted/allowlist mode installs a host-side `ip6 coi forward` drop rule keyed
-`coi6-<container>`. It is removed on normal teardown, but a container that is
-force-deleted (no coi teardown) leaves the rule behind. Orphan cleanup, which
+Restricted/allowlist mode installs a host-side IPv6 drop chain `coi6-<container>`
+in the `netdev coi` table, hooked on the container's veth. It is removed on normal
+teardown, but a container that is force-deleted (no coi teardown) can leave the
+chain behind. Orphan cleanup, which
 already sweeps stale IPv4 `ip coi` rules, must also remove these.
 """
 
@@ -26,7 +27,7 @@ def _skip_unless_ready():
 
 def _ip6_chain():
     r = subprocess.run(
-        ["sudo", "-n", "nft", "list", "chain", "ip6", "coi", "forward"],
+        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
         capture_output=True,
         text=True,
         timeout=10,
@@ -65,7 +66,7 @@ def test_clean_orphans_removes_stale_ip6_rule(coi_binary, workspace_dir, cleanup
         # In restricted mode the host-side ip6 drop is fatal-on-failure, so a
         # started container guarantees the rule exists.
         assert comment in _ip6_chain(), (
-            f"expected {comment} in ip6 coi forward after start:\n{_ip6_chain()}"
+            f"expected {comment} in netdev coi after start:\n{_ip6_chain()}"
         )
 
         # Force-delete the container WITHOUT coi teardown — this orphans the rule.
@@ -75,9 +76,10 @@ def test_clean_orphans_removes_stale_ip6_rule(coi_binary, workspace_dir, cleanup
             timeout=30,
             check=False,
         )
-        assert comment in _ip6_chain(), (
-            "precondition: rule should still be present (orphaned) after raw incus delete"
-        )
+        if comment not in _ip6_chain():
+            # Kernels before name-based netdev hooks delete the chain with its
+            # device: nothing is left to orphan.
+            pytest.skip("kernel removed the netdev chain with the veth")
 
         # Orphan cleanup must remove it.
         clean = subprocess.run(

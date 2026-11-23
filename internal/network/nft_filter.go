@@ -599,9 +599,11 @@ func installVethIngressChain(chain, vethName string, rules [][]string) error {
 func vethIngressChainCmds(chain, vethName string, rules [][]string) [][]string {
 	cmds := [][]string{
 		{"add", "table", "netdev", "coi"},
-		{"add", "chain", "netdev", "coi", chain,
+		{
+			"add", "chain", "netdev", "coi", chain,
 			"{", "type", "filter", "hook", "ingress", "device", fmt.Sprintf(`"%s"`, vethName),
-			"priority", "-500", ";", "policy", "accept", ";", "}"},
+			"priority", "-500", ";", "policy", "accept", ";", "}",
+		},
 	}
 	for _, r := range rules {
 		cmd := append([]string{"add", "rule", "netdev", "coi", chain}, r...)
@@ -681,6 +683,7 @@ func parseCOIIP6RuleContainers(output string) []string {
 	}
 	return names
 }
+
 // addRule appends a nftables rule to ip coi forward for this container.
 // Rules are appended in call order, so callers must invoke addRule from most-specific
 // to least-specific (gateway → allowlist → RFC1918 block → default).

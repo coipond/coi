@@ -82,7 +82,7 @@ def _count_monitor_rules_for_ip(ip):
 
 def _ip6_chain():
     r = subprocess.run(
-        ["sudo", "-n", "nft", "list", "chain", "ip6", "coi", "forward"],
+        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
         capture_output=True,
         text=True,
         timeout=10,

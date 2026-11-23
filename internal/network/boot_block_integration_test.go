@@ -31,8 +31,18 @@ func skipUnlessBootBlockReady(t *testing.T) {
 	}
 }
 
-// TestApplyBootBlockRule_Integration verifies that ApplyBootBlockRule adds an
-// iifname-based DROP rule to the ip coi forward chain and that
+// netdevChain returns the `nft list chain netdev coi <chain>` listing, or ""
+// when the chain does not exist.
+func netdevChain(chain string) string {
+	output, err := runNFTCommand("list", "chain", "netdev", "coi", chain)
+	if err != nil {
+		return ""
+	}
+	return string(output)
+}
+
+// TestApplyBootBlockRule_Integration verifies that ApplyBootBlockRule adds a
+// netdev coi chain on the veth's ingress that drops IPv4 and that
 // RemoveBootBlockRule removes it cleanly.
 func TestApplyBootBlockRule_Integration(t *testing.T) {
 	skipUnlessBootBlockReady(t)
@@ -60,40 +70,33 @@ func TestApplyBootBlockRule_Integration(t *testing.T) {
 
 	comment := bootBlockComment(containerName)
 
-	// Rule must appear in the chain
-	output, err := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
-	if err != nil {
-		t.Fatalf("list nft chain: %v", err)
+	// The chain must exist, hooked on the veth's ingress
+	chainStr := netdevChain(comment)
+	if chainStr == "" {
+		t.Fatalf("boot block chain %q not found in netdev coi", comment)
 	}
-	chainStr := string(output)
-
-	if !strings.Contains(chainStr, comment) {
-		t.Errorf("boot block comment %q not found in chain:\n%s", comment, chainStr)
+	veth, _ := GetContainerVethName(containerName)
+	if !strings.Contains(chainStr, "hook ingress device \""+veth+"\"") {
+		t.Errorf("expected ingress hook on veth %q; chain:\n%s", veth, chainStr)
 	}
-	if !strings.Contains(chainStr, "iifname") {
-		t.Errorf("expected iifname-based rule; chain:\n%s", chainStr)
-	}
-	if !strings.Contains(chainStr, "drop") {
-		t.Errorf("expected drop action; chain:\n%s", chainStr)
+	if !strings.Contains(chainStr, "meta protocol ip counter") || !strings.Contains(chainStr, "drop") {
+		t.Errorf("expected an IPv4 drop; chain:\n%s", chainStr)
 	}
 
 	// Calling Apply again must be idempotent (no duplicate rules)
 	if err := ApplyBootBlockRule(containerName); err != nil {
 		t.Errorf("second ApplyBootBlockRule: %v", err)
 	}
-	output2, _ := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
-	count := strings.Count(string(output2), comment)
-	if count != 1 {
-		t.Errorf("expected exactly 1 boot block rule, found %d", count)
+	if got := netdevChain(comment); strings.Count(got, " drop ") != 1 {
+		t.Errorf("expected exactly 1 boot block drop rule:\n%s", got)
 	}
 
 	// Remove and verify it is gone
 	if err := RemoveBootBlockRule(containerName); err != nil {
 		t.Errorf("RemoveBootBlockRule: %v", err)
 	}
-	output3, err := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
-	if err == nil && strings.Contains(string(output3), comment) {
-		t.Errorf("boot block rule still present after RemoveBootBlockRule:\n%s", output3)
+	if got := netdevChain(comment); got != "" {
+		t.Errorf("boot block chain still present after RemoveBootBlockRule:\n%s", got)
 	}
 }
 
@@ -191,8 +194,7 @@ func TestBootBlockRemovedBySetupForContainer_Integration(t *testing.T) {
 	}
 
 	// Boot block must be in chain before SetupForContainer
-	output, _ := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
-	if !strings.Contains(string(output), bootBlockComment(containerName)) {
+	if netdevChain(bootBlockComment(containerName)) == "" {
 		t.Errorf("boot block not present before SetupForContainer")
 	}
 
@@ -204,9 +206,8 @@ func TestBootBlockRemovedBySetupForContainer_Integration(t *testing.T) {
 	}
 
 	// Boot block must be gone after SetupForContainer
-	output2, err := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
-	if err == nil && strings.Contains(string(output2), bootBlockComment(containerName)) {
-		t.Errorf("boot block still present after SetupForContainer:\n%s", output2)
+	if got := netdevChain(bootBlockComment(containerName)); got != "" {
+		t.Errorf("boot block still present after SetupForContainer:\n%s", got)
 	}
 
 	// Tear down open mode rules
@@ -272,9 +273,8 @@ func TestSetupForContainer_SetupError_KeepsBootBlock_Integration(t *testing.T) {
 	}
 
 	// INVARIANT: the boot block must still be present after the failed setup.
-	output, _ := runNFTCommand("-a", "list", "chain", "ip", "coi", "forward")
-	if !strings.Contains(string(output), bootBlockComment(containerName)) {
-		t.Errorf("boot block was removed after a FAILED setup — the failed session was silently opened:\n%s", output)
+	if netdevChain(bootBlockComment(containerName)) == "" {
+		t.Errorf("boot block was removed after a FAILED setup — the failed session was silently opened")
 	}
 
 	// ...and it must still be effective: the container cannot reach the gateway.
