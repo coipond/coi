@@ -157,11 +157,11 @@ func (runningFake) ListDevices() ([]string, error) { return nil, nil }
 // Docker (nesting), also with an explicit --container; with sudo, or without
 // Docker, the attach goes ahead.
 func TestPhaseReconcileExisting_RunningDockerWithoutSudo(t *testing.T) {
-	orig := effectiveKernelSurfaceViolations
-	t.Cleanup(func() { effectiveKernelSurfaceViolations = orig })
+	orig := effectiveDockerKeys
+	t.Cleanup(func() { effectiveDockerKeys = orig })
 	var violations []string
 	calls := 0
-	effectiveKernelSurfaceViolations = func(string, container.HardeningPolicy) ([]string, error) {
+	effectiveDockerKeys = func(string) ([]string, error) {
 		calls++
 		return violations, nil
 	}
@@ -209,9 +209,9 @@ func (stoppedFake) Running() (bool, error) { return false, nil }
 // reconcile, so a no-sudo session refuses it while it still has Docker,
 // before starting it.
 func TestPhaseReconcileExisting_StoppedContainerDockerWithoutSudo(t *testing.T) {
-	orig := effectiveKernelSurfaceViolations
-	t.Cleanup(func() { effectiveKernelSurfaceViolations = orig })
-	effectiveKernelSurfaceViolations = func(string, container.HardeningPolicy) ([]string, error) {
+	orig := effectiveDockerKeys
+	t.Cleanup(func() { effectiveDockerKeys = orig })
+	effectiveDockerKeys = func(string) ([]string, error) {
 		return []string{"security.nesting=true"}, nil
 	}
 	st := &setupState{
@@ -230,9 +230,9 @@ func TestPhaseReconcileExisting_StoppedContainerDockerWithoutSudo(t *testing.T) 
 
 // The check reads nothing with sudo on and reports a read failure.
 func TestRefuseDockerWithoutSudo(t *testing.T) {
-	orig := effectiveKernelSurfaceViolations
-	t.Cleanup(func() { effectiveKernelSurfaceViolations = orig })
-	effectiveKernelSurfaceViolations = func(string, container.HardeningPolicy) ([]string, error) {
+	orig := effectiveDockerKeys
+	t.Cleanup(func() { effectiveDockerKeys = orig })
+	effectiveDockerKeys = func(string) ([]string, error) {
 		return nil, errors.New("incus down")
 	}
 	if err := refuseDockerWithoutSudo("c1", container.HardeningPolicy{Docker: true}, "x"); err != nil {

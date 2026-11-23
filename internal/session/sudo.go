@@ -50,9 +50,8 @@ func reportSudoRestore(out string, logger func(string)) {
 	}
 }
 
-// effectiveKernelSurfaceViolations is container.EffectiveKernelSurfaceViolations,
-// a seam for tests.
-var effectiveKernelSurfaceViolations = container.EffectiveKernelSurfaceViolations
+// effectiveDockerKeys is container.EffectiveDockerKeys, a seam for tests.
+var effectiveDockerKeys = container.EffectiveDockerKeys
 
 // refuseDockerWithoutSudo fails a no-sudo session that would use a container
 // coi does not reconcile (a running one, or a stopped one named with
@@ -62,7 +61,7 @@ func refuseDockerWithoutSudo(containerName string, p container.HardeningPolicy, 
 	if !p.NoSudo {
 		return nil
 	}
-	v, err := effectiveKernelSurfaceViolations(containerName, p)
+	v, err := effectiveDockerKeys(containerName)
 	if err != nil {
 		return fmt.Errorf("security.passwordless_sudo = false: could not read the Docker settings of container %s: %w", containerName, err)
 	}

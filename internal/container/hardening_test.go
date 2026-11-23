@@ -331,18 +331,29 @@ func TestHardeningPolicy_NoSudoDisablesDocker(t *testing.T) {
 	}
 }
 
-// No reads when the policy keeps Docker: nothing can widen it.
-func TestEffectiveKernelSurfaceViolations_DockerOn(t *testing.T) {
-	v, err := EffectiveKernelSurfaceViolations("never-read", HardeningPolicy{Docker: true})
-	if err != nil || v != nil {
-		t.Errorf("got %v, %v; want no read and no violations", v, err)
+// Only Docker keys count: a container without Docker and without the
+// reduce_kernel_surface deny list has none.
+func TestDockerKeys(t *testing.T) {
+	if v := dockerKeys(map[string]string{"security.syscalls.deny": ""}); len(v) != 0 {
+		t.Errorf("no Docker: got %v, want none", v)
+	}
+	v := dockerKeys(map[string]string{"security.nesting": "true", "security.syscalls.intercept.mknod": "true"})
+	if len(v) != 2 || v[0] != "security.nesting=true" || v[1] != "security.syscalls.intercept.mknod=true" {
+		t.Errorf("Docker keys = %v", v)
 	}
 }
 
-// With NoSudo a running container's nesting counts as a violation.
-func TestKernelSurfaceViolations_NoSudo(t *testing.T) {
-	v := kernelSurfaceViolations(map[string]string{"security.nesting": "true"}, HardeningPolicy{Docker: true, NoSudo: true})
-	if len(v) != 1 || v[0] != "security.nesting=true" {
-		t.Errorf("violations = %v, want security.nesting=true", v)
+// A container without Docker and without the deny list (created with
+// docker = false) has no Docker keys, so a no-sudo hardened session may use
+// it; a Docker container lists nesting.
+func TestEffectiveDockerKeys(t *testing.T) {
+	fakeIncusScript(t, `case "$*" in *"security.nesting"*) echo "$NESTING" ;; *) echo "" ;; esac`)
+	t.Setenv("NESTING", "")
+	if v, err := EffectiveDockerKeys("c1"); err != nil || len(v) != 0 {
+		t.Errorf("no Docker: got %v, %v; want none", v, err)
+	}
+	t.Setenv("NESTING", "true")
+	if v, err := EffectiveDockerKeys("c1"); err != nil || len(v) != 1 || v[0] != "security.nesting=true" {
+		t.Errorf("Docker: got %v, %v; want security.nesting=true", v, err)
 	}
 }

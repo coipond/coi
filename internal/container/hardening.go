@@ -304,20 +304,22 @@ func kernelSurfaceViolations(expanded map[string]string, p HardeningPolicy) []st
 	return violations
 }
 
-// EffectiveKernelSurfaceViolations reads the container's EXPANDED config
-// (instance-local plus profiles) and lists the keys that widen its surface
-// beyond the policy, e.g. security.nesting=true when the policy has Docker
-// off. Unlike VerifyKernelSurfacePolicy it does not assume a profile is the
-// cause, so it fits a running container that was never reconciled.
-func EffectiveKernelSurfaceViolations(containerName string, p HardeningPolicy) ([]string, error) {
-	if p.DockerEnabled() {
-		return nil, nil
-	}
+// EffectiveDockerKeys reads the container's EXPANDED config (instance-local
+// plus profiles) and lists the Docker keys in effect (security.nesting, the
+// two syscall intercepts, a low ip_unprivileged_port_start). The syscall deny
+// list is not one of them: it has nothing to do with Docker.
+func EffectiveDockerKeys(containerName string) ([]string, error) {
 	expanded, err := readKernelSurfaceConfig(containerName, true)
 	if err != nil {
 		return nil, err
 	}
-	return kernelSurfaceViolations(expanded, p), nil
+	return dockerKeys(expanded), nil
+}
+
+// dockerKeys is the pure core of EffectiveDockerKeys: the violations of a
+// Docker-off policy without a deny-list tier.
+func dockerKeys(expanded map[string]string) []string {
+	return kernelSurfaceViolations(expanded, HardeningPolicy{})
 }
 
 // incusTruthy reports whether an Incus boolean config value is effectively
