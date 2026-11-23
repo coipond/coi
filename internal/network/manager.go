@@ -418,7 +418,7 @@ func (m *Manager) logRestrictedPrivateAccess() {
 	case config.BoolVal(m.config.AllowLocalNetworkAccess) && len(m.config.AllowedPorts) > 0:
 		m.logger.Printf("  Allowing private networks (RFC1918, 100.64.0.0/10) on ports %v (allow_local_network_access)", m.config.AllowedPorts)
 	case config.BoolVal(m.config.AllowLocalNetworkAccess):
-		m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10) (allow_local_network_access)")
+		m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10; allow_local_network_access)")
 	case config.BoolVal(m.config.BlockPrivateNetworks):
 		m.logger.Println("  Blocking private networks (RFC1918, 100.64.0.0/10)")
 	}
@@ -553,7 +553,7 @@ func (m *Manager) logAllowlistPrivateAccess() {
 		m.logger.Printf("  Allowing private networks (RFC1918, 100.64.0.0/10) on ports %v (allow_local_network_access)", m.config.AllowedPorts)
 		return
 	}
-	m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10) (allow_local_network_access)")
+	m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10; allow_local_network_access)")
 }
 
 // installNames resolves the policy's hostnames and writes the result to the two

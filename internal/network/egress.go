@@ -122,10 +122,10 @@ func (f *NftManager) addLocalNetworkAllows(allowedPorts []int) error {
 // container's resolv.conf.
 //
 // Ordering matters and is the caller's responsibility: pinDNSForward must run
-// AFTER the gateway accept and BEFORE the RFC1918 block, so a pinned resolver that
-// lives on the LAN (a typical Pi-hole at 192.168.x.y) is reachable on 53 even when
-// private networks are otherwise blocked — but reachable on 53 ONLY, never on
-// other ports.
+// AFTER the gateway accept and BEFORE the private network block, so a pinned
+// resolver that lives on the LAN (a typical Pi-hole at 192.168.x.y) is
+// reachable on 53 even when private networks are otherwise blocked — but
+// reachable on 53 ONLY, never on other ports.
 func (f *NftManager) pinDNSForward(servers []string) error {
 	if f.containerIP == "" || len(servers) == 0 {
 		return nil

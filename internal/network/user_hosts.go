@@ -18,26 +18,6 @@ const (
 	hostMetadata                    // 169.254.0.0/16 link-local, incl. the cloud metadata endpoint
 )
 
-// privateHostNets are config.PrivateNetworkCIDRs, parsed once.
-var privateHostNets = func() []*net.IPNet {
-	var nets []*net.IPNet
-	for _, cidr := range config.PrivateNetworkCIDRs() {
-		_, n, _ := net.ParseCIDR(cidr)
-		nets = append(nets, n)
-	}
-	return nets
-}()
-
-// isPrivateHostIP reports whether ip is in config.PrivateNetworkCIDRs.
-func isPrivateHostIP(ip net.IP) bool {
-	for _, n := range privateHostNets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
 // classifyHostIP buckets an address for the per-mode reachability rules. The IP
 // is assumed already validated as a parseable IPv4 (config.ValidateNetworkHosts).
 func classifyHostIP(ipStr string) hostIPClass {
@@ -47,7 +27,7 @@ func classifyHostIP(ipStr string) hostIPClass {
 		return hostPublic // unreachable in practice — validation rejects non-IPs
 	case ip.IsLinkLocalUnicast():
 		return hostMetadata
-	case ip.IsPrivate(), isPrivateHostIP(ip):
+	case ip.IsPrivate(), config.IsPrivateNetworkIP(ipStr):
 		return hostPrivate
 	default:
 		return hostPublic
@@ -263,12 +243,12 @@ func AddUserHost(containerName string, mode config.NetworkMode, allowLocalNetwor
 	if err != nil {
 		return fmt.Errorf("failed to get container IP: %w", err)
 	}
-	// The runtime CLI is invoked with whatever config the caller happens to have,
-	// which may not be the one the container was launched with. Trusting it would
-	// let `coi hosts add` punch a restricted-style targeted allow — unscoped, or on
-	// :53 — through an allowlist container's RFC1918 and DNS blocks, skipping the
-	// port-scope checks allowlist mode requires. Detect the container's ACTUAL mode
-	// and honor that instead.
+	// The runtime CLI is invoked with whatever config the caller happens to
+	// have, which may not be the one the container was launched with. Trusting
+	// it would let `coi hosts add` punch a restricted-style targeted allow —
+	// unscoped, or on :53 — through an allowlist container's private network
+	// and DNS blocks, skipping the port-scope checks allowlist mode requires.
+	// Detect the container's ACTUAL mode and honor that instead.
 	mode = effectiveContainerMode(containerIP, mode)
 	// Same for allow_local_network_access: it decides whether an allowlist
 	// container already reaches the LAN host (no rule needed, no per-host ports
@@ -429,10 +409,11 @@ func applyHostFirewall(mode config.NetworkMode, allowLocalNetworkAccess bool, co
 			return fmt.Errorf("failed to port-scope host %s in allowlist mode: %w", entry.IP, err)
 		}
 	case class == hostPrivate && (mode == config.NetworkModeRestricted || !allowLocalNetworkAccess):
-		// A targeted accept ahead of the mode's RFC1918 reject. In allowlist mode it
-		// also precedes the DNS block, which is why checkHostPortsEnforceable insists
-		// on a port scope without 53. (With allow_local_network_access on, allowlist's
-		// LAN accept already covers the host, so no rule is added.)
+		// A targeted accept ahead of the mode's private network reject. In
+		// allowlist mode it also precedes the DNS block, which is why
+		// checkHostPortsEnforceable insists on a port scope without 53. (With
+		// allow_local_network_access on, allowlist's LAN accept already covers
+		// the host, so no rule is added.)
 		if err := insertContainerAcceptRule(containerIP, entry.IP, hostPorts); err != nil {
 			return fmt.Errorf("failed to allow private host %s in %s mode: %w", entry.IP, mode, err)
 		}
@@ -440,10 +421,11 @@ func applyHostFirewall(mode config.NetworkMode, allowLocalNetworkAccess bool, co
 	return nil
 }
 
-// insertContainerAcceptRule PREPENDS an accept rule to the coi forward chain for
-// traffic from containerIP to a specific destination, so it is evaluated before
-// the mode's RFC1918 reject. Tagged with the same `coi-<ip>` comment the other
-// per-container rules use, so it is torn down by the existing cleanup path.
+// insertContainerAcceptRule PREPENDS an accept rule to the coi forward chain
+// for traffic from containerIP to a specific destination, so it is evaluated
+// before the mode's private network reject. Tagged with the same `coi-<ip>`
+// comment the other per-container rules use, so it is torn down by the existing
+// cleanup path.
 //
 // When an egress port cap (allowed_ports) is in force the accept is scoped to
 // those TCP/UDP dports, so a [[network.hosts]] entry cannot silently reopen the

@@ -466,41 +466,6 @@ func TestNetworkDetector_FirewallPermittedDestination(t *testing.T) {
 }
 
 // Helper function tests
-func TestIsPrivateNetwork(t *testing.T) {
-	tests := []struct {
-		ip       string
-		expected bool
-	}{
-		{"10.0.0.1", true},
-		{"10.255.255.255", true},
-		{"172.16.0.1", true},
-		{"172.31.255.255", true},
-		{"192.168.0.1", true},
-		{"192.168.255.255", true},
-		{"172.15.0.1", false}, // Just outside 172.16/12
-		{"172.32.0.1", false}, // Just outside 172.16/12
-		{"100.64.0.1", true},  // RFC 6598 shared address space
-		{"100.127.255.255", true},
-		{"100.63.255.255", false}, // Just outside 100.64/10
-		{"100.128.0.1", false},    // Just outside 100.64/10
-		{"8.8.8.8", false},        // Public
-		{"1.1.1.1", false},        // Public
-		{"127.0.0.1", false},      // Loopback (not RFC1918)
-		{"169.254.0.1", false},    // Link-local (not RFC1918)
-		{"invalid", false},        // Invalid IP
-		{"", false},               // Empty
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.ip, func(t *testing.T) {
-			result := isPrivateNetwork(tt.ip)
-			if result != tt.expected {
-				t.Errorf("isPrivateNetwork(%q) = %v, expected %v", tt.ip, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestIsSuspiciousPort(t *testing.T) {
 	suspiciousPorts := []int{4444, 5555, 1234, 31337, 12345, 6666, 6667, 6697, 8080}
 	normalPorts := []int{80, 443, 22, 25, 110, 143, 993, 465, 587, 3306, 5432}

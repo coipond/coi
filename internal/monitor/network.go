@@ -397,7 +397,7 @@ func checkSuspicious(conn Connection, mode config.NetworkMode, allowedCIDRs []st
 
 	// The firewall blocks private destinations in every mode except open, which
 	// allows LAN traffic.
-	if mode != config.NetworkModeOpen && isPrivateNetwork(remoteIP) && !firewallPermits() {
+	if mode != config.NetworkModeOpen && config.IsPrivateNetworkIP(remoteIP) && !firewallPermits() {
 		return "Private address (should be blocked by firewall)"
 	}
 
@@ -434,22 +434,6 @@ func extractPort(addr string) int {
 		return port
 	}
 	return 0
-}
-
-// privateNets are the private ranges, parsed once: checkSuspicious asks for
-// every connection on every poll.
-var privateNets = func() []*net.IPNet {
-	var nets []*net.IPNet
-	for _, cidr := range config.PrivateNetworkCIDRs() {
-		_, network, _ := net.ParseCIDR(cidr)
-		nets = append(nets, network)
-	}
-	return nets
-}()
-
-// isPrivateNetwork checks if IP is in config.PrivateNetworkCIDRs
-func isPrivateNetwork(ipStr string) bool {
-	return inNets(ipStr, privateNets)
 }
 
 // inAllowlist checks if IP is in allowed CIDR ranges

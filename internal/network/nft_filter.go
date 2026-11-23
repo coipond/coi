@@ -126,9 +126,10 @@ func (f *NftManager) addRestrictedRules(cfg *config.NetworkConfig, dnsServers []
 		}
 	}
 
-	// DNS pinning must precede the RFC1918 block so a pinned LAN resolver stays
-	// reachable on 53, and must precede the permissive default so a pinned public
-	// resolver is accepted before the port cap / catch-all could touch it.
+	// DNS pinning must precede the private network block so a pinned LAN
+	// resolver stays reachable on 53, and must precede the permissive default
+	// so a pinned public resolver is accepted before the port cap / catch-all
+	// could touch it.
 	if err := f.pinDNSForward(dnsServers); err != nil {
 		return err
 	}
@@ -690,7 +691,7 @@ func parseCOIIP6RuleContainers(output string) []string {
 
 // addRule appends a nftables rule to ip coi forward for this container.
 // Rules are appended in call order, so callers must invoke addRule from most-specific
-// to least-specific (gateway → allowlist → RFC1918 block → default).
+// to least-specific (gateway → allowlist → private network block → default).
 func (f *NftManager) addRule(source, destination, action string) error {
 	return f.addRuleWithMatch(source, destination, nil, action)
 }

@@ -45,7 +45,7 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 	}
 
 	// 1. Private addresses (blocked by the firewall unless in open mode)
-	if nd.config.NetworkMode != config.NetworkModeOpen && isPrivateNetwork(event.DstIP) && event.DstIP != nd.config.GatewayIP && !permitted() {
+	if nd.config.NetworkMode != config.NetworkModeOpen && config.IsPrivateNetworkIP(event.DstIP) && event.DstIP != nd.config.GatewayIP && !permitted() {
 		return &ThreatEvent{
 			Timestamp:   event.Timestamp,
 			Level:       ThreatLevelHigh,
@@ -138,26 +138,6 @@ func (nd *NetworkDetector) analyzeDNSQuery(event *NetworkEvent, permitted func()
 	}
 
 	return nil
-}
-
-// isPrivateNetwork checks if IP is in config.PrivateNetworkCIDRs
-func isPrivateNetwork(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-
-	for _, cidr := range config.PrivateNetworkCIDRs() {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if network.Contains(ip) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // inAllowlist checks if IP is in allowed CIDR ranges

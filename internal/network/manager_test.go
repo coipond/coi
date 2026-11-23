@@ -259,7 +259,7 @@ func TestLogRestrictedPrivateAccess(t *testing.T) {
 	const (
 		blockRFC1918  = "Blocking private networks (RFC1918, 100.64.0.0/10)"
 		blockMetadata = "Blocking cloud metadata endpoints"
-		allowRFC1918  = "Allowing private networks (RFC1918, 100.64.0.0/10)"
+		allowRFC1918  = "Allowing private networks (RFC1918, 100.64.0.0/10"
 	)
 	on, off := true, false
 	tests := []struct {
@@ -285,7 +285,7 @@ func TestLogRestrictedPrivateAccess(t *testing.T) {
 				BlockPrivateNetworks:    &on,
 				BlockMetadataEndpoint:   &on,
 			},
-			want:    []string{allowRFC1918 + " (allow_local_network_access)", blockMetadata},
+			want:    []string{allowRFC1918 + "; allow_local_network_access)", blockMetadata},
 			notWant: []string{blockRFC1918, "on ports"},
 		},
 		{
@@ -295,7 +295,7 @@ func TestLogRestrictedPrivateAccess(t *testing.T) {
 				BlockPrivateNetworks:    &on,
 				AllowedPorts:            []int{443, 8080},
 			},
-			want:    []string{allowRFC1918 + " on ports [443 8080] (allow_local_network_access)"},
+			want:    []string{allowRFC1918 + ") on ports [443 8080] (allow_local_network_access)"},
 			notWant: []string{blockRFC1918, blockMetadata},
 		},
 		{
@@ -339,7 +339,7 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 	const (
 		blockRFC1918  = "Blocking all private networks (RFC1918, 100.64.0.0/10)"
 		blockMetadata = "Blocking cloud metadata endpoints"
-		allowRFC1918  = "Allowing private networks (RFC1918, 100.64.0.0/10)"
+		allowRFC1918  = "Allowing private networks (RFC1918, 100.64.0.0/10"
 	)
 	on, off := true, false
 	tests := []struct {
@@ -357,7 +357,7 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 		{
 			name:    "local access on",
 			cfg:     config.NetworkConfig{AllowLocalNetworkAccess: &on},
-			want:    []string{allowRFC1918 + " (allow_local_network_access)"},
+			want:    []string{allowRFC1918 + "; allow_local_network_access)"},
 			notWant: []string{blockRFC1918, blockMetadata, "on ports"},
 		},
 		{
@@ -366,7 +366,7 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 				AllowLocalNetworkAccess: &on,
 				AllowedPorts:            []int{443, 8080},
 			},
-			want:    []string{allowRFC1918 + " on ports [443 8080] (allow_local_network_access)"},
+			want:    []string{allowRFC1918 + ") on ports [443 8080] (allow_local_network_access)"},
 			notWant: []string{blockRFC1918, blockMetadata},
 		},
 	}

@@ -3,6 +3,7 @@
 package config
 
 import (
+	"net"
 	"regexp"
 )
 
@@ -32,6 +33,32 @@ const (
 // number their peers there).
 func PrivateNetworkCIDRs() []string {
 	return []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"}
+}
+
+// privateNetworks is PrivateNetworkCIDRs parsed once: the security monitors
+// ask for every connection.
+var privateNetworks = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range PrivateNetworkCIDRs() {
+		_, n, _ := net.ParseCIDR(cidr)
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
+// IsPrivateNetworkIP reports whether ipStr is an address in
+// PrivateNetworkCIDRs. An unparseable address is not.
+func IsPrivateNetworkIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	for _, n := range privateNetworks {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // HardenedProfileSecretPaths is the default secret-mask set bundled by the
