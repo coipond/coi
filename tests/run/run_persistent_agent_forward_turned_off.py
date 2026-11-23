@@ -12,7 +12,6 @@ Tests that:
 """
 
 import shutil
-import subprocess
 
 import pytest
 
@@ -20,33 +19,13 @@ from support.helpers import (
     calculate_container_name,
     container_device_get,
     host_ssh_agent,
+    run_coi_in_workspace,
     write_trusted_coi_config,
 )
 
 KEY_COMMENT = "coi-agent-forward-off-test"
 # ssh-add -l exits 2 when it can't connect to an agent.
 AGENT_PROBE = "echo sock=[$SSH_AUTH_SOCK]; SSH_AUTH_SOCK=/tmp/ssh-agent.sock ssh-add -l; echo rc=$?"
-
-
-def _run_probe(coi_binary, workspace_dir, slot, env):
-    return subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--slot",
-            str(slot),
-            "--",
-            "sh",
-            "-c",
-            AGENT_PROBE,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=env,
-    )
 
 
 @pytest.mark.skipif(shutil.which("ssh-agent") is None, reason="ssh-agent not installed on host")
@@ -66,7 +45,9 @@ def test_run_persistent_agent_forward_turned_off(coi_binary, cleanup_containers,
             "[container]\npersistent = true\n\n[ssh]\nforward_agent = true\n"
         )
         on["SSH_AUTH_SOCK"] = agent_sock
-        first = _run_probe(coi_binary, workspace_dir, slot, on)
+        first = run_coi_in_workspace(
+            coi_binary, workspace_dir, ["sh", "-c", AGENT_PROBE], env=on, timeout=180, slot=slot
+        )
         assert first.returncode == 0, f"first run should succeed. stderr: {first.stderr}"
         assert KEY_COMMENT in first.stdout and "rc=0" in first.stdout, (
             f"first run should reach the host agent. stdout:\n{first.stdout}\nstderr:\n{first.stderr}"
@@ -77,7 +58,9 @@ def test_run_persistent_agent_forward_turned_off(coi_binary, cleanup_containers,
             "[container]\npersistent = true\n\n[ssh]\nforward_agent = false\n"
         )
         off["SSH_AUTH_SOCK"] = agent_sock
-        second = _run_probe(coi_binary, workspace_dir, slot, off)
+        second = run_coi_in_workspace(
+            coi_binary, workspace_dir, ["sh", "-c", AGENT_PROBE], env=off, timeout=180, slot=slot
+        )
         assert second.returncode == 0, f"second run should succeed. stderr: {second.stderr}"
         assert "existing" in second.stderr.lower() or "restart" in second.stderr.lower(), (
             f"second run should reuse the persistent container. stderr:\n{second.stderr}"

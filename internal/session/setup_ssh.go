@@ -73,7 +73,7 @@ func forwardConfiguredSockets(mgr socketForwarder, sc *SocketConfig, includeSSHA
 		for _, e := range entries {
 			requested[e.DeviceName] = true
 		}
-		for _, d := range existingSocketDevices(mgr, logger) {
+		for _, d := range socketDeviceNames(mgr, logger) {
 			existing[d] = true
 			if !requested[d] {
 				removeSocketDevice(mgr, d, logger)
@@ -116,9 +116,9 @@ func isSocketDevice(name string) bool {
 	return true
 }
 
-// existingSocketDevices returns the names of the container's socket devices,
+// socketDeviceNames returns the names of the container's socket devices,
 // sorted.
-func existingSocketDevices(mgr container.ContainerDevices, logger func(string)) []string {
+func socketDeviceNames(mgr container.ContainerDevices, logger func(string)) []string {
 	devices, err := mgr.ListDevices()
 	if err != nil {
 		logger(fmt.Sprintf("Warning: could not list devices to remove stale socket forwards: %v", err))

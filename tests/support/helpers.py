@@ -1876,15 +1876,15 @@ def run_and_show_config(coi_binary, workspace_dir, env=None, extra_args=(), time
     return result.stdout
 
 
-def run_coi_in_workspace(coi_binary, workspace_dir, argv, env=None, timeout=120):
-    """Run `coi run -- <argv>` from workspace_dir, capturing output.
+def run_coi_in_workspace(coi_binary, workspace_dir, argv, env=None, timeout=120, slot=None):
+    """Run `coi run [--slot N] -- <argv>` from workspace_dir, capturing output.
 
     Shared by the protection test family (tests/mount, tests/git_hooks), which
     previously each carried an identical private copy (hoisted per the same
     convention as the storage-pool helpers, see the #684 CHANGELOG entry).
     """
     return subprocess.run(
-        [coi_binary, "run", "--", *argv],
+        [coi_binary, "run", *(["--slot", str(slot)] if slot else []), "--", *argv],
         capture_output=True,
         text=True,
         timeout=timeout,

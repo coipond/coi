@@ -11,7 +11,6 @@ Tests that:
 """
 
 import shutil
-import subprocess
 
 import pytest
 
@@ -19,6 +18,7 @@ from support.helpers import (
     calculate_container_name,
     container_device_get,
     host_ssh_agent,
+    run_coi_in_workspace,
     write_trusted_coi_config,
 )
 
@@ -26,27 +26,6 @@ KEY_COMMENT = "coi-socket-entry-removed-test"
 CONTAINER_SOCK = "/tmp/agent-fwd.sock"
 # ssh-add -l exits 2 when it can't connect to an agent.
 SOCKET_PROBE = f"echo sock=[$AGENT_FWD_SOCK]; SSH_AUTH_SOCK={CONTAINER_SOCK} ssh-add -l; echo rc=$?"
-
-
-def _run_probe(coi_binary, workspace_dir, slot, env):
-    return subprocess.run(
-        [
-            coi_binary,
-            "run",
-            "--workspace",
-            workspace_dir,
-            "--slot",
-            str(slot),
-            "--",
-            "sh",
-            "-c",
-            SOCKET_PROBE,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=env,
-    )
 
 
 @pytest.mark.skipif(shutil.which("ssh-agent") is None, reason="ssh-agent not installed on host")
@@ -69,7 +48,14 @@ def test_run_persistent_socket_entry_removed(coi_binary, cleanup_containers, wor
             f'container = "{CONTAINER_SOCK}"\n'
             'env = "AGENT_FWD_SOCK"\n'
         )
-        first = _run_probe(coi_binary, workspace_dir, slot, with_entry)
+        first = run_coi_in_workspace(
+            coi_binary,
+            workspace_dir,
+            ["sh", "-c", SOCKET_PROBE],
+            env=with_entry,
+            timeout=180,
+            slot=slot,
+        )
         assert first.returncode == 0, f"first run should succeed. stderr: {first.stderr}"
         assert KEY_COMMENT in first.stdout and "rc=0" in first.stdout, (
             f"first run should reach the host socket. stdout:\n{first.stdout}\nstderr:\n{first.stderr}"
@@ -78,7 +64,14 @@ def test_run_persistent_socket_entry_removed(coi_binary, cleanup_containers, wor
 
         # The host socket stays live at the same path: only config changes.
         without_entry = write_trusted_coi_config("[container]\npersistent = true\n")
-        second = _run_probe(coi_binary, workspace_dir, slot, without_entry)
+        second = run_coi_in_workspace(
+            coi_binary,
+            workspace_dir,
+            ["sh", "-c", SOCKET_PROBE],
+            env=without_entry,
+            timeout=180,
+            slot=slot,
+        )
         assert second.returncode == 0, f"second run should succeed. stderr: {second.stderr}"
         assert "existing" in second.stderr.lower() or "restart" in second.stderr.lower(), (
             f"second run should reuse the persistent container. stderr:\n{second.stderr}"

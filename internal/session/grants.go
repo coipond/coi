@@ -225,7 +225,6 @@ func buildGrants(st *setupState) *Grants {
 	opts := st.opts
 	info := st.contextInfo
 	g := &Grants{
-		Sockets:           st.forwardedSockets, // the attached devices replace it once read
 		Ports:             info.PublishedPorts,
 		RunAsRoot:         info.RunAsRoot,
 		DockerUnavailable: info.DockerUnavailable,
@@ -268,6 +267,7 @@ func buildGrants(st *setupState) *Grants {
 	} else {
 		g.DevicesUnread = true
 		configuredDisks(g, opts, containerWorkspace, st.result.worktreeWritableHooks)
+		g.Sockets = st.forwardedSockets
 		if info.CPULimit != "" {
 			g.Limits = append(g.Limits, "cpu "+info.CPULimit)
 		}
