@@ -70,7 +70,7 @@ class TestAliasStoredOnContainer:
 
         result = run_coi(
             coi_binary,
-            ["run", "sleep", "30"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
         assert result.returncode == 0, f"coi run failed: {result.stderr}"
@@ -119,7 +119,7 @@ class TestAliasShownInList:
         # Launch a persistent container so it stays running
         run_coi(
             coi_binary,
-            ["run", "sleep", "30"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -151,7 +151,7 @@ class TestAliasShownInList:
 
         run_coi(
             coi_binary,
-            ["run", "sleep", "30"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
         list_result = run_coi(coi_binary, ["list"])
@@ -179,7 +179,7 @@ class TestAttachByAlias:
         # Start a persistent container
         run_coi(
             coi_binary,
-            ["run", "sleep", "60"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -209,7 +209,7 @@ class TestKillByAlias:
 
         run_coi(
             coi_binary,
-            ["run", "sleep", "60"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -232,7 +232,7 @@ class TestShutdownByAlias:
 
         run_coi(
             coi_binary,
-            ["run", "sleep", "60"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -287,13 +287,13 @@ class TestAliasSlotSuffix:
         # Launch slot 1
         run_coi(
             coi_binary,
-            ["run", "--slot", "1", "sleep", "60"],
+            ["run", "--slot", "1", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
         # Launch slot 2
         run_coi(
             coi_binary,
-            ["run", "--slot", "2", "sleep", "60"],
+            ["run", "--slot", "2", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -578,7 +578,7 @@ class TestAliasEdgeCases:
         write_workspace_container_config(workspace_dir, persistent=True, image=dummy_image)
         run_coi(
             coi_binary,
-            ["run", "sleep", "30"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
