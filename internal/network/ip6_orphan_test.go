@@ -2,17 +2,24 @@ package network
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestParseCOIIP6RuleContainers(t *testing.T) {
-	output := `table ip6 coi {
-	chain forward {
-		type filter hook forward priority 10; policy accept;
-		ct state established,related accept comment "coi-base" # handle 4
-		iifname "veth0" drop comment "coi6-coi-abc12345-1" # handle 5
-		iifname "veth1" drop comment "coi6-coi-def67890-2" # handle 6
-		iifname "veth0" drop comment "coi6-coi-abc12345-1" # handle 7
+	output := `table netdev coi {
+	chain coi6-coi-abc12345-1 {
+		type filter hook ingress device "veth0" priority -500; policy accept;
+		meta protocol ip6 counter packets 0 bytes 0 drop comment "coi6-coi-abc12345-1"
+	}
+	chain coi-boot-coi-def67890-2 {
+		type filter hook ingress device "veth1" priority -500; policy accept;
+		meta protocol ip udp dport 67 accept comment "coi-boot-coi-def67890-2"
+		meta protocol ip counter packets 3 bytes 180 drop comment "coi-boot-coi-def67890-2"
+	}
+	chain coi6-coi-def67890-2 {
+		type filter hook ingress device "veth1" priority -500; policy accept;
+		meta protocol ip6 counter packets 0 bytes 0 drop comment "coi6-coi-def67890-2"
 	}
 }`
 	got := parseCOIIP6RuleContainers(output)
@@ -23,8 +30,8 @@ func TestParseCOIIP6RuleContainers(t *testing.T) {
 }
 
 func TestParseCOIIP6RuleContainers_None(t *testing.T) {
-	// Output with no coi6- comments yields no names (not nil-vs-empty sensitive).
-	if got := parseCOIIP6RuleContainers("chain forward { ct state established accept }"); len(got) != 0 {
+	// Output with no coi6-/coi-boot- chains yields no names (not nil-vs-empty sensitive).
+	if got := parseCOIIP6RuleContainers("table netdev coi {\n\tchain other {\n\t}\n}"); len(got) != 0 {
 		t.Errorf("expected no names, got %v", got)
 	}
 	if got := parseCOIIP6RuleContainers(""); len(got) != 0 {
@@ -32,40 +39,58 @@ func TestParseCOIIP6RuleContainers_None(t *testing.T) {
 	}
 }
 
-func TestVethRulePlan(t *testing.T) {
-	chain := `table ip6 coi {
-	chain forward {
-		type filter hook forward priority 10; policy accept;
-		iifname "vethOLD" drop comment "coi6-coi-abc12345-1" # handle 5
-		iifname "vethNEW" drop comment "coi6-coi-abc12345-1" # handle 6
-		iifname "vethNEW" drop comment "coi6-coi-abc12345-1" # handle 7
-		iifname "vethX" drop comment "coi6-coi-abc12345-10" # handle 8
-		iifname "vethNEWER" drop comment "coi6-coi-def67890-2" # handle 9
-	}
-}`
-	const comment = "coi6-coi-abc12345-1"
+func TestVethIngressChainCmds(t *testing.T) {
 	tests := []struct {
-		name        string
-		output      string
-		veth        string
-		wantCurrent bool
-		wantStale   []string
+		name  string
+		chain string
+		rules [][]string
+		want  string
 	}{
-		{"no rule yet", "", "vethNEW", false, nil},
-		// The bug: a rule left over from an earlier start names a dead veth.
-		{"only a stale rule", `iifname "vethOLD" drop comment "coi6-coi-abc12345-1" # handle 5`, "vethNEW", false, []string{"5"}},
-		{"already current", `iifname "vethNEW" drop comment "coi6-coi-abc12345-1" # handle 6`, "vethNEW", true, nil},
-		// Keeps one current rule, drops the stale one and the duplicate; never
-		// touches another container's rule (coi6-...-10 must not match ...-1).
-		{"stale plus duplicates", chain, "vethNEW", true, []string{"5", "7"}},
-		// A veth name that is a prefix of another must not count as current.
-		{"prefix veth", chain, "vethNE", false, []string{"5", "6", "7"}},
+		{"ipv6 block", "coi6-c1", ipv6BlockRules, `add table netdev coi
+add chain netdev coi coi6-c1 { type filter hook ingress device "veth9" priority -500 ; policy accept ; }
+add rule netdev coi coi6-c1 meta protocol ip6 counter drop comment "coi6-c1"
+`},
+		{"boot block", "coi-boot-c1", bootBlockRules, `add table netdev coi
+add chain netdev coi coi-boot-c1 { type filter hook ingress device "veth9" priority -500 ; policy accept ; }
+add rule netdev coi coi-boot-c1 meta protocol ip udp dport 67 accept comment "coi-boot-c1"
+add rule netdev coi coi-boot-c1 meta protocol ip counter drop comment "coi-boot-c1"
+`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			current, stale := vethRulePlan(tt.output, comment, tt.veth)
-			if current != tt.wantCurrent || !reflect.DeepEqual(stale, tt.wantStale) {
-				t.Errorf("vethRulePlan() = (%v, %v), want (%v, %v)", current, stale, tt.wantCurrent, tt.wantStale)
+			if got := nftScript(vethIngressChainCmds(tt.chain, "veth9", tt.rules)); got != tt.want {
+				t.Errorf("script =\n%s\nwant\n%s", got, tt.want)
+			}
+			if strings.Contains(nftScript(vethIngressChainCmds(tt.chain, "veth9", tt.rules)), "forward") {
+				t.Error("drop chain must not hook forward: iifname there is the bridge, not the veth")
+			}
+		})
+	}
+}
+
+func TestIngressChainDevice(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{"bound", `table netdev coi {
+	chain coi6-c1 {
+		type filter hook ingress device "vethNEW" priority -500; policy accept;
+		meta protocol ip6 counter packets 0 bytes 0 drop comment "coi6-c1"
+	}
+}`, "vethNEW"},
+		{"no device (veth gone)", `table netdev coi {
+	chain coi6-c1 {
+		type filter hook ingress priority -500; policy accept;
+	}
+}`, ""},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ingressChainDevice(tt.output); got != tt.want {
+				t.Errorf("ingressChainDevice() = %q, want %q", got, tt.want)
 			}
 		})
 	}

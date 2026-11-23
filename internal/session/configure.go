@@ -43,6 +43,11 @@ type ConfigureResult struct {
 	Timezone           string `json:"timezone,omitempty"`
 	NetworkApplied     string `json:"network_applied,omitempty"`
 	HomeDir            string `json:"home_dir"`
+
+	// NetworkManager owns the rules and the allowlist refresher. The caller
+	// runs NetworkManager.Teardown before deleting the container; the
+	// refresher stops with ctx (allowlist addresses are then pinned).
+	NetworkManager *network.Manager `json:"-"`
 }
 
 // ConfigureContainer applies post-boot settings to a running container.
@@ -86,6 +91,32 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 
 	result := &ConfigureResult{
 		HomeDir: homeDir,
+	}
+
+	// 0. Network isolation first: every exec below runs with the container's
+	// policy already in place. SetupForContainer runs for every mode, like
+	// coi container start: open mode replaces a previous session's rules with
+	// its accept rule, and it lifts a boot block the caller installed with
+	// network.ApplyBootBlockRule right after starting the container (coi
+	// cannot close the window between the caller's start and this call).
+	if opts.NetworkConfig != nil && opts.NetworkConfig.Mode != "" {
+		// Ensure bridge is in trusted zone before applying network rules
+		if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(opts.ContainerName); err != nil {
+			opts.Logger(fmt.Sprintf("Warning: could not ensure bridge forwarding rules: %v", err))
+		} else if changed {
+			opts.Logger(fmt.Sprintf("Added iptables FORWARD rules for %s", bridgeName))
+		}
+
+		nm := network.NewManager(opts.NetworkConfig, logger.NewDiscard())
+		if err := nm.SetupForContainer(ctx, opts.ContainerName); err != nil {
+			return nil, fmt.Errorf("failed to setup network isolation: %w", err)
+		}
+		result.NetworkManager = nm
+		result.NetworkApplied = string(opts.NetworkConfig.Mode)
+		opts.Logger(fmt.Sprintf("Network isolation applied: %s", opts.NetworkConfig.Mode))
+		for _, w := range network.AllowlistPrivateWarnings(opts.NetworkConfig) {
+			opts.Logger(w)
+		}
 	}
 
 	// 1. SSH agent forwarding
@@ -140,26 +171,6 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 			containerWorkspacePath = "/workspace"
 		}
 		SetupMiseTrust(mgr, containerWorkspacePath, opts.Logger)
-	}
-
-	// 6. Network isolation
-	if opts.NetworkConfig != nil && opts.NetworkConfig.Mode != "" && opts.NetworkConfig.Mode != config.NetworkModeOpen {
-		// Ensure bridge is in trusted zone before applying network rules
-		if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(opts.ContainerName); err != nil {
-			opts.Logger(fmt.Sprintf("Warning: could not ensure bridge forwarding rules: %v", err))
-		} else if changed {
-			opts.Logger(fmt.Sprintf("Added iptables FORWARD rules for %s", bridgeName))
-		}
-
-		nm := network.NewManager(opts.NetworkConfig, logger.NewDiscard())
-		if err := nm.SetupForContainer(ctx, opts.ContainerName); err != nil {
-			return nil, fmt.Errorf("failed to setup network isolation: %w", err)
-		}
-		result.NetworkApplied = string(opts.NetworkConfig.Mode)
-		opts.Logger(fmt.Sprintf("Network isolation applied: %s", opts.NetworkConfig.Mode))
-		for _, w := range network.AllowlistPrivateWarnings(opts.NetworkConfig) {
-			opts.Logger(w)
-		}
 	}
 
 	// 7. Runtime limits (timeout monitor, max_processes)
