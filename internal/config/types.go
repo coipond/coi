@@ -197,8 +197,8 @@ type ContainerConfig struct {
 	// KeepOnFailedSave keeps a stopped non-persistent container whose session
 	// save failed (e.g. host disk full) instead of deleting it, so the
 	// conversation since the last saved copy can still be saved with
-	// `coi shell --resume=<session id>` (the id coi prints). Off by default: kept containers use disk and
-	// memory until removed.
+	// `coi shell --resume=<session id>` (the id coi prints). Off by default:
+	// kept containers use disk and memory until removed.
 	KeepOnFailedSave *bool `toml:"keep_on_failed_save"`
 }
 
@@ -226,8 +226,8 @@ func (c *ContainerConfig) HasContainerConfig() bool {
 		c.Build.HasBuildConfig()
 }
 
-// IsKeepOnFailedSaveEnabled reports whether [container] keep_on_failed_save is on.
-// Defaults to false when unset.
+// IsKeepOnFailedSaveEnabled reports whether [container] keep_on_failed_save
+// is on. Defaults to false when unset.
 func (c *ContainerConfig) IsKeepOnFailedSaveEnabled() bool {
 	return c != nil && c.KeepOnFailedSave != nil && *c.KeepOnFailedSave
 }

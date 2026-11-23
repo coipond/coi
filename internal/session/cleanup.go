@@ -406,9 +406,10 @@ func Cleanup(opts CleanupOptions) error {
 				// Container still running - user exited normally, keep it for potential re-attach.
 				opts.Logger("Container kept running - use 'coi attach' to reconnect, 'coi shutdown' to stop, or 'coi kill' to force stop")
 			} else if saveErr != nil && opts.KeepOnFailedSave {
-				// The stopped container holds the only copy of the conversation
-				// since the last save. Its firewall rules are not needed while it
-				// is stopped; a later launch sets them up again.
+				// The stopped container holds the only copy of the
+				// conversation since the last save. Its firewall rules are
+				// not needed while it is stopped; a later launch sets them
+				// up again.
 				if opts.NetworkManager != nil {
 					if err := opts.NetworkManager.Teardown(context.Background(), opts.ContainerName); err != nil {
 						opts.Logger(fmt.Sprintf("Warning: Failed to cleanup network: %v", err))
