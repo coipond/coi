@@ -78,6 +78,16 @@ func TestOmpTool_EssentialConfigFiles(t *testing.T) {
 	}
 }
 
+func TestOmpTool_SQLiteWALFiles(t *testing.T) {
+	sw, ok := NewOmp().(ToolWithSQLiteWALFiles)
+	if !ok {
+		t.Fatal("OmpTool does not implement ToolWithSQLiteWALFiles")
+	}
+	if got, want := sw.SQLiteWALFiles(), []string{"agent/agent.db"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SQLiteWALFiles() = %v, want %v", got, want)
+	}
+}
+
 func TestOmpTool_SandboxSettingsFileName(t *testing.T) {
 	omp := NewOmp()
 	tcf, ok := omp.(ToolWithConfigDirFiles)

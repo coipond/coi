@@ -82,26 +82,19 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 	stateDir := filepath.Join(homeDir, configDirName)
 	essentialFiles, stateFile := toolHostFiles(hostCLIConfigPath, homeDir, tcf)
 
-	// Copy essential config files from host — only those that exist on host
-	bundled := make(map[string]bool, len(essentialFiles))
-	for _, f := range essentialFiles {
-		bundled[f.ContainerPath] = true
-	}
-	// A bundled -wal sidecar marks a SQLite DB in WAL mode (omp's agent.db).
-	// A saved session's WAL would be replayed over the fresh DB, so the
-	// exec that makes the DB's dir also drops the WAL and its index; the
-	// host WAL, if any, is pushed after the DB.
+	// A saved session's WAL would be replayed over the fresh DB.
 	stale := map[string][]string{}
-	for _, f := range essentialFiles {
-		if !bundled[f.ContainerPath+"-wal"] {
-			continue
-		}
-		if _, err := os.Stat(f.HostPath); err == nil {
-			dir := filepath.Dir(f.ContainerPath)
-			stale[dir] = append(stale[dir], f.ContainerPath+"-wal", f.ContainerPath+"-shm")
+	if sw, ok := tcf.(tool.ToolWithSQLiteWALFiles); ok && hostCLIConfigPath != "" {
+		for _, db := range sw.SQLiteWALFiles() {
+			if _, err := os.Stat(filepath.Join(hostCLIConfigPath, db)); err == nil {
+				containerDB := filepath.Join(stateDir, db)
+				dir := filepath.Dir(containerDB)
+				stale[dir] = append(stale[dir], containerDB+"-wal", containerDB+"-shm")
+			}
 		}
 	}
 	madeDirs := map[string]bool{stateDir: len(stale[stateDir]) == 0}
+	// Copy essential config files from host — only those that exist on host
 	for _, f := range essentialFiles {
 		if hostCLIConfigPath == "" {
 			break
@@ -110,7 +103,6 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 			logger(fmt.Sprintf("  - Refreshing %s", filepath.Base(f.ContainerPath)))
 			// A file in a subdir (goose's chatgpt_codex/tokens.json) may be new
 			// to the saved session, and PushFile does not create its parent.
-			// One exec per distinct dir: omp's files all share agent/.
 			if dir := filepath.Dir(f.ContainerPath); !madeDirs[dir] {
 				args := []string{"mkdir", "-p", dir}
 				if rm := stale[dir]; len(rm) > 0 {

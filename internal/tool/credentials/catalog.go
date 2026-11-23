@@ -28,6 +28,9 @@ type Bundle struct {
 	AlwaysSetup         bool     `toml:"always_setup"`
 	AutoContextFile     string   `toml:"auto_context_file"`
 	Mode                string   `toml:"mode"`
+	// SQLiteWALFiles lists the files that are SQLite DBs in WAL mode; each
+	// one and its "<db>-wal" are also in Files.
+	SQLiteWALFiles []string `toml:"sqlite_wal_files"`
 	// KeychainService/KeychainFile describe a credential that, on macOS, the
 	// tool keeps in the login Keychain rather than on disk (e.g. Claude Code's
 	// "Claude Code-credentials" item instead of ~/.claude/.credentials.json).

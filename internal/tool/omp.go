@@ -97,6 +97,9 @@ func (o *OmpTool) EssentialConfigFiles() []string {
 	return mustBundle("omp").Files
 }
 
+// SQLiteWALFiles implements ToolWithSQLiteWALFiles.
+func (o *OmpTool) SQLiteWALFiles() []string { return mustBundle("omp").SQLiteWALFiles }
+
 // SandboxSettingsFileName implements ToolWithConfigDirFiles.
 func (o *OmpTool) SandboxSettingsFileName() string { return mustBundle("omp").SandboxSettingsFile }
 

@@ -167,6 +167,27 @@ func TestOmpBundle_MatchesHardcodedValues(t *testing.T) {
 	if !b.AlwaysSetup {
 		t.Error("AlwaysSetup = false, want true")
 	}
+	if want := []string{"agent/agent.db"}; !reflect.DeepEqual(b.SQLiteWALFiles, want) {
+		t.Errorf("SQLiteWALFiles = %v, want %v", b.SQLiteWALFiles, want)
+	}
+}
+
+// TestSQLiteWALFiles_ListedWithWALInFiles verifies that every sqlite_wal_files
+// entry is copied together with its -wal: a DB copied without its WAL lacks the
+// writes not yet checkpointed.
+func TestSQLiteWALFiles_ListedWithWALInFiles(t *testing.T) {
+	for _, name := range Names() {
+		b, _ := Lookup(name)
+		files := map[string]bool{}
+		for _, f := range b.Files {
+			files[f] = true
+		}
+		for _, db := range b.SQLiteWALFiles {
+			if !files[db] || !files[db+"-wal"] {
+				t.Errorf("%s: sqlite_wal_files entry %q needs %q and %q in files %v", name, db, db, db+"-wal", b.Files)
+			}
+		}
+	}
 }
 
 func TestGooseBundle_MatchesHardcodedValues(t *testing.T) {
