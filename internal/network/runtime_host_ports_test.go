@@ -11,26 +11,20 @@ import (
 	"github.com/coipond/coi/internal/logger"
 )
 
-// fakeConfigIncus puts an incus on PATH that keeps runtimeHostPortsKey in a
-// file (config get/set/unset), logs every call and answers the rest with
-// nothing. It returns the key file and the log.
-func fakeConfigIncus(t *testing.T) (keyPath, logPath string) {
+// fakeRecordEnv gives the test its own HOME and an incus on PATH that logs its
+// calls and answers nothing. It returns containerName's runtime host ports
+// record path (its directory created) and the incus log.
+func fakeRecordEnv(t *testing.T, containerName string) (keyPath, logPath string) {
 	t.Helper()
-	dir := t.TempDir()
-	keyPath, logPath = filepath.Join(dir, "key"), filepath.Join(dir, "incus.log")
-	script := `#!/bin/sh
-echo "$*" >> ` + logPath + `
-case "$*" in
-*"config get "*` + runtimeHostPortsKey + `*) cat ` + keyPath + ` 2>/dev/null ;;
-*"config set "*) for a in "$@"; do case "$a" in ` + runtimeHostPortsKey + `=*) printf '%s' "${a#*=}" > ` + keyPath + ` ;; esac; done ;;
-*"config unset "*) rm -f ` + keyPath + ` ;;
-esac
-exit 0
-`
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o700); err != nil { //nolint:gosec // test fake must be executable
+	t.Setenv("HOME", t.TempDir())
+	logPath = fakeIncus(t)
+	keyPath, err := runtimeHostPortsPath(containerName)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	return keyPath, logPath
 }
 
@@ -48,8 +42,8 @@ func readKey(t *testing.T, keyPath string) string {
 
 // A second `coi hosts add --ports` keeps the first entry's ports.
 func TestRecordRuntimeHostPorts_Merges(t *testing.T) {
-	keyPath, _ := fakeConfigIncus(t)
 	c := "coi-rhp-merge"
+	keyPath, _ := fakeRecordEnv(t, c)
 	if err := recordRuntimeHostPorts(c, config.HostEntry{IP: "192.168.1.50", Ports: []int{8080}}); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +56,10 @@ func TestRecordRuntimeHostPorts_Merges(t *testing.T) {
 }
 
 func TestClearRuntimeHostPorts(t *testing.T) {
-	keyPath, _ := fakeConfigIncus(t)
+	keyPath, logPath := fakeRecordEnv(t, "coi-rhp-clear")
+	if err := ClearRuntimeHostPorts("coi-rhp-clear"); err != nil {
+		t.Errorf("clear without a record: %v", err)
+	}
 	if err := os.WriteFile(keyPath, []byte("203.0.113.10=8080"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -72,12 +69,16 @@ func TestClearRuntimeHostPorts(t *testing.T) {
 	if got := readKey(t, keyPath); got != "" {
 		t.Errorf("key after clear = %q, want none", got)
 	}
+	// Every session setup runs this: it must not cost an incus call.
+	if calls, _ := os.ReadFile(logPath); len(calls) != 0 {
+		t.Errorf("clear called incus:\n%s", calls)
+	}
 }
 
 // Session setup drops a record left by an earlier session, also when the
 // config has no [[network.hosts]] (the firewall it described is gone).
 func TestSetupForContainer_ClearsRuntimeHostPorts(t *testing.T) {
-	keyPath, _ := fakeConfigIncus(t)
+	keyPath, _ := fakeRecordEnv(t, "coi-rhp-setup")
 	if err := os.WriteFile(keyPath, []byte("203.0.113.10=8080"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -94,13 +95,13 @@ func TestAddUserHost_RecordsPorts(t *testing.T) {
 	if !hostInterfaceExists("lo") {
 		t.Skip("no /sys/class/net/lo")
 	}
-	keyPath, logPath := fakeConfigIncus(t)
+	c := "coi-rhp-add"
+	keyPath, logPath := fakeRecordEnv(t, c)
 	sudoDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sudoDir, "sudo"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil { //nolint:gosec // test fake must be executable
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", sudoDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	c := "coi-rhp-add"
 	instanceNetCache.Store(c, instanceNet{ip: "10.47.0.5", veth: "lo", at: time.Now()})
 	t.Cleanup(func() { instanceNetCache.Delete(c) })
 

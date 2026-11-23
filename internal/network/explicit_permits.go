@@ -5,20 +5,27 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coipond/coi/internal/config"
-	"github.com/coipond/coi/internal/container"
 )
 
-// runtimeHostPortsKey records the ports of each `coi hosts add --ports` entry on
-// the container ("<ip>=<port>,<port> ..."), so the monitors in the session's own
-// coi process see that runtime permit. ClearRuntimeHostPorts drops it at every
-// session setup, with the firewall it describes.
-const runtimeHostPortsKey = "user.coi.host_ports"
+// runtimeHostPortsPath is the host file that records the ports of each
+// `coi hosts add --ports` entry of a container ("<ip>=<port>,<port> ..."), so
+// the monitors in the session's own coi process see that runtime permit. It
+// sits next to the container's IP cache. ClearRuntimeHostPorts removes it at
+// every session setup, with the firewall it describes.
+func runtimeHostPortsPath(containerName string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(NewCacheManager(homeDir).cacheDir, containerName+".host-ports"), nil
+}
 
 // ExplicitPortPermits answers "did the user name this exact port for this
 // destination?" for the monitors' suspicious-port check. Unlike EgressPermits it
@@ -31,8 +38,8 @@ const runtimeHostPortsKey = "user.coi.host_ports"
 // re-reads the container's IP cache, which the allowlist refresher saves with
 // every answer it installs. Every address seen for the name stays permitted, as
 // the firewall keeps a rotated-out address for a grace period. The runtime
-// entries are read from the container only when a suspicious port has no other
-// permit, at most once per runtimeHostPortsTTL.
+// entries are read from their host record only when a suspicious port has no
+// other permit, at most once per runtimeHostPortsTTL.
 type ExplicitPortPermits struct {
 	containerName string
 	static        []explicitPortPermit
@@ -71,9 +78,18 @@ var loadNameAddresses = func(containerName string) (map[string][]string, error) 
 	return cache.Domains, nil
 }
 
-// readRuntimeHostPorts returns the container's runtimeHostPortsKey value.
+// readRuntimeHostPorts returns the container's runtime host ports record
+// (empty when there is none).
 var readRuntimeHostPorts = func(containerName string) (string, error) {
-	return container.ConfigGetUncached(context.Background(), containerName, runtimeHostPortsKey)
+	path, err := runtimeHostPortsPath(containerName)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return string(data), err
 }
 
 // NewExplicitPortPermits collects the explicit port permits of containerName
@@ -130,8 +146,8 @@ func (p *ExplicitPortPermits) refresh() {
 }
 
 // runtimePermits reports whether a `coi hosts add --ports` entry permits
-// ip:port, reading the entries from the container when the last read is older
-// than runtimeHostPortsTTL. A failed read keeps the last good entries.
+// ip:port, reading the record when the last read is older than
+// runtimeHostPortsTTL. A failed read keeps the last good entries.
 func (p *ExplicitPortPermits) runtimePermits(ip net.IP, port int) bool {
 	p.runtimeMu.Lock()
 	defer p.runtimeMu.Unlock()
@@ -209,8 +225,8 @@ func hostEntryPermits(hosts []config.HostEntry) []explicitPortPermit {
 	return out
 }
 
-// formatRuntimeHostPorts renders entries with ports as a runtimeHostPortsKey
-// value.
+// formatRuntimeHostPorts renders entries with ports as a runtime host ports
+// record.
 func formatRuntimeHostPorts(entries []config.HostEntry) string {
 	var fields []string
 	for _, e := range entries {
@@ -226,7 +242,7 @@ func formatRuntimeHostPorts(entries []config.HostEntry) string {
 	return strings.Join(fields, " ")
 }
 
-// parseRuntimeHostPorts reads a runtimeHostPortsKey value. A malformed field is
+// parseRuntimeHostPorts reads a runtime host ports record. A malformed field is
 // skipped, which can only leave a port without its permit.
 func parseRuntimeHostPorts(value string) []config.HostEntry {
 	var out []config.HostEntry

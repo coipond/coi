@@ -249,7 +249,7 @@ func TestResolveDomainsToHostCIDRs_PolicyCarriesPortPermits(t *testing.T) {
 // The monitors' explicit permit check counts only port-explicit entries, not
 // a host entry without ports.
 func TestStartExplicitPortPermits(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // no incus: the runtime host ports read fails
+	t.Setenv("HOME", t.TempDir()) // no runtime host ports record
 	permits, stop := startExplicitPortPermits(t.Context(), "c", []config.HostEntry{
 		{IP: "192.168.1.50", Ports: []int{8080}},
 		{IP: "192.168.1.60"},
@@ -297,13 +297,21 @@ func TestStartExplicitPortPermits_FollowsNameAddresses(t *testing.T) {
 // `coi run` in open mode drops a runtime host ports record of an earlier
 // session, also without [[network.hosts]].
 func TestApplyNetworkIsolation_OpenClearsRuntimeHostPorts(t *testing.T) {
-	logPath := fakeIncusLog(t)
+	fakeIncusLog(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	record := filepath.Join(home, ".coi", "network-cache", "c.host-ports")
+	if err := os.MkdirAll(filepath.Dir(record), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte("203.0.113.10=8080"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	a := &App{cfg: &config.Config{Network: config.NetworkConfig{Mode: config.NetworkModeOpen}}}
 	if _, err := a.applyNetworkIsolation(t.Context(), "c"); err != nil {
 		t.Fatal(err)
 	}
-	calls, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(calls), "user.coi.host_ports") {
-		t.Errorf("no runtime host ports clear, incus calls:\n%s", calls)
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Errorf("runtime host ports record not removed: %v", err)
 	}
 }

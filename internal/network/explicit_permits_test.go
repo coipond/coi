@@ -123,8 +123,8 @@ func TestExplicitPortPermits_NameFollowsFirewallAddresses(t *testing.T) {
 	}
 }
 
-// `coi hosts add --ports` permits are read from the container when a port has
-// no other permit, at most once per runtimeHostPortsTTL.
+// `coi hosts add --ports` permits are read from their host record when a port
+// has no other permit, at most once per runtimeHostPortsTTL.
 func TestExplicitPortPermits_RuntimeHosts(t *testing.T) {
 	stubRefreshSources(t, nil, "")
 	reads, value := 0, "10.0.0.9=8080,443 bad 10.0.0.10=x 10.0.0.11="
@@ -155,7 +155,7 @@ func TestExplicitPortPermits_RuntimeHosts(t *testing.T) {
 		t.Errorf("an expired read must be renewed (reads = %d)", reads)
 	}
 
-	readRuntimeHostPorts = func(string) (string, error) { reads++; return "", errors.New("incus down") }
+	readRuntimeHostPorts = func(string) (string, error) { reads++; return "", errors.New("read failed") }
 	p.runtimeRead = time.Now().Add(-runtimeHostPortsTTL)
 	if !p.Permits("tcp", "10.0.0.12", 8080) {
 		t.Error("a failed read must keep the last good permits")
