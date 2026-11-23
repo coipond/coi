@@ -42,16 +42,17 @@ func SetupSSHAgentForwarding(mgr container.ContainerManager, containerName strin
 // in-container socket path for the entries that were forwarded and declare an
 // EnvVar. Per-entry failures are logged, never fatal.
 func ForwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent bool, logger func(string)) map[string]string {
-	env, _ := forwardConfiguredSockets(mgr, sc, includeSSHAgent, logger)
+	env, _ := forwardConfiguredSockets(mgr, sc, includeSSHAgent, true, logger)
 	return env
 }
 
 // forwardConfiguredSockets is ForwardConfiguredSockets that also returns the
 // entries actually forwarded, for the startup grants report. A reused
 // persistent container keeps the socket devices of earlier sessions, so every
-// one this session did not forward is removed: forward_agent turned off, a
+// one this session does not forward is removed: forward_agent turned off, a
 // [[sockets]] entry removed or dropped by the trust gate, a host socket gone.
-func forwardConfiguredSockets(mgr socketForwarder, sc *SocketConfig, includeSSHAgent bool, logger func(string)) (map[string]string, []SocketEntry) {
+// A container created by this session (reused false) has none to remove.
+func forwardConfiguredSockets(mgr socketForwarder, sc *SocketConfig, includeSSHAgent, reused bool, logger func(string)) (map[string]string, []SocketEntry) {
 	var entries []SocketEntry
 	if includeSSHAgent {
 		if e, ok := sshAgentSocketEntry(logger); ok {
@@ -61,12 +62,35 @@ func forwardConfiguredSockets(mgr socketForwarder, sc *SocketConfig, includeSSHA
 	if sc != nil {
 		entries = append(entries, sc.Sockets...)
 	}
-	var env map[string]string
-	var forwarded []SocketEntry
-	if len(entries) > 0 {
-		env, forwarded = forwardSockets(mgr, entries, logger)
+	// Listed before forwarding: the list shares the config cache entry that
+	// forwardSocket reads next, while a list after the device writes would
+	// cost another `incus config show`.
+	var existing map[string]bool
+	if reused {
+		existing = existingSocketDevices(mgr, logger)
+		requested := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			requested[e.DeviceName] = true
+		}
+		for d := range existing {
+			if !requested[d] {
+				removeSocketDevice(mgr, d, logger)
+			}
+		}
 	}
-	removeStaleSocketDevices(mgr, forwarded, logger)
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	env, forwarded := forwardSockets(mgr, entries, logger)
+	done := make(map[string]bool, len(forwarded))
+	for _, e := range forwarded {
+		done[e.DeviceName] = true
+	}
+	for _, e := range entries {
+		if existing[e.DeviceName] && !done[e.DeviceName] {
+			removeSocketDevice(mgr, e.DeviceName, logger)
+		}
+	}
 	return env, forwarded
 }
 
@@ -88,25 +112,26 @@ func isSocketDevice(name string) bool {
 	return true
 }
 
-// removeStaleSocketDevices removes the container's socket devices that are
-// not in forwarded.
-func removeStaleSocketDevices(mgr container.ContainerDevices, forwarded []SocketEntry, logger func(string)) {
+// existingSocketDevices returns the names of the container's socket devices.
+func existingSocketDevices(mgr container.ContainerDevices, logger func(string)) map[string]bool {
 	devices, err := mgr.ListDevices()
 	if err != nil {
 		logger(fmt.Sprintf("Warning: could not list devices to remove stale socket forwards: %v", err))
-		return
+		return nil
 	}
-	keep := make(map[string]bool, len(forwarded))
-	for _, e := range forwarded {
-		keep[e.DeviceName] = true
-	}
+	out := map[string]bool{}
 	for _, d := range devices {
-		if !isSocketDevice(d) || keep[d] {
-			continue
+		if isSocketDevice(d) {
+			out[d] = true
 		}
-		if err := mgr.RemoveDevice(d); err != nil {
-			logger(fmt.Sprintf("Warning: could not remove stale socket device %s: %v", d, err))
-		}
+	}
+	return out
+}
+
+// removeSocketDevice removes a socket device this session does not forward.
+func removeSocketDevice(mgr container.ContainerDevices, name string, logger func(string)) {
+	if err := mgr.RemoveDevice(name); err != nil {
+		logger(fmt.Sprintf("Warning: could not remove stale socket device %s: %v", name, err))
 	}
 }
 

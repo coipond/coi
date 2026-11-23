@@ -21,6 +21,8 @@ type fakeForwarder struct {
 	addCalls     int
 	devices      []string // what ListDevices returns
 	listErr      error
+	listCalls    int
+	addsAtList   int // AddProxyDevice calls made before the last ListDevices
 }
 
 type addedDevice struct {
@@ -46,7 +48,11 @@ func (f *fakeForwarder) RemoveDevice(name string) error {
 	return nil
 }
 
-func (f *fakeForwarder) ListDevices() ([]string, error) { return f.devices, f.listErr }
+func (f *fakeForwarder) ListDevices() ([]string, error) {
+	f.listCalls++
+	f.addsAtList = f.addCalls
+	return f.devices, f.listErr
+}
 
 func (f *fakeForwarder) Exec(_ ...string) error                                    { return nil }
 func (f *fakeForwarder) ExecArgs(_ []string, _ container.ExecCommandOptions) error { return nil }
@@ -232,7 +238,7 @@ func TestForwardSocket_ReplacesChangedDevice(t *testing.T) {
 func TestForwardConfiguredSockets_RemovesStaleDevicesWhenNothingForwarded(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", newTestSocket(t, "agent.sock"))
 	f := &fakeForwarder{devices: []string{"workspace", "ssh-agent", "socket-0", "socket-12", "socket-x", "coi-port-web", "mount-0"}}
-	env, forwarded := forwardConfiguredSockets(f, nil, false, func(string) {})
+	env, forwarded := forwardConfiguredSockets(f, nil, false, true, func(string) {})
 	if len(env) != 0 || len(forwarded) != 0 || f.addCalls != 0 {
 		t.Fatalf("nothing should be forwarded: env=%v forwarded=%v adds=%d", env, forwarded, f.addCalls)
 	}
@@ -257,12 +263,41 @@ func TestForwardConfiguredSockets_KeepsOnlyForwardedDevices(t *testing.T) {
 		{HostPath: host, ContainerPath: "/run/a.sock", DeviceName: "socket-0"},
 		{HostPath: filepath.Join(t.TempDir(), "gone.sock"), ContainerPath: "/run/gone.sock", DeviceName: "socket-2"},
 	}}
-	env, forwarded := forwardConfiguredSockets(f, sc, true, func(string) {})
+	env, forwarded := forwardConfiguredSockets(f, sc, true, true, func(string) {})
 	if env["SSH_AUTH_SOCK"] != sshAgentContainerPath || len(forwarded) != 2 {
 		t.Fatalf("env=%v forwarded=%+v", env, forwarded)
 	}
 	if got := strings.Join(f.removed, ","); got != "socket-1,socket-2" {
 		t.Errorf("removed = %q, want socket-1,socket-2", got)
+	}
+	// One list, before any device write, so it shares forwardSocket's
+	// cached config read.
+	if f.listCalls != 1 || f.addsAtList != 0 {
+		t.Errorf("devices listed %d times, after %d adds; want once, before forwarding", f.listCalls, f.addsAtList)
+	}
+}
+
+// The list comes before the device writes even when one is added.
+func TestForwardConfiguredSockets_ListsBeforeAdding(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", newTestSocket(t, "agent.sock"))
+	f := &fakeForwarder{devices: []string{"socket-0"}}
+	forwardConfiguredSockets(f, nil, true, true, func(string) {})
+	if f.addCalls != 1 || f.listCalls != 1 || f.addsAtList != 0 {
+		t.Errorf("adds=%d lists=%d addsAtList=%d; want the list once, before the add", f.addCalls, f.listCalls, f.addsAtList)
+	}
+	if strings.Join(f.removed, ",") != "socket-0,ssh-agent" {
+		t.Errorf("removed = %v, want the stale socket-0, then the agent's re-add", f.removed)
+	}
+}
+
+// A container created by this session can't hold devices of an earlier
+// one: no list, no removal.
+func TestForwardConfiguredSockets_FreshContainerSkipsList(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	f := &fakeForwarder{devices: []string{"ssh-agent"}}
+	forwardConfiguredSockets(f, nil, false, false, func(string) {})
+	if f.listCalls != 0 || len(f.removed) != 0 {
+		t.Errorf("lists=%d removed=%v, want neither", f.listCalls, f.removed)
 	}
 }
 
@@ -271,7 +306,7 @@ func TestForwardConfiguredSockets_ListErrorIsLogged(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 	f := &fakeForwarder{listErr: fmt.Errorf("incus down")}
 	var logs []string
-	forwardConfiguredSockets(f, nil, false, func(s string) { logs = append(logs, s) })
+	forwardConfiguredSockets(f, nil, false, true, func(s string) { logs = append(logs, s) })
 	if len(f.removed) != 0 {
 		t.Errorf("removed = %v", f.removed)
 	}
