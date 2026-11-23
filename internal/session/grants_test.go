@@ -695,6 +695,11 @@ func TestGrantsRender_Network(t *testing.T) {
 			want:    []string{"open (no egress filtering)", "host 10.0.0.5 (db)\n"},
 			notWant: []string{"ports 443", "DNS pinned", "on ports", "LAN", "host services"},
 		},
+		{
+			name: "open with metadata block",
+			n:    NetworkGrants{Mode: "open", MetadataBlock: true},
+			want: []string{"open (only the metadata endpoint blocked)"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

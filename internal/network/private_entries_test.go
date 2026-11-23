@@ -83,10 +83,18 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 	if got := AllowlistPrivateWarnings(c); len(got) != 0 {
 		t.Errorf("allow_local_network_access: want no warning, got %q", got)
 	}
-	// block_metadata_endpoint keeps link-local blocked under local access.
+	// block_metadata_endpoint keeps link-local blocked under local access,
+	// also in an entry that overlaps a private range too.
 	c.BlockMetadataEndpoint = &on
-	if got := AllowlistPrivateWarnings(c); len(got) != 1 || !strings.Contains(got[0], "entry 169.254.169.254 ") {
-		t.Errorf("allow_local_network_access + block_metadata_endpoint: want the link-local warning only, got %q", got)
+	c.AllowedDomains = append(c.AllowedDomains, "160.0.0.0/3")
+	got = AllowlistPrivateWarnings(c)
+	if len(got) != 2 {
+		t.Fatalf("allow_local_network_access + block_metadata_endpoint: want 2 link-local warnings, got %q", got)
+	}
+	for i, entry := range []string{"169.254.169.254", "160.0.0.0/3"} {
+		if !strings.Contains(got[i], "entry "+entry+" is in the link-local range") {
+			t.Errorf("warning %d: %q", i, got[i])
+		}
 	}
 	// allowed_ports is what both sides inherit when they name no ports.
 	c = cfg()

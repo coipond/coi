@@ -56,7 +56,7 @@
 [network]
 # mode = "restricted"            # restricted | open | allowlist
 # block_private_networks = true  # block RFC1918 / 100.64.0.0/10 from the container
-# block_metadata_endpoint = true # block 169.254.169.254 (cloud metadata/IAM)
+# block_metadata_endpoint = true # block 169.254.0.0/16 (cloud metadata/IAM), every mode
 # allow_local_network_access = false
 # allow_host_access = false     # let the container reach services on the host itself
 # refresh_interval_minutes = 30  # re-resolve allowlist domains (allowlist mode)

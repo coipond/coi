@@ -266,6 +266,18 @@ func TestGrantsJSON_Network(t *testing.T) {
 				"hosts": [{"ip": "10.0.0.5", "hostnames": [], "ports": null}]}`,
 		},
 		{
+			name: "open with metadata block",
+			n:    NetworkGrants{Mode: "open", MetadataBlock: true},
+			want: `{"mode": "open", "allowed_domains": null, "lan": null, "metadata_endpoint": "blocked", "host_access": null, "allowed_ports": null, "dns_servers": null,
+				"hosts": []}`,
+		},
+		{
+			name: "explicit open without metadata block",
+			n:    NetworkGrants{Mode: "open"},
+			want: `{"mode": "open", "allowed_domains": null, "lan": null, "metadata_endpoint": "not_blocked", "host_access": null, "allowed_ports": null, "dns_servers": null,
+				"hosts": []}`,
+		},
+		{
 			name: "restricted pins DNS",
 			n:    NetworkGrants{Mode: "restricted", LANAccess: true, MetadataBlock: true, DNSServers: []string{"10.0.0.53"}},
 			want: `{"mode": "restricted", "allowed_domains": null, "lan": "allowed", "metadata_endpoint": "blocked",

@@ -1012,7 +1012,11 @@ func (g *Grants) networkLines() []string {
 	var lines []string
 	switch config.NetworkMode(n.Mode) {
 	case config.NetworkModeOpen:
-		lines = append(lines, "open (no egress filtering)")
+		if n.MetadataEndpoint != nil && *n.MetadataEndpoint == netBlocked {
+			lines = append(lines, "open (only the metadata endpoint blocked)")
+		} else {
+			lines = append(lines, "open (no egress filtering)")
+		}
 	case config.NetworkModeAllowlist:
 		dests := "nothing"
 		if len(n.AllowedDomains) > 0 {

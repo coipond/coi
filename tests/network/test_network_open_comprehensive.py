@@ -2,7 +2,7 @@
 Integration tests for network OPEN mode.
 
 Tests that OPEN mode allows unrestricted network access to all destinations,
-including public internet, RFC1918 private networks, and metadata endpoints.
+including public internet, RFC1918 private networks, and metadata endpoints (with block_metadata_endpoint = false).
 
 Network isolation is implemented using nft rules in restricted/allowlist modes.
 OPEN mode has no firewall rules applied.
@@ -189,7 +189,8 @@ mode = "open"
 
 def test_open_allows_metadata_endpoint(coi_binary, workspace_dir, cleanup_containers):
     """
-    Test that OPEN mode allows access to cloud metadata endpoint (169.254.169.254).
+    Test that OPEN mode with block_metadata_endpoint = false allows access to
+    the cloud metadata endpoint (169.254.169.254).
 
     Verifies that containers can attempt connections to the metadata endpoint
     without ACL blocking.
@@ -202,6 +203,7 @@ def test_open_allows_metadata_endpoint(coi_binary, workspace_dir, cleanup_contai
         f.write("""
 [network]
 mode = "open"
+block_metadata_endpoint = false
 """)
         config_file = f.name
 

@@ -20,7 +20,8 @@ const DefaultShutdownTimeoutSeconds = 60
 const (
 	// NetworkModeRestricted blocks local/internal networks, allows internet
 	NetworkModeRestricted NetworkMode = "restricted"
-	// NetworkModeOpen allows all network access (current behavior)
+	// NetworkModeOpen allows all network access but the metadata range under
+	// block_metadata_endpoint
 	NetworkModeOpen NetworkMode = "open"
 	// NetworkModeAllowlist allows only specific domains; private and metadata
 	// ranges stay blocked unless allow_local_network_access is set (metadata

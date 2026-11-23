@@ -100,7 +100,15 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 	// Handle different network modes
 	switch m.config.Mode {
 	case config.NetworkModeOpen:
-		m.logger.Println("Network mode: open (no restrictions)")
+		blockMetadata := config.BoolVal(m.config.BlockMetadataEndpoint)
+		if blockMetadata {
+			m.logger.Println("Network mode: open (only cloud metadata endpoints blocked)")
+		} else {
+			m.logger.Println("Network mode: open (no restrictions)")
+		}
+		if blockMetadata && !NftUsable(m.config) {
+			m.logger.Errorf("Warning: block_metadata_endpoint is not enforced in open mode: nft is not usable")
+		}
 		// Add ACCEPT rules via nft so traffic flows even when FORWARD policy is DROP
 		if NftUsable(m.config) {
 			containerIP, err := GetContainerIP(containerName)
@@ -241,15 +249,43 @@ func openModeRuleText(ip string) string {
 	return fmt.Sprintf(`ip saddr %s accept comment "coi-%s"`, ip, ip)
 }
 
-// applyOpenRules installs open mode's single accept rule for ip. A reused
-// container whose rules are already exactly that is left untouched; anything
+// openModeCmds returns the nft commands for open mode's rules for ip: under
+// block_metadata_endpoint a metadataCIDR reject, then the accept.
+func openModeCmds(ip string, blockMetadata bool) [][]string {
+	comment := []string{"comment", fmt.Sprintf(`"coi-%s"`, ip)}
+	rule := func(match ...string) []string {
+		return append(append([]string{"add", "rule", "ip", "coi", "forward", "ip", "saddr", ip}, match...), comment...)
+	}
+	var cmds [][]string
+	if blockMetadata {
+		cmds = append(cmds,
+			rule(append([]string{"ip", "daddr", metadataCIDR}, tcpReset...)...),
+			rule("ip", "daddr", metadataCIDR, "reject"))
+	}
+	return append(cmds, rule("accept"))
+}
+
+// openModeRuleTexts is how nft lists openModeCmds' rules.
+func openModeRuleTexts(ip string, blockMetadata bool) []string {
+	var texts []string
+	if blockMetadata {
+		texts = append(texts,
+			fmt.Sprintf(`ip saddr %s ip daddr %s reject with tcp reset comment "coi-%s"`, ip, metadataCIDR, ip),
+			fmt.Sprintf(`ip saddr %s ip daddr %s reject comment "coi-%s"`, ip, metadataCIDR, ip))
+	}
+	return append(texts, openModeRuleText(ip))
+}
+
+// applyOpenRules installs open mode's rules for ip (openModeCmds). A reused
+// container whose rules are already exactly those is left untouched; anything
 // else is replaced in one transaction. Non-fatal, like the code it replaces.
 func (m *Manager) applyOpenRules(ip string) {
 	if err := EnsureBaseRules(); err != nil {
 		m.logger.Errorf("Warning: failed to ensure base rules: %v", err)
 	}
+	blockMetadata := config.BoolVal(m.config.BlockMetadataEndpoint)
 	rules, err := forwardRulesWithComment("coi-" + ip)
-	if err == nil && len(rules) == 1 && rules[0].text == openModeRuleText(ip) {
+	if err == nil && ruleTextsEqual(rules, openModeRuleTexts(ip, blockMetadata)) {
 		m.purgeStaleSideStateForIP(ip)
 		return // already in place (a reused container): nothing to do
 	}
@@ -260,21 +296,30 @@ func (m *Manager) applyOpenRules(ip string) {
 		m.prepareContainer(m.containerName)
 	}
 	if err == nil {
-		cmds := deleteChainRuleCmds("forward", rules)
-		cmds = append(cmds, []string{
-			"add", "rule", "ip", "coi", "forward",
-			"ip", "saddr", ip, "accept", "comment", fmt.Sprintf(`"coi-%s"`, ip),
-		})
+		cmds := append(deleteChainRuleCmds("forward", rules), openModeCmds(ip, blockMetadata)...)
 		if runNFTScript(cmds) == nil {
 			m.purgeStaleSideStateForIP(ip)
 			return
 		}
 	}
-	// Fallback: the original purge-then-add sequence.
+	// Fallback: purge, then add.
 	m.purgeStaleRulesForIP(ip)
-	if err := EnsureOpenModeRules(ip); err != nil {
+	if err := runNFTScript(openModeCmds(ip, blockMetadata)); err != nil {
 		m.logger.Errorf("Warning: could not add open mode rules: %v", err)
 	}
+}
+
+// ruleTextsEqual reports whether rules are, in order, exactly texts.
+func ruleTextsEqual(rules []chainRule, texts []string) bool {
+	if len(rules) != len(texts) {
+		return false
+	}
+	for i, r := range rules {
+		if r.text != texts[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // applyRestrictedReplacing applies restricted mode for ip with the deletes of

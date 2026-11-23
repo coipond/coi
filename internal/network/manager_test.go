@@ -2,6 +2,7 @@ package network
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -361,6 +362,12 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 			notWant: []string{blockRFC1918, blockMetadata, "on ports"},
 		},
 		{
+			name:    "local access on, metadata blocked",
+			cfg:     config.NetworkConfig{AllowLocalNetworkAccess: &on, BlockMetadataEndpoint: &on},
+			want:    []string{allowRFC1918 + "; allow_local_network_access)", blockMetadata},
+			notWant: []string{blockRFC1918},
+		},
+		{
 			name: "local access on with allowed_ports",
 			cfg: config.NetworkConfig{
 				AllowLocalNetworkAccess: &on,
@@ -389,6 +396,63 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 			for _, nw := range tt.notWant {
 				if strings.Contains(string(out), nw) {
 					t.Errorf("log has %q; got: %q", nw, out)
+				}
+			}
+		})
+	}
+}
+
+// Open mode rejects metadataCIDR ahead of its accept under
+// block_metadata_endpoint; a reused container with exactly those rules is
+// left alone.
+func TestApplyOpenRules_MetadataBlock(t *testing.T) {
+	on, off := true, false
+	const ip = "10.0.0.2"
+	listing := func(texts []string) string {
+		var b strings.Builder
+		for i, text := range texts {
+			fmt.Fprintf(&b, "\t\t%s # handle %d\n", text, 5+i)
+		}
+		return b.String()
+	}
+	for _, tc := range []struct {
+		name    string
+		block   *bool
+		listing string
+		want    []string // rules added, in order; nil: no nft script
+	}{
+		{"blocked", &on, "", []string{"ip daddr 169.254.0.0/16 meta l4proto tcp reject with tcp reset", "ip daddr 169.254.0.0/16 reject", "ip saddr 10.0.0.2 accept"}},
+		{"not blocked", &off, "", []string{"ip saddr 10.0.0.2 accept"}},
+		{"blocked, reused", &on, listing(openModeRuleTexts(ip, true)), nil},
+		{"blocked, reused without the reject", &on, listing(openModeRuleTexts(ip, false)), []string{"handle 5", "169.254.0.0/16 meta l4proto tcp reject", "169.254.0.0/16 reject", "accept"}},
+		{"not blocked, reused with the reject", &off, listing(openModeRuleTexts(ip, true)), []string{"handle 5", "handle 6", "handle 7", "ip saddr 10.0.0.2 accept"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := fakeNftSudo(t, "table ip coi {\n\tchain forward { # handle 1\n"+tc.listing+"\t}\n}\n", "")
+			fakeIncus(t)
+			m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: tc.block}, logger.NewDiscard())
+			m.applyOpenRules(ip)
+			calls := readCalls(t, logPath)
+			script := calls[strings.Index(calls, "-f -\n")+1:]
+			if tc.want == nil {
+				if strings.Contains(calls, "-f -") {
+					t.Fatalf("reuse must not touch the rules, got:\n%s", calls)
+				}
+				return
+			}
+			lines := strings.Split(strings.TrimSpace(script), "\n")
+			var got []string
+			for _, l := range lines {
+				if strings.HasPrefix(l, "delete rule ip coi forward") || strings.HasPrefix(l, "add rule ip coi forward") {
+					got = append(got, l)
+				}
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("script rules = %q, want %q", got, tc.want)
+			}
+			for i, w := range tc.want {
+				if !strings.Contains(got[i], w) {
+					t.Errorf("rule %d = %q, want %q", i, got[i], w)
 				}
 			}
 		})
