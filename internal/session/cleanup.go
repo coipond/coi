@@ -328,7 +328,7 @@ func Cleanup(opts CleanupOptions) error {
 	// direct file-access path (no SFTP) so the save succeeds in every exit scenario.
 	saveFailed := false
 	if opts.SaveSession && exists && opts.SessionID != "" && opts.SessionsDir != "" && opts.Tool != nil && opts.Tool.ConfigDirName() != "" {
-		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, opts.Persistent, opts.ProfileName, opts.ProfileFromDefault, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger); err != nil {
+		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, opts.Persistent, opts.ProfileName, opts.ProfileFromDefault, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger, sessionDebug(opts)); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: Failed to save session data: %v", err))
 			saveFailed = true
 		}
@@ -448,6 +448,15 @@ func Cleanup(opts CleanupOptions) error {
 	return nil
 }
 
+// sessionDebug returns a debug sink that writes to the session log, if any
+func sessionDebug(opts CleanupOptions) func(string) {
+	return func(msg string) {
+		if opts.SessionLogger != nil {
+			opts.SessionLogger.Println("[cleanup] " + msg)
+		}
+	}
+}
+
 // closeSessionLogger closes the session log, if any, and logs a close error
 func closeSessionLogger(opts CleanupOptions) {
 	if opts.SessionLogger != nil {
@@ -458,7 +467,7 @@ func closeSessionLogger(opts CleanupOptions) {
 }
 
 // saveSessionData saves the tool config directory from the container
-func saveSessionData(mgr container.ContainerManager, containerName string, sessionID string, persistent bool, profileName string, profileFromDefault bool, workspace string, sessionsDir string, t tool.Tool, logger func(string)) error {
+func saveSessionData(mgr container.ContainerManager, containerName string, sessionID string, persistent bool, profileName string, profileFromDefault bool, workspace string, sessionsDir string, t tool.Tool, logger, debug func(string)) error {
 	// Determine home directory
 	// For coi images, we always use /home/code
 	// For other images, we use /root
@@ -521,9 +530,14 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 			waitForStopped(mgr, 5*time.Second)
 			_ = os.RemoveAll(stagingDir)
 		}
-		pullErr = mgr.PullDirectory(stateDir, stagingDir)
+		pullErr = pullConfigDir(mgr, stateDir, stagingDir, debug)
 		if pullErr == nil {
 			pulled = true
+			break
+		}
+		if errors.Is(pullErr, container.ErrPullTimedOut) {
+			logger(fmt.Sprintf("Warning: session save timed out after %s (%v); keeping what was pulled", fallbackPullTimeout, pullErr))
+			pulled = pathExists(stagingDir)
 			break
 		}
 		msg := strings.ToLower(pullErr.Error())
@@ -583,6 +597,25 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 
 	logger("Session data saved successfully")
 	return nil
+}
+
+// fallbackPullTimeout bounds the file pull fallback of a session save, so a
+// container-planted FIFO the listing missed cannot hang the host-side coi.
+var fallbackPullTimeout = 2 * time.Minute
+
+// pullConfigDir is the file pull fallback of a session save. It prefers the
+// bounded pull that skips special files (see PullDirectoryBounded).
+func pullConfigDir(mgr container.ContainerManager, stateDir, stagingDir string, debug func(string)) error {
+	if bp, ok := mgr.(boundedPuller); ok {
+		return bp.PullDirectoryBounded(stateDir, stagingDir, fallbackPullTimeout, debug)
+	}
+	return mgr.PullDirectory(stateDir, stagingDir)
+}
+
+// boundedPuller is implemented by *container.Manager: a deadline-bounded
+// directory pull that skips special files (see PullDirectoryBounded).
+type boundedPuller interface {
+	PullDirectoryBounded(containerPath, localPath string, timeout time.Duration, debug func(string)) error
 }
 
 // tarPuller is implemented by *container.Manager: a one-stream directory pull
