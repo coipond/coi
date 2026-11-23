@@ -3,6 +3,8 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +38,9 @@ var (
 	collectDiskSpace    = CollectDiskSpace
 	containerRootDevice = collectContainerRootDevice
 )
+
+// sysDevBlock links each block device's "major:minor" to its sysfs directory.
+var sysDevBlock = "/sys/dev/block"
 
 // rootDeviceExecTimeout bounds the stat of the container rootfs.
 var rootDeviceExecTimeout = 10 * time.Second
@@ -138,13 +143,36 @@ func workspaceIODevice(ctx context.Context, containerName, workspacePath string)
 	return ioDevice(st.Dev, rootDev)
 }
 
-// ioDevice returns the io.stat device of workspaceDev, or "" when it has no
-// block device or is the rootfs device.
+// ioDevice returns the io.stat disk of workspaceDev, or "" when either device
+// has no block device (major 0: a zfs or btrfs pool may sit on the workspace
+// disk, also through a loop file), a disk is unknown, or both share a disk.
 func ioDevice(workspaceDev, rootDev uint64) string {
-	if unix.Major(workspaceDev) == 0 || workspaceDev == rootDev {
+	if unix.Major(workspaceDev) == 0 || unix.Major(rootDev) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d:%d", unix.Major(workspaceDev), unix.Minor(workspaceDev))
+	workspaceDisk, rootDisk := diskOf(workspaceDev), diskOf(rootDev)
+	if workspaceDisk == "" || rootDisk == "" || workspaceDisk == rootDisk {
+		return ""
+	}
+	return workspaceDisk
+}
+
+// diskOf returns the "major:minor" of the disk holding dev, or "" when sysfs
+// does not know dev. io.stat names whole disks, never partitions.
+func diskOf(dev uint64) string {
+	name := fmt.Sprintf("%d:%d", unix.Major(dev), unix.Minor(dev))
+	dir, err := filepath.EvalSymlinks(filepath.Join(sysDevBlock, name))
+	if err != nil {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(dir, "partition")); err != nil {
+		return name
+	}
+	parent, err := os.ReadFile(filepath.Join(filepath.Dir(dir), "dev"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(parent))
 }
 
 // collectContainerRootDevice returns the device number of the container's

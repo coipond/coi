@@ -242,17 +242,62 @@ func TestReadIOStatsDevice(t *testing.T) {
 	}
 }
 
+// fakeSysDevBlock points sysDevBlock at a fake sysfs with the given disks and
+// partitions (partition "major:minor" -> its disk's).
+func fakeSysDevBlock(t *testing.T, disks []string, partitions map[string]string) {
+	t.Helper()
+	root := t.TempDir()
+	byDev := filepath.Join(root, "dev", "block")
+	if err := os.MkdirAll(byDev, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	add := func(dev, dir string) {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "dev"), []byte(dev+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(dir, filepath.Join(byDev, dev)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	diskDir := func(dev string) string {
+		return filepath.Join(root, "devices", strings.ReplaceAll(dev, ":", "-"))
+	}
+	for _, dev := range disks {
+		add(dev, diskDir(dev))
+	}
+	for dev, disk := range partitions {
+		dir := filepath.Join(diskDir(disk), strings.ReplaceAll(dev, ":", "-"))
+		add(dev, dir)
+		if err := os.WriteFile(filepath.Join(dir, "partition"), []byte("1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := sysDevBlock
+	t.Cleanup(func() { sysDevBlock = old })
+	sysDevBlock = byDev
+}
+
 func TestIODevice(t *testing.T) {
-	lv, other, zfs := unix.Mkdev(252, 1), unix.Mkdev(259, 2), unix.Mkdev(0, 70)
+	fakeSysDevBlock(t, []string{"252:1", "252:2", "259:0", "8:0"},
+		map[string]string{"259:3": "259:0", "259:4": "259:0", "8:1": "8:0"})
+	dev := unix.Mkdev
 	tests := []struct {
 		name          string
 		workspace, fs uint64
 		want          string
 	}{
-		{"own block device", lv, zfs, "252:1"},
-		{"other block device", lv, other, "252:1"},
-		{"shares rootfs device", lv, lv, ""},
-		{"no block device", zfs, lv, ""},
+		{"own disk", dev(252, 1), dev(252, 2), "252:1"},
+		{"partition: its disk", dev(259, 3), dev(8, 1), "259:0"},
+		{"shares rootfs device", dev(252, 1), dev(252, 1), ""},
+		{"partitions of one disk", dev(259, 3), dev(259, 4), ""},
+		{"partition and its disk", dev(259, 3), dev(259, 0), ""},
+		{"workspace has no block device", dev(0, 70), dev(252, 1), ""},
+		{"rootfs has no block device (zfs, btrfs)", dev(252, 1), dev(0, 70), ""},
+		{"unknown workspace device", dev(7, 9), dev(252, 1), ""},
+		{"unknown rootfs device", dev(252, 1), dev(7, 9), ""},
 	}
 	for _, tt := range tests {
 		if got := ioDevice(tt.workspace, tt.fs); got != tt.want {
@@ -305,10 +350,12 @@ func TestFilesystemMonitorCountsWorkspaceDevice(t *testing.T) {
 	if unix.Major(st.Dev) == 0 {
 		t.Skip("package dir has no block device")
 	}
-	containerRootDevice = func(context.Context, string) (uint64, error) {
-		return unix.Mkdev(0, 70), nil
-	}
 	want := fmt.Sprintf("%d:%d", unix.Major(st.Dev), unix.Minor(st.Dev))
+	rootDev := unix.Mkdev(unix.Major(st.Dev)+1, 0)
+	fakeSysDevBlock(t, []string{want, fmt.Sprintf("%d:0", unix.Major(rootDev))}, nil)
+	containerRootDevice = func(context.Context, string) (uint64, error) {
+		return rootDev, nil
+	}
 	var devices []string
 	written := 0.0
 	filesystemIOStats = func(_ context.Context, _ string, device string) (ioStats, error) {
