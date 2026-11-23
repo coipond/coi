@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,10 @@ const treeListTimeout = 30 * time.Second
 // that streams forever); a stall is caught much sooner by the stall timeout.
 var pullTotalLimit = 30 * time.Minute
 
+// pullMaxEntryFailures caps the entries a bounded pull skips because
+// opening them failed (a socket on a stopped container).
+const pullMaxEntryFailures = 16
+
 // pullStallBudget caps the stall waits of one bounded pull, summed over
 // the entries it skips; past it the pull stops and keeps what it pulled.
 var pullStallBudget = 2 * time.Minute
@@ -51,9 +56,10 @@ var pullProgressInterval = time.Second
 // devices are skipped (each reported to debug), and only the directories that
 // hold one are walked. A pull that makes no progress for stall (no new entry,
 // no new bytes) is stopped; the entry it stalled on is reported to warn,
-// skipped, and the pull runs again. A pull that goes on past pullTotalLimit is
-// stopped, what was pulled is kept at localPath and the error wraps
-// ErrPullTimedOut.
+// skipped, and the pull resumes. An entry the pull cannot open (an SFTP
+// status reply, such as a socket's) is skipped the same way. Past
+// pullStallBudget of stall waits or pullTotalLimit, the pull is stopped, what
+// was pulled is kept at localPath and the error wraps ErrPullTimedOut.
 func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall time.Duration, debug, warn func(string)) error {
 	if !strings.HasPrefix(containerPath, "/") {
 		containerPath = "/" + containerPath
@@ -96,6 +102,7 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 	root := filepath.Join(tempDir, path.Base(containerPath))
 	var pullErr error
 	var stalledFor time.Duration
+	failures := 0
 	overBudget := false
 	for {
 		pullErr = p.pull(ctx, root)
@@ -104,16 +111,21 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 			break
 		}
 		if se.path == containerPath || p.skip[se.path] {
-			return fmt.Errorf("pull of %s stalled on %s", containerPath, se.path)
+			return fmt.Errorf("pull of %s: %s on %s", containerPath, se.reason, se.path)
 		}
-		warn(fmt.Sprintf("Skipping %s: the pull stalled on it for %s", se.path, stall))
+		if se.waited == 0 {
+			if failures++; failures > pullMaxEntryFailures {
+				return pullErr
+			}
+		}
+		warn(fmt.Sprintf("Skipping %s: the pull %s on it", se.path, se.reason))
 		p.skip[se.path] = true
 		if se.target != "" {
 			if err := os.RemoveAll(se.target); err != nil {
 				return err
 			}
 		}
-		if stalledFor += stall; stalledFor >= pullStallBudget {
+		if stalledFor += se.waited; stalledFor >= pullStallBudget {
 			overBudget = true
 			break
 		}
@@ -160,13 +172,15 @@ type boundedPull struct {
 	skip  map[string]bool
 }
 
-// stallError names the container path a pull stalled on and its local
-// target (empty when the pull had not reached an entry).
+// stallError names the container path a pull stalled on, or failed to open,
+// and its local target (empty when the pull had not reached an entry).
+// waited is the stall wait, zero for a failed open.
 type stallError struct {
-	path, target string
+	path, target, reason string
+	waited               time.Duration
 }
 
-func (e *stallError) Error() string { return "pull stalled on " + e.path }
+func (e *stallError) Error() string { return "pull " + e.reason + " on " + e.path }
 
 // pull pulls base into root, walking only the directories above a skipped
 // path.
@@ -325,7 +339,7 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 	}
 
 	var mu sync.Mutex
-	var lastSource, lastTarget string
+	var lastSource, lastTarget, lastType string
 	var errLines []string
 	lastProgress := time.Now()
 	scanDone := make(chan struct{})
@@ -335,8 +349,8 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 		for sc.Scan() {
 			line := sc.Text()
 			mu.Lock()
-			if target, source, ok := parsePullingLine(line, p.base); ok {
-				lastTarget, lastSource = target, source
+			if target, source, typ, ok := parsePullingLine(line, p.base); ok {
+				lastTarget, lastSource, lastType = target, source, typ
 				lastProgress = time.Now()
 			} else {
 				errLines = append(errLines, line)
@@ -346,6 +360,7 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 	}()
 
 	stalled, stalledTarget := "", ""
+	var stalledWait time.Duration
 	waitDone := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
@@ -360,7 +375,10 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 		select {
 		case err := <-waitDone:
 			if stalled != "" {
-				return &stallError{path: stalled, target: stalledTarget}
+				return &stallError{
+					path: stalled, target: stalledTarget, waited: stalledWait,
+					reason: fmt.Sprintf("stalled for %s", stalledWait.Round(time.Second)),
+				}
 			}
 			if err == nil {
 				return nil
@@ -370,7 +388,14 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 			}
 			mu.Lock()
 			msg := strings.TrimSpace(strings.Join(errLines, "\n"))
+			source, target, typ := lastSource, lastTarget, lastType
 			mu.Unlock()
+			// An SFTP status reply means the connection is up and refused this
+			// entry (a socket: "no such device or address"). The source is
+			// opened before the target is created, so no target = never read.
+			if typ == "file" && source != "" && strings.Contains(msg, "SSH_FX_") && !pathOnHost(target) {
+				return &stallError{path: source, reason: "failed (" + msg + ")"}
+			}
 			if msg != "" {
 				return fmt.Errorf("%s: %w", msg, err)
 			}
@@ -383,6 +408,7 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 			}
 			if stalled == "" && time.Since(lastProgress) > p.stall {
 				stalled, stalledTarget = lastSource, lastTarget
+				stalledWait = time.Since(lastProgress)
 				if stalled == "" {
 					stalled = sources[0]
 				}
@@ -394,24 +420,35 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 }
 
 // parsePullingLine parses the `incus --verbose file pull` line logged as the
-// pull reaches an entry: "Pulling <target> from <source> (<type>)". base
-// anchors the source, so a " from " inside the target cannot split it.
-func parsePullingLine(line, base string) (target, source string, ok bool) {
+// pull reaches an entry: "Pulling <target> from <source> (<type>)". logrus
+// quotes the message (`msg="..."`, strconv quoting) when stderr is not a
+// terminal; it is unquoted first. base anchors the source, so a " from "
+// inside the target cannot split it.
+func parsePullingLine(line, base string) (target, source, typ string, ok bool) {
+	if i := strings.Index(line, `msg="`); i >= 0 {
+		quoted, err := strconv.QuotedPrefix(line[i+len("msg="):])
+		if err != nil {
+			return "", "", "", false
+		}
+		if line, err = strconv.Unquote(quoted); err != nil {
+			return "", "", "", false
+		}
+	}
 	i := strings.Index(line, "Pulling ")
 	if i < 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	rest := line[i+len("Pulling "):]
 	j := strings.LastIndex(rest, " from "+base)
 	if j < 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	target, rest = rest[:j], rest[j+len(" from "):]
 	k := strings.LastIndex(rest, " (")
-	if k < 0 {
-		return "", "", false
+	if k < 0 || !strings.HasSuffix(rest, ")") {
+		return "", "", "", false
 	}
-	return target, rest[:k], true
+	return target, rest[:k], rest[k+2 : len(rest)-1], true
 }
 
 // isNotFoundText reports whether an incus error says a path does not exist.
