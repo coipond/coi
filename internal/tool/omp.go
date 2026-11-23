@@ -49,17 +49,18 @@ func (o *OmpTool) BuildCommand(sessionID string, resume bool, resumeSessionID st
 	return cmd
 }
 
-// PreLaunch implements ToolWithPreLaunch.
+// PreLaunch implements ToolWithPreLaunch. It links the sandbox context file to
+// ~/.omp/agent/APPEND_SYSTEM.md, where omp reads its user-level append prompt.
 func (o *OmpTool) PreLaunch() [][]string {
 	if o.contextFilePath == "" {
 		return nil
 	}
 	homeDir := filepath.Dir(o.contextFilePath)
-	ompDir := filepath.Join(homeDir, ".omp")
-	linkTarget := filepath.Join(ompDir, "APPEND_SYSTEM.md")
+	agentDir := filepath.Join(homeDir, ".omp", "agent")
+	linkTarget := filepath.Join(agentDir, "APPEND_SYSTEM.md")
 
 	return [][]string{
-		{"mkdir", "-p", ompDir},
+		{"mkdir", "-p", agentDir},
 		{"ln", "-sf", o.contextFilePath, linkTarget},
 	}
 }
@@ -105,11 +106,14 @@ func (o *OmpTool) StateConfigFileName() string { return mustBundle("omp").StateF
 // AlwaysSetupConfig implements ToolWithConfigDirFiles.
 func (o *OmpTool) AlwaysSetupConfig() bool { return mustBundle("omp").AlwaysSetup }
 
-// GetContainerEnv implements ToolWithContainerEnv. It sets OMP_SESSION_DIR to
-// .omp-sessions under the workspace mount so sessions persist across
-// ephemeral container recreations.
+// GetContainerEnv implements ToolWithContainerEnv. It points omp's session dir
+// at .omp-sessions under the workspace mount so sessions persist across
+// ephemeral container recreations. omp reads PI_CODING_AGENT_SESSION_DIR;
+// OMP_SESSION_DIR is kept for scripts that read it.
 func (o *OmpTool) GetContainerEnv(workspacePath string) map[string]string {
+	sessionDir := filepath.Join(workspacePath, ".omp-sessions")
 	return map[string]string{
-		"OMP_SESSION_DIR": filepath.Join(workspacePath, ".omp-sessions"),
+		"PI_CODING_AGENT_SESSION_DIR": sessionDir,
+		"OMP_SESSION_DIR":             sessionDir,
 	}
 }
