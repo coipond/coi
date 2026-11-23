@@ -410,17 +410,17 @@ func (m *Manager) setupRestricted(ctx context.Context, containerName string) err
 	return nil
 }
 
-// logRestrictedPrivateAccess logs how restricted mode treats RFC1918 and cloud
+// logRestrictedPrivateAccess logs how restricted mode treats private and cloud
 // metadata, matching the rules addRestrictedRules installs:
 // allow_local_network_access wins over block_private_networks.
 func (m *Manager) logRestrictedPrivateAccess() {
 	switch {
 	case config.BoolVal(m.config.AllowLocalNetworkAccess) && len(m.config.AllowedPorts) > 0:
-		m.logger.Printf("  Allowing RFC1918 private networks on ports %v (allow_local_network_access)", m.config.AllowedPorts)
+		m.logger.Printf("  Allowing private networks (RFC1918, 100.64.0.0/10) on ports %v (allow_local_network_access)", m.config.AllowedPorts)
 	case config.BoolVal(m.config.AllowLocalNetworkAccess):
-		m.logger.Println("  Allowing RFC1918 private networks (allow_local_network_access)")
+		m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10) (allow_local_network_access)")
 	case config.BoolVal(m.config.BlockPrivateNetworks):
-		m.logger.Println("  Blocking private networks (RFC1918)")
+		m.logger.Println("  Blocking private networks (RFC1918, 100.64.0.0/10)")
 	}
 	if config.BoolVal(m.config.BlockMetadataEndpoint) {
 		m.logger.Println("  Blocking cloud metadata endpoints")
@@ -540,20 +540,20 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 	return nil
 }
 
-// logAllowlistPrivateAccess logs how allowlist mode treats RFC1918 and cloud
+// logAllowlistPrivateAccess logs how allowlist mode treats private and cloud
 // metadata, matching the rules ApplyAllowlist installs for
 // allow_local_network_access.
 func (m *Manager) logAllowlistPrivateAccess() {
 	if !config.BoolVal(m.config.AllowLocalNetworkAccess) {
-		m.logger.Println("  Blocking all RFC1918 private networks")
+		m.logger.Println("  Blocking all private networks (RFC1918, 100.64.0.0/10)")
 		m.logger.Println("  Blocking cloud metadata endpoints")
 		return
 	}
 	if len(m.config.AllowedPorts) > 0 {
-		m.logger.Printf("  Allowing RFC1918 private networks on ports %v (allow_local_network_access)", m.config.AllowedPorts)
+		m.logger.Printf("  Allowing private networks (RFC1918, 100.64.0.0/10) on ports %v (allow_local_network_access)", m.config.AllowedPorts)
 		return
 	}
-	m.logger.Println("  Allowing RFC1918 private networks (allow_local_network_access)")
+	m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10) (allow_local_network_access)")
 }
 
 // installNames resolves the policy's hostnames and writes the result to the two

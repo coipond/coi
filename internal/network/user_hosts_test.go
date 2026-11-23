@@ -110,6 +110,10 @@ func TestClassifyHostIP(t *testing.T) {
 		"10.0.0.5":        hostPrivate,
 		"172.16.0.1":      hostPrivate,
 		"192.168.1.1":     hostPrivate,
+		"100.64.0.1":      hostPrivate,
+		"100.127.255.255": hostPrivate,
+		"100.63.255.255":  hostPublic,
+		"100.128.0.1":     hostPublic,
 		"169.254.169.254": hostMetadata,
 		"169.254.0.1":     hostMetadata,
 	}

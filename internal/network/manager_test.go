@@ -257,9 +257,9 @@ func TestOtherContainersRunning(t *testing.T) {
 // RFC1918 and metadata rules addRestrictedRules installs.
 func TestLogRestrictedPrivateAccess(t *testing.T) {
 	const (
-		blockRFC1918  = "Blocking private networks (RFC1918)"
+		blockRFC1918  = "Blocking private networks (RFC1918, 100.64.0.0/10)"
 		blockMetadata = "Blocking cloud metadata endpoints"
-		allowRFC1918  = "Allowing RFC1918 private networks"
+		allowRFC1918  = "Allowing private networks (RFC1918, 100.64.0.0/10)"
 	)
 	on, off := true, false
 	tests := []struct {
@@ -337,9 +337,9 @@ func TestLogRestrictedPrivateAccess(t *testing.T) {
 // RFC1918 and metadata rules for allow_local_network_access.
 func TestLogAllowlistPrivateAccess(t *testing.T) {
 	const (
-		blockRFC1918  = "Blocking all RFC1918 private networks"
+		blockRFC1918  = "Blocking all private networks (RFC1918, 100.64.0.0/10)"
 		blockMetadata = "Blocking cloud metadata endpoints"
-		allowRFC1918  = "Allowing RFC1918 private networks"
+		allowRFC1918  = "Allowing private networks (RFC1918, 100.64.0.0/10)"
 	)
 	on, off := true, false
 	tests := []struct {

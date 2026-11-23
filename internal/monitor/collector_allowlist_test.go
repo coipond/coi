@@ -76,7 +76,7 @@ func TestCollector_KeepPermittedFlows(t *testing.T) {
 	c.keepPermittedFlows(&NetworkStats{Connections: []Connection{docker}})
 	flagged := docker
 	flagged.Suspicious = true
-	flagged.SuspectReason = "RFC1918 private address (should be blocked by firewall)"
+	flagged.SuspectReason = "Private address (should be blocked by firewall)"
 	stats := NetworkStats{Connections: []Connection{flagged}, SuspiciousCount: 1}
 	c.keepPermittedFlows(&stats)
 	if stats.SuspiciousCount != 1 || !stats.Connections[0].Suspicious {
@@ -126,7 +126,7 @@ func TestNewDaemonCollector_Wiring(t *testing.T) {
 			t.Errorf("%s: got %q, want not flagged", remote, reason)
 		}
 	}
-	if reason := checkWith(c, "192.168.1.51:5432", "udp"); !strings.Contains(reason, "RFC1918") {
+	if reason := checkWith(c, "192.168.1.51:5432", "udp"); !strings.Contains(reason, "Private address") {
 		t.Errorf("a LAN host that is not permitted: got %q, want RFC1918", reason)
 	}
 }

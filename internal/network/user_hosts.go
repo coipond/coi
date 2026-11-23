@@ -14,9 +14,13 @@ type hostIPClass int
 
 const (
 	hostPublic   hostIPClass = iota // routable internet address
-	hostPrivate                     // RFC1918 (10/8, 172.16/12, 192.168/16) or ULA
+	hostPrivate                     // config.PrivateNetworkCIDRs or ULA
 	hostMetadata                    // 169.254.0.0/16 link-local, incl. the cloud metadata endpoint
 )
+
+// sharedAddressSpace is RFC 6598's 100.64.0.0/10, private for coi
+// (config.PrivateNetworkCIDRs) though net.IP.IsPrivate leaves it out.
+var sharedAddressSpace = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
 // classifyHostIP buckets an address for the per-mode reachability rules. The IP
 // is assumed already validated as a parseable IPv4 (config.ValidateNetworkHosts).
@@ -27,7 +31,7 @@ func classifyHostIP(ipStr string) hostIPClass {
 		return hostPublic // unreachable in practice — validation rejects non-IPs
 	case ip.IsLinkLocalUnicast():
 		return hostMetadata
-	case ip.IsPrivate():
+	case ip.IsPrivate(), sharedAddressSpace.Contains(ip):
 		return hostPrivate
 	default:
 		return hostPublic

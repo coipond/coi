@@ -21,10 +21,18 @@ const (
 	NetworkModeRestricted NetworkMode = "restricted"
 	// NetworkModeOpen allows all network access (current behavior)
 	NetworkModeOpen NetworkMode = "open"
-	// NetworkModeAllowlist allows only specific domains; RFC1918 and metadata
+	// NetworkModeAllowlist allows only specific domains; private and metadata
 	// ranges stay blocked unless allow_local_network_access is set
 	NetworkModeAllowlist NetworkMode = "allowlist"
 )
+
+// PrivateNetworkCIDRs returns the private ranges restricted and allowlist mode
+// block unless allow_local_network_access is set: RFC1918 and the RFC 6598
+// shared address space 100.64.0.0/10 (CGNAT; Tailscale, Headscale and NetBird
+// number their peers there).
+func PrivateNetworkCIDRs() []string {
+	return []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"}
+}
 
 // HardenedProfileSecretPaths is the default secret-mask set bundled by the
 // built-in "hardened" profile. Exported so docs/tests can reference one source.

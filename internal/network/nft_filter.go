@@ -67,7 +67,8 @@ func NewNftManager(containerIP, gatewayIP string) *NftManager {
 	}
 }
 
-// ApplyRestricted applies restricted mode rules (block RFC1918, allow internet).
+// ApplyRestricted applies restricted mode rules (block private networks, allow
+// internet).
 //
 // Two optional egress controls layer on top of the classic behaviour, each a
 // no-op when unset so existing configs emit byte-identical rules:
@@ -139,9 +140,9 @@ func (f *NftManager) addRestrictedRules(cfg *config.NetworkConfig, dnsServers []
 			return err
 		}
 	} else if config.BoolVal(cfg.BlockPrivateNetworks) {
-		for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		for _, cidr := range config.PrivateNetworkCIDRs() {
 			if err := f.addRule(f.containerIP, cidr, "reject"); err != nil {
-				return fmt.Errorf("failed to add RFC1918 block rule: %w", err)
+				return fmt.Errorf("failed to add private network block rule: %w", err)
 			}
 		}
 	}
@@ -302,7 +303,7 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 	} else {
 		for _, cidr := range allowlistPrivateCIDRs {
 			if err := f.addRule(f.containerIP, cidr, "reject"); err != nil {
-				return fmt.Errorf("failed to add RFC1918/metadata block rule: %w", err)
+				return fmt.Errorf("failed to add private/metadata block rule: %w", err)
 			}
 		}
 	}
