@@ -819,24 +819,18 @@ func (a *App) applyForwardSockets(mgr container.ContainerManager, socketConfig *
 	return session.ForwardConfiguredSockets(mgr, socketConfig, config.BoolVal(a.cfg.SSH.ForwardAgent), reused, logger)
 }
 
+// networkTeardown removes what applyNetworkIsolation installed.
+type networkTeardown interface {
+	Teardown(ctx context.Context, containerName string) error
+}
+
 // applyNetworkIsolation installs firewall rules for the container when
 // network.mode is set to something other than "open" in config, or in open
-// mode under block_metadata_endpoint (the metadata reject).
-// Returns the Manager so the caller can Teardown before container deletion.
-func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (*network.Manager, error) {
+// mode the metadata reject under block_metadata_endpoint.
+// Returns what the caller must Teardown before container deletion, or nil.
+func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (networkTeardown, error) {
 	networkConfig := a.cfg.Network
-	open := networkConfig.Mode == "" || networkConfig.Mode == config.NetworkModeOpen
-	if open && config.BoolVal(networkConfig.BlockMetadataEndpoint) {
-		// SetupForContainer's open mode: metadata reject, accept and
-		// [[network.hosts]], as coi shell.
-		networkConfig.Mode = config.NetworkModeOpen
-		nm := network.NewManager(&networkConfig, logger.NewDiscard())
-		if err := nm.SetupForContainer(ctx, containerName); err != nil {
-			return nil, fmt.Errorf("failed to setup network isolation: %w", err)
-		}
-		return nm, nil
-	}
-	if open {
+	if networkConfig.Mode == "" || networkConfig.Mode == config.NetworkModeOpen {
 		// Open mode installs no isolation rules, but static [[network.hosts]]
 		// entries still apply — resolution only, since nothing is blocked. (The
 		// coi shell path calls SetupForContainer for every mode, so it already
@@ -846,7 +840,17 @@ func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (
 				return nil, fmt.Errorf("failed to apply [[network.hosts]]: %w", err)
 			}
 		}
-		return nil, nil
+		if !config.BoolVal(networkConfig.BlockMetadataEndpoint) {
+			return nil, nil
+		}
+		block, warnings := network.ApplyOpenMetadataBlock(&networkConfig, containerName)
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, w)
+		}
+		if block == nil {
+			return nil, nil
+		}
+		return block, nil
 	}
 	if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(containerName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not ensure bridge forwarding rules: %v\n", err)
