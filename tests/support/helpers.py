@@ -1533,6 +1533,72 @@ def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):
     return False
 
 
+def container_forward_rules(container_ip):
+    """Return (handle, text) for each ip coi forward rule whose source is
+    container_ip, in chain order; text is the rule without its handle."""
+    result = subprocess.run(
+        ["sudo", "-n", "nft", "-a", "list", "chain", "ip", "coi", "forward"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return []
+    src_re = re.compile(r"\bip saddr " + re.escape(container_ip) + r"(?![\d.])")
+    rules = []
+    for line in result.stdout.splitlines():
+        m = re.match(r"\s*(.*?)\s+# handle (\d+)$", line)
+        if m and src_re.search(m.group(1)):
+            rules.append((int(m.group(2)), m.group(1)))
+    return rules
+
+
+def wait_for_forward_rule(container_ip, match, timeout=30):
+    """Poll until a forward rule of container_ip contains match; return its
+    index in container_forward_rules, or -1 on timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for i, (_, text) in enumerate(container_forward_rules(container_ip)):
+            if match in text:
+                return i
+        time.sleep(0.5)
+    return -1
+
+
+def count_forward_rules(container_ip, match):
+    """Replace each forward rule of container_ip containing match with the same
+    rule plus a counter before its verdict; return how many were replaced.
+    Read the counts with forward_rule_packets."""
+    replaced = 0
+    for handle, text in container_forward_rules(container_ip):
+        if match not in text or " counter " in text:
+            continue
+        counted, n = re.subn(r"\s(accept|reject)\b", r" counter \1", text, count=1)
+        if not n:
+            continue
+        result = subprocess.run(
+            ["sudo", "-n", "nft", "-f", "-"],
+            input=f"replace rule ip coi forward handle {handle} {counted}\n",
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"nft replace rule failed: {result.stderr}"
+        replaced += 1
+    return replaced
+
+
+def forward_rule_packets(container_ip, match):
+    """Sum the counter packets of the forward rules of container_ip containing
+    match (see count_forward_rules)."""
+    total = 0
+    for _, text in container_forward_rules(container_ip):
+        if match in text:
+            m = re.search(r"\bcounter packets (\d+)", text)
+            total += int(m.group(1)) if m else 0
+    return total
+
+
 def get_screen_display(child, refresh=False, clear_buffer=False):
     """
     Get the current rendered screen display.
