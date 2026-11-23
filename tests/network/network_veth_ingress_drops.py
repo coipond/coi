@@ -12,8 +12,9 @@ Tests that:
    it re-enables itself, never gets through before (or after) the mode's rules
    are in place (restricted mode refuses all of them).
 3. Control, in the same run: with the coi6 chain swapped for the old
-   forward-hook `iifname <veth>` rule, the host attempt of 1 gets through and
-   that rule counts no packets, so the test catches that regression.
+   forward-hook `iifname <veth>` rule, the host and outside attempts of 1 get
+   through and that rule counts no packets, so the test catches that
+   regression; `coi kill` then removes that old-style rule too.
 
 The bridge on the test host may route no IPv6, so the test gives the bridge and
 the container static IPv6 addresses and a route itself, and puts the "outside"
@@ -313,6 +314,25 @@ def test_reenabled_ipv6_is_dropped_at_the_veth(
             assert re.search(rf"counter packets 0 bytes 0 drop comment \"{chain}\"", old), (
                 f"control: the old forward-hook rule should match nothing:\n{old}"
             )
+            # The runner routes to the outside host, so the outside checks
+            # above (and in the boot test) are not passing by default.
+            rc, out = exec_in(coi_binary, name, attempts["tcp outside"], timeout=30)
+            assert out_peers(), (
+                f"control: the outside attempt should get through the old rule: {out}"
+            )
+
+        # coi's cleanup also removes the rule older versions left in ip6 coi forward.
+        kill = subprocess.run(
+            [coi_binary, "kill", name], capture_output=True, text=True, timeout=60
+        )
+        assert kill.returncode == 0, f"coi kill failed: {kill.stderr}"
+        deadline = time.monotonic() + 15
+        while True:
+            left = _sudo("nft", "list", "chain", "ip6", "coi", "forward", check=False).stdout
+            if f'comment "{chain}"' not in left or time.monotonic() > deadline:
+                break
+            time.sleep(0.5)
+        assert f'comment "{chain}"' not in left, f"legacy rule {chain} left after kill:\n{left}"
 
 
 def test_boot_service_never_gets_out_before_rules(coi_binary, workspace_dir, cleanup_containers):

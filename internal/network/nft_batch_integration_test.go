@@ -163,7 +163,8 @@ func TestApplyOpenRules_ReuseIsNoop_Integration(t *testing.T) {
 }
 
 // Teardown removes everything the container owns — its policy rules, the
-// IPv6 drop and a residual boot block — in one transaction.
+// IPv6 drop, a residual boot block and the coi6-<name> rule older coi versions
+// put in the ip6 forward chain — in one transaction.
 func TestTeardownRulesAtomically_Integration(t *testing.T) {
 	requireNft(t)
 	const name = "coi-batch-teardown-test"
@@ -182,6 +183,13 @@ func TestTeardownRulesAtomically_Integration(t *testing.T) {
 	if err := installVethIngressChain(ipv6BlockComment(name), dev, ipv6BlockRules); err != nil {
 		t.Fatal(err)
 	}
+	if err := runNFTScript([][]string{
+		{"add", "table", "ip6", "coi"},
+		{"add", "chain", "ip6", "coi", "forward", "{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}"},
+		{"add", "rule", "ip6", "coi", "forward", "iifname", `"` + dev + `"`, "drop", "comment", `"` + ipv6BlockComment(name) + `"`},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(restrictedTestConfig(), logger.NewDiscard())
 	m.nft = NewNftManager(batchTestIP, "10.253.7.1")
@@ -196,6 +204,9 @@ func TestTeardownRulesAtomically_Integration(t *testing.T) {
 	}
 	if got := netdevChain(ipv6BlockComment(name)); got != "" {
 		t.Errorf("IPv6 drop left:\n%s", got)
+	}
+	if v6, _ := runNFTCommand("list", "chain", "ip6", "coi", "forward"); strings.Contains(string(v6), ipv6BlockComment(name)) {
+		t.Errorf("legacy IPv6 rule left:\n%s", v6)
 	}
 }
 
