@@ -570,9 +570,9 @@ type NetworkConfig struct {
 	// "github.com:443", "203.0.113.10:8080", "198.51.100.0/24:22",
 	// "svc:8000-8100". An entry with no port inherits the global allowed_ports
 	// (else all ports), so a per-entry scope tightens just that destination.
-	// Private (RFC1918, link-local) entries are rejected unless
-	// allow_local_network_access, which opens the whole RFC1918 LAN, so an
-	// RFC1918 entry's ports limit nothing; one LAN service is a
+	// Private (PrivateNetworkCIDRs, link-local) entries are rejected unless
+	// allow_local_network_access, which opens the whole private LAN, so a
+	// private entry's ports limit nothing; one LAN service is a
 	// [[network.hosts]] entry with ports. Exception: an address of the coi host
 	// itself is reachable on the entry's ports only (host input rules), else
 	// allowed_ports, else not at all, unless allow_host_access. IPv4 only;

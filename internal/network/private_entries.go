@@ -10,13 +10,13 @@ import (
 
 // allowlistPrivateCIDRs are the ranges allowlist mode rejects ahead of its
 // allowed_domains accepts unless allow_local_network_access is set.
-var allowlistPrivateCIDRs = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
+var allowlistPrivateCIDRs = append(config.PrivateNetworkCIDRs(), "169.254.0.0/16")
 
 // blockedEntry is an allowed_domains literal entry the forward chain rejects,
 // wholly or in part.
 type blockedEntry struct {
 	Entry   string
-	RFC1918 bool // overlaps an RFC1918 range, not only 169.254.0.0/16
+	Private bool // overlaps a private range, not only 169.254.0.0/16
 }
 
 // blockedPrivateEntries returns the tuples that overlap allowlistPrivateCIDRs,
@@ -32,16 +32,16 @@ func blockedPrivateEntries(tuples []staticTuple, skip map[string]bool) []blocked
 		if err != nil {
 			continue
 		}
-		var blocked, rfc1918 bool
+		var blocked, private bool
 		for _, cidr := range allowlistPrivateCIDRs {
 			_, privNet, _ := net.ParseCIDR(cidr)
 			if entryNet.Contains(privNet.IP) || privNet.Contains(entryNet.IP) {
 				blocked = true
-				rfc1918 = rfc1918 || cidr != "169.254.0.0/16"
+				private = private || cidr != "169.254.0.0/16"
 			}
 		}
 		if blocked {
-			entries = append(entries, blockedEntry{Entry: ip, RFC1918: rfc1918})
+			entries = append(entries, blockedEntry{Entry: ip, Private: private})
 		}
 	}
 	return entries
@@ -78,7 +78,7 @@ func AllowlistPrivateWarnings(cfg *config.NetworkConfig) []string {
 	}
 	var warnings []string
 	for _, b := range blockedPrivateEntries(policy.staticTuples(), skip) {
-		if b.RFC1918 {
+		if b.Private {
 			warnings = append(warnings, fmt.Sprintf("Warning: allowed_domains entry %s is in a private range, which allowlist mode blocks; "+
 				"set network.allow_local_network_access = true (opens the whole LAN), "+
 				"or reach one service with a [[network.hosts]] entry and its ports", b.Entry))

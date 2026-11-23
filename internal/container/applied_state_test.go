@@ -14,7 +14,7 @@ func TestAppliedState(t *testing.T) {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 case "$*" in
-  *"config show --expanded c2"*) printf 'config:\n  security.nesting: "false"\n  limits.cpu: "2"\n  limits.cpu.allowance: 50%%\n  limits.memory: 4GiB\n  environment.GIT_AUTHOR_NAME: Jane\n  environment.ANTHROPIC_MODEL: opus\n  user.coi.git_env_keys: GIT_AUTHOR_NAME\ndevices:\n  root:\n    path: /\n    pool: default\n    limits.read: 10MB\n    limits.disk.priority: "5"\n    type: disk\n  cache:\n    path: /cache\n    pool: default\n    source: cache\n    type: disk\n  eth0:\n    type: nic\n' ;;
+  *"config show --expanded c2"*) printf 'config:\n  security.nesting: "false"\n  limits.cpu: "2"\n  limits.cpu.allowance: 50%%\n  limits.memory: 4GiB\n  environment.GIT_AUTHOR_NAME: Jane\n  environment.ANTHROPIC_MODEL: opus\n  user.coi.git_env_keys: GIT_AUTHOR_NAME\ndevices:\n  root:\n    path: /\n    pool: default\n    limits.read: 10MB\n    limits.disk.priority: "5"\n    type: disk\n  cache:\n    path: /cache\n    pool: default\n    source: cache\n    type: disk\n  eth0:\n    type: nic\n  ssh-agent:\n    type: proxy\n    bind: container\n    connect: unix:/run/user/1000/agent.sock\n    listen: unix:/tmp/ssh-agent.sock\n  coi-port-web:\n    type: proxy\n    connect: tcp:127.0.0.1:3000\n    listen: tcp:127.0.0.1:3000\n  reverse:\n    type: proxy\n    connect: unix:/run/in-container.sock\n    listen: unix:/run/on-host.sock\n' ;;
   *"config show --expanded c3"*) printf 'config:\n  security.nesting: "true"\n  security.syscalls.deny: |-\n    bpf errno 1\n    keyctl errno 1\ndevices: {}\n' ;;
   *"config show c3"*) printf 'config:\n  user.x: "y"\ndevices: {}\n' ;;
   *"config show --expanded c4"*) printf 'config:\n  security.nesting: "true"\ndevices: {}\n' ;;
@@ -49,6 +49,12 @@ esac
 	}
 	if !reflect.DeepEqual(st.Disks, want) {
 		t.Errorf("disks = %+v, want %+v", st.Disks, want)
+	}
+	// Only a host unix socket proxied into the container: not a TCP port,
+	// not a bind=host proxy (Incus's default), which goes the other way.
+	wantSockets := map[string]SocketDevice{"ssh-agent": {HostPath: "/run/user/1000/agent.sock", ContainerPath: "/tmp/ssh-agent.sock"}}
+	if !reflect.DeepEqual(st.Sockets, wantSockets) {
+		t.Errorf("sockets = %+v, want %+v", st.Sockets, wantSockets)
 	}
 
 	// Nesting set only in the expanded config comes from a profile; set on

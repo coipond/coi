@@ -597,7 +597,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "apply-network",
 		RunFn: func(ctx context.Context) (session.Teardown, error) {
-			s.socketEnv = a.applyForwardSockets(s.mgr, s.socketConfig)
+			s.socketEnv = a.applyForwardSockets(s.mgr, s.socketConfig, s.wasRestarted)
 
 			// Publish [ports] on the host (localhost:<port> -> container)
 			// and expose the mapping to the command env (COI_PORTS /

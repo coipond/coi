@@ -1,0 +1,70 @@
+name: CI image cache
+
+# Actions caches are scoped to the ref that wrote them, and ci.yml runs only on
+# pull requests, so no Coi image cache ever exists in master scope and every
+# PR's first run builds the image in all lanes. This writes the cache on master
+# so PRs restore it. Same path and key as ci.yml.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'internal/image/**'
+      - 'testdata/dummy/**'
+      - 'profiles/default/**'
+      - '.github/ci-image.toml'
+      - '.github/workflows/ci-image-cache.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  COI_APT_MIRROR: http://azure.archive.ubuntu.com/ubuntu
+
+jobs:
+  save:
+    name: Save Coi image cache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check for an existing cache entry
+        id: cache-coi-image
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/coi-image.tar
+          key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**', '.github/ci-image.toml') }}
+          lookup-only: true
+
+      - name: Set up Go build
+        if: steps.cache-coi-image.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-go-build
+
+      - name: Set up Incus
+        if: steps.cache-coi-image.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-incus
+
+      - name: Build and export Coi image
+        if: steps.cache-coi-image.outputs.cache-hit != 'true'
+        run: |
+          go build -o coi ./cmd/coi
+          mkdir -p ~/.coi
+          printf '[network]\nmode = "open"\n' > ~/.coi/config.toml
+          for attempt in 1 2 3; do
+            COI_CONFIG=.github/ci-image.toml ./coi build && break
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 30))
+          done
+          incus image export coi-default /tmp/coi-image
+
+      - name: Save Coi image to cache
+        if: steps.cache-coi-image.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/coi-image.tar
+          key: ${{ runner.os }}-coi-image-${{ hashFiles('internal/image/**', 'testdata/dummy/**', 'profiles/default/**', '.github/ci-image.toml') }}
