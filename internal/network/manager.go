@@ -106,11 +106,12 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 		} else {
 			m.logger.Println("Network mode: open (no restrictions)")
 		}
-		if blockMetadata && !NftUsable(m.config) {
+		nftUsable := NftUsable(m.config)
+		if blockMetadata && !nftUsable {
 			m.logger.Errorf("Warning: block_metadata_endpoint is not enforced in open mode: nft is not usable")
 		}
 		// Add ACCEPT rules via nft so traffic flows even when FORWARD policy is DROP
-		if NftUsable(m.config) {
+		if nftUsable {
 			containerIP, err := GetContainerIP(containerName)
 			if err != nil {
 				m.logger.Errorf("Warning: could not get container IP for open mode rules: %v", err)
