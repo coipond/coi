@@ -455,3 +455,50 @@ func TestPullOnce_ConnectionErrorIsNotASkip(t *testing.T) {
 		t.Fatalf("err = %v, want a plain pull error", err)
 	}
 }
+
+// Past pullMaxEntryFailures unopenable entries the pull stops and keeps what
+// it pulled, instead of failing the save.
+func TestPullDirectoryBounded_EntryFailureCapKeepsPulled(t *testing.T) {
+	orig := pullMaxEntryFailures
+	pullMaxEntryFailures = 2
+	t.Cleanup(func() { pullMaxEntryFailures = orig })
+	root, src := configRoot(t)
+	for _, n := range []string{"s1", "s2", "s3"} {
+		l, err := net.Listen("unix", filepath.Join(src, "ide", n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = l.Close() })
+	}
+	fakeFileIncus(t, root, false)
+
+	dest, _, warn, err := pullBounded(t, 20*time.Second)
+	if !errors.Is(err, ErrPullTimedOut) {
+		t.Fatalf("err = %v, want ErrPullTimedOut", err)
+	}
+	if len(warn) != 2 {
+		t.Errorf("warn = %q, want 2 skipped sockets", warn)
+	}
+	assertRealFiles(t, dest, "history.jsonl", "clean/c.json")
+}
+
+// An SFTP error after the target was created (a read failed mid-file) is not
+// a skip: the file would be saved truncated.
+func TestPullOnce_ErrorAfterTargetCreatedIsNotASkip(t *testing.T) {
+	local := t.TempDir()
+	target := filepath.Join(local, "h")
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho 'level=info msg=\"Pulling " + target + " from /home/code/.claude/h (file)\"' >&2\n" +
+		"printf part > " + target + "\n" +
+		"echo 'Error: sftp: \"failure\" (SSH_FX_FAILURE)' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	p := &boundedPull{m: NewManager("c1"), base: "/home/code/.claude", stall: time.Second, skip: map[string]bool{}}
+	err := p.pullOnce(t.Context(), []string{"/home/code/.claude/h"}, local)
+	var se *stallError
+	if err == nil || errors.As(err, &se) {
+		t.Fatalf("err = %v, want a plain pull error", err)
+	}
+}

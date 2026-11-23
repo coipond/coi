@@ -38,8 +38,9 @@ const treeListTimeout = 30 * time.Second
 var pullTotalLimit = 30 * time.Minute
 
 // pullMaxEntryFailures caps the entries a bounded pull skips because
-// opening them failed (a socket on a stopped container).
-const pullMaxEntryFailures = 16
+// opening them failed (a socket on a stopped container); past it the pull
+// stops and keeps what it pulled.
+var pullMaxEntryFailures = 16
 
 // pullStallBudget caps the stall waits of one bounded pull, summed over
 // the entries it skips; past it the pull stops and keeps what it pulled.
@@ -103,7 +104,7 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 	var pullErr error
 	var stalledFor time.Duration
 	failures := 0
-	overBudget := false
+	stopped := ""
 	for {
 		pullErr = p.pull(ctx, root)
 		var se *stallError
@@ -115,7 +116,8 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 		}
 		if se.waited == 0 {
 			if failures++; failures > pullMaxEntryFailures {
-				return pullErr
+				stopped = fmt.Sprintf("%d entries could not be opened", failures)
+				break
 			}
 		}
 		warn(fmt.Sprintf("Skipping %s: the pull %s on it", se.path, se.reason))
@@ -126,12 +128,12 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 			}
 		}
 		if stalledFor += se.waited; stalledFor >= pullStallBudget {
-			overBudget = true
+			stopped = fmt.Sprintf("stalled for %s in total", stalledFor)
 			break
 		}
 	}
 
-	timedOut := ctx.Err() != nil || overBudget
+	timedOut := ctx.Err() != nil || stopped != ""
 	if pullErr != nil && !timedOut {
 		if isNotFoundText(pullErr.Error()) {
 			if kind, err := m.PathKind(containerPath); err == nil && kind == PathNone {
@@ -153,8 +155,8 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 	if err := renameOrCopy(root, localPath, copyDirRecursive); err != nil {
 		return err
 	}
-	if overBudget {
-		return fmt.Errorf("%w: stalled for %s in total, last on %v", ErrPullTimedOut, stalledFor, pullErr)
+	if stopped != "" {
+		return fmt.Errorf("%w: %s, last on %v", ErrPullTimedOut, stopped, pullErr)
 	}
 	if timedOut {
 		return fmt.Errorf("%w after %s: %v", ErrPullTimedOut, pullTotalLimit, pullErr)
