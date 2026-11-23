@@ -70,7 +70,7 @@ func TestCleanup_FailedSaveKeepsContainerWhenConfigured(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Container kept (stopped) - session data could NOT be saved (failed to create session directory:",
-		"'coi shell --resume'",
+		"'coi shell --resume=s1'",
 		"'coi kill coi-failed-save-test-1'",
 		"'coi clean'",
 	} {

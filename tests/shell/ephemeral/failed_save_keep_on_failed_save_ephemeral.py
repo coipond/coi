@@ -6,7 +6,7 @@ Tests that:
 - default: the stopped container is removed, and coi says why the save failed
   and that the conversation since the last saved copy is lost
 - keep_on_failed_save = true: the stopped container is kept, and coi says how
-  to save it (coi shell --resume) or remove it (coi kill / coi clean)
+  to save it (coi shell --resume=<session-id>) or remove it (coi kill / coi clean)
 
 Flow:
   start coi shell, exit the dummy to bash, replace the session's saved dir on
@@ -75,7 +75,7 @@ def test_failed_save_on_poweroff(coi_binary, cleanup_containers, workspace_dir, 
             status = incus_status(container_name)
             assert status == "STOPPED", f"container should be kept stopped, got {status!r}"
             assert "Container kept (stopped) - session data could NOT be saved" in output, output
-            assert "coi shell --resume" in output, output
+            assert f"coi shell --resume={session_id}" in output, output
             assert f"coi kill {container_name}" in output, output
         else:
             assert wait_for_specific_container_deletion(container_name, timeout=30), (

@@ -414,7 +414,7 @@ func Cleanup(opts CleanupOptions) error {
 						opts.Logger(fmt.Sprintf("Warning: Failed to cleanup network: %v", err))
 					}
 				}
-				opts.Logger(fmt.Sprintf("Container kept (stopped) - session data could NOT be saved (%v). Fix the cause (e.g. free disk space), then run 'coi shell --resume' to save it and continue, or remove it with 'coi kill %s' or 'coi clean'", saveErr, opts.ContainerName))
+				opts.Logger(fmt.Sprintf("Container kept (stopped) - session data could NOT be saved (%v). Fix the cause (e.g. free disk space), then run 'coi shell --resume=%s' to save it and continue, or remove it with 'coi kill %s' or 'coi clean'", saveErr, opts.SessionID, opts.ContainerName))
 			} else {
 				// Container stopped (user ran 'sudo poweroff') - delete it.
 				opts.Logger("Container was stopped, removing...")

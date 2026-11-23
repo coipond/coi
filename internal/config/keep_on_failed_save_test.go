@@ -39,6 +39,21 @@ func TestKeepOnFailedSave_AppliedFromProfile(t *testing.T) {
 	}
 }
 
+func TestKeepOnFailedSave_ProfileFalseOverridesGlobalTrue(t *testing.T) {
+	on, off := true, false
+	cfg := GetDefaultConfig()
+	cfg.Container.KeepOnFailedSave = &on
+	cfg.Profiles = map[string]ProfileConfig{
+		"nokeep": {Container: ContainerConfig{KeepOnFailedSave: &off}},
+	}
+	if err := cfg.ApplyProfile("nokeep"); err != nil {
+		t.Fatalf("ApplyProfile: %v", err)
+	}
+	if cfg.Container.KeepsOnFailedSave() {
+		t.Error("profile keep_on_failed_save = false must override a global true")
+	}
+}
+
 func TestKeepOnFailedSave_ProfileSchemaAccepts(t *testing.T) {
 	if err := coischema.ValidateProfileMap(map[string]any{
 		"container": map[string]any{"keep_on_failed_save": true},
