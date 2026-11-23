@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coipond/coi/internal/container"
+	"golang.org/x/sys/unix"
 )
 
 // FilesystemMonitor tracks filesystem I/O statistics with delta calculation
@@ -18,6 +19,10 @@ type FilesystemMonitor struct {
 	previousSnapshot ioSnapshot
 	previousTime     time.Time
 	diskSpaceFailing bool
+	workspacePath    string
+	// ioDevice is the io.stat device counted; "" counts the whole container.
+	ioDevice         string
+	ioDeviceResolved bool
 }
 
 type ioSnapshot struct {
@@ -27,13 +32,18 @@ type ioSnapshot struct {
 
 // Collect's sources, replaced by tests.
 var (
-	filesystemResourceStats = CollectResourceStats
-	collectDiskSpace        = CollectDiskSpace
+	filesystemIOStats   = collectIOStats
+	collectDiskSpace    = CollectDiskSpace
+	containerRootDevice = collectContainerRootDevice
 )
 
-// NewFilesystemMonitor creates a new filesystem monitor
-func NewFilesystemMonitor() *FilesystemMonitor {
-	return &FilesystemMonitor{}
+// rootDeviceExecTimeout bounds the stat of the container rootfs.
+var rootDeviceExecTimeout = 10 * time.Second
+
+// NewFilesystemMonitor creates a filesystem monitor for the workspace at
+// workspacePath ("" counts the whole container's I/O).
+func NewFilesystemMonitor(workspacePath string) *FilesystemMonitor {
+	return &FilesystemMonitor{workspacePath: workspacePath}
 }
 
 // Collect gathers filesystem statistics and calculates read/write rates
@@ -41,15 +51,18 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
 
-	// Get current resource stats (includes I/O)
-	resourceStats, err := filesystemResourceStats(ctx, containerName)
+	if !fm.ioDeviceResolved {
+		fm.ioDevice = workspaceIODevice(ctx, containerName, fm.workspacePath)
+		fm.ioDeviceResolved = true
+	}
+
+	ioStat, err := filesystemIOStats(ctx, containerName, fm.ioDevice)
 	if err != nil {
 		return FilesystemStats{Available: false}, err
 	}
 
-	// Convert to bytes (resourceStats is in MB)
-	currentReadBytes := uint64(resourceStats.IOReadMB * 1024 * 1024)
-	currentWriteBytes := uint64(resourceStats.IOWriteMB * 1024 * 1024)
+	currentReadBytes := uint64(ioStat.read)
+	currentWriteBytes := uint64(ioStat.write)
 
 	// Collect disk space stats (non-fatal if fails)
 	tmpUsed, tmpTotal, tmpPercent, diskErr := collectDiskSpace(ctx, containerName)
@@ -67,6 +80,7 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 
 			stats := FilesystemStats{
 				Available:         true,
+				WorkspaceDevice:   fm.ioDevice,
 				TotalReadMB:       float64(deltaReadBytes) / 1024 / 1024,
 				ReadRateMBPerSec:  readRateMBPerSec,
 				TotalWriteMB:      float64(deltaWriteBytes) / 1024 / 1024,
@@ -93,6 +107,7 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 
 	return FilesystemStats{
 		Available:         true,
+		WorkspaceDevice:   fm.ioDevice,
 		TotalReadMB:       0,
 		ReadRateMBPerSec:  0,
 		TotalWriteMB:      0,
@@ -102,6 +117,46 @@ func (fm *FilesystemMonitor) Collect(ctx context.Context, containerName string) 
 		TmpUsedPercent:    tmpPercent,
 		diskSpaceErr:      diskSpaceErr,
 	}, nil
+}
+
+// workspaceIODevice returns the io.stat device ("major:minor") of the block
+// device backing workspacePath, or "" to count the whole container: when the
+// workspace shares the container rootfs device, has no block device of its own
+// (major 0: zfs, btrfs, tmpfs) or a device cannot be read.
+func workspaceIODevice(ctx context.Context, containerName, workspacePath string) string {
+	if workspacePath == "" {
+		return ""
+	}
+	var st unix.Stat_t
+	if err := unix.Stat(workspacePath, &st); err != nil {
+		return ""
+	}
+	rootDev, err := containerRootDevice(ctx, containerName)
+	if err != nil {
+		return ""
+	}
+	return ioDevice(st.Dev, rootDev)
+}
+
+// ioDevice returns the io.stat device of workspaceDev, or "" when it has no
+// block device or is the rootfs device.
+func ioDevice(workspaceDev, rootDev uint64) string {
+	if unix.Major(workspaceDev) == 0 || workspaceDev == rootDev {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", unix.Major(workspaceDev), unix.Minor(workspaceDev))
+}
+
+// collectContainerRootDevice returns the device number of the container's
+// rootfs. Device numbers are not namespaced, so it compares to a host stat.
+func collectContainerRootDevice(ctx context.Context, containerName string) (uint64, error) {
+	ctx, cancel := context.WithTimeout(ctx, rootDeviceExecTimeout)
+	defer cancel()
+	output, err := container.IncusOutputContext(ctx, "exec", containerName, "--", "stat", "-c", "%d", "/")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(output), 10, 64)
 }
 
 // diskSpaceTransition returns err only when disk space collection starts

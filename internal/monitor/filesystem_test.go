@@ -3,11 +3,14 @@ package monitor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // counterDelta must clamp a backwards-going cumulative counter to 0 instead of
@@ -146,7 +149,7 @@ func TestCollectDiskSpaceViaIncusExecTimesOut(t *testing.T) {
 }
 
 func TestDiskSpaceTransition(t *testing.T) {
-	fm := NewFilesystemMonitor()
+	fm := NewFilesystemMonitor("")
 	boom := errors.New("boom")
 
 	steps := []struct {
@@ -168,10 +171,10 @@ func TestDiskSpaceTransition(t *testing.T) {
 
 func TestCollectorReportsDiskSpaceFailureOnce(t *testing.T) {
 	fakeDfIncus(t, `exit 1`)
-	oldStats, oldDisk := filesystemResourceStats, collectDiskSpace
-	t.Cleanup(func() { filesystemResourceStats, collectDiskSpace = oldStats, oldDisk })
-	filesystemResourceStats = func(context.Context, string) (ResourceStats, error) {
-		return ResourceStats{}, nil
+	oldStats, oldDisk := filesystemIOStats, collectDiskSpace
+	t.Cleanup(func() { filesystemIOStats, collectDiskSpace = oldStats, oldDisk })
+	filesystemIOStats = func(context.Context, string, string) (ioStats, error) {
+		return ioStats{}, nil
 	}
 	diskErr := errors.New("df failed")
 	collectDiskSpace = func(context.Context, string) (float64, float64, float64, error) {
@@ -210,5 +213,122 @@ func TestCollectorReportsDiskSpaceFailureOnce(t *testing.T) {
 	diskErr = errors.New("df failed again")
 	if got := diskErrors(); len(got) != 1 {
 		t.Fatalf("failing again: got %q, want one disk space error", got)
+	}
+}
+
+func TestReadIOStatsDevice(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "io.stat")
+	stat := "252:1 rbytes=1000 wbytes=2000 rios=1 wios=1\n" +
+		"259:0 rbytes=10 wbytes=20 rios=1 wios=1\n"
+	if err := os.WriteFile(path, []byte(stat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		device      string
+		read, write float64
+	}{
+		{"", 1010, 2020},
+		{"252:1", 1000, 2000},
+		{"8:0", 0, 0},
+	}
+	for _, tt := range tests {
+		got, err := readIOStats(path, tt.device)
+		if err != nil {
+			t.Fatalf("readIOStats(%q): %v", tt.device, err)
+		}
+		if got.read != tt.read || got.write != tt.write {
+			t.Errorf("readIOStats(%q) = %+v, want read=%v write=%v", tt.device, got, tt.read, tt.write)
+		}
+	}
+}
+
+func TestIODevice(t *testing.T) {
+	lv, other, zfs := unix.Mkdev(252, 1), unix.Mkdev(259, 2), unix.Mkdev(0, 70)
+	tests := []struct {
+		name          string
+		workspace, fs uint64
+		want          string
+	}{
+		{"own block device", lv, zfs, "252:1"},
+		{"other block device", lv, other, "252:1"},
+		{"shares rootfs device", lv, lv, ""},
+		{"no block device", zfs, lv, ""},
+	}
+	for _, tt := range tests {
+		if got := ioDevice(tt.workspace, tt.fs); got != tt.want {
+			t.Errorf("%s: ioDevice = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCollectContainerRootDevice(t *testing.T) {
+	fakeDfIncus(t, `case "$*" in *"exec c1 -- stat -c %d /"*) echo 64513 ;; *) exit 1 ;; esac`)
+
+	got, err := collectContainerRootDevice(t.Context(), "c1")
+	if err != nil {
+		t.Fatalf("collectContainerRootDevice: %v", err)
+	}
+	if got != unix.Mkdev(252, 1) {
+		t.Errorf("collectContainerRootDevice = %d, want %d", got, unix.Mkdev(252, 1))
+	}
+}
+
+func TestWorkspaceIODeviceFallsBackToContainer(t *testing.T) {
+	old := containerRootDevice
+	t.Cleanup(func() { containerRootDevice = old })
+	containerRootDevice = func(context.Context, string) (uint64, error) {
+		return 0, errors.New("exec failed")
+	}
+
+	for _, path := range []string{"", filepath.Join(t.TempDir(), "missing"), t.TempDir()} {
+		if got := workspaceIODevice(t.Context(), "c1", path); got != "" {
+			t.Errorf("workspaceIODevice(%q) = %q, want whole container", path, got)
+		}
+	}
+}
+
+func TestFilesystemMonitorCountsWorkspaceDevice(t *testing.T) {
+	oldStats, oldDisk, oldRoot := filesystemIOStats, collectDiskSpace, containerRootDevice
+	t.Cleanup(func() { filesystemIOStats, collectDiskSpace, containerRootDevice = oldStats, oldDisk, oldRoot })
+	collectDiskSpace = func(context.Context, string) (float64, float64, float64, error) {
+		return 0, 0, 0, nil
+	}
+	// The package dir, not t.TempDir(): /tmp is often tmpfs or zfs.
+	workspace, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st unix.Stat_t
+	if err := unix.Stat(workspace, &st); err != nil {
+		t.Fatal(err)
+	}
+	if unix.Major(st.Dev) == 0 {
+		t.Skip("package dir has no block device")
+	}
+	containerRootDevice = func(context.Context, string) (uint64, error) {
+		return unix.Mkdev(0, 70), nil
+	}
+	want := fmt.Sprintf("%d:%d", unix.Major(st.Dev), unix.Minor(st.Dev))
+	var devices []string
+	written := 0.0
+	filesystemIOStats = func(_ context.Context, _ string, device string) (ioStats, error) {
+		devices = append(devices, device)
+		written += 100 * 1024 * 1024
+		return ioStats{write: written}, nil
+	}
+
+	fm := NewFilesystemMonitor(workspace)
+	if _, err := fm.Collect(t.Context(), "c1"); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := fm.Collect(t.Context(), "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 2 || devices[0] != want || devices[1] != want {
+		t.Errorf("io.stat devices read = %q, want %q twice", devices, want)
+	}
+	if stats.WorkspaceDevice != want || stats.TotalWriteMB != 100 {
+		t.Errorf("stats = %+v, want device %q and 100 MB written", stats, want)
 	}
 }

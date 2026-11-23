@@ -151,18 +151,23 @@ func (d *Detector) Analyze(snapshot MonitorSnapshot) []ThreatEvent {
 		}}))
 	}
 
-	// 4. Detect large workspace reads (possible data exfiltration)
+	// 4. Detect large workspace reads (possible data exfiltration). Without a
+	// workspace device of its own the counts cover all container I/O.
 	if snapshot.Filesystem.Available {
+		scope := "container I/O"
+		if snapshot.Filesystem.WorkspaceDevice != "" {
+			scope = "workspace"
+		}
 		fsExfil := DetectLargeReads(snapshot.Filesystem, d.fileReadThresholdMB, d.fileReadRateMBPerSec)
 		if fsExfil != nil {
-			threats = append(threats, newThreatEvent(snapshot.Timestamp, ThreatLevelHigh, "filesystem", "Large workspace read detected", fmt.Sprintf("Read %.2f MB at %.2f MB/sec (threshold: %.2f MB)",
+			threats = append(threats, newThreatEvent(snapshot.Timestamp, ThreatLevelHigh, "filesystem", "Large "+scope+" read detected", fmt.Sprintf("Read %.2f MB at %.2f MB/sec (threshold: %.2f MB)",
 				fsExfil.ReadBytesMB, fsExfil.ReadRate, fsExfil.Threshold), Evidence{Filesystem: fsExfil}))
 		}
 
 		// 4b. Detect large workspace writes (possible data exfiltration via tar, dd, etc.)
 		fsWriteExfil := DetectLargeWrites(snapshot.Filesystem, d.fileWriteThresholdMB, d.fileWriteRateMBPerSec)
 		if fsWriteExfil != nil {
-			threats = append(threats, newThreatEvent(snapshot.Timestamp, ThreatLevelHigh, "filesystem", "Large workspace write detected", fmt.Sprintf("Write %.2f MB at %.2f MB/sec (threshold: %.2f MB)",
+			threats = append(threats, newThreatEvent(snapshot.Timestamp, ThreatLevelHigh, "filesystem", "Large "+scope+" write detected", fmt.Sprintf("Write %.2f MB at %.2f MB/sec (threshold: %.2f MB)",
 				fsWriteExfil.WriteBytesMB, fsWriteExfil.WriteRate, fsWriteExfil.Threshold), Evidence{FileWrite: fsWriteExfil}))
 		}
 	}
