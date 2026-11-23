@@ -2,6 +2,7 @@ package container
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,7 +16,8 @@ import (
 // `file pull --verbose -r` from ROOT, which stands in for the container's
 // filesystem. The pull logs each entry as `incus --verbose` does, then opens
 // it: a FIFO blocks, a socket fails, a `*.slow` file grows by a byte every
-// 0.2 s for SLOW_TICKS ticks. Without RUNNING every exec fails, as on a
+// 0.2 s for SLOW_TICKS ticks. Each file reached is appended to PULLED if
+// set. Without RUNNING every exec fails, as on a
 // stopped container. VANISH is removed right after the listing.
 const fakeFileIncusScript = `
 [ "$1" = --project ] && shift 2
@@ -29,6 +31,7 @@ pull() {
   fi
   [ -e "$ROOT$1" ] || { echo "Error: not found" >&2; return 1; }
   echo "level=info msg=\"Pulling $2 from $1 (file)\"" >&2
+  [ -n "$PULLED" ] && echo "$1" >> "$PULLED"
   [ -S "$ROOT$1" ] && { echo "Error: no such device or address" >&2; return 1; }
   case "$1" in *.slow)
     i=0; while [ $i -lt "$SLOW_TICKS" ]; do printf x >> "$2"; sleep 0.2; i=$((i+1)); done; return 0 ;;
@@ -288,5 +291,97 @@ func TestParsePullingLine(t *testing.T) {
 		if target != tt.target || source != tt.source || ok != tt.ok {
 			t.Errorf("parsePullingLine(%q) = %q, %q, %v; want %q, %q, %v", tt.line, target, source, ok, tt.target, tt.source, tt.ok)
 		}
+	}
+}
+
+// pulledCounts counts how often each file was reached (fake PULLED log).
+func pulledCounts(t *testing.T, log string) map[string]int {
+	t.Helper()
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, l := range strings.Fields(string(b)) {
+		counts[l]++
+	}
+	return counts
+}
+
+// Stalls on k FIFOs cost k stall waits, not k extra copies of the tree:
+// files pulled before a stall are not pulled again.
+func TestPullDirectoryBounded_StallsDoNotRepull(t *testing.T) {
+	root, src := configRoot(t)
+	for _, f := range []string{"a-fifo", "clean/b-fifo", "projects/p/c-fifo"} {
+		mkfifo(t, filepath.Join(src, f))
+	}
+	fakeFileIncus(t, root, false)
+	log := filepath.Join(t.TempDir(), "pulled")
+	t.Setenv("PULLED", log)
+
+	dest, _, warn, err := pullBounded(t, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRealFiles(t, dest, "history.jsonl", "projects/p/s.jsonl", "clean/c.json", "ide/lock.json")
+	if len(warn) != 3 {
+		t.Errorf("warn = %q, want 3 skipped FIFOs", warn)
+	}
+	for f, n := range pulledCounts(t, log) {
+		if n != 1 && !strings.HasSuffix(f, "-fifo") {
+			t.Errorf("%s pulled %d times, want 1", f, n)
+		}
+	}
+}
+
+// The stall waits of one pull are capped in total: past the budget it stops
+// and keeps what it pulled.
+func TestPullDirectoryBounded_StallBudget(t *testing.T) {
+	orig := pullStallBudget
+	pullStallBudget = 2 * time.Second
+	t.Cleanup(func() { pullStallBudget = orig })
+	root, src := configRoot(t)
+	for _, f := range []string{"a-fifo", "b-fifo", "c-fifo"} {
+		mkfifo(t, filepath.Join(src, f))
+	}
+	fakeFileIncus(t, root, false)
+
+	dest, _, warn, err := pullBounded(t, time.Second)
+	if !errors.Is(err, ErrPullTimedOut) {
+		t.Fatalf("err = %v, want ErrPullTimedOut", err)
+	}
+	if len(warn) != 2 {
+		t.Errorf("warn = %q, want 2 skips within the budget", warn)
+	}
+	if _, statErr := os.Stat(dest); statErr != nil {
+		t.Errorf("pulled part not kept: %v", statErr)
+	}
+}
+
+// Vanished entries in a batch are found with one listing of its directory,
+// not one query per source.
+func TestPullDirectoryBounded_VanishedEntryOneListing(t *testing.T) {
+	root, src := configRoot(t)
+	mkfifo(t, filepath.Join(src, "fifo"))
+	for i := range 20 {
+		writeFiles(t, src, fmt.Sprintf("f%02d", i))
+	}
+	writeFiles(t, src, "gone.tmp")
+	log := fakeFileIncus(t, root, true)
+	t.Setenv("VANISH", "/home/code/.claude/gone.tmp")
+
+	dest, _, _, err := pullBounded(t, 20*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRealFiles(t, dest, "history.jsonl", "f00", "f19")
+	queries := 0
+	for _, c := range calls(t, log) {
+		if strings.HasPrefix(c, "query ") {
+			queries++
+		}
+	}
+	if queries != 1 {
+		t.Errorf("incus query calls = %d, want 1", queries)
 	}
 }

@@ -36,8 +36,9 @@ const treeListTimeout = 30 * time.Second
 // that streams forever); a stall is caught much sooner by the stall timeout.
 var pullTotalLimit = 30 * time.Minute
 
-// pullMaxSkips caps the entries a bounded pull skips after a stall.
-const pullMaxSkips = 64
+// pullStallBudget caps the stall waits of one bounded pull, summed over
+// the entries it skips; past it the pull stops and keeps what it pulled.
+var pullStallBudget = 2 * time.Minute
 
 // pullProgressInterval is how often a running pull is checked for progress.
 var pullProgressInterval = time.Second
@@ -89,25 +90,36 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 		}
 	}
 
+	// Each attempt after a stall keeps what is on the host and pulls only the
+	// rest: the pull walks the tree in order, so every entry it reached before
+	// the stalled one, other than the directories above it, is complete.
 	root := filepath.Join(tempDir, path.Base(containerPath))
 	var pullErr error
+	var stalledFor time.Duration
+	overBudget := false
 	for {
-		if err := os.RemoveAll(root); err != nil {
-			return err
-		}
 		pullErr = p.pull(ctx, root)
 		var se *stallError
 		if !errors.As(pullErr, &se) || ctx.Err() != nil {
 			break
 		}
-		if se.path == containerPath || p.skip[se.path] || len(p.skip) >= pullMaxSkips {
+		if se.path == containerPath || p.skip[se.path] {
 			return fmt.Errorf("pull of %s stalled on %s", containerPath, se.path)
 		}
 		warn(fmt.Sprintf("Skipping %s: the pull stalled on it for %s", se.path, stall))
 		p.skip[se.path] = true
+		if se.target != "" {
+			if err := os.RemoveAll(se.target); err != nil {
+				return err
+			}
+		}
+		if stalledFor += stall; stalledFor >= pullStallBudget {
+			overBudget = true
+			break
+		}
 	}
 
-	timedOut := ctx.Err() != nil
+	timedOut := ctx.Err() != nil || overBudget
 	if pullErr != nil && !timedOut {
 		if isNotFoundText(pullErr.Error()) {
 			if kind, err := m.PathKind(containerPath); err == nil && kind == PathNone {
@@ -129,6 +141,9 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 	if err := renameOrCopy(root, localPath, copyDirRecursive); err != nil {
 		return err
 	}
+	if overBudget {
+		return fmt.Errorf("%w: stalled for %s in total, last on %v", ErrPullTimedOut, stalledFor, pullErr)
+	}
 	if timedOut {
 		return fmt.Errorf("%w after %s: %v", ErrPullTimedOut, pullTotalLimit, pullErr)
 	}
@@ -145,9 +160,10 @@ type boundedPull struct {
 	skip  map[string]bool
 }
 
-// stallError names the container path a pull stalled on.
+// stallError names the container path a pull stalled on and its local
+// target (empty when the pull had not reached an entry).
 type stallError struct {
-	path string
+	path, target string
 }
 
 func (e *stallError) Error() string { return "pull stalled on " + e.path }
@@ -170,7 +186,7 @@ func (p *boundedPull) pull(ctx context.Context, root string) error {
 // pullDirtyDir pulls the container directory dir to local, skipping skipped
 // entries and walking only subdirectories that hold one.
 func (p *boundedPull) pullDirtyDir(ctx context.Context, dirty map[string]bool, dir, local string) error {
-	if err := os.Mkdir(local, 0o700); err != nil {
+	if err := os.Mkdir(local, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
 	entries, err := p.children(dir)
@@ -187,6 +203,8 @@ func (p *boundedPull) pullDirtyDir(ctx context.Context, dirty map[string]bool, d
 			}
 		case p.tree != nil && p.tree.types[p.rel(src)] == 'l':
 			// Dropped from every pulled tree (sanitizePulledTree).
+		case pathOnHost(filepath.Join(local, path.Base(src))):
+			// Pulled by an earlier attempt.
 		default:
 			batch = append(batch, src)
 		}
@@ -199,6 +217,12 @@ func (p *boundedPull) pullDirtyDir(ctx context.Context, dirty map[string]bool, d
 		batch = batch[n:]
 	}
 	return nil
+}
+
+// pathOnHost reports whether p exists on the host.
+func pathOnHost(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
 }
 
 // rel is src relative to base.
@@ -215,14 +239,9 @@ func (p *boundedPull) children(dir string) ([]string, error) {
 			names = append(names, path.Base(rel))
 		}
 	} else {
-		q := fmt.Sprintf("/1.0/instances/%s/files?project=%s&path=%s",
-			url.PathEscape(p.m.ContainerName), url.QueryEscape(IncusProject), url.QueryEscape(dir))
-		out, err := p.m.incusQuery("GET", q, "")
-		if err != nil {
-			return nil, fmt.Errorf("list %s: %w", dir, err)
-		}
-		if err := json.Unmarshal([]byte(out), &names); err != nil {
-			return nil, fmt.Errorf("list %s: %w", dir, err)
+		var err error
+		if names, err = p.listDir(dir); err != nil {
+			return nil, err
 		}
 	}
 	sort.Strings(names)
@@ -233,21 +252,46 @@ func (p *boundedPull) children(dir string) ([]string, error) {
 	return srcs, nil
 }
 
+// listDir lists the entry names of the container directory dir through the
+// Incus files API (no exec, so a stopped container works too).
+func (p *boundedPull) listDir(dir string) ([]string, error) {
+	q := fmt.Sprintf("/1.0/instances/%s/files?project=%s&path=%s",
+		url.PathEscape(p.m.ContainerName), url.QueryEscape(IncusProject), url.QueryEscape(dir))
+	out, err := p.m.incusQuery("GET", q, "")
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %w", dir, err)
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(out), &names); err != nil {
+		return nil, fmt.Errorf("list %s: %w", dir, err)
+	}
+	return names, nil
+}
+
 // pullSources pulls container paths into localDir in one
 // `incus file pull --verbose -r`. The verbose log names each entry as the
 // pull reaches it; a pull with no new entry and no new bytes for p.stall is
 // stopped with a stallError naming its last entry. Entries listed in the
 // container that are gone by the pull are dropped from the batch and pulled
-// again without them.
+// again without them; the sources of a batch share one directory, so one
+// listing of it finds them.
 func (p *boundedPull) pullSources(ctx context.Context, sources []string, localDir string) error {
 	for {
 		err := p.pullOnce(ctx, sources, localDir)
-		if err == nil || p.tree == nil || !isNotFoundText(err.Error()) {
+		if err == nil || p.tree == nil || !isNotFoundText(err.Error()) || sources[0] == p.base {
 			return err
+		}
+		names, listErr := p.listDir(path.Dir(sources[0]))
+		if listErr != nil {
+			return err
+		}
+		present := make(map[string]bool, len(names))
+		for _, n := range names {
+			present[n] = true
 		}
 		var kept []string
 		for _, s := range sources {
-			if ok, statErr := p.m.PathKind(s); statErr != nil || ok == PathNone {
+			if !present[path.Base(s)] {
 				p.skip[s] = true
 				continue
 			}
@@ -301,7 +345,7 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 		}
 	}()
 
-	stalled := ""
+	stalled, stalledTarget := "", ""
 	waitDone := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
@@ -316,7 +360,7 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 		select {
 		case err := <-waitDone:
 			if stalled != "" {
-				return &stallError{path: stalled}
+				return &stallError{path: stalled, target: stalledTarget}
 			}
 			if err == nil {
 				return nil
@@ -338,7 +382,7 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 				lastProgress = time.Now()
 			}
 			if stalled == "" && time.Since(lastProgress) > p.stall {
-				stalled = lastSource
+				stalled, stalledTarget = lastSource, lastTarget
 				if stalled == "" {
 					stalled = sources[0]
 				}
