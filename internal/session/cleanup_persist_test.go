@@ -19,7 +19,7 @@ func cleanupStoppedSession(t *testing.T, key string) (calls, logs string, teardo
 	logPath := fakeLimitsIncusStatus(t, name, "", "STOPPED")
 	dir := filepath.Dir(logPath)
 	for path, content := range map[string]string{
-		filepath.Join(dir, "keys", PersistentConfigKey): key,
+		filepath.Join(dir, "keys", PersistentConfigKey):     key,
 		filepath.Join(dir, "home", ".codex", "config.toml"): "x",
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
