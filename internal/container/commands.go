@@ -1264,6 +1264,12 @@ func ConfigSet(ctx context.Context, containerName, key, value string) error {
 	return IncusExecContext(ctx, "config", "set", containerName, key+"="+value)
 }
 
+// ClearEphemeral turns off the container's Incus ephemeral property, so
+// Incus no longer deletes it when it stops.
+func ClearEphemeral(ctx context.Context, containerName string) error {
+	return IncusExecContext(ctx, "config", "set", containerName, "ephemeral=false", "--property")
+}
+
 // ConfigSetPairs sets several `key=value` pairs on a container in one
 // `incus config set`.
 func ConfigSetPairs(ctx context.Context, containerName string, pairs ...string) error {

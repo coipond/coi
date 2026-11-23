@@ -133,6 +133,12 @@ func persistCommand(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "  Warning: Failed to set persistence metadata: %v\n", err)
 			continue
 		}
+		// An ephemeral `coi run` container is created with Incus' ephemeral
+		// property, and Incus deletes it on its next stop.
+		if err := container.ClearEphemeral(context.Background(), name); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to make %s non-ephemeral: %v\n", name, err)
+			continue
+		}
 
 		persisted++
 		fmt.Printf("  ✓ Persisted %s\n", name)

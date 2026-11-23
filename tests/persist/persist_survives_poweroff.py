@@ -98,7 +98,7 @@ def test_persist_survives_poweroff_and_next_shell(coi_binary, cleanup_containers
     )
     launch_output = result.stdout + result.stderr
     assert name == container_name, f"want {container_name} reused, got {name}:\n{launch_output}"
-    assert "kept by coi persist" in launch_output, f"want the reuse notice:\n{launch_output}"
+    assert "marked persistent" in launch_output, f"want the reuse notice:\n{launch_output}"
     assert "leftover" not in launch_output, f"container treated as a leftover:\n{launch_output}"
     assert incus_status(calculate_container_name(workspace_dir, 2)) == "", "slot 2 was launched"
 

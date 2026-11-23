@@ -80,6 +80,35 @@ type runState struct {
 	nftDaemon     nftmonitor.NFTMonitorDaemon
 }
 
+// chooseRunSlot picks the run's slot: --slot, or an auto-allocated one. A
+// chosen container marked persistent makes the run persistent when config
+// does not set [container] persistent (see inheritPersistedContainer).
+func (a *App) chooseRunSlot(workspace string) (int, error) {
+	if a.slot != 0 {
+		a.inheritPersistedContainer(session.ContainerName(workspace, a.sessionName(), a.slot))
+		return a.slot, nil
+	}
+	// Persistent mode: prefer the stopped container from a previous run —
+	// plain AllocateSlot treats it as occupying its slot and would silently
+	// launch a FRESH container on the next slot (state never persists, slots
+	// exhaust).
+	return a.autoAllocateSlot(workspace, "Reusing persistent container on slot %d\n")
+}
+
+// endRunContainer deletes the run's container, or stops it when the run is
+// persistent or `coi persist` marked it since launch.
+func (a *App) endRunContainer(mgr container.ContainerManager, containerName string) {
+	if !a.persistent && !session.ContainerMarkedPersistent(containerName) {
+		fmt.Fprintf(os.Stderr, "Cleaning up container %s...\n", containerName)
+		_ = mgr.Delete(true)
+		return
+	}
+	if running, _ := mgr.Running(); running {
+		fmt.Fprintf(os.Stderr, "Stopping persistent container %s...\n", containerName)
+		_ = mgr.Stop(false)
+	}
+}
+
 // validateEnvRunPhase checks Incus availability, allocates a slot, resolves
 // the image name, and validates the storage pool and alias.
 func (a *App) validateEnvRunPhase(s *runState) session.Phase {
@@ -114,34 +143,9 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 				}
 			}()
 
-			slotNum := a.slot
-			if slotNum == 0 {
-				// Persistent mode: prefer the stopped container from a
-				// previous run — plain AllocateSlot treats it as occupying
-				// its slot and would silently launch a FRESH container on
-				// the next slot (state never persists, slots exhaust).
-				if a.persistent {
-					if reuse, ok := session.FindReusablePersistentSlot(s.absWorkspace, a.sessionName(), session.MaxSlots); ok {
-						slotNum = reuse
-						fmt.Fprintf(os.Stderr, "Reusing persistent container on slot %d\n", slotNum)
-					}
-				}
-				if slotNum == 0 {
-					var persisted bool
-					slotNum, persisted, err = a.allocateSlot(s.absWorkspace)
-					if err != nil {
-						return nil, fmt.Errorf("failed to allocate slot: %w", err)
-					}
-					if persisted {
-						a.persistent = true
-						fmt.Fprintf(os.Stderr, "Reusing stopped container kept by coi persist on slot %d\n", slotNum)
-					} else {
-						fmt.Fprintf(os.Stderr, "Auto-allocated slot %d\n", slotNum)
-						warnNamedSessionFork(s.absWorkspace, a.sessionName(), slotNum)
-					}
-				}
-			} else {
-				a.inheritPersistedContainer(session.ContainerName(s.absWorkspace, a.sessionName(), slotNum))
+			slotNum, err := a.chooseRunSlot(s.absWorkspace)
+			if err != nil {
+				return nil, err
 			}
 			s.containerName = session.ContainerName(s.absWorkspace, a.sessionName(), slotNum)
 			s.slot = slotNum
@@ -421,16 +425,7 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			teardown := func() {
 				logFn := stderrLogFn
 				session.RemoveImmutable(s.containerName, logFn)
-				// `coi persist` may have converted the run since launch.
-				if !a.persistent && !session.ContainerMarkedPersistent(s.containerName) {
-					fmt.Fprintf(os.Stderr, "Cleaning up container %s...\n", s.containerName)
-					_ = s.mgr.Delete(true)
-				} else {
-					if running, _ := s.mgr.Running(); running {
-						fmt.Fprintf(os.Stderr, "Stopping persistent container %s...\n", s.containerName)
-						_ = s.mgr.Stop(false)
-					}
-				}
+				a.endRunContainer(s.mgr, s.containerName)
 			}
 
 			stopLaunch := timing.Start(timing.CatStep, "launch-or-reuse")

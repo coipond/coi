@@ -8,9 +8,10 @@ import (
 )
 
 // ContainerMarkedPersistent reports whether the container's
-// user.coi.persistent key is "true". `coi persist` sets it while a session
-// runs, so session ends and later launches read it instead of trusting the
-// persistence decided at launch. false when Incus cannot answer.
+// user.coi.persistent key is "true". Persistent launches set it, and
+// `coi persist` sets it while a session runs, so session ends and later
+// launches read it instead of trusting the persistence decided at launch.
+// false when Incus cannot answer.
 func ContainerMarkedPersistent(name string) bool {
 	v, err := container.ConfigGetUncached(context.Background(), name, PersistentConfigKey)
 	return err == nil && v == "true"
@@ -19,7 +20,7 @@ func ContainerMarkedPersistent(name string) bool {
 // AllocateSlotPreferPersisted is AllocateSlot that first returns the lowest
 // slot whose container for the identity is stopped and marked persistent
 // (user.coi.persistent=true), with persisted=true, so a launch restarts a
-// container kept by `coi persist` instead of forking a fresh slot. The key
+// kept container instead of forking a fresh slot. The key
 // comes from the one instance listing.
 func AllocateSlotPreferPersisted(workspacePath, sessionName string, maxSlots int) (slot int, persisted bool, err error) {
 	if maxSlots == 0 {
