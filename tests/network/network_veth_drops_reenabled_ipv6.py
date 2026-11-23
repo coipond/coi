@@ -62,7 +62,7 @@ def test_reenabled_ipv6_is_dropped_at_the_veth(
     bridge = veth_bridge(host_veth(name))
 
     with bridge_v6(bridge), outside_host(bridge) as (out_port, out_peers):
-        port = free_host_port(socket.AF_INET6, BRIDGE_V6)
+        port = free_host_port(BRIDGE_V6, family=socket.AF_INET6)
         with counting_listener(socket.AF_INET6, BRIDGE_V6, port) as peers:
             rc, out = exec_in(
                 coi_binary,

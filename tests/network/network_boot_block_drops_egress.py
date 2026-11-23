@@ -42,7 +42,7 @@ def test_boot_service_never_gets_out_before_rules(coi_binary, workspace_dir, cle
     rc, gw = exec_in(coi_binary, name, "ip -4 route show default | awk '{print $3; exit}'")
     gateway = gw.strip()
     assert rc == 0 and gateway, f"no IPv4 gateway in the container: {gw}"
-    port = free_host_port(socket.AF_INET, gateway)
+    port = free_host_port(gateway, family=socket.AF_INET)
     v6_port = port  # BRIDGE_V6 is a different address: the same port is free
     bridge = veth_bridge(host_veth(name))
 
