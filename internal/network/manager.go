@@ -96,6 +96,9 @@ func NewManager(cfg *config.NetworkConfig, log *logger.SessionLogger) *Manager {
 // blocked until the caller tears everything down.
 func (m *Manager) SetupForContainer(ctx context.Context, containerName string) error {
 	m.containerName = containerName
+	if err := ClearRuntimeHostPorts(containerName); err != nil {
+		return err
+	}
 
 	// Handle different network modes
 	switch m.config.Mode {

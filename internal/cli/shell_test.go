@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/network"
@@ -259,5 +260,50 @@ func TestStartExplicitPortPermits(t *testing.T) {
 	}
 	if permits("tcp", "192.168.1.60", 8080) {
 		t.Error("a host entry without ports must not count")
+	}
+}
+
+// The name refresh runs in production: a changed address the firewall
+// installed (the container's IP cache) gets the name's port permit.
+func TestStartExplicitPortPermits_FollowsNameAddresses(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	policy, err := network.NewAllowPolicy([]string{"proxy.example.com:8080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := `{"domains": {"proxy.example.com": ["203.0.113.31"]}}`
+	if err := os.MkdirAll(filepath.Join(home, ".coi", "network-cache"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".coi", "network-cache", "c.json"), []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	permits, stop := startExplicitPortPermits(t.Context(), "c", nil, policy, map[string][]string{"proxy.example.com": {"203.0.113.30"}})
+	defer stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for !permits("tcp", "203.0.113.31", 8080) {
+		if time.Now().After(deadline) {
+			t.Fatal("the address from the IP cache never got the name's permit")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !permits("tcp", "203.0.113.30", 8080) {
+		t.Error("the address resolved at start must stay permitted")
+	}
+}
+
+// `coi run` in open mode drops a runtime host ports record of an earlier
+// session, also without [[network.hosts]].
+func TestApplyNetworkIsolation_OpenClearsRuntimeHostPorts(t *testing.T) {
+	logPath := fakeIncusLog(t)
+	a := &App{cfg: &config.Config{Network: config.NetworkConfig{Mode: config.NetworkModeOpen}}}
+	if _, err := a.applyNetworkIsolation(t.Context(), "c"); err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(calls), "user.coi.host_ports") {
+		t.Errorf("no runtime host ports clear, incus calls:\n%s", calls)
 	}
 }

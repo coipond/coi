@@ -16,8 +16,8 @@ import (
 
 // runtimeHostPortsKey records the ports of each `coi hosts add --ports` entry on
 // the container ("<ip>=<port>,<port> ..."), so the monitors in the session's own
-// coi process see that runtime permit. ApplyUserHosts clears it at setup, with
-// the firewall it describes.
+// coi process see that runtime permit. ClearRuntimeHostPorts drops it at every
+// session setup, with the firewall it describes.
 const runtimeHostPortsKey = "user.coi.host_ports"
 
 // ExplicitPortPermits answers "did the user name this exact port for this

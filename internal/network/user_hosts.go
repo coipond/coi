@@ -162,10 +162,6 @@ func checkHostAddressPorts(mode config.NetworkMode, entry config.HostEntry, allo
 // refused entry aborts before any /etc/hosts or firewall change. Works on a
 // running container. An empty slice clears the managed block.
 func ApplyUserHosts(containerName string, mode config.NetworkMode, allowLocalNetworkAccess bool, entries []config.HostEntry, allowedPorts []int) error {
-	// Runtime port permits describe the previous firewall, not this one.
-	if err := container.ConfigUnsetIfSet(context.Background(), containerName, runtimeHostPortsKey); err != nil {
-		return fmt.Errorf("failed to clear runtime host ports: %w", err)
-	}
 	if len(entries) == 0 {
 		return WriteUserHosts(containerName, nil)
 	}
@@ -290,6 +286,17 @@ func AddUserHost(containerName string, mode config.NetworkMode, allowLocalNetwor
 		return err
 	}
 	return WriteUserHosts(containerName, mergeHostEntry(existing, entry))
+}
+
+// ClearRuntimeHostPorts drops the container's `coi hosts add --ports` record.
+// Session setup calls it in every mode: restricted and allowlist setup purge the
+// container's rules (purgeStaleRulesForIP), runtime host accepts included, and
+// open mode refuses per-host ports, so no runtime port permit survives setup.
+func ClearRuntimeHostPorts(containerName string) error {
+	if err := container.ConfigUnsetIfSet(context.Background(), containerName, runtimeHostPortsKey); err != nil {
+		return fmt.Errorf("failed to clear runtime host ports: %w", err)
+	}
+	return nil
 }
 
 // recordRuntimeHostPorts adds entry's ports to the container's
