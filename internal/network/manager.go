@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -66,11 +65,6 @@ type Manager struct {
 
 // NewManager creates a new network manager with the specified configuration
 func NewManager(cfg *config.NetworkConfig, log *logger.SessionLogger) *Manager {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = "/tmp"
-	}
-
 	// Route the package's resolver/nft diagnostics (which log via the package
 	// logger, including from package-level helpers and the background refresher)
 	// to this Manager's logger. This makes the caller's choice authoritative: a
@@ -83,7 +77,7 @@ func NewManager(cfg *config.NetworkConfig, log *logger.SessionLogger) *Manager {
 
 	return &Manager{
 		config:       cfg,
-		cacheManager: NewCacheManager(homeDir),
+		cacheManager: defaultCacheManager(),
 		logger:       log,
 	}
 }

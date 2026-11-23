@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,10 +20,7 @@ func fakeRecordEnv(t *testing.T, containerName string) (keyPath, logPath string)
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	logPath = fakeIncus(t)
-	keyPath, err := runtimeHostPortsPath(containerName)
-	if err != nil {
-		t.Fatal(err)
-	}
+	keyPath = runtimeHostPortsPath(containerName)
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -124,5 +123,44 @@ func TestAddUserHost_RecordsPorts(t *testing.T) {
 	}
 	if got := readKey(t, keyPath); got != "" {
 		t.Errorf("key = %q, want none", got)
+	}
+}
+
+// Without $HOME the record, the IP cache and the monitor all use the /tmp
+// fallback, and setup does not fail.
+func TestRuntimeHostPorts_HomeUnset(t *testing.T) {
+	t.Setenv("HOME", "")
+	fakeIncus(t)
+	c := "coi-rhp-nohome-" + strconv.Itoa(os.Getpid())
+	t.Cleanup(func() {
+		_ = os.Remove(runtimeHostPortsPath(c))
+		_ = defaultCacheManager().Delete(c)
+	})
+
+	useSudo := false
+	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, UseSudo: &useSudo}, logger.NewDiscard())
+	if err := m.SetupForContainer(context.Background(), c); err != nil {
+		t.Fatalf("setup without $HOME: %v", err)
+	}
+	if dir := filepath.Dir(runtimeHostPortsPath(c)); dir != m.cacheManager.cacheDir || !strings.HasPrefix(dir, "/tmp/") {
+		t.Errorf("record dir %q, IP cache dir %q, want one /tmp dir", dir, m.cacheManager.cacheDir)
+	}
+
+	if err := recordRuntimeHostPorts(c, config.HostEntry{IP: "192.168.1.50", Ports: []int{8080}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readRuntimeHostPorts(c); err != nil || got != "192.168.1.50=8080" {
+		t.Errorf("record = %q, %v", got, err)
+	}
+	if err := ClearRuntimeHostPorts(c); err != nil {
+		t.Errorf("clear without $HOME: %v", err)
+	}
+
+	cache := &IPCache{Domains: map[string][]string{"proxy.example.com": {"203.0.113.31"}}}
+	if err := m.cacheManager.Save(c, cache); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loadNameAddresses(c); err != nil || len(got["proxy.example.com"]) != 1 {
+		t.Errorf("name addresses = %v, %v, want the firewall's IP cache", got, err)
 	}
 }

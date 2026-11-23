@@ -19,12 +19,8 @@ import (
 // the monitors in the session's own coi process see that runtime permit. It
 // sits next to the container's IP cache. ClearRuntimeHostPorts removes it at
 // every session setup, with the firewall it describes.
-func runtimeHostPortsPath(containerName string) (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(NewCacheManager(homeDir).cacheDir, containerName+".host-ports"), nil
+func runtimeHostPortsPath(containerName string) string {
+	return filepath.Join(defaultCacheManager().cacheDir, containerName+".host-ports")
 }
 
 // ExplicitPortPermits answers "did the user name this exact port for this
@@ -67,11 +63,7 @@ type explicitPortPermit struct {
 // loadNameAddresses returns the addresses the firewall installed for each
 // allowlisted name of the container (its saved IP cache).
 var loadNameAddresses = func(containerName string) (map[string][]string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	cache, err := NewCacheManager(homeDir).Load(containerName)
+	cache, err := defaultCacheManager().Load(containerName)
 	if err != nil {
 		return nil, err
 	}
@@ -81,11 +73,7 @@ var loadNameAddresses = func(containerName string) (map[string][]string, error) 
 // readRuntimeHostPorts returns the container's runtime host ports record
 // (empty when there is none).
 var readRuntimeHostPorts = func(containerName string) (string, error) {
-	path, err := runtimeHostPortsPath(containerName)
-	if err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(runtimeHostPortsPath(containerName))
 	if os.IsNotExist(err) {
 		return "", nil
 	}

@@ -27,6 +27,16 @@ func NewCacheManager(baseDir string) *CacheManager {
 	}
 }
 
+// defaultCacheManager is the cache manager under the user's home directory, or
+// /tmp when it is unknown, as NewManager uses it.
+func defaultCacheManager() *CacheManager {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/tmp"
+	}
+	return NewCacheManager(homeDir)
+}
+
 // Load reads the IP cache for a container
 func (c *CacheManager) Load(containerName string) (*IPCache, error) {
 	cachePath := filepath.Join(c.cacheDir, fmt.Sprintf("%s.json", containerName))

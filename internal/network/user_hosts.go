@@ -294,11 +294,7 @@ func AddUserHost(containerName string, mode config.NetworkMode, allowLocalNetwor
 // container's rules (purgeStaleRulesForIP), runtime host accepts included, and
 // open mode refuses per-host ports, so no runtime port permit survives setup.
 func ClearRuntimeHostPorts(containerName string) error {
-	path, err := runtimeHostPortsPath(containerName)
-	if err == nil {
-		err = os.Remove(path)
-	}
-	if err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(runtimeHostPortsPath(containerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to clear runtime host ports: %w", err)
 	}
 	return nil
@@ -312,12 +308,8 @@ func recordRuntimeHostPorts(containerName string, entry config.HostEntry) error 
 	if err != nil {
 		return fmt.Errorf("failed to read runtime host ports: %w", err)
 	}
-	path, err := runtimeHostPortsPath(containerName)
-	if err != nil {
-		return fmt.Errorf("failed to record runtime host ports: %w", err)
-	}
 	value := formatRuntimeHostPorts(append(parseRuntimeHostPorts(cur), entry))
-	if err := writeFileAtomic(path, []byte(value)); err != nil {
+	if err := writeFileAtomic(runtimeHostPortsPath(containerName), []byte(value)); err != nil {
 		return fmt.Errorf("failed to record runtime host ports: %w", err)
 	}
 	return nil
