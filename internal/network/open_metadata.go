@@ -9,10 +9,9 @@ import (
 )
 
 // OpenMetadataBlock is coi run's open-mode metadata reject for one container
-// (block_metadata_endpoint). It installs only open mode's rules
-// (openModeCmds), in one table listing and one nft script; Teardown takes them
-// down in one listing and one script. coi run installs no boot block and no
-// input rules in open mode, so neither is touched.
+// (block_metadata_endpoint). coi run pays for it on every command, so it
+// does not use SetupForContainer and its Teardown, which cost about 160 ms
+// there: it only installs open mode's rules and removes a stale holder's.
 type OpenMetadataBlock struct {
 	ip string
 }
@@ -80,16 +79,10 @@ func openMetadataCmds(listing, ip string) (cmds [][]string, inPlace bool) {
 		cmds = append(cmds, []string{"add", "table", "ip", "coi"})
 	}
 	if !hasForward {
-		cmds = append(cmds, []string{
-			"add", "chain", "ip", "coi", "forward",
-			"{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}",
-		})
+		cmds = append(cmds, addForwardChainCmd("ip"))
 	}
 	if len(parseChainRules(forward, "coi-base")) == 0 {
-		cmds = append(cmds, []string{
-			"add", "rule", "ip", "coi", "forward",
-			"ct", "state", "established,related", "accept", "comment", `"coi-base"`,
-		})
+		cmds = append(cmds, addBaseRuleCmd())
 	}
 	cmds = append(cmds, deleteChainRuleCmds("forward", rules)...)
 	cmds = append(cmds, deleteChainRuleCmds("input", input)...)

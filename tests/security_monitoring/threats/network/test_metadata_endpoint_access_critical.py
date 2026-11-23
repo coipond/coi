@@ -14,16 +14,10 @@ from support.monitoring import (
 )
 
 
-def test_metadata_endpoint_access_critical(test_workspace, enable_monitoring, coi_binary):
+def test_metadata_endpoint_access_critical(
+    test_workspace, enable_monitoring_metadata_open, coi_binary
+):
     """Test connection to cloud metadata endpoint triggers CRITICAL threat."""
-    # Open mode rejects 169.254.0.0/16 by default; with the reject, curl fails
-    # at once and leaves no socket for the process monitor to see.
-    enable_monitoring.write_text(
-        enable_monitoring.read_text().replace(
-            'mode = "open"\n', 'mode = "open"\nblock_metadata_endpoint = false\n', 1
-        )
-    )
-    assert "block_metadata_endpoint = false" in enable_monitoring.read_text()
     metadata_script = Path(test_workspace) / "metadata.py"
     metadata_script.write_text(
         """#!/usr/bin/env python3

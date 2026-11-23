@@ -17,7 +17,7 @@ from support.helpers import (
     exec_in,
     forward_rule_packets,
     start_background_shell,
-    wait_for_forward_rule,
+    wait_for_firewall_rules,
     write_trusted_coi_config,
 )
 
@@ -39,7 +39,7 @@ def _start(coi_binary, workspace_dir, block_metadata):
     assert ip, f"no IPv4 address for {name}"
     # The allowlist rules apply as one batch: once the set accept is there,
     # so is everything before it.
-    assert wait_for_forward_rule(ip, STATIC_PORT_SET) >= 0, (
+    assert wait_for_firewall_rules(name, match=STATIC_PORT_SET), (
         f"allowlist rules for {name} did not appear: {container_forward_rules(ip)}"
     )
     return name, ip

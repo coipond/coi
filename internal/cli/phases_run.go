@@ -452,10 +452,10 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			// init can phone home, until the real isolation rules land in
 			// apply-network (which removes this temporary rule). Shell parity
 			// (#726 follow-up). Only for non-open modes: open opts into
-			// unrestricted egress, and its network path need not remove a boot
-			// block (applyNetworkIsolation short-circuits without
-			// block_metadata_endpoint), so installing one
-			// there would strand the container with no network. Fail closed.
+			// unrestricted egress, and no open-mode path removes a boot block
+			// (applyNetworkIsolation's open path, also ApplyOpenMetadataBlock),
+			// so installing one there would strand the container with no
+			// network. Fail closed.
 			if m := a.cfg.Network.Mode; m != "" && m != config.NetworkModeOpen {
 				if err := network.ApplyBootBlockRule(s.containerName); err != nil {
 					return teardown, fmt.Errorf("boot network block failed in %s mode; refusing to run with an unprotected boot window: %w", m, err)

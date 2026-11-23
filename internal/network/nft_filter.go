@@ -290,8 +290,8 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 	// block_metadata_endpoint rejects link-local whatever
 	// allow_local_network_access says, as in restricted mode. Without local
 	// access, link-local stays rejected with the private ranges.
-	metadataBlocked := config.BoolVal(cfg.BlockMetadataEndpoint)
-	if metadataBlocked {
+	blockMetadata := config.BoolVal(cfg.BlockMetadataEndpoint)
+	if blockMetadata {
 		if err := f.addRule(f.containerIP, metadataCIDR, "reject"); err != nil {
 			return fmt.Errorf("failed to add metadata block rule: %w", err)
 		}
@@ -304,7 +304,7 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 		}
 	} else {
 		for _, cidr := range allowlistPrivateCIDRs {
-			if cidr == metadataCIDR && metadataBlocked {
+			if cidr == metadataCIDR && blockMetadata {
 				continue
 			}
 			if err := f.addRule(f.containerIP, cidr, "reject"); err != nil {
@@ -413,10 +413,26 @@ func EnsureBaseRules() error {
 	if err != nil || exists {
 		return err
 	}
-	_, err = runNFTCommand("add", "rule", "ip", "coi", "forward",
-		"ct", "state", "established,related", "accept",
-		"comment", `"coi-base"`)
+	_, err = runNFTCommand(addBaseRuleCmd()...)
 	return err
+}
+
+// addBaseRuleCmd returns the nft command that adds the shared conntrack
+// accept (coi-base) to the ip coi forward chain.
+func addBaseRuleCmd() []string {
+	return []string{
+		"add", "rule", "ip", "coi", "forward",
+		"ct", "state", "established,related", "accept", "comment", `"coi-base"`,
+	}
+}
+
+// addForwardChainCmd returns the nft command that creates family's coi
+// forward chain: hook forward at priority 10, default-accept policy.
+func addForwardChainCmd(family string) []string {
+	return []string{
+		"add", "chain", family, "coi", "forward",
+		"{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}",
+	}
 }
 
 // EnsureOpenModeRules adds an ACCEPT rule for all traffic from a container in open mode.
@@ -551,8 +567,7 @@ func ensureCOIIP6TableAndChain() error {
 	if _, err := runNFTCommand("list", "chain", "ip6", "coi", "forward"); err == nil {
 		return nil
 	}
-	_, err := runNFTCommand("add", "chain", "ip6", "coi", "forward",
-		"{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}")
+	_, err := runNFTCommand(addForwardChainCmd("ip6")...)
 	if err != nil {
 		return fmt.Errorf("failed to create nft chain ip6 coi forward: %w", err)
 	}
@@ -748,8 +763,7 @@ func ensureCOITableAndChain() error {
 	if _, err := runNFTCommand("list", "chain", "ip", "coi", "forward"); err == nil {
 		return nil
 	}
-	_, err := runNFTCommand("add", "chain", "ip", "coi", "forward",
-		"{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}")
+	_, err := runNFTCommand(addForwardChainCmd("ip")...)
 	if err != nil {
 		return fmt.Errorf("failed to create nft chain ip coi forward: %w", err)
 	}

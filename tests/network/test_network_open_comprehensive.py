@@ -1,11 +1,12 @@
 """
 Integration tests for network OPEN mode.
 
-Tests that OPEN mode allows unrestricted network access to all destinations,
-including public internet, RFC1918 private networks, and metadata endpoints (with block_metadata_endpoint = false).
+Tests that OPEN mode allows network access to all destinations, including
+public internet, RFC1918 private networks, and metadata endpoints (with
+block_metadata_endpoint = false).
 
 Network isolation is implemented using nft rules in restricted/allowlist modes.
-OPEN mode has no firewall rules applied.
+OPEN mode only rejects the metadata range, under block_metadata_endpoint.
 """
 
 import os

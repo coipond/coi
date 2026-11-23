@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -499,24 +498,7 @@ func TestSetupForContainer_OpenMetadataLog(t *testing.T) {
 // When the forward chain cannot be listed, open mode falls back to purge then
 // add, and the fallback keeps the metadata reject ahead of the accept.
 func TestApplyOpenRules_FallbackKeepsMetadataBlock(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls.log")
-	script := fmt.Sprintf(`#!/bin/sh
-shift 2
-echo "$*" >> %q
-case "$*" in
-"-f -") cat >> %q ;;
-*"list chain ip coi forward"*) echo "Error: permission denied" >&2; exit 1 ;;
-esac
-exit 0
-`, logPath, logPath)
-	if err := os.WriteFile(filepath.Join(dir, "sudo"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	prev := SudoEnabled()
-	SetSudoAllowed(true)
-	t.Cleanup(func() { SetSudoAllowed(prev) })
+	logPath := fakeNftSudoFailing(t, nftFakeFailures{list: true})
 
 	on := true
 	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: &on}, logger.NewDiscard())
@@ -534,33 +516,8 @@ exit 0
 // When open mode's nft rules fail, the metadata block is not enforced:
 // MetadataUnenforced is true and the session log warns.
 func TestSetupForContainer_OpenMetadataRulesFail(t *testing.T) {
-	dir := t.TempDir()
-	scripts := map[string]string{
-		"sudo": `#!/bin/sh
-shift 2
-case "$*" in
-"list tables") exit 0 ;;
-"-f -") cat >/dev/null; exit 1 ;;
-*"list chain"*) echo "Error: permission denied" >&2; exit 1 ;;
-esac
-exit 0
-`,
-		"incus": `#!/bin/sh
-case "$*" in
-*"query /1.0/instances/coi-rules-fail?"*) echo '{"name":"coi-rules-fail","state":{"network":{"eth0":{"host_name":"vethx","addresses":[{"family":"inet","address":"10.0.0.9"}]}}}}' ;;
-esac
-exit 0
-`,
-	}
-	for name, script := range scripts {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	prev := SudoEnabled()
-	SetSudoAllowed(true)
-	t.Cleanup(func() { SetSudoAllowed(prev) })
+	fakeNftSudoFailing(t, nftFakeFailures{list: true, script: true})
+	fakeIncusInstance(t, "coi-rules-fail", "10.0.0.9")
 
 	on := true
 	sl := logger.New("open-fail-log", t.TempDir())

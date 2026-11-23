@@ -307,7 +307,6 @@ func (m *Manager) applyOpenRules(ip string) bool {
 			return true
 		}
 	}
-	// Fallback: purge, then add.
 	m.purgeStaleRulesForIP(ip)
 	if err := runNFTScript(openModeCmds(ip, blockMetadata)); err != nil {
 		m.logger.Errorf("Warning: could not add open mode rules: %v", err)
@@ -900,7 +899,7 @@ func (m *Manager) Teardown(ctx context.Context, containerName string) error {
 		}
 	}
 
-	// For open mode, also clean up nft ACCEPT rules created by EnsureOpenModeRules()
+	// For open mode, also clean up the rules applyOpenRules created
 	if m.config.Mode == config.NetworkModeOpen {
 		if !NftUsable(m.config) && m.iptablesBridgeName == "" {
 			return nil // No nft and no iptables fallback, no rules to clean up

@@ -1496,37 +1496,27 @@ def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
     return result.returncode, result.stdout + result.stderr
 
 
-def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):
+def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5, match=None):
     """
     Poll nftables until the default-deny rule is active for a container.
 
     Queries ``sudo nft -a list chain ip coi forward`` and looks for a rule
-    whose source matches the container's IP.  Returns ``True`` once the rule
-    appears, or ``False`` on timeout.
+    whose source matches the container's IP (and, with match, contains it).
+    Returns ``True`` once the rule appears, or ``False`` on timeout.
 
     Args:
         container_name: Incus container name (used to look up the IP).
         timeout: Maximum seconds to wait (default 30).
         poll_interval: Seconds between polls (default 0.5).
+        match: Text the rule must contain (default: any rule of the IP).
     """
     container_ip = container_ipv4(container_name)
     if not container_ip:
         return False
 
-    # Poll for a rule referencing this container IP in the ip coi forward chain.
-    # Match the IP on word boundaries (not a bare `in` substring): a substring
-    # test reports a false positive when a prefix-overlapping sibling IP has a
-    # rule (e.g. 10.0.0.2 spuriously matching a rule for 10.0.0.20).
-    ip_re = re.compile(r"(?<![\d.])" + re.escape(container_ip) + r"(?![\d.])")
     start = time.time()
     while time.time() - start < timeout:
-        result = subprocess.run(
-            ["sudo", "-n", "nft", "-a", "list", "chain", "ip", "coi", "forward"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0 and ip_re.search(result.stdout):
+        if any(match is None or match in text for _, text in container_forward_rules(container_ip)):
             return True
         time.sleep(poll_interval)
 
@@ -1551,18 +1541,6 @@ def container_forward_rules(container_ip):
         if m and src_re.search(m.group(1)):
             rules.append((int(m.group(2)), m.group(1)))
     return rules
-
-
-def wait_for_forward_rule(container_ip, match, timeout=30):
-    """Poll until a forward rule of container_ip contains match; return its
-    index in container_forward_rules, or -1 on timeout."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        for i, (_, text) in enumerate(container_forward_rules(container_ip)):
-            if match in text:
-                return i
-        time.sleep(0.5)
-    return -1
 
 
 def count_forward_rules(container_ip, match):

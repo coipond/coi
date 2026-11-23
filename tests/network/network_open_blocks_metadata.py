@@ -14,7 +14,7 @@ from support.helpers import (
     exec_in,
     forward_rule_packets,
     start_background_shell,
-    wait_for_forward_rule,
+    wait_for_firewall_rules,
     write_trusted_coi_config,
 )
 
@@ -33,7 +33,7 @@ def test_open_blocks_metadata(coi_binary, workspace_dir, cleanup_containers):
     ip = container_ipv4(name)
     assert ip, f"no IPv4 address for {name}"
     accept = f"ip saddr {ip} accept"
-    assert wait_for_forward_rule(ip, accept) >= 0, (
+    assert wait_for_firewall_rules(name, match=accept), (
         f"open mode rules for {name} did not appear: {container_forward_rules(ip)}"
     )
 
