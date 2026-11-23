@@ -108,3 +108,24 @@ func TestSetupCLIConfig_Omp_CopiesHostWAL(t *testing.T) {
 		}
 	}
 }
+
+// TestInjectCredentials_Omp_KeepsSavedWALWithoutHostDB verifies that on resume,
+// when the host has no agent.db, the saved session's agent.db-wal is kept: it
+// may hold logins made only inside the container.
+func TestInjectCredentials_Omp_KeepsSavedWALWithoutHostDB(t *testing.T) {
+	hostDir := t.TempDir()
+	writeOmpHostFiles(t, hostDir, "config.yml")
+
+	mgr := &fakeOpsManager{fakeDirsManager: newFakeDirsManager("/home/code/.omp")}
+	if _, err := injectCredentials(mgr, hostDir, "/home/code", toolWithConfigDirFiles(t, "omp"), func(string) {}); err != nil {
+		t.Fatalf("injectCredentials failed: %v", err)
+	}
+
+	want := []string{
+		"exec mkdir -p /home/code/.omp/agent",
+		"push /home/code/.omp/agent/config.yml",
+	}
+	if !reflect.DeepEqual(mgr.ops, want) {
+		t.Errorf("ops = %v, want %v (no rm of the saved agent.db-wal)", mgr.ops, want)
+	}
+}
