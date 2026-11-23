@@ -238,6 +238,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 			if resumeSlot > 0 && slotNum == 0 {
 				slotNum = resumeSlot
 				fmt.Fprintf(os.Stderr, "Reusing original slot %d from session\n", slotNum)
+				a.inheritPersistedContainer(session.ContainerName(s.absWorkspace, a.sessionName(), slotNum))
 			} else if slotNum == 0 {
 				// Persistent mode: prefer restarting the identity's stopped
 				// container over allocating a fresh slot — for a NAMED
@@ -251,12 +252,18 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 					}
 				}
 				if slotNum == 0 {
-					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), session.MaxSlots)
+					var persisted bool
+					slotNum, persisted, err = a.allocateSlot(s.absWorkspace)
 					if err != nil {
 						return nil, fmt.Errorf("failed to allocate slot: %w", err)
 					}
-					fmt.Fprintf(os.Stderr, "Auto-allocated slot %d\n", slotNum)
-					warnNamedSessionFork(s.absWorkspace, a.sessionName(), slotNum)
+					if persisted {
+						a.persistent = true
+						fmt.Fprintf(os.Stderr, "Reusing stopped container kept by coi persist on slot %d\n", slotNum)
+					} else {
+						fmt.Fprintf(os.Stderr, "Auto-allocated slot %d\n", slotNum)
+						warnNamedSessionFork(s.absWorkspace, a.sessionName(), slotNum)
+					}
 				}
 			} else {
 				available, err := session.IsSlotAvailable(s.absWorkspace, a.sessionName(), slotNum)
@@ -271,6 +278,8 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 					}
 					fmt.Fprintf(os.Stderr, "Slot %d is occupied, using slot %d instead\n", orig, slotNum)
 					warnNamedSessionFork(s.absWorkspace, a.sessionName(), slotNum)
+				} else {
+					a.inheritPersistedContainer(session.ContainerName(s.absWorkspace, a.sessionName(), slotNum))
 				}
 			}
 			s.slotNum = slotNum
@@ -516,6 +525,28 @@ func (a *App) startMonitoringPhase(s *shellState) session.Phase {
 			return teardown, nil
 		},
 	}
+}
+
+// allocateSlot auto-allocates a slot for the workspace. With no
+// [container] persistent in config it prefers a stopped container kept by
+// `coi persist` (persisted=true); an explicit value wins, as on resume.
+func (a *App) allocateSlot(workspace string) (slot int, persisted bool, err error) {
+	if a.cfg.Container.Persistent == nil {
+		return session.AllocateSlotPreferPersisted(workspace, a.sessionName(), session.MaxSlots)
+	}
+	slot, err = session.AllocateSlot(workspace, a.sessionName(), session.MaxSlots)
+	return slot, false, err
+}
+
+// inheritPersistedContainer makes the launch persistent when config does not
+// set [container] persistent and `coi persist` marked containerName, so the
+// launch restarts the container instead of deleting it as a leftover.
+func (a *App) inheritPersistedContainer(containerName string) {
+	if a.persistent || a.cfg.Container.Persistent != nil || !session.ContainerMarkedPersistent(containerName) {
+		return
+	}
+	a.persistent = true
+	fmt.Fprintf(os.Stderr, "Container %s was kept by coi persist: persistent mode\n", containerName)
 }
 
 // resumePersistence decides a resumed session's persistence: an explicitly

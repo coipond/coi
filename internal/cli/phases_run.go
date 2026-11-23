@@ -127,13 +127,21 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 					}
 				}
 				if slotNum == 0 {
-					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), session.MaxSlots)
+					var persisted bool
+					slotNum, persisted, err = a.allocateSlot(s.absWorkspace)
 					if err != nil {
 						return nil, fmt.Errorf("failed to allocate slot: %w", err)
 					}
-					fmt.Fprintf(os.Stderr, "Auto-allocated slot %d\n", slotNum)
-					warnNamedSessionFork(s.absWorkspace, a.sessionName(), slotNum)
+					if persisted {
+						a.persistent = true
+						fmt.Fprintf(os.Stderr, "Reusing stopped container kept by coi persist on slot %d\n", slotNum)
+					} else {
+						fmt.Fprintf(os.Stderr, "Auto-allocated slot %d\n", slotNum)
+						warnNamedSessionFork(s.absWorkspace, a.sessionName(), slotNum)
+					}
 				}
+			} else {
+				a.inheritPersistedContainer(session.ContainerName(s.absWorkspace, a.sessionName(), slotNum))
 			}
 			s.containerName = session.ContainerName(s.absWorkspace, a.sessionName(), slotNum)
 			s.slot = slotNum
@@ -413,7 +421,8 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			teardown := func() {
 				logFn := stderrLogFn
 				session.RemoveImmutable(s.containerName, logFn)
-				if !a.persistent {
+				// `coi persist` may have converted the run since launch.
+				if !a.persistent && !session.ContainerMarkedPersistent(s.containerName) {
 					fmt.Fprintf(os.Stderr, "Cleaning up container %s...\n", s.containerName)
 					_ = s.mgr.Delete(true)
 				} else {

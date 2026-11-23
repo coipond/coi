@@ -90,7 +90,8 @@ func persistCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Get tool instance to determine sessions directory
+	// Every tool's sessions directory: the container may have been started
+	// with another tool's profile.
 	toolInstance, err := getConfiguredTool(app.cfg)
 	if err != nil {
 		return err
@@ -102,7 +103,7 @@ func persistCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 	baseDir := filepath.Join(homeDir, ".coi")
-	sessionsDir := session.GetSessionsDir(baseDir, toolInstance)
+	sessionsDirs := allSessionsDirs(baseDir, toolInstance)
 
 	// Persist each container
 	persisted := 0
@@ -121,17 +122,12 @@ func persistCommand(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Find session metadata for this container
-		metadataPath, err := findSessionMetadata(sessionsDir, name)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
-			continue
-		}
-
-		// Update persistent flag in metadata
-		if err := updatePersistentFlag(metadataPath, true); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to update metadata: %v\n", err)
-			continue
+		// Without session metadata the container key alone keeps it.
+		if metadataPath := findSessionMetadataIn(sessionsDirs, name); metadataPath != "" {
+			if err := updatePersistentFlag(metadataPath, true); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to update metadata: %v\n", err)
+				continue
+			}
 		}
 		if _, err := container.ConfigSetIfChanged(context.Background(), name, session.PersistentConfigKey, "true"); err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: Failed to set persistence metadata: %v\n", err)
@@ -153,6 +149,17 @@ func persistCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// findSessionMetadataIn returns the metadata.json naming the container in the
+// first of sessionsDirs that has one, or "" when none does.
+func findSessionMetadataIn(sessionsDirs []string, containerName string) string {
+	for _, dir := range sessionsDirs {
+		if path, err := findSessionMetadata(dir, containerName); err == nil {
+			return path
+		}
+	}
+	return ""
 }
 
 // findSessionMetadata finds the metadata.json file for a given container name
