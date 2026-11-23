@@ -40,9 +40,10 @@ func SetupSSHAgentForwarding(mgr container.ContainerManager, containerName strin
 // ForwardConfiguredSockets forwards the host SSH agent (when includeSSHAgent)
 // plus every entry in sc into the container, returning a map of env var name ->
 // in-container socket path for the entries that were forwarded and declare an
-// EnvVar. Per-entry failures are logged, never fatal.
-func ForwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent bool, logger func(string)) map[string]string {
-	env, _ := forwardConfiguredSockets(mgr, sc, includeSSHAgent, true, logger)
+// EnvVar. Socket devices of earlier sessions on a reused container are
+// removed. Per-entry failures are logged, never fatal.
+func ForwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent, reused bool, logger func(string)) map[string]string {
+	env, _ := forwardConfiguredSockets(mgr, sc, includeSSHAgent, reused, logger)
 	return env
 }
 
