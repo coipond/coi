@@ -159,8 +159,8 @@ jobs:
             path: tests/audit tests/clean tests/completion tests/docker tests/errors tests/help tests/info tests/mount tests/monitor tests/top tests/shutdown tests/update tests/version tests/main_help_flag.py tests/main_help_shorthand.py
             description: "Misc commands: audit/clean/completion/docker/errors/help/info/mount/monitor/top/shutdown/update/version + root help files"
           - name: misc-config
-            path: tests/config tests/health tests/limits tests/schema
-            description: "Config, health, limits, and schema tests"
+            path: tests/config tests/health tests/schema
+            description: "Config, health, and schema tests"
           - name: monitoring-nft
             path: tests/integration/test_nft_monitoring.py
             description: "NFT network monitoring tests"
@@ -183,8 +183,8 @@ jobs:
             path: tests/integration/test_file_watcher_fanotify.py
             description: "fanotify sensitive file monitoring: shadow read, sudoers write, authorized_keys write"
           - name: uid-mapping
-            path: tests/container/uid_mapping_shift_true.py tests/container/uid_mapping_raw_idmap.py
-            description: "UID mapping integration tests"
+            path: tests/container/uid_mapping_shift_true.py tests/container/uid_mapping_raw_idmap.py tests/limits
+            description: "UID mapping and limits tests (limits sits here to shorten the slow misc-config lane)"
           - name: git-hooks
             path: tests/git_hooks
             description: "Git hooks and security protection tests"
