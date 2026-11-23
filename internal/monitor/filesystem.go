@@ -143,36 +143,92 @@ func workspaceIODevice(ctx context.Context, containerName, workspacePath string)
 	return ioDevice(st.Dev, rootDev)
 }
 
-// ioDevice returns the io.stat disk of workspaceDev, or "" when either device
-// has no block device (major 0: a zfs or btrfs pool may sit on the workspace
-// disk, also through a loop file), a disk is unknown, or both share a disk.
+// maxDeviceDepth bounds the walk down a device stack (dm, md, loop).
+const maxDeviceDepth = 8
+
+// ioDevice returns the io.stat disk of workspaceDev, or "" when the two
+// devices' stacks share a lowest disk (I/O on a stacked device is charged
+// again on each disk below it) or a level of either stack is unknown, as for
+// a zfs or btrfs pool (major 0).
 func ioDevice(workspaceDev, rootDev uint64) string {
-	if unix.Major(workspaceDev) == 0 || unix.Major(rootDev) == 0 {
+	disk, _, ok := diskOf(workspaceDev)
+	workspaceDisks, rootDisks := map[uint64]bool{}, map[uint64]bool{}
+	if !ok || !lowestDisks(workspaceDev, workspaceDisks, 0) || !lowestDisks(rootDev, rootDisks, 0) {
 		return ""
 	}
-	workspaceDisk, rootDisk := diskOf(workspaceDev), diskOf(rootDev)
-	if workspaceDisk == "" || rootDisk == "" || workspaceDisk == rootDisk {
-		return ""
+	for d := range workspaceDisks {
+		if rootDisks[d] {
+			return ""
+		}
 	}
-	return workspaceDisk
+	return deviceName(disk)
 }
 
-// diskOf returns the "major:minor" of the disk holding dev, or "" when sysfs
-// does not know dev. io.stat names whole disks, never partitions.
-func diskOf(dev uint64) string {
-	name := fmt.Sprintf("%d:%d", unix.Major(dev), unix.Minor(dev))
-	dir, err := filepath.EvalSymlinks(filepath.Join(sysDevBlock, name))
+// deviceName formats dev as io.stat and sysfs name it: "major:minor".
+func deviceName(dev uint64) string {
+	return fmt.Sprintf("%d:%d", unix.Major(dev), unix.Minor(dev))
+}
+
+// readDevice reads a sysfs "dev" file ("major:minor").
+func readDevice(path string) (uint64, bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return 0, false
+	}
+	majorText, minorText, found := strings.Cut(strings.TrimSpace(string(data)), ":")
+	major, majorErr := strconv.ParseUint(majorText, 10, 32)
+	minor, minorErr := strconv.ParseUint(minorText, 10, 32)
+	if !found || majorErr != nil || minorErr != nil {
+		return 0, false
+	}
+	return unix.Mkdev(uint32(major), uint32(minor)), true
+}
+
+// diskOf returns the disk holding dev and its sysfs directory; false when
+// sysfs does not know dev. io.stat names whole disks, never partitions.
+func diskOf(dev uint64) (uint64, string, bool) {
+	dir, err := filepath.EvalSymlinks(filepath.Join(sysDevBlock, deviceName(dev)))
+	if err != nil {
+		return 0, "", false
 	}
 	if _, err := os.Stat(filepath.Join(dir, "partition")); err != nil {
-		return name
+		return dev, dir, true
 	}
-	parent, err := os.ReadFile(filepath.Join(filepath.Dir(dir), "dev"))
-	if err != nil {
-		return ""
+	dir = filepath.Dir(dir)
+	disk, ok := readDevice(filepath.Join(dir, "dev"))
+	return disk, dir, ok
+}
+
+// lowestDisks adds the disks at the bottom of dev's stack to disks: below a
+// dm or md device its slaves, below a loop device the device of its backing
+// file. It returns false when a level is unknown.
+func lowestDisks(dev uint64, disks map[uint64]bool, depth int) bool {
+	if depth > maxDeviceDepth {
+		return false
 	}
-	return strings.TrimSpace(string(parent))
+	disk, dir, ok := diskOf(dev)
+	if !ok {
+		return false
+	}
+	if backing, err := os.ReadFile(filepath.Join(dir, "loop", "backing_file")); err == nil {
+		var st unix.Stat_t
+		if err := unix.Stat(strings.TrimSpace(string(backing)), &st); err != nil {
+			return false
+		}
+		return lowestDisks(st.Dev, disks, depth+1)
+	}
+	slaves, err := os.ReadDir(filepath.Join(dir, "slaves"))
+	if err != nil || len(slaves) == 0 {
+		disks[disk] = true
+		return true
+	}
+	for _, slave := range slaves {
+		slaveDev, ok := readDevice(filepath.Join(dir, "slaves", slave.Name(), "dev"))
+		if !ok || !lowestDisks(slaveDev, disks, depth+1) {
+			return false
+		}
+	}
+	return true
 }
 
 // collectContainerRootDevice returns the device number of the container's

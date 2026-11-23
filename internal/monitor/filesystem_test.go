@@ -242,36 +242,55 @@ func TestReadIOStatsDevice(t *testing.T) {
 	}
 }
 
-// fakeSysDevBlock points sysDevBlock at a fake sysfs with the given disks and
-// partitions (partition "major:minor" -> its disk's).
-func fakeSysDevBlock(t *testing.T, disks []string, partitions map[string]string) {
+// fakeBlockDev is a block device in a fake sysfs.
+type fakeBlockDev struct {
+	partitionOf string   // the disk of a partition
+	slaves      []string // the devices below a dm or md device
+	backingFile string   // the backing file of a loop device
+}
+
+// fakeSysDevBlock points sysDevBlock at a fake sysfs with the given devices,
+// keyed by "major:minor".
+func fakeSysDevBlock(t *testing.T, devs map[string]fakeBlockDev) {
 	t.Helper()
 	root := t.TempDir()
 	byDev := filepath.Join(root, "dev", "block")
 	if err := os.MkdirAll(byDev, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	add := func(dev, dir string) {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+	dirOf := func(name string) string {
+		dir := filepath.Join(root, "devices")
+		if disk := devs[name].partitionOf; disk != "" {
+			dir = filepath.Join(dir, strings.ReplaceAll(disk, ":", "-"))
+		}
+		return filepath.Join(dir, strings.ReplaceAll(name, ":", "-"))
+	}
+	write := func(path, data string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "dev"), []byte(dev+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(dir, filepath.Join(byDev, dev)); err != nil {
+		if err := os.WriteFile(path, []byte(data+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	diskDir := func(dev string) string {
-		return filepath.Join(root, "devices", strings.ReplaceAll(dev, ":", "-"))
-	}
-	for _, dev := range disks {
-		add(dev, diskDir(dev))
-	}
-	for dev, disk := range partitions {
-		dir := filepath.Join(diskDir(disk), strings.ReplaceAll(dev, ":", "-"))
-		add(dev, dir)
-		if err := os.WriteFile(filepath.Join(dir, "partition"), []byte("1\n"), 0o644); err != nil {
+	for name, dev := range devs {
+		dir := dirOf(name)
+		write(filepath.Join(dir, "dev"), name)
+		if dev.partitionOf != "" {
+			write(filepath.Join(dir, "partition"), "1")
+		}
+		if dev.backingFile != "" {
+			write(filepath.Join(dir, "loop", "backing_file"), dev.backingFile)
+		}
+		if err := os.MkdirAll(filepath.Join(dir, "slaves"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, slave := range dev.slaves {
+			if err := os.Symlink(dirOf(slave), filepath.Join(dir, "slaves", strings.ReplaceAll(slave, ":", "-"))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink(dir, filepath.Join(byDev, name)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -281,23 +300,69 @@ func fakeSysDevBlock(t *testing.T, disks []string, partitions map[string]string)
 }
 
 func TestIODevice(t *testing.T) {
-	fakeSysDevBlock(t, []string{"252:1", "252:2", "259:0", "8:0"},
-		map[string]string{"259:3": "259:0", "259:4": "259:0", "8:1": "8:0"})
+	fakeSysDevBlock(t, map[string]fakeBlockDev{
+		"259:0": {},
+		"259:1": {partitionOf: "259:0"},
+		"259:3": {partitionOf: "259:0"},
+		"8:0":   {},
+		"8:1":   {partitionOf: "8:0"},
+		"252:0": {slaves: []string{"259:3"}},
+		"252:1": {slaves: []string{"252:0"}},
+		"252:2": {slaves: []string{"252:0"}},
+		"252:3": {slaves: []string{"8:1"}},
+	})
 	dev := unix.Mkdev
 	tests := []struct {
 		name          string
 		workspace, fs uint64
 		want          string
 	}{
-		{"own disk", dev(252, 1), dev(252, 2), "252:1"},
+		{"own disk", dev(252, 1), dev(252, 3), "252:1"},
 		{"partition: its disk", dev(259, 3), dev(8, 1), "259:0"},
 		{"shares rootfs device", dev(252, 1), dev(252, 1), ""},
-		{"partitions of one disk", dev(259, 3), dev(259, 4), ""},
+		{"partitions of one disk", dev(259, 3), dev(259, 1), ""},
 		{"partition and its disk", dev(259, 3), dev(259, 0), ""},
+		{"dm rootfs on the workspace disk", dev(259, 1), dev(252, 2), ""},
+		{"dm volumes on one disk", dev(252, 1), dev(252, 2), ""},
 		{"workspace has no block device", dev(0, 70), dev(252, 1), ""},
 		{"rootfs has no block device (zfs, btrfs)", dev(252, 1), dev(0, 70), ""},
 		{"unknown workspace device", dev(7, 9), dev(252, 1), ""},
 		{"unknown rootfs device", dev(252, 1), dev(7, 9), ""},
+	}
+	for _, tt := range tests {
+		if got := ioDevice(tt.workspace, tt.fs); got != tt.want {
+			t.Errorf("%s: ioDevice = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestIODeviceLoop(t *testing.T) {
+	image := filepath.Join(t.TempDir(), "pool.img")
+	if err := os.WriteFile(image, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var st unix.Stat_t
+	if err := unix.Stat(image, &st); err != nil {
+		t.Fatal(err)
+	}
+	// Fake devices around the real device holding image, so none collides.
+	major := unix.Major(st.Dev)
+	imageDisk, otherDisk := st.Dev, unix.Mkdev(major+1, 0)
+	loop, goneLoop := unix.Mkdev(major+2, 0), unix.Mkdev(major+2, 1)
+	fakeSysDevBlock(t, map[string]fakeBlockDev{
+		deviceName(imageDisk): {},
+		deviceName(otherDisk): {},
+		deviceName(loop):      {backingFile: image},
+		deviceName(goneLoop):  {backingFile: filepath.Join(t.TempDir(), "missing.img")},
+	})
+	tests := []struct {
+		name          string
+		workspace, fs uint64
+		want          string
+	}{
+		{"loop rootfs on the workspace disk", imageDisk, loop, ""},
+		{"loop rootfs on another disk", otherDisk, loop, deviceName(otherDisk)},
+		{"loop backing file gone", otherDisk, goneLoop, ""},
 	}
 	for _, tt := range tests {
 		if got := ioDevice(tt.workspace, tt.fs); got != tt.want {
@@ -352,7 +417,7 @@ func TestFilesystemMonitorCountsWorkspaceDevice(t *testing.T) {
 	}
 	want := fmt.Sprintf("%d:%d", unix.Major(st.Dev), unix.Minor(st.Dev))
 	rootDev := unix.Mkdev(unix.Major(st.Dev)+1, 0)
-	fakeSysDevBlock(t, []string{want, fmt.Sprintf("%d:0", unix.Major(rootDev))}, nil)
+	fakeSysDevBlock(t, map[string]fakeBlockDev{want: {}, deviceName(rootDev): {}})
 	containerRootDevice = func(context.Context, string) (uint64, error) {
 		return rootDev, nil
 	}
