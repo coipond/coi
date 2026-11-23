@@ -49,6 +49,12 @@ func TestCheckHostPortsEnforceable(t *testing.T) {
 		// it, so a per-host scope cannot narrow anything.
 		{"allowlist + local access + private without ports is fine", config.NetworkModeAllowlist, withLocal, noPorts("192.168.1.50"), nil, false},
 		{"allowlist + local access + private with ports cannot", config.NetworkModeAllowlist, withLocal, withPorts("192.168.1.50"), nil, true},
+
+		// 100.64.0.0/10 (Tailscale, CGNAT) follows the private rules.
+		{"restricted + shared address space enforces", config.NetworkModeRestricted, noLocal, withPorts("100.101.1.2"), nil, false},
+		{"allowlist + shared address space with no scope is refused", config.NetworkModeAllowlist, noLocal, noPorts("100.101.1.2"), nil, true},
+		{"allowlist + shared address space on 53 is refused", config.NetworkModeAllowlist, noLocal, withPorts("100.100.100.100", 53), nil, true},
+		{"allowlist + local access + shared address space with ports cannot", config.NetworkModeAllowlist, withLocal, withPorts("100.101.1.2"), nil, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

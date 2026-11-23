@@ -18,9 +18,25 @@ const (
 	hostMetadata                    // 169.254.0.0/16 link-local, incl. the cloud metadata endpoint
 )
 
-// sharedAddressSpace is RFC 6598's 100.64.0.0/10, private for coi
-// (config.PrivateNetworkCIDRs) though net.IP.IsPrivate leaves it out.
-var sharedAddressSpace = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+// privateHostNets are config.PrivateNetworkCIDRs, parsed once.
+var privateHostNets = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range config.PrivateNetworkCIDRs() {
+		_, n, _ := net.ParseCIDR(cidr)
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
+// isPrivateHostIP reports whether ip is in config.PrivateNetworkCIDRs.
+func isPrivateHostIP(ip net.IP) bool {
+	for _, n := range privateHostNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 // classifyHostIP buckets an address for the per-mode reachability rules. The IP
 // is assumed already validated as a parseable IPv4 (config.ValidateNetworkHosts).
@@ -31,7 +47,7 @@ func classifyHostIP(ipStr string) hostIPClass {
 		return hostPublic // unreachable in practice — validation rejects non-IPs
 	case ip.IsLinkLocalUnicast():
 		return hostMetadata
-	case ip.IsPrivate(), sharedAddressSpace.Contains(ip):
+	case ip.IsPrivate(), isPrivateHostIP(ip):
 		return hostPrivate
 	default:
 		return hostPublic
@@ -41,15 +57,16 @@ func classifyHostIP(ipStr string) hostIPClass {
 // checkHostReachable reports whether a host entry's address CAN be made reachable
 // under the given mode. It refuses addresses the mode hard-blocks, so we never
 // write a /etc/hosts name that resolves to a permanently-unreachable address.
-// Private (RFC1918) addresses are reachable in every mode — restricted and
-// allowlist via a targeted accept, or allowlist's allow_local_network_access LAN
-// accept — so whether one is acceptable is a port-scope question, answered by
-// checkHostPortsEnforceable.
+// Private (config.PrivateNetworkCIDRs) addresses are reachable in every mode —
+// restricted and allowlist via a targeted accept, or allowlist's
+// allow_local_network_access LAN accept — so whether one is acceptable is a
+// port-scope question, answered by checkHostPortsEnforceable.
 func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 	// Refused in every enforcing mode regardless of allow_local_network_access:
 	// pointing a name at 169.254.0.0/16 (cloud metadata) is a credential-theft
-	// SSRF vector. Even with local access on, allowlist mode installs an RFC1918
-	// accept but NOT a metadata one, so the address stays unreachable anyway.
+	// SSRF vector. Even with local access on, allowlist mode installs a
+	// private network accept but NOT a metadata one, so the address stays
+	// unreachable anyway.
 	if classifyHostIP(ipStr) == hostMetadata &&
 		(mode == config.NetworkModeRestricted || mode == config.NetworkModeAllowlist) {
 		return fmt.Errorf(
@@ -73,11 +90,12 @@ func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 // chain opens it only on its port scope (see checkHostAddressPorts).
 //
 // A private host in allowlist mode without allow_local_network_access gets a
-// targeted accept ahead of the RFC1918 block, which must be port-scoped (the
-// entry's ports, else the global allowed_ports) and must not include the DNS
-// ports 53 or 853 (DNS-over-TLS): allowlist mode blocks all DNS so /etc/hosts
-// stays the container's only resolver, and an all-ports or DNS-port hole to a LAN
-// resolver would reopen DNS — and with it DNS tunnelling out past the allowlist.
+// targeted accept ahead of the private network block, which must be
+// port-scoped (the entry's ports, else the global allowed_ports) and must not
+// include the DNS ports 53 or 853 (DNS-over-TLS): allowlist mode blocks all
+// DNS so /etc/hosts stays the container's only resolver, and an all-ports or
+// DNS-port hole to a LAN resolver would reopen DNS — and with it DNS
+// tunnelling out past the allowlist.
 // A host that also serves DNS-over-HTTPS on a port the entry opens (typically
 // 443) cannot be told apart from its web service by the firewall, so point
 // entries only at hosts you trust not to resolve for the container.
