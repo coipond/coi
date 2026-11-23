@@ -76,7 +76,7 @@ func warnDockerHardeningConflict(cfg *config.Config) {
 	if cfg == nil || cfg.Container.Docker == nil || !*cfg.Container.Docker {
 		return
 	}
-	setting := ""
+	var setting string
 	switch {
 	case cfg.Security.IsReduceKernelSurfaceBaseEnabled():
 		setting = "reduce_kernel_surface = true"
