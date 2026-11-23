@@ -67,7 +67,7 @@ func TestOmpTool_EssentialConfigFiles(t *testing.T) {
 		t.Fatal("OmpTool does not implement ToolWithConfigDirFiles")
 	}
 	files := tcf.EssentialConfigFiles()
-	expected := []string{"agent/config.yml", "agent/models.yml", "agent/agent.db", "agent/AGENTS.md"}
+	expected := []string{"agent/config.yml", "agent/models.yml", "agent/agent.db", "agent/agent.db-wal", "agent/AGENTS.md"}
 	if len(files) != len(expected) {
 		t.Fatalf("EssentialConfigFiles() = %v, want %v", files, expected)
 	}

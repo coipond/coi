@@ -157,7 +157,7 @@ func TestOmpBundle_MatchesHardcodedValues(t *testing.T) {
 	if b.ConfigDir != ".omp" {
 		t.Errorf("ConfigDir = %q, want %q", b.ConfigDir, ".omp")
 	}
-	want := []string{"agent/config.yml", "agent/models.yml", "agent/agent.db", "agent/AGENTS.md"}
+	want := []string{"agent/config.yml", "agent/models.yml", "agent/agent.db", "agent/agent.db-wal", "agent/AGENTS.md"}
 	if !reflect.DeepEqual(b.Files, want) {
 		t.Errorf("Files = %v, want %v", b.Files, want)
 	}

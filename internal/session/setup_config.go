@@ -84,6 +84,10 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 
 	// Copy essential config files from host — only those that exist on host
 	madeDirs := map[string]bool{stateDir: true}
+	bundled := make(map[string]bool, len(essentialFiles))
+	for _, f := range essentialFiles {
+		bundled[f.ContainerPath] = true
+	}
 	for _, f := range essentialFiles {
 		if hostCLIConfigPath == "" {
 			break
@@ -99,6 +103,16 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 					continue
 				}
 				madeDirs[dir] = true
+			}
+			// A bundled -wal sidecar marks a SQLite DB in WAL mode (omp's
+			// agent.db). A saved session's WAL would be replayed over the
+			// fresh DB, so drop it and its index; the host WAL, if any, is
+			// pushed after the DB.
+			if wal := f.ContainerPath + "-wal"; bundled[wal] {
+				if err := mgr.ExecArgs([]string{"rm", "-f", wal, f.ContainerPath + "-shm"}, container.ExecCommandOptions{}); err != nil {
+					logger(fmt.Sprintf("  - Warning: Failed to remove %s: %v", wal, err))
+					continue
+				}
 			}
 			if err := mgr.PushFile(f.HostPath, f.ContainerPath); err != nil {
 				logger(fmt.Sprintf("  - Warning: Failed to copy %s: %v", filepath.Base(f.ContainerPath), err))
