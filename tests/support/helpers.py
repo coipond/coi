@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -162,6 +163,40 @@ def fake_lan(subnet, hosts=(20, 21), ports=(443, 8080)):
             listener.wait(timeout=10)
         sh("ip", "netns", "del", ns, check=False)
         sh("ip", "link", "del", host_if, check=False)
+
+
+@contextlib.contextmanager
+def host_ssh_agent(key_comment):
+    """Run a throwaway ssh-agent holding a fresh ed25519 key (comment
+    `key_comment`) and yield its socket path. The socket lives in a short /tmp
+    dir: AF_UNIX paths are capped at ~108 bytes."""
+    agent_dir = tempfile.mkdtemp(prefix="coiagent")
+    sock = os.path.join(agent_dir, "agent.sock")
+    key = os.path.join(agent_dir, "id_ed25519")
+    agent = None
+    try:
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", key_comment, "-f", key],
+            check=True,
+            timeout=30,
+        )
+        agent = subprocess.Popen(["ssh-agent", "-D", "-a", sock], stdout=subprocess.DEVNULL)
+        deadline = time.time() + 10
+        while not os.path.exists(sock):
+            assert time.time() < deadline, "ssh-agent did not create its socket"
+            time.sleep(0.1)
+        subprocess.run(
+            ["ssh-add", "-q", key],
+            check=True,
+            timeout=30,
+            env={**os.environ, "SSH_AUTH_SOCK": sock},
+        )
+        yield sock
+    finally:
+        if agent is not None:
+            agent.terminate()
+            agent.wait(timeout=10)
+        shutil.rmtree(agent_dir, ignore_errors=True)
 
 
 def write_workspace_container_config(workspace_dir, persistent=None, image=None, alias=None):
