@@ -19,6 +19,9 @@ type fakeOpsManager struct {
 
 func (f *fakeOpsManager) ExecArgs(args []string, opts container.ExecCommandOptions) error {
 	f.ops = append(f.ops, "exec "+strings.Join(args, " "))
+	if len(args) > 4 && args[0] == "sh" && strings.HasPrefix(args[2], "mkdir -p ") {
+		f.dirs[args[4]] = true
+	}
 	return f.fakeDirsManager.ExecArgs(args, opts)
 }
 
@@ -42,14 +45,14 @@ func writeOmpHostFiles(t *testing.T, hostDir string, names ...string) {
 }
 
 // TestInjectCredentials_Omp_OneMkdirPerDir verifies that on resume the omp
-// files, which all sit in ~/.omp/agent, make that dir with one exec, not one
-// per file.
+// files, which all sit in ~/.omp/agent, cost one exec: it makes that dir and
+// drops the saved agent.db-wal/-shm.
 func TestInjectCredentials_Omp_OneMkdirPerDir(t *testing.T) {
 	hostDir := t.TempDir()
 	files := []string{"config.yml", "models.yml", "agent.db", "AGENTS.md"}
 	writeOmpHostFiles(t, hostDir, files...)
 
-	mgr := newFakeDirsManager("/home/code/.omp")
+	mgr := &fakeOpsManager{fakeDirsManager: newFakeDirsManager("/home/code/.omp")}
 	copied, err := injectCredentials(mgr, hostDir, "/home/code", toolWithConfigDirFiles(t, "omp"), func(string) {})
 	if err != nil {
 		t.Fatalf("injectCredentials failed: %v", err)
@@ -58,14 +61,8 @@ func TestInjectCredentials_Omp_OneMkdirPerDir(t *testing.T) {
 	if len(copied) != len(files) {
 		t.Errorf("copied = %+v, want %v", copied, files)
 	}
-	var mkdirs int
-	for _, args := range mgr.execArgs {
-		if args[0] == "mkdir" {
-			mkdirs++
-		}
-	}
-	if mkdirs != 1 {
-		t.Errorf("execs = %v, want one mkdir -p /home/code/.omp/agent", mgr.execArgs)
+	if len(mgr.execArgs) != 1 {
+		t.Errorf("execs = %v, want one", mgr.execArgs)
 	}
 }
 
@@ -77,14 +74,14 @@ func TestInjectCredentials_Omp_ReplacesSavedWAL(t *testing.T) {
 	hostDir := t.TempDir()
 	writeOmpHostFiles(t, hostDir, "agent.db", "agent.db-wal")
 
-	mgr := &fakeOpsManager{fakeDirsManager: newFakeDirsManager("/home/code/.omp", "/home/code/.omp/agent")}
+	mgr := &fakeOpsManager{fakeDirsManager: newFakeDirsManager("/home/code/.omp")}
 	if _, err := injectCredentials(mgr, hostDir, "/home/code", toolWithConfigDirFiles(t, "omp"), func(string) {}); err != nil {
 		t.Fatalf("injectCredentials failed: %v", err)
 	}
 
 	want := []string{
-		"exec mkdir -p /home/code/.omp/agent",
-		"exec rm -f /home/code/.omp/agent/agent.db-wal /home/code/.omp/agent/agent.db-shm",
+		`exec sh -c mkdir -p "$1" && shift && rm -f "$@" sh /home/code/.omp/agent ` +
+			"/home/code/.omp/agent/agent.db-wal /home/code/.omp/agent/agent.db-shm",
 		"push /home/code/.omp/agent/agent.db",
 		"push /home/code/.omp/agent/agent.db-wal",
 	}

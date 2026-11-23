@@ -83,11 +83,25 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 	essentialFiles, stateFile := toolHostFiles(hostCLIConfigPath, homeDir, tcf)
 
 	// Copy essential config files from host — only those that exist on host
-	madeDirs := map[string]bool{stateDir: true}
 	bundled := make(map[string]bool, len(essentialFiles))
 	for _, f := range essentialFiles {
 		bundled[f.ContainerPath] = true
 	}
+	// A bundled -wal sidecar marks a SQLite DB in WAL mode (omp's agent.db).
+	// A saved session's WAL would be replayed over the fresh DB, so the
+	// exec that makes the DB's dir also drops the WAL and its index; the
+	// host WAL, if any, is pushed after the DB.
+	stale := map[string][]string{}
+	for _, f := range essentialFiles {
+		if !bundled[f.ContainerPath+"-wal"] {
+			continue
+		}
+		if _, err := os.Stat(f.HostPath); err == nil {
+			dir := filepath.Dir(f.ContainerPath)
+			stale[dir] = append(stale[dir], f.ContainerPath+"-wal", f.ContainerPath+"-shm")
+		}
+	}
+	madeDirs := map[string]bool{stateDir: len(stale[stateDir]) == 0}
 	for _, f := range essentialFiles {
 		if hostCLIConfigPath == "" {
 			break
@@ -96,23 +110,17 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 			logger(fmt.Sprintf("  - Refreshing %s", filepath.Base(f.ContainerPath)))
 			// A file in a subdir (goose's chatgpt_codex/tokens.json) may be new
 			// to the saved session, and PushFile does not create its parent.
-			// One mkdir per distinct dir: omp's files all share agent/.
+			// One exec per distinct dir: omp's files all share agent/.
 			if dir := filepath.Dir(f.ContainerPath); !madeDirs[dir] {
-				if err := mgr.ExecArgs([]string{"mkdir", "-p", dir}, container.ExecCommandOptions{}); err != nil {
-					logger(fmt.Sprintf("  - Warning: Failed to create %s: %v", dir, err))
+				args := []string{"mkdir", "-p", dir}
+				if rm := stale[dir]; len(rm) > 0 {
+					args = append([]string{"sh", "-c", `mkdir -p "$1" && shift && rm -f "$@"`, "sh", dir}, rm...)
+				}
+				if err := mgr.ExecArgs(args, container.ExecCommandOptions{}); err != nil {
+					logger(fmt.Sprintf("  - Warning: Failed to prepare %s: %v", dir, err))
 					continue
 				}
 				madeDirs[dir] = true
-			}
-			// A bundled -wal sidecar marks a SQLite DB in WAL mode (omp's
-			// agent.db). A saved session's WAL would be replayed over the
-			// fresh DB, so drop it and its index; the host WAL, if any, is
-			// pushed after the DB.
-			if wal := f.ContainerPath + "-wal"; bundled[wal] {
-				if err := mgr.ExecArgs([]string{"rm", "-f", wal, f.ContainerPath + "-shm"}, container.ExecCommandOptions{}); err != nil {
-					logger(fmt.Sprintf("  - Warning: Failed to remove %s: %v", wal, err))
-					continue
-				}
 			}
 			if err := mgr.PushFile(f.HostPath, f.ContainerPath); err != nil {
 				logger(fmt.Sprintf("  - Warning: Failed to copy %s: %v", filepath.Base(f.ContainerPath), err))
