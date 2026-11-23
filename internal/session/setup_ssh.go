@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/coipond/coi/internal/container"
@@ -46,8 +47,11 @@ func ForwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, 
 }
 
 // forwardConfiguredSockets is ForwardConfiguredSockets that also returns the
-// entries actually forwarded, for the startup grants report.
-func forwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent bool, logger func(string)) (map[string]string, []SocketEntry) {
+// entries actually forwarded, for the startup grants report. A reused
+// persistent container keeps the socket devices of earlier sessions, so every
+// one this session did not forward is removed: forward_agent turned off, a
+// [[sockets]] entry removed or dropped by the trust gate, a host socket gone.
+func forwardConfiguredSockets(mgr socketForwarder, sc *SocketConfig, includeSSHAgent bool, logger func(string)) (map[string]string, []SocketEntry) {
 	var entries []SocketEntry
 	if includeSSHAgent {
 		if e, ok := sshAgentSocketEntry(logger); ok {
@@ -57,10 +61,53 @@ func forwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, 
 	if sc != nil {
 		entries = append(entries, sc.Sockets...)
 	}
-	if len(entries) == 0 {
-		return nil, nil
+	var env map[string]string
+	var forwarded []SocketEntry
+	if len(entries) > 0 {
+		env, forwarded = forwardSockets(mgr, entries, logger)
 	}
-	return forwardSockets(mgr, entries, logger)
+	removeStaleSocketDevices(mgr, forwarded, logger)
+	return env, forwarded
+}
+
+// isSocketDevice reports whether a device name is one socket forwarding
+// creates: the SSH agent's or a [[sockets]] entry's (socket-<n>).
+func isSocketDevice(name string) bool {
+	if name == sshAgentDevice {
+		return true
+	}
+	n, ok := strings.CutPrefix(name, "socket-")
+	if !ok || n == "" {
+		return false
+	}
+	for _, c := range n {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// removeStaleSocketDevices removes the container's socket devices that are
+// not in forwarded.
+func removeStaleSocketDevices(mgr container.ContainerDevices, forwarded []SocketEntry, logger func(string)) {
+	devices, err := mgr.ListDevices()
+	if err != nil {
+		logger(fmt.Sprintf("Warning: could not list devices to remove stale socket forwards: %v", err))
+		return
+	}
+	keep := make(map[string]bool, len(forwarded))
+	for _, e := range forwarded {
+		keep[e.DeviceName] = true
+	}
+	for _, d := range devices {
+		if !isSocketDevice(d) || keep[d] {
+			continue
+		}
+		if err := mgr.RemoveDevice(d); err != nil {
+			logger(fmt.Sprintf("Warning: could not remove stale socket device %s: %v", d, err))
+		}
+	}
 }
 
 // sshAgentSocketEntry builds the synthetic socket entry for the host SSH agent,
