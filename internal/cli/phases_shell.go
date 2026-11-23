@@ -386,6 +386,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 					Docker:                    a.cfg.Container.IsDockerEnabled(),
 					ReduceKernelSurface:       a.cfg.Security.IsReduceKernelSurfaceEnabled(),
 					ReduceKernelSurfaceStrict: a.cfg.Security.IsReduceKernelSurfaceStrictEnabled(),
+					DisableSudo:               !a.cfg.Security.IsPasswordlessSudoEnabled(),
 				},
 				Network: session.NetworkOptions{
 					Config:          &networkConfig,

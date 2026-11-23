@@ -98,7 +98,7 @@ func TestConfigureTimezoneAndMiseTrust_OneExec(t *testing.T) {
 	r := &guestOpsRecorder{}
 	var logs []string
 	copied := []CredentialEntry{{HostPath: "/h/aws", ContainerPath: "/home/code/.aws/credentials"}}
-	ConfigureTimezoneAndMiseTrust(r, "Europe/Warsaw", "/workspace", copied, true, func(m string) { logs = append(logs, m) })
+	ConfigureTimezoneAndMiseTrust(r, "Europe/Warsaw", "/workspace", copied, true, true, func(m string) { logs = append(logs, m) })
 	if len(r.execs) != 1 {
 		t.Fatalf("want one exec, got %d", len(r.execs))
 	}
@@ -113,7 +113,7 @@ func TestConfigureTimezoneAndMiseTrust_OneExec(t *testing.T) {
 
 	// A reused container's manifest isn't claimed complete.
 	r = &guestOpsRecorder{}
-	ConfigureTimezoneAndMiseTrust(r, "", "/workspace", nil, false, func(string) {})
+	ConfigureTimezoneAndMiseTrust(r, "", "/workspace", nil, false, true, func(string) {})
 	if strings.Contains(r.execs[0], copyManifestComplete) {
 		t.Error("a reused container's manifest must not be marked complete")
 	}

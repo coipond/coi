@@ -425,6 +425,20 @@ type SecurityConfig struct {
 	// Same default (false) and same trusted-scope-only handling as the base
 	// flag: stripped from untrusted repo configs in both directions.
 	ReduceKernelSurfaceStrict *bool `toml:"reduce_kernel_surface_strict"`
+	// PasswordlessSudo keeps the image's NOPASSWD sudo rule for the code user.
+	// Set to false to run the session without any sudo: the rule is disabled
+	// and the code user leaves the sudo group at session start, so the agent
+	// cannot become root or install system packages. Packages it needs then
+	// come from the image or the profile's build scripts. Default: true (the
+	// built-in hardened profile sets false). Trusted scope only: stripped from
+	// untrusted repo configs in both directions.
+	PasswordlessSudo *bool `toml:"passwordless_sudo"`
+}
+
+// IsPasswordlessSudoEnabled reports whether the code user keeps passwordless
+// sudo. Default true (nil receiver or field).
+func (s *SecurityConfig) IsPasswordlessSudoEnabled() bool {
+	return s == nil || s.PasswordlessSudo == nil || *s.PasswordlessSudo
 }
 
 // IsReduceKernelSurfaceEnabled reports whether kernel attack-surface hardening

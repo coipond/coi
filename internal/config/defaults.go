@@ -158,7 +158,8 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 // Limitation: profile merges are additive for slice fields, so it cannot
 // *subtract* a globally-configured forward_env, nor force protections back on if
 // the user globally set disable_protection=true. It hardens network egress,
-// secrets, immutability, ephemerality, SSH-agent forwarding, and monitoring.
+// secrets, immutability, ephemerality, SSH-agent forwarding, sudo, and
+// monitoring.
 func synthesizeHardenedProfile() ProfileConfig {
 	t, f := true, false
 	return ProfileConfig{
@@ -188,6 +189,9 @@ func synthesizeHardenedProfile() ProfileConfig {
 			// Shrink the shared-kernel attack surface: no nesting, and the
 			// syscall families behind most recent kernel escape chains denied.
 			ReduceKernelSurface: &t,
+			// No sudo for the code user: an apt hook runs as root, so even a
+			// narrowed rule would still hand out root.
+			PasswordlessSudo: &f,
 		},
 		// Catch in-container exfil / reverse-shell attempts and auto-respond.
 		Monitoring: &MonitoringConfig{

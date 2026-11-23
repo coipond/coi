@@ -502,6 +502,13 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 			if err := sizeTmpfsAndRemapUser(s.mgr, &a.cfg.Limits, s.wasRestarted, logFn); err != nil {
 				return nil, err
 			}
+			// Before anything runs as the code user. Turning sudo back on rides
+			// along with the timezone exec in apply-network.
+			if !a.cfg.Security.IsPasswordlessSudoEnabled() {
+				if err := session.DisableSudo(s.mgr, logFn); err != nil {
+					return nil, err
+				}
+			}
 
 			// Git commit identity + [[credentials]], applied the same way the
 			// shell path does so `coi run -- git commit`/credential-consuming
@@ -612,7 +619,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 			// Timezone ("" = UTC, resetting a reused container) and workspace
 			// mise trust in one exec.
 			s.tz = resolveTimezone(a.cfg)
-			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, !s.wasRestarted, logFn)
+			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, !s.wasRestarted, a.cfg.Security.IsPasswordlessSudoEnabled(), logFn)
 
 			if nm == nil {
 				return nil, nil
@@ -806,6 +813,7 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 					// reflects the strict tier (it implies the base flag).
 					Docker:              a.cfg.Container.IsDockerEnabled(),
 					ReduceKernelSurface: a.cfg.Security.IsReduceKernelSurfaceEnabled(),
+					DisableSudo:         !a.cfg.Security.IsPasswordlessSudoEnabled(),
 				},
 			}
 			if err := session.SeedToolConfigForRun(ctx, seedResult, seedOpts); err != nil {

@@ -733,6 +733,44 @@ func TestRenderContextFileContent_DockerUnavailable(t *testing.T) {
 	}
 }
 
+// With [security] passwordless_sudo = false the context must not promise
+// sudo, root or apt installs the agent cannot use.
+func TestRenderContextFileContent_SudoUnavailable(t *testing.T) {
+	info := ContextInfo{WorkspacePath: "/workspace", HomeDir: "/home/code", NetworkMode: "restricted", SudoUnavailable: true}
+	content := RenderContextFileContent(info)
+	for _, banned := range []string{"passwordless sudo", "sudo apt-get", "sudo chown"} {
+		if strings.Contains(content, banned) {
+			t.Errorf("no-sudo context must not mention %q", banned)
+		}
+	}
+	for _, want := range []string{"**Sudo**: Not available", "no sudo", "Act, don't ask", "**Only the workspace"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("no-sudo context missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "autonomy:- ") || strings.Contains(content, "config.- ") {
+		t.Errorf("sudo bullet must keep its own line:\n%s", content)
+	}
+	jsonStr, err := RenderContextFileJSON(info)
+	if err != nil {
+		t.Fatalf("RenderContextFileJSON: %v", err)
+	}
+	if !strings.Contains(jsonStr, "\"sudo_available\": false") {
+		t.Errorf("JSON should report sudo_available:false, got:\n%s", jsonStr)
+	}
+
+	// Default (zero value) still promises sudo.
+	def := RenderContextFileContent(ContextInfo{WorkspacePath: "/w", HomeDir: "/h", NetworkMode: "open"})
+	for _, want := range []string{"passwordless sudo / full root", "Available via passwordless sudo", "sudo chown"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("default context missing %q", want)
+		}
+	}
+	if !strings.Contains(def, "autonomy:\n\n- **Act") {
+		t.Errorf("default sudo bullet layout changed:\n%s", def)
+	}
+}
+
 func TestRenderContextFileContent_Persistent(t *testing.T) {
 	info := ContextInfo{
 		WorkspacePath: "/workspace",

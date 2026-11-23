@@ -51,6 +51,7 @@ type SecurityOptions struct {
 	Docker                    bool                   // [container] docker: nesting + syscall interception + low-port sysctl (precedence vs ReduceKernelSurface resolved by container.HardeningPolicy.DockerEnabled)
 	ReduceKernelSurface       bool                   // [security] reduce_kernel_surface: deny high-risk kernel-escape syscalls; wins over Docker
 	ReduceKernelSurfaceStrict bool                   // [security] reduce_kernel_surface_strict: additionally deny perf_event_open (implies ReduceKernelSurface)
+	DisableSudo               bool                   // [security] passwordless_sudo = false: no sudo for the code user this session
 }
 
 // NetworkOptions groups network isolation and host<->container forwarding.
@@ -195,6 +196,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 		phase("size-tmpfs", st.phaseSizeTmpfs),
 		phase("detect-user", st.phaseDetectUser),
 		phase("remap-uid", st.phaseRemapUID),
+		phase("sudo-policy", st.phaseSudoPolicy),
 		phase("forward-sockets", st.phaseForwardSockets),
 		phase("publish-ports", st.phasePublishPorts),
 		phase("configure-git", st.phaseConfigureGit),
@@ -946,6 +948,7 @@ func contextInfoFor(result *SetupResult, opts SetupOptions) tool.ContextInfo {
 		ContainerName:      result.ContainerName,
 		ProfileContext:     profileContext,
 		DockerUnavailable:  dockerUnavailable(result, opts),
+		SudoUnavailable:    opts.Security.DisableSudo,
 	}
 }
 

@@ -38,6 +38,10 @@
     "reduce_kernel_surface_strict": {
       "type": "boolean",
       "description": "Opt-in STRICT tier on top of reduce_kernel_surface: additionally denies perf_event_open (a long-standing kernel-LPE vector). Kept separate because, unlike the base list, denying perf_event_open removes real capability — kernel-level profiling (perf, JVM async-profiler's perf mode) stops working, though it degrades gracefully (EPERM, no crash). Enabling it implies reduce_kernel_surface. Default: false. Trusted scope only."
+    },
+    "passwordless_sudo": {
+      "type": "boolean",
+      "description": "Keep the image's NOPASSWD sudo rule for the code user. false runs the session without any sudo: the rule is disabled and the code user leaves the sudo group at session start, so the agent cannot become root or install system packages (they come from the image or the profile's build scripts). Default: true. Trusted scope only. Disabled by the built-in 'hardened' profile."
     }
   }
 }
