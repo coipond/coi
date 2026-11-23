@@ -11,9 +11,9 @@ Tests that:
 2. `incus file pull` fallback (tar hidden in the container): symlinks are not
    recreated; regular files and dirs are.
 3. `incus file pull` fallback with FIFOs and a unix socket in ~/.claude (one
-   nested): the save skips them and finishes in time (the pull opens every
-   non-dir entry, and a FIFO with no writer blocks it); regular files and dirs
-   are saved.
+   nested): the save skips them before the pull (which opens every non-dir
+   entry; a FIFO with no writer blocks it) and logs each skip to the session
+   log; regular files and dirs are saved.
 """
 
 import os
@@ -163,8 +163,7 @@ def test_session_save_file_pull_fallback_skips_special_files(
         f"{FILES_SETUP} && {SPECIAL_FILES_SETUP} && "
         'sudo mv "$(command -v tar)" /usr/local/coi-tar-hidden'
     )
-    # _save_session waits 60 s for coi to exit, under the fallback pull's
-    # 2-minute backstop: the special files must be skipped, not waited out.
+    # The special files must be skipped before the pull, not waited out.
     output, saved, session_dir = _save_session(coi_binary, workspace_dir, setup)
     try:
         assert "Fast session save unavailable" in output, (
@@ -173,10 +172,16 @@ def test_session_save_file_pull_fallback_skips_special_files(
         assert "Session data saved successfully" in output, (
             f"the save should finish. Output:\n{output}"
         )
-        assert "timed out" not in output, (
+        assert "stalled" not in output, (
             f"special files should be skipped, not waited out. Output:\n{output}"
         )
         _assert_only_regular_saved(saved, output, SPECIAL_FILES)
+        container_name = calculate_container_name(workspace_dir, 1)
+        log = (Path.home() / ".coi" / "logs" / f"{container_name}.stdout.log").read_text()
+        for name in SPECIAL_FILES:
+            assert f"Skipping special file /home/code/.claude/{name} " in log, (
+                f"{name} skip should be in the session log:\n{log}"
+            )
     finally:
         if session_dir is not None:
             shutil.rmtree(session_dir, ignore_errors=True)

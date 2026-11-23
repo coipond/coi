@@ -530,23 +530,21 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 			waitForStopped(mgr, 5*time.Second)
 			_ = os.RemoveAll(stagingDir)
 		}
-		pullErr = pullConfigDir(mgr, stateDir, stagingDir, debug)
+		pullErr = pullConfigDir(mgr, stateDir, stagingDir, logger, debug)
 		if pullErr == nil {
 			pulled = true
 			break
 		}
 		if errors.Is(pullErr, container.ErrPullTimedOut) {
-			logger(fmt.Sprintf("Warning: session save timed out after %s (%v); keeping what was pulled", fallbackPullTimeout, pullErr))
+			logger(fmt.Sprintf("Warning: session save stopped (%v); keeping what was pulled", pullErr))
 			pulled = pathExists(stagingDir)
 			break
 		}
-		msg := strings.ToLower(pullErr.Error())
-		if strings.Contains(msg, "does not exist") ||
-			strings.Contains(msg, "not found") ||
-			strings.Contains(msg, "no such file") {
+		if configDirMissing(mgr, pullErr) {
 			logger(fmt.Sprintf("No %s directory found in container", configDirName))
 			return nil
 		}
+		msg := strings.ToLower(pullErr.Error())
 		if !strings.Contains(msg, "sftp") &&
 			!strings.Contains(msg, "unexpected eof") &&
 			!strings.Contains(msg, "bad file descriptor") &&
@@ -599,23 +597,39 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 	return nil
 }
 
-// fallbackPullTimeout bounds the file pull fallback of a session save, so a
-// container-planted FIFO the listing missed cannot hang the host-side coi.
-var fallbackPullTimeout = 2 * time.Minute
+// fallbackPullStallTimeout is how long the file pull fallback of a session
+// save may make no progress before it skips the entry it is stuck on, so a
+// container-planted FIFO cannot hang the host-side coi.
+var fallbackPullStallTimeout = 15 * time.Second
 
 // pullConfigDir is the file pull fallback of a session save. It prefers the
 // bounded pull that skips special files (see PullDirectoryBounded).
-func pullConfigDir(mgr container.ContainerManager, stateDir, stagingDir string, debug func(string)) error {
+func pullConfigDir(mgr container.ContainerManager, stateDir, stagingDir string, logger, debug func(string)) error {
 	if bp, ok := mgr.(boundedPuller); ok {
-		return bp.PullDirectoryBounded(stateDir, stagingDir, fallbackPullTimeout, debug)
+		return bp.PullDirectoryBounded(stateDir, stagingDir, fallbackPullStallTimeout, debug, func(msg string) {
+			logger("Warning: " + msg)
+		})
 	}
 	return mgr.PullDirectory(stateDir, stagingDir)
+}
+
+// configDirMissing reports whether a failed config dir pull means the
+// container has no config dir. A bounded pull says so with a sentinel: its
+// errors can name a single entry that vanished mid-pull as "not found".
+func configDirMissing(mgr container.ContainerManager, err error) bool {
+	if _, ok := mgr.(boundedPuller); ok {
+		return errors.Is(err, container.ErrPullSourceMissing)
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "does not exist") ||
+		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no such file")
 }
 
 // boundedPuller is implemented by *container.Manager: a deadline-bounded
 // directory pull that skips special files (see PullDirectoryBounded).
 type boundedPuller interface {
-	PullDirectoryBounded(containerPath, localPath string, timeout time.Duration, debug func(string)) error
+	PullDirectoryBounded(containerPath, localPath string, stall time.Duration, debug, warn func(string)) error
 }
 
 // tarPuller is implemented by *container.Manager: a one-stream directory pull

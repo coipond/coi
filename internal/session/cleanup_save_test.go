@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/logger"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -75,7 +77,7 @@ type boundedPullFake struct {
 	pulls int
 }
 
-func (f *boundedPullFake) PullDirectoryBounded(_, localPath string, _ time.Duration, _ func(string)) error {
+func (f *boundedPullFake) PullDirectoryBounded(_, localPath string, _ time.Duration, _, _ func(string)) error {
 	f.pulls++
 	if err := os.MkdirAll(localPath, 0o755); err != nil {
 		return err
@@ -98,7 +100,39 @@ func TestSaveSessionData_TimedOutPullKeepsPulled(t *testing.T) {
 	if mgr.pulls != 1 {
 		t.Errorf("pulls = %d, want 1", mgr.pulls)
 	}
-	if got := strings.Join(logs, "\n"); !strings.Contains(got, "timed out") || !strings.Contains(got, "/home/code/.claude/fifo") {
+	if got := strings.Join(logs, "\n"); !strings.Contains(got, "pull timed out") || !strings.Contains(got, "/home/code/.claude/fifo") {
 		t.Errorf("logs = %q, want the timeout and the stalled path", got)
 	}
+}
+
+// vanishedEntryFake fails like a bounded pull whose entry vanished mid-pull.
+type vanishedEntryFake struct {
+	container.ContainerManager
+}
+
+func (vanishedEntryFake) PullDirectoryBounded(_, _ string, _ time.Duration, _, _ func(string)) error {
+	return errors.New("Error: not found: exit status 1")
+}
+
+// A bounded pull's "not found" for one entry is a failed save, not "no
+// config dir" (which would skip the save without a warning).
+func TestSaveSessionData_BoundedEntryNotFoundFailsSave(t *testing.T) {
+	err := saveSessionData(vanishedEntryFake{}, "coi-test", "abc", false, "", false, "/w", t.TempDir(), tool.NewClaude(), func(string) {}, nil)
+	if err == nil {
+		t.Fatal("saveSessionData succeeded; want the pull error")
+	}
+}
+
+// Skipped special files reach the session log.
+func TestSessionDebug_WritesSessionLog(t *testing.T) {
+	sl := logger.New("coi-test", t.TempDir())
+	sessionDebug(CleanupOptions{SessionLogger: sl})("Skipping special file /home/code/.claude/fifo (type p)")
+	if err := sl.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(sl.OutPath())
+	if err != nil || !strings.Contains(string(b), "[cleanup] Skipping special file /home/code/.claude/fifo") {
+		t.Errorf("session log = %q, %v", b, err)
+	}
+	sessionDebug(CleanupOptions{})("no session log: no panic")
 }
