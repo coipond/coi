@@ -37,7 +37,7 @@ var monitorCmd = &cobra.Command{
 This command shows current container metrics including:
 - Network connections (with suspicious connection detection)
 - Running processes (with reverse shell detection)
-- Filesystem activity (workspace read monitoring)
+- Filesystem activity (container I/O read and write monitoring)
 - Resource usage (CPU, memory, I/O)
 - Security threats and alerts
 

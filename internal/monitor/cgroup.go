@@ -241,7 +241,7 @@ func CollectResourceStats(ctx context.Context, containerName string) (ResourceSt
 	// climbed one level to compensate — no longer needed now that cgroupPath is
 	// already the container root. Climbing further would reach the grouping
 	// cgroup shared by every container and over-count.)
-	ioStats, err := readIOStats(filepath.Join(cgroupPath, "io.stat"))
+	ioStats, err := readIOStats(filepath.Join(cgroupPath, "io.stat"), "")
 	if err != nil {
 		// I/O stats might not be available, don't fail
 		stats.IOReadMB = 0
@@ -251,6 +251,21 @@ func CollectResourceStats(ctx context.Context, containerName string) (ResourceSt
 		stats.IOWriteMB = ioStats.write / 1024.0 / 1024.0
 	}
 
+	return stats, nil
+}
+
+// collectIOStats reads the container's cgroup io.stat, counting only the
+// device ("major:minor") when it is set. A missing io.stat counts as no I/O,
+// as in CollectResourceStats.
+func collectIOStats(ctx context.Context, containerName, device string) (ioStats, error) {
+	rawPath, err := GetCgroupPath(ctx, containerName)
+	if err != nil {
+		return ioStats{}, fmt.Errorf("failed to get cgroup path: %w", err)
+	}
+	stats, err := readIOStats(filepath.Join(stripSystemdScopeSuffix(rawPath), "io.stat"), device)
+	if err != nil {
+		return ioStats{}, nil
+	}
 	return stats, nil
 }
 
@@ -330,7 +345,9 @@ type ioStats struct {
 	write float64
 }
 
-func readIOStats(path string) (ioStats, error) {
+// readIOStats sums rbytes and wbytes over io.stat, or over the line of the
+// device ("major:minor") alone when it is set.
+func readIOStats(path, device string) (ioStats, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return ioStats{}, err
@@ -343,7 +360,7 @@ func readIOStats(path string) (ioStats, error) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		if len(fields) < 2 || (device != "" && fields[0] != device) {
 			continue
 		}
 
