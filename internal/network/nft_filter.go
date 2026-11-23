@@ -149,7 +149,7 @@ func (f *NftManager) addRestrictedRules(cfg *config.NetworkConfig, dnsServers []
 	}
 
 	if config.BoolVal(cfg.BlockMetadataEndpoint) {
-		if err := f.addRule(f.containerIP, "169.254.0.0/16", "reject"); err != nil {
+		if err := f.addRule(f.containerIP, metadataCIDR, "reject"); err != nil {
 			return fmt.Errorf("failed to add metadata block rule: %w", err)
 		}
 	}
@@ -286,15 +286,16 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 	// lands in a private or link-local range would otherwise be matched by the
 	// set-accept rule before any reject runs, opening a DNS-rebinding path to
 	// 169.254.169.254 (cloud metadata → credential theft) or to internal hosts.
-	// (Restricted mode already rejects these ahead of its permissive default;
-	// allowlist mode was rejecting them AFTER its set-accepts, so any set member
-	// in these ranges slipped straight through.) Semantics are unchanged from the
-	// previous placement — only the order is fixed.
 	//
-	// NB: this still keys off allow_local_network_access alone, as the previous
-	// code did; wiring allowlist mode to honor block_private_networks /
-	// block_metadata_endpoint independently (as restricted mode does) — and thus
-	// blocking metadata even when local access is on — is a separate follow-up.
+	// block_metadata_endpoint rejects link-local whatever
+	// allow_local_network_access says, as in restricted mode. Without local
+	// access, link-local stays rejected with the private ranges.
+	metadataBlocked := config.BoolVal(cfg.BlockMetadataEndpoint)
+	if metadataBlocked {
+		if err := f.addRule(f.containerIP, metadataCIDR, "reject"); err != nil {
+			return fmt.Errorf("failed to add metadata block rule: %w", err)
+		}
+	}
 	if config.BoolVal(cfg.AllowLocalNetworkAccess) {
 		// allowed_ports still applies to the LAN (see addLocalNetworkAllows): local
 		// access opens the LAN, but only on the permitted ports when a cap is set.
@@ -303,6 +304,9 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 		}
 	} else {
 		for _, cidr := range allowlistPrivateCIDRs {
+			if cidr == metadataCIDR && metadataBlocked {
+				continue
+			}
 			if err := f.addRule(f.containerIP, cidr, "reject"); err != nil {
 				return fmt.Errorf("failed to add private/metadata block rule: %w", err)
 			}

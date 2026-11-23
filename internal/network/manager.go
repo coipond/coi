@@ -542,18 +542,21 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 
 // logAllowlistPrivateAccess logs how allowlist mode treats private and cloud
 // metadata, matching the rules ApplyAllowlist installs for
-// allow_local_network_access.
+// allow_local_network_access and block_metadata_endpoint.
 func (m *Manager) logAllowlistPrivateAccess() {
-	if !config.BoolVal(m.config.AllowLocalNetworkAccess) {
+	switch {
+	case !config.BoolVal(m.config.AllowLocalNetworkAccess):
 		m.logger.Println("  Blocking all private networks (RFC1918, 100.64.0.0/10)")
 		m.logger.Println("  Blocking cloud metadata endpoints")
 		return
-	}
-	if len(m.config.AllowedPorts) > 0 {
+	case len(m.config.AllowedPorts) > 0:
 		m.logger.Printf("  Allowing private networks (RFC1918, 100.64.0.0/10) on ports %v (allow_local_network_access)", m.config.AllowedPorts)
-		return
+	default:
+		m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10; allow_local_network_access)")
 	}
-	m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10; allow_local_network_access)")
+	if config.BoolVal(m.config.BlockMetadataEndpoint) {
+		m.logger.Println("  Blocking cloud metadata endpoints")
+	}
 }
 
 // installNames resolves the policy's hostnames and writes the result to the two

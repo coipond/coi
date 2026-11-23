@@ -38,9 +38,9 @@ type grantedHost struct {
 }
 
 // effective resolves what n's mode enforces. Allowlist mode keys its
-// private/link-local handling off allow_local_network_access alone: with it
-// off, LAN and metadata are rejected; with it on, neither is, whatever the
-// block_* settings say. Port caps and DNS pins apply only in the modes whose
+// private handling off allow_local_network_access alone: with it off, LAN
+// and metadata are rejected; with it on, the LAN is allowed and metadata is
+// rejected only under block_metadata_endpoint. Port caps and DNS pins apply only in the modes whose
 // firewall enforces them, as the sandbox context says.
 func (n NetworkGrants) effective() effectiveNetwork {
 	mode := config.NetworkMode(n.Mode)
@@ -53,7 +53,10 @@ func (n NetworkGrants) effective() effectiveNetwork {
 		e.AllowedDomains = append([]string{}, n.AllowedDomains...)
 		e.LAN, e.MetadataEndpoint = accessOf(netBlocked), accessOf(netBlocked)
 		if n.LANAccess {
-			e.LAN, e.MetadataEndpoint = accessOf(netAllowed), accessOf(netNotBlocked)
+			e.LAN = accessOf(netAllowed)
+			if !n.MetadataBlock {
+				e.MetadataEndpoint = accessOf(netNotBlocked)
+			}
 		}
 	case config.NetworkModeRestricted:
 		switch {

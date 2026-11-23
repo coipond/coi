@@ -1019,9 +1019,12 @@ func (g *Grants) networkLines() []string {
 			dests = strings.Join(n.AllowedDomains, ", ")
 		}
 		lines = append(lines, "allowlist: "+dests)
-		if *n.LAN == netAllowed {
+		switch {
+		case *n.LAN == netAllowed && *n.MetadataEndpoint == netBlocked:
+			lines = append(lines, "LAN allowed (metadata endpoint blocked)")
+		case *n.LAN == netAllowed:
 			lines = append(lines, "LAN allowed (metadata endpoint not blocked)")
-		} else {
+		default:
 			lines = append(lines, "LAN and metadata endpoint blocked")
 		}
 	case config.NetworkModeRestricted:

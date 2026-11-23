@@ -26,7 +26,7 @@ func TestBlockedPrivateEntries(t *testing.T) {
 		{Entry: "172.16.0.0/16", Private: true},
 		{Entry: "10.0.0.0/7", Private: true},
 		{Entry: "172.0.0.0/8", Private: true},
-		{Entry: "169.254.169.254"},
+		{Entry: "169.254.169.254", Metadata: true},
 		{Entry: "100.101.1.2", Private: true},
 	}
 	if got := blockedPrivateEntries(tuples, map[string]bool{"192.168.1.10": true}); !reflect.DeepEqual(got, want) {
@@ -73,6 +73,7 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 	// [[network.hosts]] refuses 169.254.0.0/16 in allowlist mode.
 	if !strings.Contains(got[2], "entry 169.254.169.254 ") ||
 		!strings.Contains(got[2], "allow_local_network_access = true") ||
+		!strings.Contains(got[2], "block_metadata_endpoint = false") ||
 		strings.Contains(got[2], "network.hosts") {
 		t.Errorf("link-local warning: %q", got[2])
 	}
@@ -81,6 +82,11 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 	c.AllowLocalNetworkAccess = &on
 	if got := AllowlistPrivateWarnings(c); len(got) != 0 {
 		t.Errorf("allow_local_network_access: want no warning, got %q", got)
+	}
+	// block_metadata_endpoint keeps link-local blocked under local access.
+	c.BlockMetadataEndpoint = &on
+	if got := AllowlistPrivateWarnings(c); len(got) != 1 || !strings.Contains(got[0], "entry 169.254.169.254 ") {
+		t.Errorf("allow_local_network_access + block_metadata_endpoint: want the link-local warning only, got %q", got)
 	}
 	// allowed_ports is what both sides inherit when they name no ports.
 	c = cfg()

@@ -670,8 +670,13 @@ func TestGrantsRender_Network(t *testing.T) {
 		},
 		{
 			name: "allowlist with LAN access opens metadata",
-			n:    NetworkGrants{Mode: "allowlist", LANAccess: true, MetadataBlock: true},
+			n:    NetworkGrants{Mode: "allowlist", LANAccess: true},
 			want: []string{"allowlist: nothing", "LAN allowed (metadata endpoint not blocked)"},
+		},
+		{
+			name: "allowlist with LAN access keeps metadata blocked",
+			n:    NetworkGrants{Mode: "allowlist", LANAccess: true, MetadataBlock: true},
+			want: []string{"allowlist: nothing", "LAN allowed (metadata endpoint blocked)"},
 		},
 		{
 			name:    "allowlist without LAN access blocks LAN and metadata, never shows a DNS pin",

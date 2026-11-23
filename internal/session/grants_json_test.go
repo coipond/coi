@@ -283,6 +283,12 @@ func TestGrantsJSON_Network(t *testing.T) {
 			want: `{"mode": "allowlist", "allowed_domains": [], "lan": "allowed", "metadata_endpoint": "not_blocked",
 				"host_access": false, "allowed_ports": null, "dns_servers": null, "hosts": []}`,
 		},
+		{
+			name: "allowlist with LAN access and metadata block",
+			n:    NetworkGrants{Mode: "allowlist", LANAccess: true, MetadataBlock: true},
+			want: `{"mode": "allowlist", "allowed_domains": [], "lan": "allowed", "metadata_endpoint": "blocked",
+				"host_access": false, "allowed_ports": null, "dns_servers": null, "hosts": []}`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

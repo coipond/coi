@@ -23,7 +23,8 @@ const (
 	// NetworkModeOpen allows all network access (current behavior)
 	NetworkModeOpen NetworkMode = "open"
 	// NetworkModeAllowlist allows only specific domains; private and metadata
-	// ranges stay blocked unless allow_local_network_access is set
+	// ranges stay blocked unless allow_local_network_access is set (metadata
+	// also under block_metadata_endpoint)
 	NetworkModeAllowlist NetworkMode = "allowlist"
 )
 

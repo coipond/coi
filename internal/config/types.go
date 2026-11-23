@@ -571,7 +571,8 @@ type NetworkConfig struct {
 	// "svc:8000-8100". An entry with no port inherits the global allowed_ports
 	// (else all ports), so a per-entry scope tightens just that destination.
 	// Private (PrivateNetworkCIDRs, link-local) entries are rejected unless
-	// allow_local_network_access, which opens the whole private LAN, so a
+	// allow_local_network_access (link-local: and not
+	// block_metadata_endpoint), which opens the whole private LAN, so a
 	// private entry's ports limit nothing; one LAN service is a
 	// [[network.hosts]] entry with ports. Exception: an address of the coi host
 	// itself is reachable on the entry's ports only (host input rules), else
