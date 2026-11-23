@@ -11,6 +11,9 @@ Tests that:
    boot to reach the host and a routed private host, over IPv4 and over IPv6
    it re-enables itself, never gets through before (or after) the mode's rules
    are in place (restricted mode refuses all of them).
+3. Control, in the same run: with the coi6 chain swapped for the old
+   forward-hook `iifname <veth>` rule, the host attempt of 1 gets through and
+   that rule counts no packets, so the test catches that regression.
 
 The bridge on the test host may route no IPv6, so the test gives the bridge and
 the container static IPv6 addresses and a route itself, and puts the "outside"
@@ -85,8 +88,10 @@ def _bridge_of(veth):
     return m.group(1)
 
 
-def _sudo(*argv, check=True):
-    r = subprocess.run(["sudo", "-n", *argv], capture_output=True, text=True, timeout=30)
+def _sudo(*argv, check=True, input=None):
+    r = subprocess.run(
+        ["sudo", "-n", *argv], capture_output=True, text=True, timeout=30, input=input
+    )
     if check:
         assert r.returncode == 0, f"{' '.join(argv)} failed: {r.stderr}"
     return r
@@ -285,6 +290,29 @@ def test_reenabled_ipv6_is_dropped_at_the_veth(
                 )
             assert peers == [], f"host listener accepted IPv6 connections: {peers}"
             assert out_peers() == [], f"outside host accepted IPv6 connections: {out_peers()}"
+
+            # Control: with the coi6 chain swapped for the old forward-hook
+            # rule, the same host attempt gets through and the old rule counts
+            # nothing, so the assertions above catch that regression.
+            veth = _veth(name)
+            _sudo("nft", "delete", "chain", "netdev", "coi", chain)
+            _sudo(
+                "nft",
+                "-f",
+                "-",
+                input=(
+                    "add table ip6 coi\n"
+                    "add chain ip6 coi forward"
+                    " { type filter hook forward priority 10 ; policy accept ; }\n"
+                    f'add rule ip6 coi forward iifname "{veth}" counter drop comment "{chain}"\n'
+                ),
+            )
+            rc, out = exec_in(coi_binary, name, attempts["tcp host"], timeout=30)
+            old = _sudo("nft", "list", "chain", "ip6", "coi", "forward").stdout
+            assert peers, f"control: the host attempt should get through the old rule: {out}"
+            assert re.search(rf"counter packets 0 bytes 0 drop comment \"{chain}\"", old), (
+                f"control: the old forward-hook rule should match nothing:\n{old}"
+            )
 
 
 def test_boot_service_never_gets_out_before_rules(coi_binary, workspace_dir, cleanup_containers):
