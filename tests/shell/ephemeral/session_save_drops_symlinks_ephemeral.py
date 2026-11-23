@@ -9,8 +9,11 @@ Tests that:
 1. tar path (container still running on exit): symlinks and a FIFO in
    ~/.claude are not recreated in the saved session; regular files and dirs are.
 2. `incus file pull` fallback (tar hidden in the container): symlinks are not
-   recreated; regular files and dirs are. No FIFO here: the fallback opens a
-   FIFO as a regular file, which blocks with no writer.
+   recreated; regular files and dirs are.
+3. `incus file pull` fallback with FIFOs and a unix socket in ~/.claude (one
+   nested): the save skips them and finishes in time (the pull opens every
+   non-dir entry, and a FIFO with no writer blocks it); regular files and dirs
+   are saved.
 """
 
 import os
@@ -134,6 +137,46 @@ def test_session_save_file_pull_fallback_drops_symlinks(
             f"the save should fall back to file pull. Output:\n{output}"
         )
         _assert_only_regular_saved(saved, output, SYMLINKS)
+    finally:
+        if session_dir is not None:
+            shutil.rmtree(session_dir, ignore_errors=True)
+
+
+# A unix socket file stays after its process exits; argv avoids the
+# process monitor's python socket patterns.
+SPECIAL_FILES_SETUP = (
+    "mkfifo ~/.claude/coi-fifo ~/.claude/coi-sub/coi-fifo && "
+    "python3 - <<'PY' &&\n"
+    "import os\n"
+    "from socket import AF_UNIX, socket\n"
+    "socket(AF_UNIX).bind(os.path.expanduser('~/.claude/coi-sock'))\n"
+    "PY\n"
+    "test -S ~/.claude/coi-sock"
+)
+SPECIAL_FILES = ["coi-fifo", os.path.join("coi-sub", "coi-fifo"), "coi-sock"]
+
+
+def test_session_save_file_pull_fallback_skips_special_files(
+    coi_binary, cleanup_containers, workspace_dir
+):
+    setup = (
+        f"{FILES_SETUP} && {SPECIAL_FILES_SETUP} && "
+        'sudo mv "$(command -v tar)" /usr/local/coi-tar-hidden'
+    )
+    # _save_session waits 60 s for coi to exit, under the fallback pull's
+    # 2-minute backstop: the special files must be skipped, not waited out.
+    output, saved, session_dir = _save_session(coi_binary, workspace_dir, setup)
+    try:
+        assert "Fast session save unavailable" in output, (
+            f"the save should fall back to file pull. Output:\n{output}"
+        )
+        assert "Session data saved successfully" in output, (
+            f"the save should finish. Output:\n{output}"
+        )
+        assert "timed out" not in output, (
+            f"special files should be skipped, not waited out. Output:\n{output}"
+        )
+        _assert_only_regular_saved(saved, output, SPECIAL_FILES)
     finally:
         if session_dir is not None:
             shutil.rmtree(session_dir, ignore_errors=True)
