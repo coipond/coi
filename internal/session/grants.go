@@ -220,6 +220,12 @@ func dockerSource(mgr container.ContainerManager, applied *container.AppliedStat
 	return dockerSourceUnknown
 }
 
+// metadataEnforcer is the network manager's report of an open-mode
+// block_metadata_endpoint it could not enforce (network.Manager).
+type metadataEnforcer interface {
+	MetadataUnenforced() bool
+}
+
 // buildGrants collects the session's effective grants once setup has run.
 func buildGrants(st *setupState) *Grants {
 	opts := st.opts
@@ -242,6 +248,9 @@ func buildGrants(st *setupState) *Grants {
 		g.Network.HostAccess = config.BoolVal(nc.AllowHostAccess)
 		g.Network.LANBlocked = config.BoolVal(nc.BlockPrivateNetworks)
 		g.Network.MetadataBlock = config.BoolVal(nc.BlockMetadataEndpoint)
+		if m, ok := st.result.NetworkManager.(metadataEnforcer); ok && m.MetadataUnenforced() {
+			g.Network.MetadataBlock = false
+		}
 	}
 
 	// The container's applied config: disks (profile-inherited included), its

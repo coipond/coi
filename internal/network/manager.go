@@ -62,6 +62,9 @@ type Manager struct {
 	// hostAddrWarned holds resolved allowlist addresses that are host
 	// addresses, already warned about (see warnResolvedHostAddrs).
 	hostAddrWarned map[string]bool
+
+	// metadataBlocked: open mode's metadata reject is in place.
+	metadataBlocked bool
 }
 
 // NewManager creates a new network manager with the specified configuration
@@ -107,9 +110,6 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 			m.logger.Println("Network mode: open (no restrictions)")
 		}
 		nftUsable := NftUsable(m.config)
-		if blockMetadata && !nftUsable {
-			m.logger.Errorf("Warning: block_metadata_endpoint is not enforced in open mode: nft is not usable")
-		}
 		// Add ACCEPT rules via nft so traffic flows even when FORWARD policy is DROP
 		if nftUsable {
 			containerIP, err := GetContainerIP(containerName)
@@ -118,7 +118,7 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 			} else {
 				m.containerIP = containerIP
 				m.nft = NewNftManager(containerIP, "")
-				m.applyOpenRules(containerIP)
+				m.metadataBlocked = m.applyOpenRules(containerIP) && blockMetadata
 			}
 		} else if m.config.SudoAllowed() && NeedsIptablesFallback() {
 			bridgeName, err := containerNetworkName(containerName)
@@ -132,6 +132,9 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 					m.logger.Printf("iptables fallback: added FORWARD ACCEPT rules for bridge %s (FORWARD policy is DROP, nft not available)", bridgeName)
 				}
 			}
+		}
+		if blockMetadata && !m.metadataBlocked {
+			m.logger.Errorf("Warning: block_metadata_endpoint is not enforced in open mode: no nft rules for the container")
 		}
 		// Open mode always lifts the boot block — errors above are non-fatal
 		// and the user has explicitly opted into unrestricted network access.
@@ -277,10 +280,11 @@ func openModeRuleTexts(ip string, blockMetadata bool) []string {
 	return append(texts, openModeRuleText(ip))
 }
 
-// applyOpenRules installs open mode's rules for ip (openModeCmds). A reused
-// container whose rules are already exactly those is left untouched; anything
-// else is replaced in one transaction. Non-fatal, like the code it replaces.
-func (m *Manager) applyOpenRules(ip string) {
+// applyOpenRules installs open mode's rules for ip (openModeCmds) and reports
+// whether they are in place. A reused container whose rules are already
+// exactly those is left untouched; anything else is replaced in one
+// transaction. Non-fatal, like the code it replaces.
+func (m *Manager) applyOpenRules(ip string) bool {
 	if err := EnsureBaseRules(); err != nil {
 		m.logger.Errorf("Warning: failed to ensure base rules: %v", err)
 	}
@@ -288,7 +292,7 @@ func (m *Manager) applyOpenRules(ip string) {
 	rules, err := forwardRulesWithComment("coi-" + ip)
 	if err == nil && ruleTextsEqual(rules, openModeRuleTexts(ip, blockMetadata)) {
 		m.purgeStaleSideStateForIP(ip)
-		return // already in place (a reused container): nothing to do
+		return true // already in place (a reused container): nothing to do
 	}
 	if len(rules) > 0 && m.containerName != "" {
 		// Another mode's rules: a running container from an earlier session,
@@ -300,14 +304,23 @@ func (m *Manager) applyOpenRules(ip string) {
 		cmds := append(deleteChainRuleCmds("forward", rules), openModeCmds(ip, blockMetadata)...)
 		if runNFTScript(cmds) == nil {
 			m.purgeStaleSideStateForIP(ip)
-			return
+			return true
 		}
 	}
 	// Fallback: purge, then add.
 	m.purgeStaleRulesForIP(ip)
 	if err := runNFTScript(openModeCmds(ip, blockMetadata)); err != nil {
 		m.logger.Errorf("Warning: could not add open mode rules: %v", err)
+		return false
 	}
+	return true
+}
+
+// MetadataUnenforced reports whether SetupForContainer left open mode's
+// block_metadata_endpoint without its reject (no usable nft, no container IP,
+// or the rules failed), so the grants report does not claim the block.
+func (m *Manager) MetadataUnenforced() bool {
+	return m.config.Mode == config.NetworkModeOpen && config.BoolVal(m.config.BlockMetadataEndpoint) && !m.metadataBlocked
 }
 
 // ruleTextsEqual reports whether rules are, in order, exactly texts.

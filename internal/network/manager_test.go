@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -456,5 +457,76 @@ func TestApplyOpenRules_MetadataBlock(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Open mode's header says whether metadata is blocked; with no usable nft
+// the block is not enforced, and the session log and MetadataUnenforced say so.
+func TestSetupForContainer_OpenMetadataLog(t *testing.T) {
+	on, off := true, false
+	prev := SudoEnabled()
+	SetSudoAllowed(false)
+	t.Cleanup(func() { SetSudoAllowed(prev) })
+	for _, tc := range []struct {
+		name       string
+		block      *bool
+		header     string
+		unenforced bool
+	}{
+		{"blocked", &on, "Network mode: open (only cloud metadata endpoints blocked)", true},
+		{"not blocked", &off, "Network mode: open (no restrictions)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sl := logger.New("open-log", t.TempDir())
+			m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: tc.block, UseSudo: &off}, sl)
+			if err := m.SetupForContainer(t.Context(), "c1"); err != nil {
+				t.Fatal(err)
+			}
+			_ = sl.Close()
+			out, _ := os.ReadFile(sl.OutPath())
+			errOut, _ := os.ReadFile(sl.ErrPath())
+			if !strings.Contains(string(out), tc.header) {
+				t.Errorf("log missing %q; got %q", tc.header, out)
+			}
+			warned := strings.Contains(string(errOut), "block_metadata_endpoint is not enforced in open mode")
+			if warned != tc.unenforced || m.MetadataUnenforced() != tc.unenforced {
+				t.Errorf("warned=%v MetadataUnenforced=%v, want %v; stderr log %q", warned, m.MetadataUnenforced(), tc.unenforced, errOut)
+			}
+		})
+	}
+}
+
+// When the forward chain cannot be listed, open mode falls back to purge then
+// add, and the fallback keeps the metadata reject ahead of the accept.
+func TestApplyOpenRules_FallbackKeepsMetadataBlock(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls.log")
+	script := fmt.Sprintf(`#!/bin/sh
+shift 2
+echo "$*" >> %q
+case "$*" in
+"-f -") cat >> %q ;;
+*"list chain ip coi forward"*) echo "Error: permission denied" >&2; exit 1 ;;
+esac
+exit 0
+`, logPath, logPath)
+	if err := os.WriteFile(filepath.Join(dir, "sudo"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	prev := SudoEnabled()
+	SetSudoAllowed(true)
+	t.Cleanup(func() { SetSudoAllowed(prev) })
+
+	on := true
+	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: &on}, logger.NewDiscard())
+	if !m.applyOpenRules("10.0.0.2") {
+		t.Fatal("fallback reported failure")
+	}
+	calls := readCalls(t, logPath)
+	reject := strings.Index(calls, "ip daddr 169.254.0.0/16 meta l4proto tcp reject")
+	accept := strings.Index(calls, "ip saddr 10.0.0.2 accept")
+	if reject < 0 || accept < reject {
+		t.Errorf("fallback must add the metadata reject before the accept, got:\n%s", calls)
 	}
 }

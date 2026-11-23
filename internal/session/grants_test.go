@@ -11,6 +11,7 @@ import (
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -1046,5 +1047,31 @@ func TestBuildGrants_FallbackWorktreeProtections(t *testing.T) {
 	}
 	if strings.Contains(got, "git internals of") {
 		t.Errorf("fallback still summarizes: %v", g.Protected)
+	}
+}
+
+// fakeMetadataManager is a network manager reporting whether open mode's
+// metadata block was left unenforced.
+type fakeMetadataManager struct {
+	network.NetworkManager
+	unenforced bool
+}
+
+func (f fakeMetadataManager) MetadataUnenforced() bool { return f.unenforced }
+
+// The report claims the open-mode metadata block only when it is enforced.
+func TestBuildGrants_OpenMetadataUnenforced(t *testing.T) {
+	for _, unenforced := range []bool{false, true} {
+		st := &setupState{
+			opts: SetupOptions{Network: NetworkOptions{Config: &config.NetworkConfig{
+				Mode:                  config.NetworkModeOpen,
+				BlockMetadataEndpoint: boolPtr(true),
+			}}},
+			result:      &SetupResult{Manager: &fakeGrantsManager{}, NetworkManager: fakeMetadataManager{unenforced: unenforced}},
+			contextInfo: tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "open"},
+		}
+		if got := buildGrants(st).Network.MetadataBlock; got == unenforced {
+			t.Errorf("unenforced=%v: MetadataBlock = %v", unenforced, got)
+		}
 	}
 }
