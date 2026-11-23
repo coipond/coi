@@ -36,7 +36,7 @@ func AllocateSlotPreferPersisted(workspacePath, sessionName string, maxSlots int
 	for _, c := range instances {
 		if n, ok := slotOf(re, c.Name); ok {
 			used[n] = true
-			if container.StatusIsStopped(c.Status) && c.Key == "true" {
+			if container.StatusIsStopped(c.Status) && c.KeyValue == "true" {
 				kept[n] = true
 			}
 		}

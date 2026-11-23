@@ -1179,8 +1179,9 @@ func parseNamesCSV(output string) []string {
 type ContainerStatus struct {
 	Name   string
 	Status string
-	// Key is the value of the config key ListContainerStatusesKey asked for.
-	Key string
+	// KeyValue is the value of the config key ListContainerStatusesKey asked
+	// for.
+	KeyValue string
 }
 
 // ListContainerStatuses lists container names and statuses, optionally
@@ -1191,7 +1192,7 @@ func ListContainerStatuses(filter string) ([]ContainerStatus, error) {
 }
 
 // ListContainerStatusesKey is ListContainerStatuses that also reads one
-// config key per container (ContainerStatus.Key) in the same listing.
+// config key per container (ContainerStatus.KeyValue) in the same listing.
 func ListContainerStatusesKey(filter, key string) ([]ContainerStatus, error) {
 	args := []string{"list"}
 	if filter != "" {
@@ -1219,8 +1220,8 @@ func parseStatusesCSV(output string) []ContainerStatus {
 			continue
 		}
 		name, rest, _ := strings.Cut(line, ",")
-		status, key, _ := strings.Cut(rest, ",")
-		out = append(out, ContainerStatus{Name: name, Status: status, Key: key})
+		status, value, _ := strings.Cut(rest, ",")
+		out = append(out, ContainerStatus{Name: name, Status: status, KeyValue: value})
 	}
 	return out
 }

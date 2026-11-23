@@ -90,19 +90,18 @@ func persistCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Every tool's sessions directory: the container may have been started
-	// with another tool's profile.
 	toolInstance, err := getConfiguredTool(app.cfg)
 	if err != nil {
 		return err
 	}
 
-	// Get sessions directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 	baseDir := filepath.Join(homeDir, ".coi")
+	// Every tool's sessions directory: the container may have been started
+	// with another tool's profile.
 	sessionsDirs := allSessionsDirs(baseDir, toolInstance)
 
 	// Persist each container

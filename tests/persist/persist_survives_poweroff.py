@@ -13,13 +13,11 @@ import os
 import subprocess
 import time
 
-from pexpect import EOF, TIMEOUT
-
 from support.helpers import (
     calculate_container_name,
-    child_output,
     exec_in,
     incus_status,
+    poweroff_session,
     spawn_coi,
     start_background_shell,
     wait_for_container_ready,
@@ -71,18 +69,7 @@ def test_persist_survives_poweroff_and_next_shell(coi_binary, cleanup_containers
             in_bash = wait_for_text_in_monitor(monitor, "66666", timeout=5)
         assert in_bash, "should be in bash after exiting the dummy"
 
-    child.send("sudo poweroff")
-    time.sleep(0.3)
-    child.send("\x0d")
-    try:
-        child.expect(EOF, timeout=120)
-    except TIMEOUT:
-        pass
-    output = child_output(child)
-    try:
-        child.close(force=False)
-    except Exception:
-        child.close(force=True)
+    output = poweroff_session(child, timeout=120)
 
     assert "Container was stopped, removing" not in output, (
         f"persisted container removed:\n{output}"

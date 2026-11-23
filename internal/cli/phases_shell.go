@@ -494,11 +494,6 @@ func (a *App) chooseShellSlot(workspace string, resumeSlot int) (int, error) {
 		a.inheritPersistedContainer(session.ContainerName(workspace, a.sessionName(), resumeSlot))
 		return resumeSlot, nil
 	case slotNum == 0:
-		// Persistent mode: prefer restarting the identity's stopped
-		// container over allocating a fresh slot — for a NAMED
-		// persistent session this is the core promise (auto-allocation
-		// would otherwise fork it on every plain `coi shell`), and it
-		// mirrors what the run pipeline has done since #610.
 		return a.autoAllocateSlot(workspace, "Reusing stopped persistent container on slot %d\n")
 	}
 	available, err := session.IsSlotAvailable(workspace, a.sessionName(), slotNum)
@@ -523,6 +518,10 @@ func (a *App) chooseShellSlot(workspace string, resumeSlot int) (int, error) {
 // allocateSlot, whose stopped container marked persistent makes the launch
 // persistent.
 func (a *App) autoAllocateSlot(workspace, reuseFormat string) (int, error) {
+	// Persistent mode: prefer restarting the identity's stopped container
+	// over allocating a fresh slot — plain AllocateSlot treats it as
+	// occupying its slot, so a NAMED persistent session would fork on every
+	// plain launch (state never persists, slots exhaust).
 	if a.persistent {
 		if reuse, ok := session.FindReusablePersistentSlot(workspace, a.sessionName(), session.MaxSlots); ok {
 			fmt.Fprintf(os.Stderr, reuseFormat, reuse)
@@ -563,7 +562,7 @@ func (a *App) inheritPersistedContainer(containerName string) {
 		return
 	}
 	a.persistent = true
-	fmt.Fprintf(os.Stderr, "Container %s is marked persistent: persistent mode\n", containerName)
+	fmt.Fprintf(os.Stderr, "Inherited persistent mode from container %s\n", containerName)
 }
 
 // resumePersistence decides a resumed session's persistence: an explicitly

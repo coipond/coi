@@ -15,6 +15,7 @@ from pathlib import Path
 
 from support.helpers import (
     container_config_get,
+    session_for_container,
     start_background_shell,
     write_profile,
 )
@@ -22,11 +23,11 @@ from support.helpers import (
 
 def _codex_metadata(container_name):
     """Return the saved codex session metadata naming the container."""
-    for path in (Path.home() / ".coi" / "sessions-codex").glob("*/metadata.json"):
-        data = json.loads(path.read_text())
-        if data.get("container_name") == container_name:
-            return data
-    return None
+    sessions_dir = Path.home() / ".coi" / "sessions-codex"
+    session_id = session_for_container(sessions_dir, container_name)
+    if session_id is None:
+        return None
+    return json.loads((sessions_dir / session_id / "metadata.json").read_text())
 
 
 def test_persist_finds_other_tool_metadata(coi_binary, cleanup_containers, workspace_dir):

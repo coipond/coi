@@ -88,10 +88,6 @@ func (a *App) chooseRunSlot(workspace string) (int, error) {
 		a.inheritPersistedContainer(session.ContainerName(workspace, a.sessionName(), a.slot))
 		return a.slot, nil
 	}
-	// Persistent mode: prefer the stopped container from a previous run —
-	// plain AllocateSlot treats it as occupying its slot and would silently
-	// launch a FRESH container on the next slot (state never persists, slots
-	// exhaust).
 	return a.autoAllocateSlot(workspace, "Reusing persistent container on slot %d\n")
 }
 

@@ -29,8 +29,8 @@ func TestAllocateSlotPreferPersisted(t *testing.T) {
 			t.Cleanup(func() { listSlotInstances = orig })
 			listSlotInstances = func() ([]container.ContainerStatus, error) {
 				return []container.ContainerStatus{
-					{Name: ContainerName(workspace, "", 1), Status: "STOPPED", Key: "false"},
-					{Name: ContainerName(workspace, "", 2), Status: tt.status2, Key: "true"},
+					{Name: ContainerName(workspace, "", 1), Status: "STOPPED", KeyValue: "false"},
+					{Name: ContainerName(workspace, "", 2), Status: tt.status2, KeyValue: "true"},
 					{Name: ContainerName(workspace, "", 3), Status: "RUNNING"},
 				}, nil
 			}
@@ -42,7 +42,6 @@ func TestAllocateSlotPreferPersisted(t *testing.T) {
 			if got != tt.want || persisted != tt.wantPersisted {
 				t.Errorf("AllocateSlotPreferPersisted() = %d, %v; want %d, %v", got, persisted, tt.want, tt.wantPersisted)
 			}
-			// The key comes from the listing: no incus call per container.
 			if calls, _ := os.ReadFile(logPath); len(calls) != 0 {
 				t.Errorf("want no incus calls besides the listing, got:\n%s", calls)
 			}

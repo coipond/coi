@@ -102,7 +102,7 @@ func TestParseStatusesCSV(t *testing.T) {
 			{Name: "c1", Status: "RUNNING"}, {Name: "c2", Status: "FROZEN"},
 		},
 		"bad\n":             {{Name: "bad"}},
-		"c1,STOPPED,true\n": {{Name: "c1", Status: "STOPPED", Key: "true"}},
+		"c1,STOPPED,true\n": {{Name: "c1", Status: "STOPPED", KeyValue: "true"}},
 		"c1,RUNNING,\n":     {{Name: "c1", Status: "RUNNING"}},
 	} {
 		if got := parseStatusesCSV(in); !reflect.DeepEqual(got, want) {
@@ -128,7 +128,7 @@ func TestListContainerStatusesKey(t *testing.T) {
 	logPath := fakeListIncus(t, "c1,STOPPED,true\nc2,RUNNING,\n")
 
 	got, err := ListContainerStatusesKey("", "user.coi.persistent")
-	want := []ContainerStatus{{Name: "c1", Status: "STOPPED", Key: "true"}, {Name: "c2", Status: "RUNNING"}}
+	want := []ContainerStatus{{Name: "c1", Status: "STOPPED", KeyValue: "true"}, {Name: "c2", Status: "RUNNING"}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("statuses = %v, %v", got, err)
 	}
