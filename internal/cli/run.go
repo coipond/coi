@@ -820,11 +820,23 @@ func (a *App) applyForwardSockets(mgr container.ContainerManager, socketConfig *
 }
 
 // applyNetworkIsolation installs firewall rules for the container when
-// network.mode is set to something other than "open" in config.
+// network.mode is set to something other than "open" in config, or in open
+// mode under block_metadata_endpoint (the metadata reject).
 // Returns the Manager so the caller can Teardown before container deletion.
 func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (*network.Manager, error) {
 	networkConfig := a.cfg.Network
-	if networkConfig.Mode == "" || networkConfig.Mode == config.NetworkModeOpen {
+	open := networkConfig.Mode == "" || networkConfig.Mode == config.NetworkModeOpen
+	if open && config.BoolVal(networkConfig.BlockMetadataEndpoint) {
+		// SetupForContainer's open mode: metadata reject, accept and
+		// [[network.hosts]], as coi shell.
+		networkConfig.Mode = config.NetworkModeOpen
+		nm := network.NewManager(&networkConfig, logger.NewDiscard())
+		if err := nm.SetupForContainer(ctx, containerName); err != nil {
+			return nil, fmt.Errorf("failed to setup network isolation: %w", err)
+		}
+		return nm, nil
+	}
+	if open {
 		// Open mode installs no isolation rules, but static [[network.hosts]]
 		// entries still apply — resolution only, since nothing is blocked. (The
 		// coi shell path calls SetupForContainer for every mode, so it already

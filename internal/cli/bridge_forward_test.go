@@ -90,3 +90,54 @@ func TestIsolateStartedContainer_ContainerBridge(t *testing.T) {
 	_ = restrictedApp().isolateStartedContainer(cmd, "coi-br-4")
 	assertBridgeRules(t, sudoLog, "coinetstart")
 }
+
+// coi run in open mode installs the metadata reject under
+// block_metadata_endpoint and returns the manager for teardown; without it
+// nothing is installed.
+func TestApplyNetworkIsolation_OpenMetadataBlock(t *testing.T) {
+	for _, block := range []bool{true, false} {
+		t.Run(fmt.Sprintf("block=%v", block), func(t *testing.T) {
+			dir := t.TempDir()
+			sudoLog := filepath.Join(dir, "sudo.log")
+			scripts := map[string]string{
+				"incus": `#!/bin/sh
+case "$*" in
+  *"query /1.0/instances/coi-open-run?"*) echo '{"name":"coi-open-run","state":{"network":{"eth0":{"host_name":"vethx","addresses":[{"family":"inet","address":"10.99.0.7"}]}}}}' ;;
+esac
+exit 0
+`,
+				"sudo": fmt.Sprintf(`#!/bin/sh
+shift
+echo "$*" >> %[1]q
+case "$*" in
+  "nft -f -") cat >> %[1]q ;;
+esac
+exit 0
+`, sudoLog),
+			}
+			for name, script := range scripts {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("HOME", t.TempDir())
+			prev := network.SudoEnabled()
+			network.SetSudoAllowed(true)
+			t.Cleanup(func() { network.SetSudoAllowed(prev) })
+
+			cfg := config.GetDefaultConfig()
+			cfg.Network.Mode = config.NetworkModeOpen
+			cfg.Network.BlockMetadataEndpoint = &block
+			nm, err := (&App{cfg: cfg}).applyNetworkIsolation(t.Context(), "coi-open-run")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, _ := os.ReadFile(sudoLog)
+			reject := strings.Contains(string(data), "ip saddr 10.99.0.7 ip daddr 169.254.0.0/16")
+			if reject != block || (nm != nil) != block {
+				t.Errorf("metadata reject = %v, manager = %v, want %v; sudo calls:\n%s", reject, nm != nil, block, data)
+			}
+		})
+	}
+}

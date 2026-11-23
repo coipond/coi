@@ -530,3 +530,53 @@ exit 0
 		t.Errorf("fallback must add the metadata reject before the accept, got:\n%s", calls)
 	}
 }
+
+// When open mode's nft rules fail, the metadata block is not enforced:
+// MetadataUnenforced is true and the session log warns.
+func TestSetupForContainer_OpenMetadataRulesFail(t *testing.T) {
+	dir := t.TempDir()
+	scripts := map[string]string{
+		"sudo": `#!/bin/sh
+shift 2
+case "$*" in
+"list tables") exit 0 ;;
+"-f -") cat >/dev/null; exit 1 ;;
+*"list chain"*) echo "Error: permission denied" >&2; exit 1 ;;
+esac
+exit 0
+`,
+		"incus": `#!/bin/sh
+case "$*" in
+*"query /1.0/instances/coi-rules-fail?"*) echo '{"name":"coi-rules-fail","state":{"network":{"eth0":{"host_name":"vethx","addresses":[{"family":"inet","address":"10.0.0.9"}]}}}}' ;;
+esac
+exit 0
+`,
+	}
+	for name, script := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	prev := SudoEnabled()
+	SetSudoAllowed(true)
+	t.Cleanup(func() { SetSudoAllowed(prev) })
+
+	on := true
+	sl := logger.New("open-fail-log", t.TempDir())
+	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: &on}, sl)
+	if err := m.SetupForContainer(t.Context(), "coi-rules-fail"); err != nil {
+		t.Fatal(err)
+	}
+	_ = sl.Close()
+	errOut, _ := os.ReadFile(sl.ErrPath())
+	if m.containerIP != "10.0.0.9" {
+		t.Fatalf("container IP = %q: the fake incus was not used", m.containerIP)
+	}
+	if !m.MetadataUnenforced() {
+		t.Error("MetadataUnenforced = false, want true when the rules failed")
+	}
+	if !strings.Contains(string(errOut), "block_metadata_endpoint is not enforced in open mode") {
+		t.Errorf("stderr log missing the warning: %q", errOut)
+	}
+}
