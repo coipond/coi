@@ -320,3 +320,13 @@ func TestKernelSurfaceStrictViolation(t *testing.T) {
 		t.Error("strict policy must flag a base-only deny list as missing perf_event_open")
 	}
 }
+
+// passwordless_sudo = false wins over Docker: the docker socket is root.
+func TestHardeningPolicy_NoSudoDisablesDocker(t *testing.T) {
+	if (HardeningPolicy{Docker: true, NoSudo: true}).DockerEnabled() {
+		t.Error("NoSudo must turn Docker off")
+	}
+	if !(HardeningPolicy{Docker: true}).DockerEnabled() {
+		t.Error("Docker stays on with sudo")
+	}
+}

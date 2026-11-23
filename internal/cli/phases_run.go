@@ -801,20 +801,7 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 				Git: session.GitOptions{
 					ProtectedBranches: a.cfg.Git.EffectiveProtectedBranches(),
 				},
-				Security: session.SecurityOptions{
-					// The kernel-surface flags feed injectSandboxContext's Docker
-					// availability line; omitting them here (zero value = docker
-					// off) would make every headless run's context claim Docker is
-					// unavailable while the container actually has it (the launch
-					// phase applies the real policy). Mirrors phases_shell.go.
-					// The strict tier is intentionally not threaded here: this seed
-					// path only drives the Docker-availability line, which depends
-					// solely on DockerEnabled() — and ReduceKernelSurface already
-					// reflects the strict tier (it implies the base flag).
-					Docker:              a.cfg.Container.IsDockerEnabled(),
-					ReduceKernelSurface: a.cfg.Security.IsReduceKernelSurfaceEnabled(),
-					DisableSudo:         !a.cfg.Security.IsPasswordlessSudoEnabled(),
-				},
+				Security: a.seedSecurityOptions(),
 			}
 			if err := session.SeedToolConfigForRun(ctx, seedResult, seedOpts); err != nil {
 				return nil, err
@@ -908,4 +895,24 @@ func buildPromptRunScript(t tool.Tool, sessionID, promptPath string) (string, er
 			"tool %q cannot run a prompt headlessly via coi run", t.Name())}
 	}
 	return guardToolInstalled(t.Name(), strings.Join(argv, " ")), nil
+}
+
+// seedSecurityOptions are the security facts SeedToolConfigForRun writes into
+// the headless run's sandbox context.
+func (a *App) seedSecurityOptions() session.SecurityOptions {
+	return session.SecurityOptions{
+		// The kernel-surface flags feed injectSandboxContext's Docker
+		// availability line; omitting them here (zero value = docker
+		// off) would make every headless run's context claim Docker is
+		// unavailable while the container actually has it (the launch
+		// phase applies the real policy). Mirrors phases_shell.go.
+		// The strict tier is intentionally not threaded here: this seed
+		// path only drives the Docker-availability line, which depends
+		// solely on DockerEnabled() — and ReduceKernelSurface already
+		// reflects the strict tier (it implies the base flag). DisableSudo
+		// drives the sudo lines (and also turns Docker off).
+		Docker:              a.cfg.Container.IsDockerEnabled(),
+		ReduceKernelSurface: a.cfg.Security.IsReduceKernelSurfaceEnabled(),
+		DisableSudo:         !a.cfg.Security.IsPasswordlessSudoEnabled(),
+	}
 }

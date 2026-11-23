@@ -181,36 +181,7 @@ func Setup(ctx context.Context, opts SetupOptions) (*SetupResult, error) {
 	st := &setupState{opts: opts, result: &SetupResult{nestedGitScan: startSetupNestedGitScan(opts)}}
 
 	pipe := &Pipeline{}
-	if err := pipe.Run(ctx,
-		phase("resolve-name", st.phaseResolveName),
-		phase("validate-bedrock", st.phaseValidateBedrock),
-		phase("ensure-bridge", st.phaseEnsureBridge),
-		phase("resolve-image", st.phaseResolveImage),
-		phase("reconcile-existing", st.phaseReconcileExisting),
-		phase("filter-trusted", st.phaseFilterTrusted),
-		phase("preflight-ports", st.phasePreflightPorts),
-		phase("create-container", st.phaseCreateContainer),
-		phase("container-up", st.phaseContainerUp),
-		phase("wait-ready", st.phaseWaitReady),
-		phase("configure-docker-bridge", st.phaseConfigureDockerBridge),
-		phase("size-tmpfs", st.phaseSizeTmpfs),
-		phase("detect-user", st.phaseDetectUser),
-		phase("remap-uid", st.phaseRemapUID),
-		phase("sudo-policy", st.phaseSudoPolicy),
-		phase("forward-sockets", st.phaseForwardSockets),
-		phase("publish-ports", st.phasePublishPorts),
-		phase("configure-git", st.phaseConfigureGit),
-		phase("claude-settings", st.phaseClaudeSettings),
-		phase("configure-timezone", st.phaseConfigureTimezone),
-		phase("start-timeout-monitor", st.phaseStartTimeoutMonitor),
-		phase("setup-network", st.phaseSetupNetwork),
-		phase("resume-restore", st.phaseResumeRestore),
-		phase("mounts-context-path", st.phaseMountsAndContextPath),
-		phase("setup-cli-config", st.phaseSetupCLIConfig),
-		phase("apply-tool-env", st.phaseApplyToolEnv),
-		phase("setup-credentials", st.phaseSetupCredentials),
-		phase("inject-context", st.phaseInjectContext),
-	); err != nil {
+	if err := pipe.Run(ctx, st.phases()...); err != nil {
 		// Pipeline.Run annotates a failing phase's error as "<phase>: %w". Setup's
 		// phases already return user-facing, actionable messages (e.g. "image 'X'
 		// not found - run 'coi build' first"), so strip that one layer of phase
@@ -1089,4 +1060,38 @@ func configureGitIdentity(ctx context.Context, result *SetupResult, opts SetupOp
 	// keys) when the identity isn't locked.
 	ApplyGitIdentityContainerEnv(ctx, result.ContainerName, opts.Git.Identity, identityLock, opts.Logger)
 	return nil
+}
+
+// phases lists Setup's pipeline in order.
+func (st *setupState) phases() []Phase {
+	return []Phase{
+		phase("resolve-name", st.phaseResolveName),
+		phase("validate-bedrock", st.phaseValidateBedrock),
+		phase("ensure-bridge", st.phaseEnsureBridge),
+		phase("resolve-image", st.phaseResolveImage),
+		phase("reconcile-existing", st.phaseReconcileExisting),
+		phase("filter-trusted", st.phaseFilterTrusted),
+		phase("preflight-ports", st.phasePreflightPorts),
+		phase("create-container", st.phaseCreateContainer),
+		phase("container-up", st.phaseContainerUp),
+		phase("wait-ready", st.phaseWaitReady),
+		phase("configure-docker-bridge", st.phaseConfigureDockerBridge),
+		phase("size-tmpfs", st.phaseSizeTmpfs),
+		phase("detect-user", st.phaseDetectUser),
+		phase("remap-uid", st.phaseRemapUID),
+		phase("sudo-policy", st.phaseSudoPolicy),
+		phase("forward-sockets", st.phaseForwardSockets),
+		phase("publish-ports", st.phasePublishPorts),
+		phase("configure-git", st.phaseConfigureGit),
+		phase("claude-settings", st.phaseClaudeSettings),
+		phase("configure-timezone", st.phaseConfigureTimezone),
+		phase("start-timeout-monitor", st.phaseStartTimeoutMonitor),
+		phase("setup-network", st.phaseSetupNetwork),
+		phase("resume-restore", st.phaseResumeRestore),
+		phase("mounts-context-path", st.phaseMountsAndContextPath),
+		phase("setup-cli-config", st.phaseSetupCLIConfig),
+		phase("apply-tool-env", st.phaseApplyToolEnv),
+		phase("setup-credentials", st.phaseSetupCredentials),
+		phase("inject-context", st.phaseInjectContext),
+	}
 }

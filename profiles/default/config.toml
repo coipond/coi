@@ -105,8 +105,9 @@ host_immutable = true
 # reduce_kernel_surface_strict = false
 # passwordless_sudo: keep the image's NOPASSWD sudo rule for the code user.
 # false runs the session without any sudo: the agent cannot become root or
-# install system packages, so packages come from the image or the profile's
-# build scripts. Disabled by the built-in "hardened" profile. Trusted scope only.
+# install system packages, so packages come from the image ([container.build]
+# script or commands). Also turns Docker off (the docker socket gives root).
+# Disabled by the built-in "hardened" profile. Trusted scope only.
 # passwordless_sudo = true
 
 [limits.cpu]

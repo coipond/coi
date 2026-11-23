@@ -16,13 +16,15 @@ func codeSudoersPath() string { return "/etc/sudoers.d/" + container.CodeUser }
 // there and a later session with sudo on can move it back.
 func codeSudoersDisabledPath() string { return codeSudoersPath() + ".coi-disabled" }
 
-// disableSudoCmd takes sudo away from the code user: it parks the NOPASSWD
-// rule, drops the user from the sudo group, then fails unless `sudo -n true`
-// as the code user is refused, so a sudo grant from anywhere else (a custom
-// image, /etc/sudoers itself) stops the session instead of passing silently.
+// disableSudoCmd takes sudo away from the code user: it fails when there is
+// no code user (the session would run as root), parks the NOPASSWD rule,
+// drops the user from the sudo group, then fails unless `sudo -n true` as the
+// code user is refused, so a sudo grant from anywhere else (a custom image,
+// /etc/sudoers itself) stops the session instead of passing silently.
 func disableSudoCmd() string {
 	return fmt.Sprintf(
-		`{ [ ! -e %[1]s ] || mv -f %[1]s %[2]s; } && `+
+		`id -u %[3]s >/dev/null && `+
+			`{ [ ! -e %[1]s ] || mv -f %[1]s %[2]s; } && `+
 			`{ ! id -nG %[3]s 2>/dev/null | grep -qw sudo || gpasswd -d %[3]s sudo >/dev/null; } && `+
 			`! runuser -u %[3]s -- sudo -n true >/dev/null 2>&1`,
 		shellEscape(codeSudoersPath()), shellEscape(codeSudoersDisabledPath()), shellEscape(container.CodeUser))
@@ -53,7 +55,7 @@ func reportSudoRestore(out string, logger func(string)) {
 // still have sudo, and the session must not start.
 func DisableSudo(mgr container.ContainerManager, logger func(string)) error {
 	if _, err := mgr.ExecCommand(disableSudoCmd(), container.ExecCommandOptions{Capture: true}); err != nil {
-		return fmt.Errorf("security.passwordless_sudo = false: could not remove sudo from the %s user: %w", container.CodeUser, err)
+		return fmt.Errorf("security.passwordless_sudo = false: could not remove sudo from the %s user (or the image has no such user): %w", container.CodeUser, err)
 	}
 	logger(fmt.Sprintf("Sudo disabled for the %s user", container.CodeUser))
 	return nil

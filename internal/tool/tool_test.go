@@ -738,7 +738,7 @@ func TestRenderContextFileContent_DockerUnavailable(t *testing.T) {
 func TestRenderContextFileContent_SudoUnavailable(t *testing.T) {
 	info := ContextInfo{WorkspacePath: "/workspace", HomeDir: "/home/code", NetworkMode: "restricted", SudoUnavailable: true}
 	content := RenderContextFileContent(info)
-	for _, banned := range []string{"passwordless sudo", "sudo apt-get", "sudo chown"} {
+	for _, banned := range []string{"passwordless sudo", "sudo apt-get", "sudo chown", "sudo systemctl"} {
 		if strings.Contains(content, banned) {
 			t.Errorf("no-sudo context must not mention %q", banned)
 		}

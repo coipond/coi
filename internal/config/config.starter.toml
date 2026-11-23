@@ -187,8 +187,8 @@
 #                                   #   kernel profiling (perf, JVM async-profiler) — degrades gracefully,
 #                                   #   but stops working. Trusted scope only.
 # passwordless_sudo = true          # false: no sudo for the code user (no root, no apt in the
-#                                   #   session; packages come from the image or the profile's
-#                                   #   build scripts). Trusted scope only; off in "hardened"
+#                                   #   session; packages come from the image) and no Docker
+#                                   #   (its socket gives root). Trusted scope only; off in "hardened"
 
 [limits.cpu]
 # count = ""                     # "2", "0-3", "0,1,3" ("" = unlimited)

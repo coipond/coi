@@ -29,6 +29,10 @@ type HardeningPolicy struct {
 	// opt-in rather than part of the default hardened list. Implies (and does
 	// not require separately setting) ReduceKernelSurface.
 	ReduceKernelSurfaceStrict bool
+	// NoSudo is [security] passwordless_sudo = false. It also wins over
+	// Docker: the image gives the code user's group the docker socket, and
+	// the socket is root (`docker run -v /:/host`).
+	NoSudo bool
 }
 
 // reducesKernelSurface reports whether either hardening tier is active. The
@@ -42,8 +46,11 @@ func (p HardeningPolicy) reducesKernelSurface() bool {
 func DefaultHardeningPolicy() HardeningPolicy { return HardeningPolicy{Docker: true} }
 
 // DockerEnabled resolves the docker/hardening conflict: either kernel-surface
-// tier wins over Docker (nesting is part of the surface being reduced).
-func (p HardeningPolicy) DockerEnabled() bool { return p.Docker && !p.reducesKernelSurface() }
+// tier wins over Docker (nesting is part of the surface being reduced), and so
+// does NoSudo (the docker socket would hand root back).
+func (p HardeningPolicy) DockerEnabled() bool {
+	return p.Docker && !p.reducesKernelSurface() && !p.NoSudo
+}
 
 // KernelSurfaceDenySyscalls is the space-separated list of syscall NAMES denied
 // by ReduceKernelSurface: io_uring, bpf, userfaultfd, and the kernel keyring —

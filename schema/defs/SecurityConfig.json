@@ -41,7 +41,7 @@
     },
     "passwordless_sudo": {
       "type": "boolean",
-      "description": "Keep the image's NOPASSWD sudo rule for the code user. false runs the session without any sudo: the rule is disabled and the code user leaves the sudo group at session start, so the agent cannot become root or install system packages (they come from the image or the profile's build scripts). Default: true. Trusted scope only. Disabled by the built-in 'hardened' profile."
+      "description": "Keep the image's NOPASSWD sudo rule for the code user. false runs the session without any sudo: the rule is disabled and the code user leaves the sudo group at session start, so the agent cannot become root or install system packages (they come from the image: [container.build] script or commands). Also turns Docker off (wins over [container] docker), since the docker socket gives root. A session that would run as root fails to start. Default: true. Trusted scope only. Disabled by the built-in 'hardened' profile."
     }
   }
 }

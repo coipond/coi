@@ -20,7 +20,7 @@ You are in a **Coi (Code on Incus)** disposable sandbox built for AI coding tool
 - **Network**: {{.NetworkDesc}}
 - **SSH agent**: {{.SSHDesc}}
 - **GitHub CLI**: {{.GitHubCLIDesc}}
-- **Docker**: {{.DockerDesc}}{{if .DockerAvailable}} — if not responding: `sudo systemctl start docker`{{end}}
+- **Docker**: {{.DockerDesc}}{{if and .DockerAvailable .SudoAvailable}} — if not responding: `sudo systemctl start docker`{{end}}
 {{- if .HasForwardedEnvVars}}
 - **Forwarded Environment Variables**: `{{.ForwardedEnvVars}}`
 {{- end}}

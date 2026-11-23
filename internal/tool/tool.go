@@ -730,7 +730,7 @@ func RenderContextFileContent(info ContextInfo) string {
 		SudoAvailable:   !info.SudoUnavailable,
 	}
 	if info.DockerUnavailable {
-		data.DockerDesc = "Not available (kernel-surface hardening disabled Docker/nesting for this session)"
+		data.DockerDesc = "Not available (Docker/nesting is disabled for this session)"
 	}
 
 	if info.Persistent {

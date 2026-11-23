@@ -61,6 +61,7 @@ func (a *App) hardeningPolicy() container.HardeningPolicy {
 		Docker:                    a.cfg.Container.IsDockerEnabled(),
 		ReduceKernelSurface:       a.cfg.Security.IsReduceKernelSurfaceEnabled(),
 		ReduceKernelSurfaceStrict: a.cfg.Security.IsReduceKernelSurfaceStrictEnabled(),
+		NoSudo:                    !a.cfg.Security.IsPasswordlessSudoEnabled(),
 	}
 }
 
@@ -69,19 +70,25 @@ func (a *App) hardeningPolicy() container.HardeningPolicy {
 // of the surface being reduced). The message names whichever flag the user
 // actually set — reduce_kernel_surface_strict implies the base tier, so when
 // only the strict flag is on, pointing at reduce_kernel_surface would name a
-// setting absent from their config.
+// setting absent from their config. [security] passwordless_sudo = false
+// overrides it too (the docker socket is root).
 func warnDockerHardeningConflict(cfg *config.Config) {
-	if cfg == nil || !cfg.Security.IsReduceKernelSurfaceEnabled() {
+	if cfg == nil || cfg.Container.Docker == nil || !*cfg.Container.Docker {
 		return
 	}
-	if cfg.Container.Docker != nil && *cfg.Container.Docker {
-		flag := "reduce_kernel_surface"
-		if !cfg.Security.IsReduceKernelSurfaceBaseEnabled() {
-			flag = "reduce_kernel_surface_strict"
-		}
-		fmt.Fprintf(os.Stderr,
-			"Warning: [security] %s = true disables Docker support; ignoring [container] docker = true\n", flag)
+	setting := ""
+	switch {
+	case cfg.Security.IsReduceKernelSurfaceBaseEnabled():
+		setting = "reduce_kernel_surface = true"
+	case cfg.Security.IsReduceKernelSurfaceEnabled():
+		setting = "reduce_kernel_surface_strict = true"
+	case !cfg.Security.IsPasswordlessSudoEnabled():
+		setting = "passwordless_sudo = false"
+	default:
+		return
 	}
+	fmt.Fprintf(os.Stderr,
+		"Warning: [security] %s disables Docker support; ignoring [container] docker = true\n", setting)
 }
 
 // applyDefaultProfileForOps applies the [defaults] profile fallback for

@@ -428,8 +428,11 @@ type SecurityConfig struct {
 	// PasswordlessSudo keeps the image's NOPASSWD sudo rule for the code user.
 	// Set to false to run the session without any sudo: the rule is disabled
 	// and the code user leaves the sudo group at session start, so the agent
-	// cannot become root or install system packages. Packages it needs then
-	// come from the image or the profile's build scripts. Default: true (the
+	// cannot become root or install system packages. It also turns Docker off
+	// (overriding [container] docker): the docker socket would give root back.
+	// Packages the agent needs then come from the image ([container.build]
+	// script or commands). The session fails to start when it would run as
+	// root (an image without the code user). Default: true (the
 	// built-in hardened profile sets false). Trusted scope only: stripped from
 	// untrusted repo configs in both directions.
 	PasswordlessSudo *bool `toml:"passwordless_sudo"`

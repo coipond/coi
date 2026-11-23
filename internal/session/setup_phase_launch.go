@@ -58,6 +58,9 @@ func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) 
 // session turned it off).
 func (st *setupState) phaseSudoPolicy(_ context.Context) (Teardown, error) {
 	if st.opts.Security.DisableSudo {
+		if st.result.RunAsRoot {
+			return nil, fmt.Errorf("security.passwordless_sudo = false: the session would run as root (no %s user in the image)", container.CodeUser)
+		}
 		return nil, DisableSudo(st.result.Manager, st.opts.Logger)
 	}
 	if st.skipLaunch {
