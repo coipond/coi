@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -162,6 +163,40 @@ def fake_lan(subnet, hosts=(20, 21), ports=(443, 8080)):
             listener.wait(timeout=10)
         sh("ip", "netns", "del", ns, check=False)
         sh("ip", "link", "del", host_if, check=False)
+
+
+@contextlib.contextmanager
+def host_ssh_agent(key_comment):
+    """Run a throwaway ssh-agent holding a fresh ed25519 key (comment
+    `key_comment`) and yield its socket path. The socket lives in a short /tmp
+    dir: AF_UNIX paths are capped at ~108 bytes."""
+    agent_dir = tempfile.mkdtemp(prefix="coiagent")
+    sock = os.path.join(agent_dir, "agent.sock")
+    key = os.path.join(agent_dir, "id_ed25519")
+    agent = None
+    try:
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", key_comment, "-f", key],
+            check=True,
+            timeout=30,
+        )
+        agent = subprocess.Popen(["ssh-agent", "-D", "-a", sock], stdout=subprocess.DEVNULL)
+        deadline = time.time() + 10
+        while not os.path.exists(sock):
+            assert time.time() < deadline, "ssh-agent did not create its socket"
+            time.sleep(0.1)
+        subprocess.run(
+            ["ssh-add", "-q", key],
+            check=True,
+            timeout=30,
+            env={**os.environ, "SSH_AUTH_SOCK": sock},
+        )
+        yield sock
+    finally:
+        if agent is not None:
+            agent.terminate()
+            agent.wait(timeout=10)
+        shutil.rmtree(agent_dir, ignore_errors=True)
 
 
 def write_workspace_container_config(workspace_dir, persistent=None, image=None, alias=None):
@@ -1841,15 +1876,15 @@ def run_and_show_config(coi_binary, workspace_dir, env=None, extra_args=(), time
     return result.stdout
 
 
-def run_coi_in_workspace(coi_binary, workspace_dir, argv, env=None, timeout=120):
-    """Run `coi run -- <argv>` from workspace_dir, capturing output.
+def run_coi_in_workspace(coi_binary, workspace_dir, argv, env=None, timeout=120, slot=None):
+    """Run `coi run [--slot N] -- <argv>` from workspace_dir, capturing output.
 
     Shared by the protection test family (tests/mount, tests/git_hooks), which
     previously each carried an identical private copy (hoisted per the same
     convention as the storage-pool helpers, see the #684 CHANGELOG entry).
     """
     return subprocess.run(
-        [coi_binary, "run", "--", *argv],
+        [coi_binary, "run", *(["--slot", str(slot)] if slot else []), "--", *argv],
         capture_output=True,
         text=True,
         timeout=timeout,

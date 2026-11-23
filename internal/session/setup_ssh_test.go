@@ -19,6 +19,11 @@ type fakeForwarder struct {
 	removed      []string
 	presentAfter int // number of AddProxyDevice calls before a socket "appears"
 	addCalls     int
+	devices      []string // what ListDevices returns
+	listErr      error
+	listCalls    int
+	addsAtList   int // AddProxyDevice calls made before the last ListDevices
+	addErr       error
 }
 
 type addedDevice struct {
@@ -31,6 +36,9 @@ func (f *fakeForwarder) SetTmpfsSize(_ string) error               { return nil 
 
 func (f *fakeForwarder) AddProxyDevice(name, connect, listen string, uid, gid int) error {
 	f.addCalls++
+	if f.addErr != nil {
+		return f.addErr
+	}
 	f.added = append(f.added, addedDevice{name, connect, listen, uid, gid})
 	return nil
 }
@@ -44,7 +52,11 @@ func (f *fakeForwarder) RemoveDevice(name string) error {
 	return nil
 }
 
-func (f *fakeForwarder) ListDevices() ([]string, error) { return nil, nil }
+func (f *fakeForwarder) ListDevices() ([]string, error) {
+	f.listCalls++
+	f.addsAtList = f.addCalls
+	return f.devices, f.listErr
+}
 
 func (f *fakeForwarder) Exec(_ ...string) error                                    { return nil }
 func (f *fakeForwarder) ExecArgs(_ []string, _ container.ExecCommandOptions) error { return nil }
@@ -221,5 +233,145 @@ func TestForwardSocket_ReplacesChangedDevice(t *testing.T) {
 	}
 	if len(f.removed) != 1 || f.addCalls != 1 || f.added[0].connect != "unix:"+host {
 		t.Errorf("changed device must be replaced: removed=%v added=%+v", f.removed, f.added)
+	}
+}
+
+// A reused container keeps the socket devices of earlier sessions: with
+// forward_agent off and no [[sockets]], the SSH agent's and every socket-<n>
+// device go, and nothing else is touched.
+func TestForwardConfiguredSockets_RemovesStaleDevicesWhenNothingForwarded(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", newTestSocket(t, "agent.sock"))
+	f := &fakeForwarder{devices: []string{"workspace", "ssh-agent", "socket-0", "socket-12", "socket-x", "coi-port-web", "mount-0"}}
+	env, forwarded := forwardConfiguredSockets(f, nil, false, true, func(string) {})
+	if len(env) != 0 || len(forwarded) != 0 || f.addCalls != 0 {
+		t.Fatalf("nothing should be forwarded: env=%v forwarded=%v adds=%d", env, forwarded, f.addCalls)
+	}
+	if got := strings.Join(f.removed, ","); got != "socket-0,socket-12,ssh-agent" {
+		t.Errorf("removed = %q, want socket-0,socket-12,ssh-agent", got)
+	}
+}
+
+// Devices this session forwards stay; a [[sockets]] entry removed from
+// config (socket-1) and one whose host socket is gone (socket-2) do not.
+func TestForwardConfiguredSockets_KeepsOnlyForwardedDevices(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", newTestSocket(t, "agent.sock"))
+	host := newTestSocket(t, "a.sock")
+	f := &fakeForwarderWithDevices{
+		fakeForwarder: &fakeForwarder{devices: []string{"ssh-agent", "socket-0", "socket-1", "socket-2"}},
+		devices: map[string]map[string]string{
+			"ssh-agent": existingSocketDevice(os.Getenv("SSH_AUTH_SOCK"), sshAgentContainerPath),
+			"socket-0":  existingSocketDevice(host, "/run/a.sock"),
+		},
+	}
+	sc := &SocketConfig{Sockets: []SocketEntry{
+		{HostPath: host, ContainerPath: "/run/a.sock", DeviceName: "socket-0"},
+		{HostPath: filepath.Join(t.TempDir(), "gone.sock"), ContainerPath: "/run/gone.sock", DeviceName: "socket-2"},
+	}}
+	env, forwarded := forwardConfiguredSockets(f, sc, true, true, func(string) {})
+	if env["SSH_AUTH_SOCK"] != sshAgentContainerPath || len(forwarded) != 2 {
+		t.Fatalf("env=%v forwarded=%+v", env, forwarded)
+	}
+	if got := strings.Join(f.removed, ","); got != "socket-1,socket-2" {
+		t.Errorf("removed = %q, want socket-1,socket-2", got)
+	}
+	// One list, before any device write, so it shares forwardSocket's
+	// cached config read.
+	if f.listCalls != 1 || f.addsAtList != 0 {
+		t.Errorf("devices listed %d times, after %d adds; want once, before forwarding", f.listCalls, f.addsAtList)
+	}
+}
+
+// The list comes before the device writes even when one is added.
+func TestForwardConfiguredSockets_ListsBeforeAdding(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", newTestSocket(t, "agent.sock"))
+	f := &fakeForwarder{devices: []string{"socket-0"}}
+	forwardConfiguredSockets(f, nil, true, true, func(string) {})
+	if f.addCalls != 1 || f.listCalls != 1 || f.addsAtList != 0 {
+		t.Errorf("adds=%d lists=%d addsAtList=%d; want the list once, before the add", f.addCalls, f.listCalls, f.addsAtList)
+	}
+	if strings.Join(f.removed, ",") != "socket-0,ssh-agent" {
+		t.Errorf("removed = %v, want the stale socket-0, then the agent's re-add", f.removed)
+	}
+}
+
+// A container created by this session can't hold devices of an earlier
+// one: no list, no removal.
+func TestForwardConfiguredSockets_FreshContainerSkipsList(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	f := &fakeForwarder{devices: []string{"ssh-agent"}}
+	forwardConfiguredSockets(f, nil, false, false, func(string) {})
+	if f.listCalls != 0 || len(f.removed) != 0 {
+		t.Errorf("lists=%d removed=%v, want neither", f.listCalls, f.removed)
+	}
+}
+
+// A device list that can't be read is logged; forwarding still works.
+func TestForwardConfiguredSockets_ListErrorIsLogged(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	f := &fakeForwarder{listErr: fmt.Errorf("incus down")}
+	var logs []string
+	forwardConfiguredSockets(f, nil, false, true, func(s string) { logs = append(logs, s) })
+	if len(f.removed) != 0 {
+		t.Errorf("removed = %v", f.removed)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "could not list devices to remove stale socket forwards: incus down") {
+		t.Errorf("logs = %v", logs)
+	}
+}
+
+// forwardSocket removes the old device before a failed add: it is not
+// removed (and warned about) a second time.
+func TestForwardConfiguredSockets_FailedAddRemovesOnce(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	host := newTestSocket(t, "a.sock")
+	f := &fakeForwarder{devices: []string{"socket-0"}, addErr: fmt.Errorf("add failed")}
+	sc := &SocketConfig{Sockets: []SocketEntry{{HostPath: host, ContainerPath: "/run/a.sock", DeviceName: "socket-0"}}}
+	var logs []string
+	_, forwarded := forwardConfiguredSockets(f, sc, false, true, func(s string) { logs = append(logs, s) })
+	if len(forwarded) != 0 || strings.Join(f.removed, ",") != "socket-0" {
+		t.Errorf("forwarded=%v removed=%v, want none forwarded and socket-0 removed once", forwarded, f.removed)
+	}
+	if strings.Contains(strings.Join(logs, "\n"), "could not remove stale socket device") {
+		t.Errorf("logs = %v", logs)
+	}
+}
+
+// fakeSocketManager is a container.ContainerManager whose socket-forwarding
+// methods go to a fakeForwarder; any other call panics.
+type fakeSocketManager struct {
+	container.ContainerManager
+	f *fakeForwarder
+}
+
+func (m *fakeSocketManager) ListDevices() ([]string, error) { return m.f.ListDevices() }
+func (m *fakeSocketManager) RemoveDevice(name string) error { return m.f.RemoveDevice(name) }
+func (m *fakeSocketManager) AddProxyDevice(name, connect, listen string, uid, gid int) error {
+	return m.f.AddProxyDevice(name, connect, listen, uid, gid)
+}
+
+func (m *fakeSocketManager) ExecCommand(command string, opts container.ExecCommandOptions) (string, error) {
+	return m.f.ExecCommand(command, opts)
+}
+
+// coi shell removes a stale device only from a container it did not create
+// (skipLaunch), and doesn't list the devices of one it did.
+func TestPhaseForwardSockets_ReusedOnly(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	for _, skipLaunch := range []bool{true, false} {
+		f := &fakeForwarder{devices: []string{"ssh-agent"}}
+		st := &setupState{
+			opts:       SetupOptions{Logger: func(string) {}},
+			result:     &SetupResult{Manager: &fakeSocketManager{f: f}},
+			skipLaunch: skipLaunch,
+		}
+		if _, err := st.phaseForwardSockets(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if skipLaunch && (f.listCalls != 1 || strings.Join(f.removed, ",") != "ssh-agent") {
+			t.Errorf("reused: lists=%d removed=%v, want the stale ssh-agent removed", f.listCalls, f.removed)
+		}
+		if !skipLaunch && (f.listCalls != 0 || len(f.removed) != 0) {
+			t.Errorf("new container: lists=%d removed=%v, want neither", f.listCalls, f.removed)
+		}
 	}
 }

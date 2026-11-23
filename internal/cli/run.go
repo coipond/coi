@@ -813,9 +813,10 @@ func (a *App) gateRunForwarding(mc *session.MountConfig, sc *session.SocketConfi
 // applyForwardSockets forwards the host SSH agent (when ssh.forward_agent is
 // true) plus every trust-gated [[sockets]] entry into the container. Returns a
 // map of env var name -> container-side socket path for those that declare one.
-func (a *App) applyForwardSockets(mgr container.ContainerManager, socketConfig *session.SocketConfig) map[string]string {
+// reused is set for a persistent container that existed before this run.
+func (a *App) applyForwardSockets(mgr container.ContainerManager, socketConfig *session.SocketConfig, reused bool) map[string]string {
 	logger := stderrLogFn
-	return session.ForwardConfiguredSockets(mgr, socketConfig, config.BoolVal(a.cfg.SSH.ForwardAgent), logger)
+	return session.ForwardConfiguredSockets(mgr, socketConfig, config.BoolVal(a.cfg.SSH.ForwardAgent), reused, logger)
 }
 
 // applyNetworkIsolation installs firewall rules for the container when
