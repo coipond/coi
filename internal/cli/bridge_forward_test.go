@@ -92,13 +92,30 @@ func TestIsolateStartedContainer_ContainerBridge(t *testing.T) {
 }
 
 // coi run in open mode installs the metadata reject under
-// block_metadata_endpoint and returns the manager for teardown; without it
-// nothing is installed.
+// block_metadata_endpoint and returns it for teardown; without the setting
+// nothing is installed. When the reject cannot be installed, stderr says so.
 func TestApplyNetworkIsolation_OpenMetadataBlock(t *testing.T) {
-	for _, block := range []bool{true, false} {
-		t.Run(fmt.Sprintf("block=%v", block), func(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name     string
+		block    bool
+		useSudo  *bool
+		nftFails bool
+		reject   bool
+		warning  string
+	}{
+		{name: "blocked", block: true, reject: true},
+		{name: "not blocked", block: false},
+		{name: "nft script fails", block: true, nftFails: true, warning: "block_metadata_endpoint is not enforced in open mode: nft failed"},
+		{name: "no usable nft", block: true, useSudo: &off, warning: "block_metadata_endpoint is not enforced in open mode: nft is not usable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			sudoLog := filepath.Join(dir, "sudo.log")
+			scriptExit := 0
+			if tc.nftFails {
+				scriptExit = 1
+			}
 			scripts := map[string]string{
 				"incus": `#!/bin/sh
 case "$*" in
@@ -110,10 +127,10 @@ exit 0
 shift
 echo "$*" >> %[1]q
 case "$*" in
-  "nft -f -") cat >> %[1]q ;;
+  "nft -f -") cat >> %[1]q; exit %[2]d ;;
 esac
 exit 0
-`, sudoLog),
+`, sudoLog, scriptExit),
 			}
 			for name, script := range scripts {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil {
@@ -123,20 +140,34 @@ exit 0
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			t.Setenv("HOME", t.TempDir())
 			prev := network.SudoEnabled()
-			network.SetSudoAllowed(true)
+			network.SetSudoAllowed(tc.useSudo == nil || *tc.useSudo)
 			t.Cleanup(func() { network.SetSudoAllowed(prev) })
 
 			cfg := config.GetDefaultConfig()
 			cfg.Network.Mode = config.NetworkModeOpen
-			cfg.Network.BlockMetadataEndpoint = &block
-			nm, err := (&App{cfg: cfg}).applyNetworkIsolation(t.Context(), "coi-open-run")
+			cfg.Network.BlockMetadataEndpoint = &tc.block
+			cfg.Network.UseSudo = tc.useSudo
+			if tc.useSudo == nil {
+				cfg.Network.UseSudo = &on
+			}
+			var nm networkTeardown
+			var err error
+			stderr := captureOutput(t, &os.Stderr, func() {
+				nm, err = (&App{cfg: cfg}).applyNetworkIsolation(t.Context(), "coi-open-run")
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			data, _ := os.ReadFile(sudoLog)
 			reject := strings.Contains(string(data), "ip saddr 10.99.0.7 ip daddr 169.254.0.0/16")
-			if reject != block || (nm != nil) != block {
-				t.Errorf("metadata reject = %v, manager = %v, want %v; sudo calls:\n%s", reject, nm != nil, block, data)
+			if (reject && !tc.nftFails) != tc.reject || (nm != nil) != tc.reject {
+				t.Errorf("metadata reject = %v, teardown = %v, want %v; sudo calls:\n%s", reject, nm != nil, tc.reject, data)
+			}
+			if tc.warning == "" && strings.Contains(stderr, "not enforced") {
+				t.Errorf("unexpected warning: %q", stderr)
+			}
+			if tc.warning != "" && !strings.Contains(stderr, tc.warning) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.warning)
 			}
 		})
 	}
