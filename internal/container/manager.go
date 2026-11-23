@@ -347,6 +347,15 @@ type AppliedState struct {
 	// under: the limits.* instance keys, plus the root disk's limits.read,
 	// limits.write, limits.max and size as "root.<key>".
 	Limits map[string]string
+	// Sockets are the proxy devices that forward a host unix socket into
+	// the container, by device name, the container's own and its profiles'.
+	Sockets map[string]SocketDevice
+}
+
+// SocketDevice is a proxy device forwarding a host unix socket (HostPath) to
+// one in the container (ContainerPath).
+type SocketDevice struct {
+	HostPath, ContainerPath string
 }
 
 // LimitKeys are the AppliedState.Limits keys, in reporting order.
@@ -368,6 +377,7 @@ func (m *Manager) AppliedState() (AppliedState, error) {
 	st := AppliedState{
 		Disks:   diskDevicesFrom(c.devices),
 		Nesting: isTrue(c.config["security.nesting"]),
+		Sockets: socketDevicesFrom(c.devices),
 	}
 	_, st.NestingSet = c.config["security.nesting"]
 	denied := kernelSurfaceDenySyscallSet(c.config["security.syscalls.deny"])
@@ -454,6 +464,28 @@ func diskDevicesFrom(devices map[string]map[string]string) map[string]DiskDevice
 		}
 	}
 	return disks
+}
+
+// socketDevicesFrom picks the proxy devices that listen in the container
+// (bind=container) and connect to a host unix socket. With Incus's default
+// bind=host the proxy goes the other way, into the container.
+func socketDevicesFrom(devices map[string]map[string]string) map[string]SocketDevice {
+	sockets := make(map[string]SocketDevice)
+	for name, d := range devices {
+		if d["type"] != "proxy" || d["bind"] != "container" {
+			continue
+		}
+		host, ok := strings.CutPrefix(d["connect"], "unix:")
+		if !ok {
+			continue
+		}
+		listen, ok := strings.CutPrefix(d["listen"], "unix:")
+		if !ok {
+			continue
+		}
+		sockets[name] = SocketDevice{HostPath: host, ContainerPath: listen}
+	}
+	return sockets
 }
 
 // isTrue reads an Incus boolean config value.

@@ -329,3 +329,22 @@ def test_context_json_reports_docker_unavailable(
         f"docker_available should be false with docker disabled, got "
         f"{data.get('docker_available')!r}"
     )
+
+
+def test_context_json_reports_sudo_unavailable(
+    coi_binary, cleanup_containers, workspace_dir, tmp_path
+):
+    """
+    With [security] passwordless_sudo = false the code user has no sudo and
+    Docker is off, so ~/SANDBOX_CONTEXT.json must report sudo_available and
+    docker_available false.
+    """
+    env = write_trusted_coi_config("[security]\npasswordless_sudo = false\n")
+    data = _read_context_json(coi_binary, workspace_dir, tmp_path, env)
+
+    assert data.get("sudo_available") is False, (
+        f"sudo_available should be false without sudo, got {data.get('sudo_available')!r}"
+    )
+    assert data.get("docker_available") is False, (
+        f"docker_available should be false without sudo, got {data.get('docker_available')!r}"
+    )

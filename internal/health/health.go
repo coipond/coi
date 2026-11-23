@@ -111,6 +111,7 @@ func RunAllChecks(cfg *config.Config, verbose bool) *HealthResult {
 		Docker:                    cfg.Container.IsDockerEnabled(),
 		ReduceKernelSurface:       cfg.Security.IsReduceKernelSurfaceEnabled(),
 		ReduceKernelSurfaceStrict: cfg.Security.IsReduceKernelSurfaceStrictEnabled(),
+		NoSudo:                    !cfg.Security.IsPasswordlessSudoEnabled(),
 	}
 	checks["container_connectivity"] = CheckContainerConnectivity(cfg.Container.Image, probePolicy)
 	checks["network_restriction"] = CheckNetworkRestriction(cfg.Container.Image, probePolicy)

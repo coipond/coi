@@ -477,7 +477,7 @@ func TestCheckSuspicious(t *testing.T) {
 			},
 			mode:         config.NetworkModeAllowlist,
 			allowedCIDRs: []string{"8.8.8.8/32"},
-			wantReason:   "RFC1918 private address",
+			wantReason:   "Private address",
 		},
 		{
 			name: "suspicious port on public IP",

@@ -58,11 +58,11 @@ def test_restricted_mode_rfc1918_flagged(test_workspace, coi_binary):
             container_name,
             lambda e: (
                 f"{blocked}:443" in e.get("description", "")
-                and "RFC1918" in e.get("description", "")
+                and "Private address" in e.get("description", "")
             ),
         )
         assert threats, (
-            f"{blocked}:443 must be flagged as RFC1918 in restricted mode; "
+            f"{blocked}:443 must be flagged as a private address in restricted mode; "
             f"threat events: {get_threat_events(container_name)}"
         )
         assert all(t.get("level") == "high" for t in threats), threats

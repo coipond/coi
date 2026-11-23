@@ -502,6 +502,13 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 			if err := sizeTmpfsAndRemapUser(s.mgr, &a.cfg.Limits, s.wasRestarted, logFn); err != nil {
 				return nil, err
 			}
+			// Before anything runs as the code user. Turning sudo back on rides
+			// along with the timezone exec in apply-network.
+			if !a.cfg.Security.IsPasswordlessSudoEnabled() {
+				if err := session.DisableSudo(s.mgr, logFn); err != nil {
+					return nil, err
+				}
+			}
 
 			// Git commit identity + [[credentials]], applied the same way the
 			// shell path does so `coi run -- git commit`/credential-consuming
@@ -590,7 +597,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "apply-network",
 		RunFn: func(ctx context.Context) (session.Teardown, error) {
-			s.socketEnv = a.applyForwardSockets(s.mgr, s.socketConfig)
+			s.socketEnv = a.applyForwardSockets(s.mgr, s.socketConfig, s.wasRestarted)
 
 			// Publish [ports] on the host (localhost:<port> -> container)
 			// and expose the mapping to the command env (COI_PORTS /
@@ -612,7 +619,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 			// Timezone ("" = UTC, resetting a reused container) and workspace
 			// mise trust in one exec.
 			s.tz = resolveTimezone(a.cfg)
-			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, !s.wasRestarted, logFn)
+			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, !s.wasRestarted, a.cfg.Security.IsPasswordlessSudoEnabled(), logFn)
 
 			if nm == nil {
 				return nil, nil
@@ -794,19 +801,7 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 				Git: session.GitOptions{
 					ProtectedBranches: a.cfg.Git.EffectiveProtectedBranches(),
 				},
-				Security: session.SecurityOptions{
-					// The kernel-surface flags feed injectSandboxContext's Docker
-					// availability line; omitting them here (zero value = docker
-					// off) would make every headless run's context claim Docker is
-					// unavailable while the container actually has it (the launch
-					// phase applies the real policy). Mirrors phases_shell.go.
-					// The strict tier is intentionally not threaded here: this seed
-					// path only drives the Docker-availability line, which depends
-					// solely on DockerEnabled() — and ReduceKernelSurface already
-					// reflects the strict tier (it implies the base flag).
-					Docker:              a.cfg.Container.IsDockerEnabled(),
-					ReduceKernelSurface: a.cfg.Security.IsReduceKernelSurfaceEnabled(),
-				},
+				Security: a.seedSecurityOptions(),
 			}
 			if err := session.SeedToolConfigForRun(ctx, seedResult, seedOpts); err != nil {
 				return nil, err
@@ -900,4 +895,24 @@ func buildPromptRunScript(t tool.Tool, sessionID, promptPath string) (string, er
 			"tool %q cannot run a prompt headlessly via coi run", t.Name())}
 	}
 	return guardToolInstalled(t.Name(), strings.Join(argv, " ")), nil
+}
+
+// seedSecurityOptions are the security facts SeedToolConfigForRun writes into
+// the headless run's sandbox context.
+func (a *App) seedSecurityOptions() session.SecurityOptions {
+	return session.SecurityOptions{
+		// The kernel-surface flags feed injectSandboxContext's Docker
+		// availability line; omitting them here (zero value = docker
+		// off) would make every headless run's context claim Docker is
+		// unavailable while the container actually has it (the launch
+		// phase applies the real policy). Mirrors phases_shell.go.
+		// The strict tier is intentionally not threaded here: this seed
+		// path only drives the Docker-availability line, which depends
+		// solely on DockerEnabled() — and ReduceKernelSurface already
+		// reflects the strict tier (it implies the base flag). NoSudo
+		// drives the sudo lines (and also turns Docker off).
+		Docker:              a.cfg.Container.IsDockerEnabled(),
+		ReduceKernelSurface: a.cfg.Security.IsReduceKernelSurfaceEnabled(),
+		NoSudo:              !a.cfg.Security.IsPasswordlessSudoEnabled(),
+	}
 }
