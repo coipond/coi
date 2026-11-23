@@ -10,7 +10,7 @@
     },
     "block_private_networks": {
       "type": "boolean",
-      "description": "Block access to RFC 1918 private network ranges"
+      "description": "Block access to private network ranges (RFC 1918 and 100.64.0.0/10)"
     },
     "block_metadata_endpoint": {
       "type": "boolean",
@@ -19,7 +19,7 @@
     "allowed_domains": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Destinations allowed when mode is \"allowlist\". Accepts exact hostnames (\"api.anthropic.com\"), raw IPv4 addresses (\"8.8.8.8\") and IPv4 CIDRs (\"10.0.0.0/8\"). Each entry may carry a per-destination port scope as \":ports\" — a comma list of single ports and/or lo-hi ranges, e.g. \"github.com:443\", \"203.0.113.10:8080\", \"198.51.100.0/24:22\", \"svc:8000-8100\" — so a public name or address is reachable only on those ports; an entry with no port inherits the global allowed_ports (else all ports). Coi resolves each hostname on the host, installs the addresses in the firewall, and writes the same addresses into the container's /etc/hosts; DNS egress is then blocked, so the container cannot reach an address the firewall was not given. Wildcards are NOT supported and are rejected: with names resolved up front there is no answer to write for a subdomain nobody has asked for yet. List exact hostnames, or the provider's published IP ranges as CIDRs. Private (RFC 1918, 169.254.0.0/16) entries are blocked unless allow_local_network_access. That opens the whole RFC 1918 LAN on every port (or on allowed_ports), so an RFC 1918 entry's \":ports\" do not limit it; reach a single LAN service with a [[network.hosts]] entry and its ports instead. A 169.254.0.0/16 entry keeps its ports. An address of the coi host itself is reachable on the entry's ports only (else allowed_ports; with neither it opens nothing), unless allow_host_access opens the whole host."
+      "description": "Destinations allowed when mode is \"allowlist\". Accepts exact hostnames (\"api.anthropic.com\"), raw IPv4 addresses (\"8.8.8.8\") and IPv4 CIDRs (\"10.0.0.0/8\"). Each entry may carry a per-destination port scope as \":ports\" — a comma list of single ports and/or lo-hi ranges, e.g. \"github.com:443\", \"203.0.113.10:8080\", \"198.51.100.0/24:22\", \"svc:8000-8100\" — so a public name or address is reachable only on those ports; an entry with no port inherits the global allowed_ports (else all ports). Coi resolves each hostname on the host, installs the addresses in the firewall, and writes the same addresses into the container's /etc/hosts; DNS egress is then blocked, so the container cannot reach an address the firewall was not given. Wildcards are NOT supported and are rejected: with names resolved up front there is no answer to write for a subdomain nobody has asked for yet. List exact hostnames, or the provider's published IP ranges as CIDRs. Private (RFC 1918, 100.64.0.0/10, 169.254.0.0/16) entries are blocked unless allow_local_network_access. That opens the whole private LAN (RFC 1918 and 100.64.0.0/10) on every port (or on allowed_ports), so a private entry's \":ports\" do not limit it; reach a single LAN service with a [[network.hosts]] entry and its ports instead. A 169.254.0.0/16 entry keeps its ports. An address of the coi host itself is reachable on the entry's ports only (else allowed_ports; with neither it opens nothing), unless allow_host_access opens the whole host."
     },
     "refresh_interval_minutes": {
       "type": "integer",

@@ -221,7 +221,7 @@ type DaemonConfig struct {
 	AllowedCIDRs   []string // CIDR ranges for allowed networks (static snapshot / fallback)
 	AllowedDomains []string // Domains from network allowlist
 	// NetworkMode is the container's [network] mode. Open mode allows LAN
-	// traffic, so RFC1918 destinations are not flagged there.
+	// traffic, so private destinations are not flagged there.
 	NetworkMode config.NetworkMode
 
 	// AllowedCIDRsProvider, when set, is consulted on every collection for the
