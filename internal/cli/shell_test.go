@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/network"
 )
 
 func TestResolveDomainsToHostCIDRs_EmptyInput(t *testing.T) {
@@ -223,5 +226,37 @@ func TestBuildTmuxPrepScript_Exec(t *testing.T) {
 	out, _, err = run("FAKE_ENV_FAILS=1")
 	if err != nil || !strings.Contains(out, tmuxPrepEnvFailed) || !strings.Contains(out, tmuxPrepCreated) {
 		t.Errorf("env failure is a warning, not fatal; out=%q err=%v", out, err)
+	}
+}
+
+// The allowlist policy returned for monitoring carries the :ports permits (the
+// proxy case) to network.NewExplicitPortPermits.
+func TestResolveDomainsToHostCIDRs_PolicyCarriesPortPermits(t *testing.T) {
+	_, policy, resolved := resolveDomainsToHostCIDRs([]string{"10.0.0.5:8080"})
+	if policy == nil {
+		t.Fatal("expected a policy")
+	}
+	p := network.NewExplicitPortPermits("c", nil, policy, resolved)
+	if !p.Permits("tcp", "10.0.0.5", 8080) {
+		t.Error("10.0.0.5:8080 should have an explicit permit")
+	}
+	if p.Permits("tcp", "10.0.0.5", 8081) {
+		t.Error("10.0.0.5:8081 must not have an explicit permit")
+	}
+}
+
+// The monitors' explicit permit check counts only port-explicit entries, not
+// a host entry without ports.
+func TestStartExplicitPortPermits(t *testing.T) {
+	permits, stop := startExplicitPortPermits(t.Context(), "c", []config.HostEntry{
+		{IP: "192.168.1.50", Ports: []int{8080}},
+		{IP: "192.168.1.60"},
+	}, nil, nil)
+	defer stop()
+	if !permits("tcp", "192.168.1.50", 8080) {
+		t.Error("a host entry with ports should permit its port")
+	}
+	if permits("tcp", "192.168.1.60", 8080) {
+		t.Error("a host entry without ports must not count")
 	}
 }

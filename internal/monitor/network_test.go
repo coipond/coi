@@ -275,7 +275,7 @@ func TestCheckSuspicious_ExplicitPortPermit(t *testing.T) {
 	portPermitted := func(_, ip string, port int) bool {
 		return (ip == "203.0.113.10" || ip == "192.168.1.50") && port == 8080
 	}
-	firewall := func(_, ip string, _ int) bool { return ip == "192.168.1.50" }
+	firewall := func(_, ip string, _ int) bool { return ip == "192.168.1.50" || ip == "192.168.1.60" }
 	for _, tc := range []struct {
 		mode    config.NetworkMode
 		remote  string
@@ -287,6 +287,9 @@ func TestCheckSuspicious_ExplicitPortPermit(t *testing.T) {
 		{config.NetworkModeRestricted, "203.0.113.10:4444", true},
 		{config.NetworkModeRestricted, "203.0.113.11:8080", true},
 		{config.NetworkModeOpen, "203.0.113.11:8080", true},
+		// The firewall permits it, but not on an explicit port.
+		{config.NetworkModeRestricted, "192.168.1.60:8080", true},
+		{config.NetworkModeAllowlist, "192.168.1.60:8080", true},
 	} {
 		conn := Connection{Protocol: "tcp", LocalAddr: "10.0.0.2:51820", RemoteAddr: tc.remote, State: "ESTABLISHED"}
 		reason := checkSuspicious(conn, tc.mode, nil, firewall, portPermitted, nil)

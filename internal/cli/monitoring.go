@@ -53,7 +53,7 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 
 	nftEnabled := config.BoolVal(a.cfg.Monitoring.NFT.Enabled) && a.cfg.Network.SudoAllowed()
 	permitted, stopPermits := a.startEgressPermits(ctx, containerName)
-	portPermitted := network.NewExplicitPortPermits(a.cfg.Network.Hosts, policy, resolved).Permits
+	portPermitted, stopPortPermits := startExplicitPortPermits(ctx, containerName, a.cfg.Network.Hosts, policy, resolved)
 
 	if err := startMonitoringDaemon(ctx, containerName, workspacePath, a.cfg, allowedCIDRs, permitted, portPermitted, log, mon); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to start security monitor: %v\n", err)
@@ -69,6 +69,7 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 
 	return func() {
 		stopPermits()
+		stopPortPermits()
 		var wg sync.WaitGroup
 		if *mon != nil {
 			wg.Add(1)
@@ -107,6 +108,16 @@ func (a *App) startEgressPermits(ctx context.Context, containerName string) (fun
 		return nil, func() {}
 	}
 	permits := network.NewEgressPermits(containerIP, a.cfg.Network.Hosts, a.cfg.Network.AllowedPorts)
+	pctx, cancel := context.WithCancel(ctx)
+	permits.Start(pctx, 5*time.Second)
+	return permits.Permits, cancel
+}
+
+// startExplicitPortPermits returns the check both monitors share for "did the
+// user permit this exact host:port?" (network.ExplicitPortPermits), refreshed
+// in the background until the returned stop is called.
+func startExplicitPortPermits(ctx context.Context, containerName string, hosts []config.HostEntry, policy *network.AllowPolicy, resolved map[string][]string) (func(proto, ip string, port int) bool, func()) {
+	permits := network.NewExplicitPortPermits(containerName, hosts, policy, resolved)
 	pctx, cancel := context.WithCancel(ctx)
 	permits.Start(pctx, 5*time.Second)
 	return permits.Permits, cancel

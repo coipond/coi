@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -161,6 +162,10 @@ func checkHostAddressPorts(mode config.NetworkMode, entry config.HostEntry, allo
 // refused entry aborts before any /etc/hosts or firewall change. Works on a
 // running container. An empty slice clears the managed block.
 func ApplyUserHosts(containerName string, mode config.NetworkMode, allowLocalNetworkAccess bool, entries []config.HostEntry, allowedPorts []int) error {
+	// Runtime port permits describe the previous firewall, not this one.
+	if err := container.ConfigUnsetIfSet(context.Background(), containerName, runtimeHostPortsKey); err != nil {
+		return fmt.Errorf("failed to clear runtime host ports: %w", err)
+	}
 	if len(entries) == 0 {
 		return WriteUserHosts(containerName, nil)
 	}
@@ -274,12 +279,31 @@ func AddUserHost(containerName string, mode config.NetworkMode, allowLocalNetwor
 			return err
 		}
 	}
+	if len(entry.Ports) > 0 {
+		if err := recordRuntimeHostPorts(containerName, entry); err != nil {
+			return err
+		}
+	}
 	// Merge into the existing block (union hostnames for a repeated IP).
 	existing, err := ReadUserHosts(containerName)
 	if err != nil {
 		return err
 	}
 	return WriteUserHosts(containerName, mergeHostEntry(existing, entry))
+}
+
+// recordRuntimeHostPorts adds entry's ports to the container's
+// runtimeHostPortsKey, for the security monitors (ExplicitPortPermits).
+func recordRuntimeHostPorts(containerName string, entry config.HostEntry) error {
+	cur, err := readRuntimeHostPorts(containerName)
+	if err != nil {
+		return fmt.Errorf("failed to read runtime host ports: %w", err)
+	}
+	value := formatRuntimeHostPorts(append(parseRuntimeHostPorts(cur), entry))
+	if _, err := container.ConfigSetIfChanged(context.Background(), containerName, runtimeHostPortsKey, value); err != nil {
+		return fmt.Errorf("failed to record runtime host ports: %w", err)
+	}
+	return nil
 }
 
 // effectiveContainerMode returns the mode the container is ACTUALLY enforcing,

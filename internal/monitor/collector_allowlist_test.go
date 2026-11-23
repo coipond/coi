@@ -117,9 +117,12 @@ func TestNewCollector_NoPrivateNetworkCheckByDefault(t *testing.T) {
 
 func TestNewDaemonCollector_Wiring(t *testing.T) {
 	c := newDaemonCollector(DaemonConfig{
-		NetworkMode:          config.NetworkModeRestricted,
-		Gateway:              func() string { return "10.47.0.1" },
-		PermittedDestination: func(_, ip string, port int) bool { return ip == "192.168.1.50" && port == 5432 },
+		NetworkMode: config.NetworkModeRestricted,
+		Gateway:     func() string { return "10.47.0.1" },
+		PermittedDestination: func(_, ip string, port int) bool {
+			return ip == "192.168.1.50" && (port == 5432 || port == 8080 || port == 4444)
+		},
+		ExplicitPortPermit: func(_, ip string, port int) bool { return ip == "192.168.1.50" && port == 8080 },
 	})
 	for _, remote := range []string{"10.47.0.1:53", "192.168.1.50:5432"} {
 		if reason := checkWith(c, remote, "udp"); reason != "" {
@@ -128,5 +131,11 @@ func TestNewDaemonCollector_Wiring(t *testing.T) {
 	}
 	if reason := checkWith(c, "192.168.1.51:5432", "udp"); !strings.Contains(reason, "Private address") {
 		t.Errorf("a LAN host that is not permitted: got %q, want RFC1918", reason)
+	}
+	if reason := checkWith(c, "192.168.1.50:8080", "tcp"); reason != "" {
+		t.Errorf("an explicitly permitted host:port: got %q, want not flagged", reason)
+	}
+	if reason := checkWith(c, "192.168.1.50:4444", "tcp"); !strings.Contains(reason, "Suspicious port") {
+		t.Errorf("a firewall-permitted port without an explicit permit: got %q, want a C2 alert", reason)
 	}
 }

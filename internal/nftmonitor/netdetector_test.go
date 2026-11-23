@@ -471,7 +471,8 @@ func TestNetworkDetector_ExplicitPortPermit(t *testing.T) {
 	nd := NewNetworkDetector(&Config{
 		ContainerIP:          "10.47.62.50",
 		GatewayIP:            "10.47.62.1",
-		PermittedDestination: func(_, ip string, _ int) bool { return ip == "203.0.113.10" },
+		AllowedCIDRs:         []string{"140.82.112.3/32"},
+		PermittedDestination: func(_, ip string, _ int) bool { return ip == "203.0.113.10" || ip == "192.168.1.60" },
 		ExplicitPortPermit:   func(_, ip string, port int) bool { return ip == "203.0.113.10" && port == 8080 },
 	})
 	event := func(dst string, port int) *NetworkEvent {
@@ -489,6 +490,7 @@ func TestNetworkDetector_ExplicitPortPermit(t *testing.T) {
 	}{
 		{"203.0.113.10", 4444}, // same host, a suspicious port it has no permit for
 		{"203.0.113.11", 8080}, // unlisted host
+		{"192.168.1.60", 8080}, // firewall-permitted, no explicit port permit
 	} {
 		threat := nd.Analyze(event(tc.dst, tc.port))
 		if threat == nil || threat.Level != ThreatLevelCritical || threat.Title != "Connection to suspicious port" {
