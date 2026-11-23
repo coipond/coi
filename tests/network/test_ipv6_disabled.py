@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 import time
 
+from support.helpers import netdev_coi
+
 
 def _start_background_container(coi_binary, workspace_dir, network_mode, config_extra=""):
     """Start a container in background with the given network mode and return its name."""
@@ -165,24 +167,12 @@ def test_ipv6_not_disabled_in_open_mode(coi_binary, workspace_dir, cleanup_conta
         os.unlink(config_file)
 
 
-def _nft_netdev_coi():
-    """Return the host-side ``netdev coi`` table text (empty if absent)."""
-    result = subprocess.run(
-        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    return result.stdout if result.returncode == 0 else ""
-
-
 def _wait_for_ip6_drop(container_name, timeout=20):
     """Poll until the per-container host-side IPv6 drop chain appears."""
     chain = f"chain coi6-{container_name} {{"
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if chain in _nft_netdev_coi():
+        if chain in netdev_coi():
             return True
         time.sleep(0.5)
     return False
@@ -202,9 +192,9 @@ def test_ipv6_host_drop_present_in_restricted_mode(coi_binary, workspace_dir, cl
     try:
         assert _wait_for_ip6_drop(container_name), (
             f"host-side IPv6 drop (coi6-{container_name}) not found in netdev coi "
-            f"table:\n{_nft_netdev_coi()}"
+            f"table:\n{netdev_coi()}"
         )
-        table = _nft_netdev_coi()
+        table = netdev_coi()
         assert "meta protocol ip6" in table, f"expected an IPv6 drop in netdev coi:\n{table}"
         assert "hook ingress device" in table, f"expected an ingress hook in netdev coi:\n{table}"
     finally:
@@ -222,7 +212,7 @@ def test_ipv6_host_drop_present_in_allowlist_mode(coi_binary, workspace_dir, cle
     try:
         assert _wait_for_ip6_drop(container_name), (
             f"host-side IPv6 drop (coi6-{container_name}) not found in allowlist mode:\n"
-            f"{_nft_netdev_coi()}"
+            f"{netdev_coi()}"
         )
     finally:
         os.unlink(config_file)
@@ -238,7 +228,7 @@ def test_ipv6_host_drop_absent_in_open_mode(coi_binary, workspace_dir, cleanup_c
         # Open-mode setup completes before `coi shell --background` returns; give a
         # brief margin, then confirm no per-container IPv6 drop was installed.
         time.sleep(3)
-        assert f"coi6-{container_name}" not in _nft_netdev_coi(), (
+        assert f"coi6-{container_name}" not in netdev_coi(), (
             "open mode should not install a host-side IPv6 drop rule"
         )
     finally:

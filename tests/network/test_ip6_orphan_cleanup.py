@@ -17,7 +17,7 @@ import tempfile
 
 import pytest
 
-from support.helpers import dummy_netdev_chains
+from support.helpers import dummy_netdev_chains, netdev_coi
 
 
 def _skip_unless_ready():
@@ -33,16 +33,6 @@ def _skip_unless_ready():
 def _legacy_ip6_chain():
     r = subprocess.run(
         ["sudo", "-n", "nft", "list", "chain", "ip6", "coi", "forward"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return r.stdout if r.returncode == 0 else ""
-
-
-def _ip6_chain():
-    r = subprocess.run(
-        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
         capture_output=True,
         text=True,
         timeout=10,
@@ -80,8 +70,8 @@ def test_clean_orphans_removes_stale_ip6_rule(coi_binary, workspace_dir, cleanup
         comment = f"coi6-{container_name}"
         # In restricted mode the host-side ip6 drop is fatal-on-failure, so a
         # started container guarantees the rule exists.
-        assert comment in _ip6_chain(), (
-            f"expected {comment} in netdev coi after start:\n{_ip6_chain()}"
+        assert comment in netdev_coi(), (
+            f"expected {comment} in netdev coi after start:\n{netdev_coi()}"
         )
 
         # Force-delete the container WITHOUT coi teardown — this orphans the rule.
@@ -95,9 +85,9 @@ def test_clean_orphans_removes_stale_ip6_rule(coi_binary, workspace_dir, cleanup
         # it as a kernel that keeps it would. Plant the boot chain and the
         # legacy ip6 rule of the same dead container on every kernel.
         boot = f"coi-boot-{container_name}"
-        planted = [boot] if comment in _ip6_chain() else [comment, boot]
+        planted = [boot] if comment in netdev_coi() else [comment, boot]
         with dummy_netdev_chains(*planted, legacy_ip6=[container_name]):
-            assert f"chain {comment} {{" in _ip6_chain() and f"chain {boot} {{" in _ip6_chain()
+            assert f"chain {comment} {{" in netdev_coi() and f"chain {boot} {{" in netdev_coi()
             assert f'comment "{comment}"' in _legacy_ip6_chain()
 
             # Orphan cleanup must remove them all.
@@ -110,8 +100,8 @@ def test_clean_orphans_removes_stale_ip6_rule(coi_binary, workspace_dir, cleanup
             assert clean.returncode == 0, f"coi clean failed: {clean.stderr}"
             assert "Orphaned drop chains" in clean.stdout, clean.stdout
             for chain in (comment, boot):
-                assert f"chain {chain} {{" not in _ip6_chain(), (
-                    f"orphaned chain {chain} should be removed by clean --orphans:\n{_ip6_chain()}"
+                assert f"chain {chain} {{" not in netdev_coi(), (
+                    f"orphaned chain {chain} should be removed by clean --orphans:\n{netdev_coi()}"
                 )
             assert f'comment "{comment}"' not in _legacy_ip6_chain(), (
                 f"legacy ip6 rule {comment} should be removed:\n{_legacy_ip6_chain()}"

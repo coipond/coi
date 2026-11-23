@@ -235,7 +235,7 @@ func CheckOrphanedResources() HealthCheck {
 		}
 
 		// Check the netdev coi table for orphaned drop chains
-		if names, err := network.ListCOIIP6RuleContainers(); err == nil {
+		if names, err := network.ListDropChainContainers(); err == nil {
 			for _, name := range names {
 				if !containerNames[name] {
 					orphanedRules++

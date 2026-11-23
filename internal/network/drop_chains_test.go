@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestParseCOIIP6RuleContainers(t *testing.T) {
+func TestParseDropChainContainers(t *testing.T) {
 	output := `table netdev coi {
 	chain coi6-coi-abc12345-1 {
 		type filter hook ingress device "veth0" priority -500; policy accept;
@@ -26,21 +26,21 @@ func TestParseCOIIP6RuleContainers(t *testing.T) {
 		meta protocol ip counter packets 0 bytes 0 drop comment "coi-boot-coi-killed-3"
 	}
 }`
-	got := parseCOIIP6RuleContainers(output)
+	got := parseDropChainContainers(output)
 	// deduped, order-preserved; a boot-only chain (killed before its mode's
 	// rules) is an orphan too
 	want := []string{"coi-abc12345-1", "coi-def67890-2", "coi-killed-3"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("parseCOIIP6RuleContainers() = %v, want %v", got, want)
+		t.Errorf("parseDropChainContainers() = %v, want %v", got, want)
 	}
 }
 
-func TestParseCOIIP6RuleContainers_None(t *testing.T) {
+func TestParseDropChainContainers_None(t *testing.T) {
 	// Output with no coi6-/coi-boot- chains yields no names (not nil-vs-empty sensitive).
-	if got := parseCOIIP6RuleContainers("table netdev coi {\n\tchain other {\n\t}\n}"); len(got) != 0 {
+	if got := parseDropChainContainers("table netdev coi {\n\tchain other {\n\t}\n}"); len(got) != 0 {
 		t.Errorf("expected no names, got %v", got)
 	}
-	if got := parseCOIIP6RuleContainers(""); len(got) != 0 {
+	if got := parseDropChainContainers(""); len(got) != 0 {
 		t.Errorf("expected no names for empty input, got %v", got)
 	}
 }

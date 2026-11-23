@@ -33,6 +33,7 @@ from support.helpers import (
     calculate_container_name,
     container_config_get,
     incus_status,
+    netdev_coi,
     start_background_shell,
 )
 
@@ -81,21 +82,11 @@ def _count_rules_for_ip(ip):
     return sum(1 for line in r.stdout.splitlines() if marker in line)
 
 
-def _ip6_chain():
-    r = subprocess.run(
-        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return r.stdout if r.returncode == 0 else ""
-
-
 def _ip6_block_veths(name):
     """The veths the container's coi6-<name> chains hook, one per chain."""
     m = re.search(
         rf"chain coi6-{re.escape(name)} {{\n\s*type filter hook ingress device \"([^\"]+)\"",
-        _ip6_chain(),
+        netdev_coi(),
     )
     return [m.group(1)] if m else []
 
@@ -178,15 +169,15 @@ def test_container_stop_removes_firewall_artifacts_and_start_restores_them(
             pytest.skip("container never got a DHCP IP; cannot assert rule cleanup")
         assert count > 0, f"precondition: expected coi-{ip} rules while running"
         comment = f"coi6-{name}"
-        assert comment in _ip6_chain(), f"precondition: {comment} present while running"
+        assert comment in netdev_coi(), f"precondition: {comment} present while running"
 
         _coi_stop(coi_binary, name)
 
         assert _poll_until(lambda: _count_rules_for_ip(ip) == 0), (
             f"coi-{ip} IPv4 rules still present after stop"
         )
-        assert _poll_until(lambda: comment not in _ip6_chain()), (
-            f"{comment} IPv6 block still present after stop:\n{_ip6_chain()}"
+        assert _poll_until(lambda: comment not in netdev_coi()), (
+            f"{comment} IPv6 block still present after stop:\n{netdev_coi()}"
         )
 
         # Restart: the same persistent container comes back with its rules re-applied.
@@ -237,7 +228,7 @@ def test_container_start_after_stop_reapplies_firewall(
         )
         _assert_ip6_block_on_current_veth(name)
         boot_block = f"chain coi-boot-{name} {{"
-        assert _poll_until(lambda: boot_block not in _ip6_chain()), (
+        assert _poll_until(lambda: boot_block not in netdev_coi()), (
             "the boot block should be lifted once the rules are in place"
         )
     finally:
@@ -307,7 +298,7 @@ def test_container_launch_applies_firewall(coi_binary, workspace_dir, cleanup_co
         assert ip and count > 0, f"coi container launch should apply the coi-<ip> rules (ip={ip!r})"
         _assert_ip6_block_on_current_veth(name)
         boot_block = f"chain coi-boot-{name} {{"
-        assert _poll_until(lambda: boot_block not in _ip6_chain()), (
+        assert _poll_until(lambda: boot_block not in netdev_coi()), (
             "the boot block should be lifted once the rules are in place"
         )
     finally:

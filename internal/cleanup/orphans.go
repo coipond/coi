@@ -21,7 +21,7 @@ import (
 type OrphanedResources struct {
 	Veths               []string // Orphaned veth interfaces (no master bridge)
 	NftRules            []string // Orphaned nft rules (for non-existent container IPs)
-	IPv6Rules           []string // Orphaned netdev coi drop chains (container names no longer running)
+	DropChains          []string // Orphaned netdev coi drop chains (container names no longer running)
 	NFTMonitorRules     []string // Orphaned nft monitoring rules (NFT_COI/NFT_DNS/NFT_SUSPICIOUS)
 	IptablesBridgeRules []string // Orphaned iptables coi-bridge-forward rules (no coi containers running)
 }
@@ -102,11 +102,11 @@ func DetectOrphanedNftRules() ([]string, error) {
 	return orphaned, nil
 }
 
-// DetectOrphanedIPv6Rules finds container names with a drop chain in the
+// DetectOrphanedDropChains finds container names with a drop chain in the
 // netdev coi table whose containers are no longer running (e.g. force-killed
 // without teardown).
-func DetectOrphanedIPv6Rules() ([]string, error) {
-	names, err := network.ListCOIIP6RuleContainers()
+func DetectOrphanedDropChains() ([]string, error) {
+	names, err := network.ListDropChainContainers()
 	if err != nil || len(names) == 0 {
 		return nil, err
 	}
@@ -129,9 +129,9 @@ func DetectOrphanedIPv6Rules() ([]string, error) {
 	return orphaned, nil
 }
 
-// CleanupOrphanedIPv6Rules removes the IPv6 and boot drop chains of each given
+// CleanupOrphanedDropChains removes the IPv6 and boot drop chains of each given
 // container name. Returns the number cleaned.
-func CleanupOrphanedIPv6Rules(names []string, logger func(string)) (int, error) {
+func CleanupOrphanedDropChains(names []string, logger func(string)) (int, error) {
 	if logger == nil {
 		logger = func(msg string) { log.Println(msg) }
 	}
@@ -471,12 +471,12 @@ func DetectAll() (*OrphanedResources, error) {
 	}
 	result.NftRules = rules
 
-	ipv6Rules, err := DetectOrphanedIPv6Rules()
+	dropChains, err := DetectOrphanedDropChains()
 	if err != nil {
-		// Non-fatal - nft/ip6 might not be available
+		// Non-fatal - nft might not be available
 		log.Printf("Warning: Could not check drop chains: %v", err)
 	}
-	result.IPv6Rules = ipv6Rules
+	result.DropChains = dropChains
 
 	nftRules, err := DetectOrphanedNFTMonitorRules()
 	if err != nil {

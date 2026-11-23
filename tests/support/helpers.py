@@ -66,9 +66,9 @@ def expected_pool_port(workspace_dir, slot=1, index=0):
     return 20000 + (int(h, 16) % 400) * 100 + (slot - 1) * 10 + index
 
 
-def free_host_port(addr="127.0.0.1"):
-    """Return a TCP port that is free on the host address `addr`."""
-    with socket.socket() as s:
+def free_host_port(addr="127.0.0.1", family=socket.AF_INET):
+    """Return a TCP port that is free on the host address `addr` (of `family`)."""
+    with socket.socket(family) as s:
         s.bind((addr, 0))
         return s.getsockname()[1]
 
@@ -2037,6 +2037,17 @@ def stale_ubuntu_cache_alias(alias, target="coi-default"):
         )
 
 
+def netdev_coi():
+    """The host's `nft list table netdev coi` (coi's drop chains), or "" if absent."""
+    r = subprocess.run(
+        ["sudo", "-n", "nft", "list", "table", "netdev", "coi"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return r.stdout if r.returncode == 0 else ""
+
+
 @contextlib.contextmanager
 def dummy_netdev_chains(*chains, legacy_ip6=()):
     """Plant coi drop chains as a dead container leaves them, for orphan tests.
@@ -2076,3 +2087,193 @@ def dummy_netdev_chains(*chains, legacy_ip6=()):
         yield
     finally:
         subprocess.run(["sudo", "-n", "ip", "link", "del", dev], capture_output=True, timeout=10)
+
+
+# Shared by the veth drop e2e tests (tests/network/network_veth_*.py,
+# network_boot_block_*.py): a bridge IPv6 address, a routed "outside" host in a
+# netns, counting listeners and the coi drop chain counters.
+BRIDGE_V6 = "fd42:c015:7e57::1"
+CTR_V6 = "fd42:c015:7e57::2"
+OUT_NS = "coi-e2e-out"
+OUT_HOST_IF, OUT_NS_IF = "coie2eh", "coie2eo"
+OUT_GW_V4, OUT_V4 = "172.31.254.1", "172.31.254.2"
+OUT_GW_V6, OUT_V6 = "fd42:c016:7e57::1", "fd42:c016:7e57::2"
+OUT_PORT = 18443
+
+# Accepts TCP on OUT_V4 and OUT_V6 at argv[1], appending each peer to argv[2].
+OUT_SERVER = """
+import select, socket, sys
+port, log = int(sys.argv[1]), sys.argv[2]
+socks = []
+for fam, addr in ((socket.AF_INET, sys.argv[3]), (socket.AF_INET6, sys.argv[4])):
+    s = socket.socket(fam)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((addr, port))
+    s.listen(64)
+    socks.append(s)
+open(log, "w").close()
+while True:
+    for s in select.select(socks, [], [])[0]:
+        c, peer = s.accept()
+        with open(log, "a") as f:
+            f.write(peer[0] + "\\n")
+        c.close()
+"""
+
+
+def host_veth(container_name):
+    """The host-side veth of the container's eth0, or ""."""
+    return container_config_get(container_name, "volatile.eth0.host_name") or ""
+
+
+def veth_bridge(veth):
+    out = subprocess.run(
+        ["ip", "-o", "link", "show", veth], capture_output=True, text=True, timeout=10
+    ).stdout
+    m = re.search(r"\bmaster (\S+)", out)
+    assert m, f"veth {veth} has no bridge master: {out}"
+    return m.group(1)
+
+
+def sudo_run(*argv, check=True, input=None):
+    r = subprocess.run(
+        ["sudo", "-n", *argv], capture_output=True, text=True, timeout=30, input=input
+    )
+    if check:
+        assert r.returncode == 0, f"{' '.join(argv)} failed: {r.stderr}"
+    return r
+
+
+def drop_chain_packets(chain):
+    """Packets counted by the drop rule of netdev coi chain, or -1 if absent."""
+    r = sudo_run("nft", "list", "chain", "netdev", "coi", chain, check=False)
+    m = re.search(r"counter packets (\d+) bytes \d+ drop", r.stdout)
+    return int(m.group(1)) if m else -1
+
+
+@contextlib.contextmanager
+def bridge_v6(bridge):
+    """Give the bridge BRIDGE_V6, restoring its IPv6 state afterwards."""
+    key = f"net.ipv6.conf.{bridge}.disable_ipv6"
+    old = sudo_run("sysctl", "-n", key).stdout.strip()
+    sudo_run("sysctl", "-w", f"{key}=0")
+    added = (
+        sudo_run(
+            "ip", "-6", "addr", "add", f"{BRIDGE_V6}/64", "dev", bridge, "nodad", check=False
+        ).returncode
+        == 0
+    )
+    try:
+        yield
+    finally:
+        if added:
+            sudo_run("ip", "-6", "addr", "del", f"{BRIDGE_V6}/64", "dev", bridge, check=False)
+        sudo_run("sysctl", "-w", f"{key}={old}", check=False)
+
+
+@contextlib.contextmanager
+def counting_listener(family, addr, port):
+    """A TCP listener on the host; yields the list of peer addresses it accepted."""
+    peers = []
+    srv = socket.socket(family, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((addr, port))
+    srv.listen(64)
+    srv.settimeout(0.2)
+    stop = threading.Event()
+
+    def serve():
+        while not stop.is_set():
+            try:
+                conn, peer = srv.accept()
+            except (TimeoutError, OSError):
+                continue
+            peers.append(peer[0])
+            conn.close()
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    try:
+        yield peers
+    finally:
+        stop.set()
+        t.join(timeout=5)
+        srv.close()
+
+
+@contextlib.contextmanager
+def outside_host(bridge):
+    """A host beyond the bridge: a netns behind a routed veth on the test host.
+
+    Yields (port, peers), where peers() lists the addresses that connected to
+    OUT_V4/OUT_V6 on port. Restores forwarding and removes everything after.
+    """
+    fwd = "net.ipv6.conf.all.forwarding"
+    old_fwd = sudo_run("sysctl", "-n", fwd).stdout.strip()
+    allow = [
+        ("iptables", "FORWARD", "-i", bridge, "-o", OUT_HOST_IF, "-j", "ACCEPT"),
+        ("iptables", "FORWARD", "-i", OUT_HOST_IF, "-o", bridge, "-j", "ACCEPT"),
+        ("ip6tables", "FORWARD", "-i", bridge, "-o", OUT_HOST_IF, "-j", "ACCEPT"),
+        ("ip6tables", "FORWARD", "-i", OUT_HOST_IF, "-o", bridge, "-j", "ACCEPT"),
+    ]
+    fd, log = tempfile.mkstemp(prefix="coi-e2e-out-")
+    os.close(fd)
+    os.chmod(log, 0o666)
+    port = OUT_PORT
+    server = None
+    try:
+        sudo_run("ip", "netns", "add", OUT_NS)
+        sudo_run("ip", "link", "add", OUT_HOST_IF, "type", "veth", "peer", "name", OUT_NS_IF)
+        sudo_run("ip", "link", "set", OUT_NS_IF, "netns", OUT_NS)
+        sudo_run("ip", "addr", "add", f"{OUT_GW_V4}/24", "dev", OUT_HOST_IF)
+        sudo_run("ip", "-6", "addr", "add", f"{OUT_GW_V6}/64", "dev", OUT_HOST_IF, "nodad")
+        sudo_run("ip", "link", "set", OUT_HOST_IF, "up")
+        ns = ("ip", "netns", "exec", OUT_NS)
+        sudo_run(*ns, "ip", "link", "set", "lo", "up")
+        sudo_run(*ns, "ip", "addr", "add", f"{OUT_V4}/24", "dev", OUT_NS_IF)
+        sudo_run(*ns, "ip", "-6", "addr", "add", f"{OUT_V6}/64", "dev", OUT_NS_IF, "nodad")
+        sudo_run(*ns, "ip", "link", "set", OUT_NS_IF, "up")
+        sudo_run(*ns, "ip", "route", "add", "default", "via", OUT_GW_V4)
+        sudo_run(*ns, "ip", "-6", "route", "add", "default", "via", OUT_GW_V6)
+        sudo_run("sysctl", "-w", f"{fwd}=1")
+        for tool, chain, *rule in allow:
+            sudo_run(tool, "-I", chain, *rule, check=False)
+        server = subprocess.Popen(
+            ["sudo", "-n", *ns, "python3", "-I", "-c", OUT_SERVER, str(port), log, OUT_V4, OUT_V6],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 10
+        while (
+            not os.path.exists(log)
+            or sudo_run(*ns, "ss", "-ltn", check=False).stdout.count(f":{port} ") < 2
+        ):
+            assert time.monotonic() < deadline, "outside listener did not come up"
+            time.sleep(0.2)
+
+        def peers():
+            with open(log) as f:
+                return f.read().split()
+
+        yield port, peers
+    finally:
+        if server is not None:
+            pids = sudo_run("ip", "netns", "pids", OUT_NS, check=False).stdout.split()
+            if pids:
+                sudo_run("kill", *pids, check=False)
+            server.wait(timeout=10)
+        for tool, chain, *rule in allow:
+            sudo_run(tool, "-D", chain, *rule, check=False)
+        sudo_run("sysctl", "-w", f"{fwd}={old_fwd}", check=False)
+        sudo_run("ip", "link", "del", OUT_HOST_IF, check=False)
+        sudo_run("ip", "netns", "del", OUT_NS, check=False)
+        os.unlink(log)
+
+
+def launch_with_network(coi_binary, workspace_dir, network_toml, persistent=False):
+    """Start a background shell with network_toml (and persistent) as trusted
+    config; return (container name, env)."""
+    toml = ("[container]\npersistent = true\n" if persistent else "") + network_toml
+    env = write_trusted_coi_config(toml)
+    name, _ = start_background_shell(coi_binary, workspace_dir, env, debug=False)
+    return name, env

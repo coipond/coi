@@ -653,14 +653,14 @@ func RemoveIPv6BlockForContainer(containerName string) error {
 	return deleteNFTRulesByCommentFamily("ip6", ipv6BlockComment(containerName))
 }
 
-// ListCOIIP6RuleContainers returns the container names that own a coi6-<name>
+// ListDropChainContainers returns the container names that own a coi6-<name>
 // or coi-boot-<name> chain in the netdev coi table, or a coi6-<name> rule
 // older coi versions put in the ip6 coi forward chain. Used by orphan
 // detection to find drop chains whose containers are no longer running.
-func ListCOIIP6RuleContainers() ([]string, error) {
+func ListDropChainContainers() ([]string, error) {
 	var names []string
 	if output, err := runNFTCommand("list", "table", "netdev", "coi"); err == nil {
-		names = parseCOIIP6RuleContainers(string(output))
+		names = parseDropChainContainers(string(output))
 	}
 	if output, err := runNFTCommand("list", "chain", "ip6", "coi", "forward"); err == nil {
 		for _, n := range parseLegacyIP6RuleContainers(string(output)) {
@@ -695,10 +695,10 @@ func parseLegacyIP6RuleContainers(output string) []string {
 	return names
 }
 
-// parseCOIIP6RuleContainers extracts the unique container names from the
+// parseDropChainContainers extracts the unique container names from the
 // coi6-<name> and coi-boot-<name> chains in `nft list table netdev coi`
 // output. Pure, for testing.
-func parseCOIIP6RuleContainers(output string) []string {
+func parseDropChainContainers(output string) []string {
 	var names []string
 	seen := make(map[string]bool)
 	for _, line := range strings.Split(output, "\n") {
