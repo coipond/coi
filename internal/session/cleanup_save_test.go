@@ -70,7 +70,7 @@ func TestSaveSessionData_OpencodeKeepsConfigDir(t *testing.T) {
 	}
 }
 
-// boundedPullFake times out after pulling part of the config dir, as
+// boundedPullFake stops after pulling part of the config dir, as
 // PullDirectoryBounded does on a stalled pull.
 type boundedPullFake struct {
 	container.ContainerManager
@@ -85,11 +85,11 @@ func (f *boundedPullFake) PullDirectoryBounded(_, localPath string, _ time.Durat
 	if err := os.WriteFile(filepath.Join(localPath, "history.jsonl"), []byte("partial"), 0o600); err != nil {
 		return err
 	}
-	return fmt.Errorf("%w: stalled on /home/code/.claude/fifo", container.ErrPullTimedOut)
+	return fmt.Errorf("%w: stalled on /home/code/.claude/fifo", container.ErrPullStopped)
 }
 
 // A timed-out fallback pull keeps what was pulled and is not retried.
-func TestSaveSessionData_TimedOutPullKeepsPulled(t *testing.T) {
+func TestSaveSessionData_StoppedPullKeepsPulled(t *testing.T) {
 	sessions := t.TempDir()
 	mgr := &boundedPullFake{}
 	var logs []string
@@ -100,7 +100,7 @@ func TestSaveSessionData_TimedOutPullKeepsPulled(t *testing.T) {
 	if mgr.pulls != 1 {
 		t.Errorf("pulls = %d, want 1", mgr.pulls)
 	}
-	if got := strings.Join(logs, "\n"); !strings.Contains(got, "pull timed out") || !strings.Contains(got, "/home/code/.claude/fifo") {
+	if got := strings.Join(logs, "\n"); !strings.Contains(got, "pull stopped") || !strings.Contains(got, "/home/code/.claude/fifo") {
 		t.Errorf("logs = %q, want the timeout and the stalled path", got)
 	}
 }

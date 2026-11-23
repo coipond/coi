@@ -18,9 +18,8 @@ import (
 // filesystem. The pull logs each entry as `incus --verbose` does (logrus
 // quoting), then opens the source before it creates the target, as Incus
 // does: a FIFO blocks, a socket fails with an SFTP status, a `*.slow` file
-// grows by a byte every
-// 0.2 s for SLOW_TICKS ticks. Each file reached is appended to PULLED if
-// set. Without RUNNING every exec fails, as on a
+// grows by a byte every 0.2 s for SLOW_TICKS ticks. Each file reached is
+// appended to PULLED if set. Without RUNNING every exec fails, as on a
 // stopped container. VANISH is removed right after the listing.
 const fakeFileIncusScript = `
 [ "$1" = --project ] && shift 2
@@ -70,18 +69,11 @@ esac
 // log.
 func fakeFileIncus(t *testing.T, root string, running bool) string {
 	t.Helper()
-	bin := t.TempDir()
-	log := filepath.Join(bin, "calls.log")
 	env := "ROOT=" + root + "\nSLOW_TICKS=${SLOW_TICKS:-0}\n"
 	if running {
 		env += "RUNNING=1\n"
 	}
-	script := "#!/bin/sh\necho \"$*\" >> " + log + "\n" + env + fakeFileIncusScript
-	if err := os.WriteFile(filepath.Join(bin, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return log
+	return fakeIncusScript(t, env+fakeFileIncusScript)
 }
 
 // writeFiles writes each name (relative to dir) with its name as content.
@@ -120,6 +112,7 @@ func configRoot(t *testing.T) (root, src string) {
 	return root, src
 }
 
+// assertRealFiles fails unless each name under dest holds its name.
 func assertRealFiles(t *testing.T, dest string, names ...string) {
 	t.Helper()
 	for _, f := range names {
@@ -129,6 +122,7 @@ func assertRealFiles(t *testing.T, dest string, names ...string) {
 	}
 }
 
+// assertAbsent fails if any name exists under dest.
 func assertAbsent(t *testing.T, dest string, names ...string) {
 	t.Helper()
 	for _, f := range names {
@@ -138,6 +132,8 @@ func assertAbsent(t *testing.T, dest string, names ...string) {
 	}
 }
 
+// pullBounded pulls /home/code/.claude of c1 with the given stall timeout
+// and returns the destination and the debug and warn messages.
 func pullBounded(t *testing.T, stall time.Duration) (dest string, debug, warn []string, err error) {
 	t.Helper()
 	dest = filepath.Join(t.TempDir(), "saved")
@@ -250,8 +246,8 @@ func TestPullDirectoryBounded_TotalLimitKeepsPulled(t *testing.T) {
 	t.Setenv("SLOW_TICKS", "100000")
 
 	dest, _, _, err := pullBounded(t, time.Second)
-	if !errors.Is(err, ErrPullTimedOut) {
-		t.Fatalf("err = %v, want ErrPullTimedOut", err)
+	if !errors.Is(err, ErrPullStopped) {
+		t.Fatalf("err = %v, want ErrPullStopped", err)
 	}
 	assertRealFiles(t, dest, "history.jsonl", "clean/c.json")
 }
@@ -359,8 +355,8 @@ func TestPullDirectoryBounded_StallBudget(t *testing.T) {
 	fakeFileIncus(t, root, false)
 
 	dest, _, warn, err := pullBounded(t, time.Second)
-	if !errors.Is(err, ErrPullTimedOut) {
-		t.Fatalf("err = %v, want ErrPullTimedOut", err)
+	if !errors.Is(err, ErrPullStopped) {
+		t.Fatalf("err = %v, want ErrPullStopped", err)
 	}
 	if len(warn) != 2 {
 		t.Errorf("warn = %q, want 2 skips within the budget", warn)
@@ -450,7 +446,7 @@ func TestPullOnce_ConnectionErrorIsNotASkip(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	p := &boundedPull{m: NewManager("c1"), base: "/home/code/.claude", stall: time.Second, skip: map[string]bool{}}
 	err := p.pullOnce(t.Context(), []string{"/home/code/.claude"}, t.TempDir())
-	var se *stallError
+	var se *skipEntryError
 	if err == nil || errors.As(err, &se) {
 		t.Fatalf("err = %v, want a plain pull error", err)
 	}
@@ -473,8 +469,8 @@ func TestPullDirectoryBounded_EntryFailureCapKeepsPulled(t *testing.T) {
 	fakeFileIncus(t, root, false)
 
 	dest, _, warn, err := pullBounded(t, 20*time.Second)
-	if !errors.Is(err, ErrPullTimedOut) {
-		t.Fatalf("err = %v, want ErrPullTimedOut", err)
+	if !errors.Is(err, ErrPullStopped) {
+		t.Fatalf("err = %v, want ErrPullStopped", err)
 	}
 	if len(warn) != 2 {
 		t.Errorf("warn = %q, want 2 skipped sockets", warn)
@@ -497,7 +493,7 @@ func TestPullOnce_ErrorAfterTargetCreatedIsNotASkip(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	p := &boundedPull{m: NewManager("c1"), base: "/home/code/.claude", stall: time.Second, skip: map[string]bool{}}
 	err := p.pullOnce(t.Context(), []string{"/home/code/.claude/h"}, local)
-	var se *stallError
+	var se *skipEntryError
 	if err == nil || errors.As(err, &se) {
 		t.Fatalf("err = %v, want a plain pull error", err)
 	}

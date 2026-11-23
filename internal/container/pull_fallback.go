@@ -19,9 +19,10 @@ import (
 	"time"
 )
 
-// ErrPullTimedOut marks a PullDirectoryBounded that hit its total limit. The
-// entries pulled before it are kept at localPath.
-var ErrPullTimedOut = errors.New("pull timed out")
+// ErrPullStopped marks a PullDirectoryBounded stopped before the end (total
+// limit, stall budget, too many entries that cannot be opened). The entries
+// pulled before it are kept at localPath.
+var ErrPullStopped = errors.New("pull stopped")
 
 // ErrPullSourceMissing marks a PullDirectoryBounded whose container
 // directory does not exist.
@@ -59,8 +60,9 @@ var pullProgressInterval = time.Second
 // no new bytes) is stopped; the entry it stalled on is reported to warn,
 // skipped, and the pull resumes. An entry the pull cannot open (an SFTP
 // status reply, such as a socket's) is skipped the same way. Past
-// pullStallBudget of stall waits or pullTotalLimit, the pull is stopped, what
-// was pulled is kept at localPath and the error wraps ErrPullTimedOut.
+// pullStallBudget of stall waits, pullMaxEntryFailures such entries or
+// pullTotalLimit, the pull is stopped, what was pulled is kept at localPath
+// and the error wraps ErrPullStopped.
 func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall time.Duration, debug, warn func(string)) error {
 	if !strings.HasPrefix(containerPath, "/") {
 		containerPath = "/" + containerPath
@@ -107,7 +109,7 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 	stopped := ""
 	for {
 		pullErr = p.pull(ctx, root)
-		var se *stallError
+		var se *skipEntryError
 		if !errors.As(pullErr, &se) || ctx.Err() != nil {
 			break
 		}
@@ -135,7 +137,7 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 
 	timedOut := ctx.Err() != nil || stopped != ""
 	if pullErr != nil && !timedOut {
-		if isNotFoundText(pullErr.Error()) {
+		if IsNotFoundText(pullErr.Error()) {
 			if kind, err := m.PathKind(containerPath); err == nil && kind == PathNone {
 				return fmt.Errorf("%w: %s", ErrPullSourceMissing, containerPath)
 			}
@@ -144,7 +146,7 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 	}
 	if _, err := os.Lstat(root); err != nil {
 		if timedOut {
-			return fmt.Errorf("%w: %v", ErrPullTimedOut, pullErr)
+			return fmt.Errorf("%w: %v", ErrPullStopped, pullErr)
 		}
 		return fmt.Errorf("no files pulled")
 	}
@@ -156,10 +158,10 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 		return err
 	}
 	if stopped != "" {
-		return fmt.Errorf("%w: %s, last on %v", ErrPullTimedOut, stopped, pullErr)
+		return fmt.Errorf("%w: %s, last on %v", ErrPullStopped, stopped, pullErr)
 	}
 	if timedOut {
-		return fmt.Errorf("%w after %s: %v", ErrPullTimedOut, pullTotalLimit, pullErr)
+		return fmt.Errorf("%w after %s: %v", ErrPullStopped, pullTotalLimit, pullErr)
 	}
 	return nil
 }
@@ -174,15 +176,17 @@ type boundedPull struct {
 	skip  map[string]bool
 }
 
-// stallError names the container path a pull stalled on, or failed to open,
-// and its local target (empty when the pull had not reached an entry).
-// waited is the stall wait, zero for a failed open.
-type stallError struct {
+// skipEntryError names an entry the pull skips: the container path it
+// stalled on or failed to open, and its local target (empty when the pull
+// had not reached an entry). waited is the stall wait, zero for a failed
+// open.
+type skipEntryError struct {
 	path, target, reason string
 	waited               time.Duration
 }
 
-func (e *stallError) Error() string { return "pull " + e.reason + " on " + e.path }
+// Error names the entry and why the pull skips it.
+func (e *skipEntryError) Error() string { return "pull " + e.reason + " on " + e.path }
 
 // pull pulls base into root, walking only the directories above a skipped
 // path.
@@ -287,14 +291,14 @@ func (p *boundedPull) listDir(dir string) ([]string, error) {
 // pullSources pulls container paths into localDir in one
 // `incus file pull --verbose -r`. The verbose log names each entry as the
 // pull reaches it; a pull with no new entry and no new bytes for p.stall is
-// stopped with a stallError naming its last entry. Entries listed in the
+// stopped with a skipEntryError naming its last entry. Entries listed in the
 // container that are gone by the pull are dropped from the batch and pulled
 // again without them; the sources of a batch share one directory, so one
 // listing of it finds them.
 func (p *boundedPull) pullSources(ctx context.Context, sources []string, localDir string) error {
 	for {
 		err := p.pullOnce(ctx, sources, localDir)
-		if err == nil || p.tree == nil || !isNotFoundText(err.Error()) || sources[0] == p.base {
+		if err == nil || p.tree == nil || !IsNotFoundText(err.Error()) || sources[0] == p.base {
 			return err
 		}
 		names, listErr := p.listDir(path.Dir(sources[0]))
@@ -377,7 +381,7 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 		select {
 		case err := <-waitDone:
 			if stalled != "" {
-				return &stallError{
+				return &skipEntryError{
 					path: stalled, target: stalledTarget, waited: stalledWait,
 					reason: fmt.Sprintf("stalled for %s", stalledWait.Round(time.Second)),
 				}
@@ -396,7 +400,7 @@ func (p *boundedPull) pullOnce(ctx context.Context, sources []string, localDir s
 			// entry (a socket: "no such device or address"). The source is
 			// opened before the target is created, so no target = never read.
 			if typ == "file" && source != "" && strings.Contains(msg, "SSH_FX_") && !pathOnHost(target) {
-				return &stallError{path: source, reason: "failed (" + msg + ")"}
+				return &skipEntryError{path: source, reason: "failed (" + msg + ")"}
 			}
 			if msg != "" {
 				return fmt.Errorf("%s: %w", msg, err)
@@ -453,8 +457,8 @@ func parsePullingLine(line, base string) (target, source, typ string, ok bool) {
 	return target, rest[:k], rest[k+2 : len(rest)-1], true
 }
 
-// isNotFoundText reports whether an incus error says a path does not exist.
-func isNotFoundText(msg string) bool {
+// IsNotFoundText reports whether an incus error says a path does not exist.
+func IsNotFoundText(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such file") || strings.Contains(msg, "does not exist")
 }

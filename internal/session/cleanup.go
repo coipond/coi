@@ -535,7 +535,7 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 			pulled = true
 			break
 		}
-		if errors.Is(pullErr, container.ErrPullTimedOut) {
+		if errors.Is(pullErr, container.ErrPullStopped) {
 			logger(fmt.Sprintf("Warning: session save stopped (%v); keeping what was pulled", pullErr))
 			pulled = pathExists(stagingDir)
 			break
@@ -620,13 +620,10 @@ func configDirMissing(mgr container.ContainerManager, err error) bool {
 	if _, ok := mgr.(boundedPuller); ok {
 		return errors.Is(err, container.ErrPullSourceMissing)
 	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "does not exist") ||
-		strings.Contains(msg, "not found") ||
-		strings.Contains(msg, "no such file")
+	return container.IsNotFoundText(err.Error())
 }
 
-// boundedPuller is implemented by *container.Manager: a deadline-bounded
+// boundedPuller is implemented by *container.Manager: a stall-bounded
 // directory pull that skips special files (see PullDirectoryBounded).
 type boundedPuller interface {
 	PullDirectoryBounded(containerPath, localPath string, stall time.Duration, debug, warn func(string)) error

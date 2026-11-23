@@ -163,7 +163,6 @@ def test_session_save_file_pull_fallback_skips_special_files(
         f"{FILES_SETUP} && {SPECIAL_FILES_SETUP} && "
         'sudo mv "$(command -v tar)" /usr/local/coi-tar-hidden'
     )
-    # The special files must be skipped before the pull, not waited out.
     output, saved, session_dir = _save_session(coi_binary, workspace_dir, setup)
     try:
         assert "Fast session save unavailable" in output, (
