@@ -135,8 +135,8 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 		}
 	}
 
-	timedOut := ctx.Err() != nil || stopped != ""
-	if pullErr != nil && !timedOut {
+	stoppedEarly := ctx.Err() != nil || stopped != ""
+	if pullErr != nil && !stoppedEarly {
 		if IsNotFoundText(pullErr.Error()) {
 			if kind, err := m.PathKind(containerPath); err == nil && kind == PathNone {
 				return fmt.Errorf("%w: %s", ErrPullSourceMissing, containerPath)
@@ -145,7 +145,7 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 		return pullErr
 	}
 	if _, err := os.Lstat(root); err != nil {
-		if timedOut {
+		if stoppedEarly {
 			return fmt.Errorf("%w: %v", ErrPullStopped, pullErr)
 		}
 		return fmt.Errorf("no files pulled")
@@ -160,7 +160,7 @@ func (m *Manager) PullDirectoryBounded(containerPath, localPath string, stall ti
 	if stopped != "" {
 		return fmt.Errorf("%w: %s, last on %v", ErrPullStopped, stopped, pullErr)
 	}
-	if timedOut {
+	if stoppedEarly {
 		return fmt.Errorf("%w after %s: %v", ErrPullStopped, pullTotalLimit, pullErr)
 	}
 	return nil

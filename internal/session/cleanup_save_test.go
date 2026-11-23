@@ -88,7 +88,7 @@ func (f *boundedPullFake) PullDirectoryBounded(_, localPath string, _ time.Durat
 	return fmt.Errorf("%w: stalled on /home/code/.claude/fifo", container.ErrPullStopped)
 }
 
-// A timed-out fallback pull keeps what was pulled and is not retried.
+// A stopped fallback pull keeps what was pulled and is not retried.
 func TestSaveSessionData_StoppedPullKeepsPulled(t *testing.T) {
 	sessions := t.TempDir()
 	mgr := &boundedPullFake{}
@@ -101,7 +101,7 @@ func TestSaveSessionData_StoppedPullKeepsPulled(t *testing.T) {
 		t.Errorf("pulls = %d, want 1", mgr.pulls)
 	}
 	if got := strings.Join(logs, "\n"); !strings.Contains(got, "pull stopped") || !strings.Contains(got, "/home/code/.claude/fifo") {
-		t.Errorf("logs = %q, want the timeout and the stalled path", got)
+		t.Errorf("logs = %q, want the stop and the stalled path", got)
 	}
 }
 
