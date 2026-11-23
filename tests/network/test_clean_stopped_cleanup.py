@@ -23,7 +23,7 @@ import time
 
 import pytest
 
-from support.helpers import incus_status
+from support.helpers import dummy_netdev_chains, incus_status
 
 
 def _skip_unless_ready():
@@ -99,23 +99,24 @@ def test_default_clean_reclaims_stopped_container_ipv6_block(
             pytest.skip(
                 f"container not in STOPPED state after stop (got {status!r}); cannot exercise reap path"
             )
-        if comment not in _ip6_chain():
-            # Kernels before name-based netdev hooks delete the chain with its
-            # device: nothing is left to reap.
-            pytest.skip("kernel removed the netdev chain with the veth")
+        # A kernel that deletes the chain with the veth leaves nothing to reap:
+        # plant it as a kernel that keeps it would.
+        planted = [] if comment in _ip6_chain() else [comment]
+        with dummy_netdev_chains(*planted):
+            assert comment in _ip6_chain(), f"precondition: {comment} left after the stop"
 
-        # Default reap path (NOT --orphans) must now clean the block.
-        clean = subprocess.run(
-            [coi_binary, "clean", "--force"],
-            capture_output=True,
-            text=True,
-            timeout=90,
-            env=env,
-        )
-        assert clean.returncode == 0, f"coi clean failed: {clean.stderr}"
+            # Default reap path (NOT --orphans) must now clean the block.
+            clean = subprocess.run(
+                [coi_binary, "clean", "--force"],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                env=env,
+            )
+            assert clean.returncode == 0, f"coi clean failed: {clean.stderr}"
 
-        assert _poll_until(lambda: comment not in _ip6_chain()), (
-            f"default coi clean should remove {comment} when reaping the stopped container:\n{_ip6_chain()}"
-        )
+            assert _poll_until(lambda: comment not in _ip6_chain()), (
+                f"default coi clean should remove {comment} when reaping the stopped container:\n{_ip6_chain()}"
+            )
     finally:
         os.unlink(config_file)

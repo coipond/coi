@@ -42,7 +42,7 @@ func netdevChain(chain string) string {
 }
 
 // TestApplyBootBlockRule_Integration verifies that ApplyBootBlockRule adds a
-// netdev coi chain on the veth's ingress that drops IPv4 and that
+// netdev coi chain on the veth's ingress that drops IPv4 and IPv6 and that
 // RemoveBootBlockRule removes it cleanly.
 func TestApplyBootBlockRule_Integration(t *testing.T) {
 	skipUnlessBootBlockReady(t)
@@ -79,16 +79,16 @@ func TestApplyBootBlockRule_Integration(t *testing.T) {
 	if !strings.Contains(chainStr, "hook ingress device \""+veth+"\"") {
 		t.Errorf("expected ingress hook on veth %q; chain:\n%s", veth, chainStr)
 	}
-	if !strings.Contains(chainStr, "meta protocol ip counter") || !strings.Contains(chainStr, "drop") {
-		t.Errorf("expected an IPv4 drop; chain:\n%s", chainStr)
+	if !strings.Contains(chainStr, "meta protocol ip counter") || !strings.Contains(chainStr, "meta protocol ip6 counter") {
+		t.Errorf("expected an IPv4 and an IPv6 drop; chain:\n%s", chainStr)
 	}
 
 	// Calling Apply again must be idempotent (no duplicate rules)
 	if err := ApplyBootBlockRule(containerName); err != nil {
 		t.Errorf("second ApplyBootBlockRule: %v", err)
 	}
-	if got := netdevChain(comment); strings.Count(got, " drop ") != 1 {
-		t.Errorf("expected exactly 1 boot block drop rule:\n%s", got)
+	if got := netdevChain(comment); strings.Count(got, " drop ") != 2 {
+		t.Errorf("expected exactly 2 boot block drop rules (IPv4, IPv6):\n%s", got)
 	}
 
 	// Remove and verify it is gone

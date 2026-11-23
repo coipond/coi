@@ -2035,3 +2035,44 @@ def stale_ubuntu_cache_alias(alias, target="coi-default"):
         subprocess.run(
             ["incus", "image", "alias", "delete", alias], capture_output=True, timeout=30
         )
+
+
+@contextlib.contextmanager
+def dummy_netdev_chains(*chains, legacy_ip6=()):
+    """Plant coi drop chains as a dead container leaves them, for orphan tests.
+
+    Each name in chains becomes a `netdev coi` chain hooked on a dummy device
+    (as coi installs them on a veth; kernels that delete such a chain with its
+    device leave nothing to reap after a real stop). Each name in legacy_ip6
+    becomes a coi6-<name> rule in `ip6 coi forward`, as older coi versions
+    installed it. The dummy device goes away on exit; the chains are left to
+    the code under test.
+    """
+    dev = "coiorphdummy0"
+    script = [
+        "add table netdev coi",
+        "add table ip6 coi",
+        "add chain ip6 coi forward { type filter hook forward priority 10 ; policy accept ; }",
+    ]
+    for chain in chains:
+        script += [
+            f'add chain netdev coi {chain} {{ type filter hook ingress device "{dev}" priority -500 ; policy accept ; }}',
+            f'add rule netdev coi {chain} meta protocol ip6 counter drop comment "{chain}"',
+        ]
+    for name in legacy_ip6:
+        script.append(f'add rule ip6 coi forward iifname "{dev}" drop comment "coi6-{name}"')
+    subprocess.run(
+        ["sudo", "-n", "ip", "link", "add", dev, "type", "dummy"], check=True, timeout=10
+    )
+    try:
+        r = subprocess.run(
+            ["sudo", "-n", "nft", "-f", "-"],
+            input="\n".join(script) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert r.returncode == 0, f"could not plant drop chains: {r.stderr}"
+        yield
+    finally:
+        subprocess.run(["sudo", "-n", "ip", "link", "del", dev], capture_output=True, timeout=10)

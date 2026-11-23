@@ -4,8 +4,11 @@
 Restricted/allowlist mode installs a host-side IPv6 drop chain `coi6-<container>`
 in the `netdev coi` table, hooked on the container's veth. It is removed on normal
 teardown, but a container that is force-deleted (no coi teardown) can leave the
-chain behind. Orphan cleanup, which
-already sweeps stale IPv4 `ip coi` rules, must also remove these.
+chain behind (on kernels that do not delete it together with the veth). A
+container killed before its mode's rules leaves its `coi-boot-<container>` chain,
+and older coi versions left a `coi6-<container>` rule in `ip6 coi forward`.
+Orphan cleanup, which already sweeps stale IPv4 `ip coi` rules, must remove all
+of them.
 """
 
 import os
@@ -13,6 +16,8 @@ import subprocess
 import tempfile
 
 import pytest
+
+from support.helpers import dummy_netdev_chains
 
 
 def _skip_unless_ready():
@@ -23,6 +28,16 @@ def _skip_unless_ready():
     if subprocess.run(["sudo", "-n", "nft", "list", "tables"], capture_output=True).returncode != 0:
         return "nft sudo not available"
     return None
+
+
+def _legacy_ip6_chain():
+    r = subprocess.run(
+        ["sudo", "-n", "nft", "list", "chain", "ip6", "coi", "forward"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return r.stdout if r.returncode == 0 else ""
 
 
 def _ip6_chain():
@@ -76,21 +91,30 @@ def test_clean_orphans_removes_stale_ip6_rule(coi_binary, workspace_dir, cleanup
             timeout=30,
             check=False,
         )
-        if comment not in _ip6_chain():
-            # Kernels before name-based netdev hooks delete the chain with its
-            # device: nothing is left to orphan.
-            pytest.skip("kernel removed the netdev chain with the veth")
+        # A kernel that deletes the chain with the veth leaves nothing: plant
+        # it as a kernel that keeps it would. Plant the boot chain and the
+        # legacy ip6 rule of the same dead container on every kernel.
+        boot = f"coi-boot-{container_name}"
+        planted = [boot] if comment in _ip6_chain() else [comment, boot]
+        with dummy_netdev_chains(*planted, legacy_ip6=[container_name]):
+            assert f"chain {comment} {{" in _ip6_chain() and f"chain {boot} {{" in _ip6_chain()
+            assert f'comment "{comment}"' in _legacy_ip6_chain()
 
-        # Orphan cleanup must remove it.
-        clean = subprocess.run(
-            [coi_binary, "clean", "--orphans", "--force"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        assert clean.returncode == 0, f"coi clean failed: {clean.stderr}"
-        assert comment not in _ip6_chain(), (
-            f"orphaned ip6 rule {comment} should be removed by clean --orphans:\n{_ip6_chain()}"
-        )
+            # Orphan cleanup must remove them all.
+            clean = subprocess.run(
+                [coi_binary, "clean", "--orphans", "--force"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert clean.returncode == 0, f"coi clean failed: {clean.stderr}"
+            assert "Orphaned drop chains" in clean.stdout, clean.stdout
+            for chain in (comment, boot):
+                assert f"chain {chain} {{" not in _ip6_chain(), (
+                    f"orphaned chain {chain} should be removed by clean --orphans:\n{_ip6_chain()}"
+                )
+            assert f'comment "{comment}"' not in _legacy_ip6_chain(), (
+                f"legacy ip6 rule {comment} should be removed:\n{_legacy_ip6_chain()}"
+            )
     finally:
         os.unlink(config_file)
