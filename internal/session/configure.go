@@ -77,6 +77,35 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 		return nil, fmt.Errorf("container %s is not running", opts.ContainerName)
 	}
 
+	// 0. Network isolation first: every exec below (the code user probe
+	// included) runs with the container's policy already in place.
+	// SetupForContainer runs for every mode, like coi container start: open
+	// mode replaces a previous session's rules with its accept rule, and it
+	// lifts a boot block the caller installed with network.ApplyBootBlockRule
+	// right after starting the container (coi cannot close the window between
+	// the caller's start and this call).
+	var networkManager *network.Manager
+	var networkApplied string
+	if opts.NetworkConfig != nil && opts.NetworkConfig.Mode != "" {
+		// Ensure bridge is in trusted zone before applying network rules
+		if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(opts.ContainerName); err != nil {
+			opts.Logger(fmt.Sprintf("Warning: could not ensure bridge forwarding rules: %v", err))
+		} else if changed {
+			opts.Logger(fmt.Sprintf("Added iptables FORWARD rules for %s", bridgeName))
+		}
+
+		nm := network.NewManager(opts.NetworkConfig, logger.NewDiscard())
+		if err := nm.SetupForContainer(ctx, opts.ContainerName); err != nil {
+			return nil, fmt.Errorf("failed to setup network isolation: %w", err)
+		}
+		networkManager = nm
+		networkApplied = string(opts.NetworkConfig.Mode)
+		opts.Logger(fmt.Sprintf("Network isolation applied: %s", opts.NetworkConfig.Mode))
+		for _, w := range network.AllowlistPrivateWarnings(opts.NetworkConfig) {
+			opts.Logger(w)
+		}
+	}
+
 	// Detect code user to determine home directory
 	hasCodeUser, err := DetectCodeUser(mgr, container.CodeUser)
 	if err != nil {
@@ -90,33 +119,9 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 	}
 
 	result := &ConfigureResult{
-		HomeDir: homeDir,
-	}
-
-	// 0. Network isolation first: every exec below runs with the container's
-	// policy already in place. SetupForContainer runs for every mode, like
-	// coi container start: open mode replaces a previous session's rules with
-	// its accept rule, and it lifts a boot block the caller installed with
-	// network.ApplyBootBlockRule right after starting the container (coi
-	// cannot close the window between the caller's start and this call).
-	if opts.NetworkConfig != nil && opts.NetworkConfig.Mode != "" {
-		// Ensure bridge is in trusted zone before applying network rules
-		if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(opts.ContainerName); err != nil {
-			opts.Logger(fmt.Sprintf("Warning: could not ensure bridge forwarding rules: %v", err))
-		} else if changed {
-			opts.Logger(fmt.Sprintf("Added iptables FORWARD rules for %s", bridgeName))
-		}
-
-		nm := network.NewManager(opts.NetworkConfig, logger.NewDiscard())
-		if err := nm.SetupForContainer(ctx, opts.ContainerName); err != nil {
-			return nil, fmt.Errorf("failed to setup network isolation: %w", err)
-		}
-		result.NetworkManager = nm
-		result.NetworkApplied = string(opts.NetworkConfig.Mode)
-		opts.Logger(fmt.Sprintf("Network isolation applied: %s", opts.NetworkConfig.Mode))
-		for _, w := range network.AllowlistPrivateWarnings(opts.NetworkConfig) {
-			opts.Logger(w)
-		}
+		HomeDir:        homeDir,
+		NetworkApplied: networkApplied,
+		NetworkManager: networkManager,
 	}
 
 	// 1. SSH agent forwarding

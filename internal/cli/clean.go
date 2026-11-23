@@ -318,7 +318,7 @@ func printOrphanedResources(orphans *cleanup.OrphanedResources) {
 	}
 
 	if len(orphans.IPv6Rules) > 0 {
-		fmt.Printf("  Orphaned ip6 nft rules (%d):\n", len(orphans.IPv6Rules))
+		fmt.Printf("  Orphaned drop chains (%d):\n", len(orphans.IPv6Rules))
 		for _, name := range orphans.IPv6Rules {
 			fmt.Printf("    - %s\n", name)
 		}

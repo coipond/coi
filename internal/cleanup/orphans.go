@@ -137,9 +137,9 @@ func CleanupOrphanedIPv6Rules(names []string, logger func(string)) (int, error) 
 	}
 	cleaned := 0
 	for _, name := range names {
-		logger(fmt.Sprintf("Removing orphaned ip6 nft rule for container: %s", name))
+		logger(fmt.Sprintf("Removing orphaned drop chains for container: %s", name))
 		if err := network.RemoveIPv6BlockForContainer(name); err != nil {
-			logger(fmt.Sprintf("  Warning: Failed to remove ip6 rule for %s: %v", name, err))
+			logger(fmt.Sprintf("  Warning: Failed to remove IPv6 drop for %s: %v", name, err))
 			continue
 		}
 		if err := network.RemoveBootBlockRule(name); err != nil {
@@ -474,7 +474,7 @@ func DetectAll() (*OrphanedResources, error) {
 	ipv6Rules, err := DetectOrphanedIPv6Rules()
 	if err != nil {
 		// Non-fatal - nft/ip6 might not be available
-		log.Printf("Warning: Could not check ip6 nft rules: %v", err)
+		log.Printf("Warning: Could not check drop chains: %v", err)
 	}
 	result.IPv6Rules = ipv6Rules
 

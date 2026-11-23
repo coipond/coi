@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -443,8 +444,8 @@ func RemoveOpenModeRules(containerIP string) error {
 	return deleteNFTRulesByComment("coi-" + containerIP)
 }
 
-// ApplyBootBlockRule installs a temporary drop of all IPv4 except DHCP at the
-// ingress of the container's host veth (see installVethIngressChain)
+// ApplyBootBlockRule installs a temporary drop of all IPv4 except DHCP, and of
+// all IPv6, at the ingress of the container's host veth (see installVethIngressChain)
 // immediately after a container starts, before any startup scripts can run.
 // This closes the network gap between container boot and SetupForContainer
 // installing proper IP-based isolation rules.
@@ -504,11 +505,12 @@ func bootBlockComment(containerName string) string {
 	return "coi-boot-" + containerName
 }
 
-// bootBlockRules let DHCP through, so the container gets its address, and
-// drop all other IPv4. ARP passes.
+// bootBlockRules let the DHCP broadcasts through, so the container gets its
+// address, and drop all other IPv4 and all IPv6. ARP passes.
 var bootBlockRules = [][]string{
-	{"meta", "protocol", "ip", "udp", "dport", "67", "accept"},
+	{"meta", "protocol", "ip", "ip", "daddr", "255.255.255.255", "udp", "sport", "68", "udp", "dport", "67", "accept"},
 	{"meta", "protocol", "ip", "counter", "drop"},
+	{"meta", "protocol", "ip6", "counter", "drop"},
 }
 
 // ipv6BlockRules drop all IPv6, to any destination, the host included.
@@ -639,23 +641,58 @@ func deleteVethIngressChain(chain string) error {
 }
 
 // RemoveIPv6BlockForContainer removes the host-side IPv6 drop chain installed
-// by ApplyIPv6BlockForContainer. Safe to call even if none was ever installed.
+// by ApplyIPv6BlockForContainer, and the coi6-<name> rule older coi versions
+// put in the ip6 coi forward chain. Safe to call even if none was installed.
 func RemoveIPv6BlockForContainer(containerName string) error {
 	if !SudoEnabled() {
 		return nil
 	}
-	return deleteVethIngressChain(ipv6BlockComment(containerName))
+	if err := deleteVethIngressChain(ipv6BlockComment(containerName)); err != nil {
+		return err
+	}
+	return deleteNFTRulesByCommentFamily("ip6", ipv6BlockComment(containerName))
 }
 
 // ListCOIIP6RuleContainers returns the container names that own a coi6-<name>
-// or coi-boot-<name> chain in the netdev coi table. Used by orphan detection
-// to find drop chains whose containers are no longer running.
+// or coi-boot-<name> chain in the netdev coi table, or a coi6-<name> rule
+// older coi versions put in the ip6 coi forward chain. Used by orphan
+// detection to find drop chains whose containers are no longer running.
 func ListCOIIP6RuleContainers() ([]string, error) {
-	output, err := runNFTCommand("list", "table", "netdev", "coi")
-	if err != nil {
-		return nil, nil // table doesn't exist yet — no chains
+	var names []string
+	if output, err := runNFTCommand("list", "table", "netdev", "coi"); err == nil {
+		names = parseCOIIP6RuleContainers(string(output))
 	}
-	return parseCOIIP6RuleContainers(string(output)), nil
+	if output, err := runNFTCommand("list", "chain", "ip6", "coi", "forward"); err == nil {
+		for _, n := range parseLegacyIP6RuleContainers(string(output)) {
+			if !slices.Contains(names, n) {
+				names = append(names, n)
+			}
+		}
+	}
+	return names, nil
+}
+
+// parseLegacyIP6RuleContainers extracts the unique container names from the
+// coi6-<name> rule comments in `nft list chain ip6 coi forward` output (rules
+// of older coi versions). Pure, for testing.
+func parseLegacyIP6RuleContainers(output string) []string {
+	var names []string
+	for _, line := range strings.Split(output, "\n") {
+		const prefix = `comment "coi6-`
+		idx := strings.Index(line, prefix)
+		if idx == -1 {
+			continue
+		}
+		rest := line[idx+len(prefix):]
+		end := strings.Index(rest, `"`)
+		if end == -1 {
+			continue
+		}
+		if name := rest[:end]; name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // parseCOIIP6RuleContainers extracts the unique container names from the

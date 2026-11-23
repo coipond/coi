@@ -21,9 +21,15 @@ func TestParseCOIIP6RuleContainers(t *testing.T) {
 		type filter hook ingress device "veth1" priority -500; policy accept;
 		meta protocol ip6 counter packets 0 bytes 0 drop comment "coi6-coi-def67890-2"
 	}
+	chain coi-boot-coi-killed-3 {
+		type filter hook ingress device "veth2" priority -500; policy accept;
+		meta protocol ip counter packets 0 bytes 0 drop comment "coi-boot-coi-killed-3"
+	}
 }`
 	got := parseCOIIP6RuleContainers(output)
-	want := []string{"coi-abc12345-1", "coi-def67890-2"} // deduped, order-preserved
+	// deduped, order-preserved; a boot-only chain (killed before its mode's
+	// rules) is an orphan too
+	want := []string{"coi-abc12345-1", "coi-def67890-2", "coi-killed-3"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseCOIIP6RuleContainers() = %v, want %v", got, want)
 	}
@@ -52,8 +58,9 @@ add rule netdev coi coi6-c1 meta protocol ip6 counter drop comment "coi6-c1"
 `},
 		{"boot block", "coi-boot-c1", bootBlockRules, `add table netdev coi
 add chain netdev coi coi-boot-c1 { type filter hook ingress device "veth9" priority -500 ; policy accept ; }
-add rule netdev coi coi-boot-c1 meta protocol ip udp dport 67 accept comment "coi-boot-c1"
+add rule netdev coi coi-boot-c1 meta protocol ip ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept comment "coi-boot-c1"
 add rule netdev coi coi-boot-c1 meta protocol ip counter drop comment "coi-boot-c1"
+add rule netdev coi coi-boot-c1 meta protocol ip6 counter drop comment "coi-boot-c1"
 `},
 	}
 	for _, tt := range tests {
@@ -93,5 +100,21 @@ func TestIngressChainDevice(t *testing.T) {
 				t.Errorf("ingressChainDevice() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseLegacyIP6RuleContainers(t *testing.T) {
+	output := `table ip6 coi {
+	chain forward {
+		type filter hook forward priority 10; policy accept;
+		iifname "veth0" drop comment "coi6-coi-abc12345-1" # handle 5
+		iifname "veth1" drop comment "coi6-coi-def67890-2" # handle 6
+		iifname "veth0" drop comment "coi6-coi-abc12345-1" # handle 7
+	}
+}`
+	got := parseLegacyIP6RuleContainers(output)
+	want := []string{"coi-abc12345-1", "coi-def67890-2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseLegacyIP6RuleContainers() = %v, want %v", got, want)
 	}
 }

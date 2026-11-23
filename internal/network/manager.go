@@ -339,6 +339,14 @@ func (m *Manager) teardownRulesAtomically(containerName string) bool {
 	}
 	cmds := deleteChainRuleCmds("forward", parseChainRules(string(v4), "coi-"+ip))
 	cmds = append(cmds, deleteChainRuleCmds("forward", parseChainRules(string(v4), bootBlockComment(containerName)))...)
+	// coi6-<name> rules older coi versions put in the ip6 forward chain.
+	if v6, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward"); err == nil {
+		for _, r := range parseChainRules(string(v6), ipv6BlockComment(containerName)) {
+			cmds = append(cmds, []string{"delete", "rule", "ip6", "coi", "forward", "handle", r.handle})
+		}
+	} else if !strings.Contains(err.Error(), "No such file or directory") {
+		return false
+	}
 	if nd, err := runNFTCommand("list", "table", "netdev", "coi"); err == nil {
 		for _, chain := range []string{ipv6BlockComment(containerName), bootBlockComment(containerName)} {
 			if strings.Contains(string(nd), "chain "+chain+" {") {
