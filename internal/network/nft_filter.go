@@ -445,8 +445,9 @@ func RemoveOpenModeRules(containerIP string) error {
 }
 
 // ApplyBootBlockRule installs a temporary drop of all IPv4 except DHCP, and of
-// all IPv6, at the ingress of the container's host veth (see installVethIngressChain)
-// immediately after a container starts, before any startup scripts can run.
+// all IPv6, at the ingress of the container's host veth (see
+// installVethIngressChain) immediately after a container starts, before any
+// startup scripts can run.
 // This closes the network gap between container boot and SetupForContainer
 // installing proper IP-based isolation rules.
 //

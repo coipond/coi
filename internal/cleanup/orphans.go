@@ -21,7 +21,7 @@ import (
 type OrphanedResources struct {
 	Veths               []string // Orphaned veth interfaces (no master bridge)
 	NftRules            []string // Orphaned nft rules (for non-existent container IPs)
-	DropChains          []string // Orphaned netdev coi drop chains (container names no longer running)
+	DropChains          []string // Orphaned netdev coi drop chains (names of containers no longer running)
 	NFTMonitorRules     []string // Orphaned nft monitoring rules (NFT_COI/NFT_DNS/NFT_SUSPICIOUS)
 	IptablesBridgeRules []string // Orphaned iptables coi-bridge-forward rules (no coi containers running)
 }

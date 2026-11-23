@@ -44,9 +44,8 @@ type ConfigureResult struct {
 	NetworkApplied     string `json:"network_applied,omitempty"`
 	HomeDir            string `json:"home_dir"`
 
-	// NetworkManager owns the rules and the allowlist refresher. The caller
-	// runs NetworkManager.Teardown before deleting the container; the
-	// refresher stops with ctx (allowlist addresses are then pinned).
+	// NetworkManager owns the rules and the allowlist refresher (see
+	// ConfigureContainer for the caller's duties).
 	NetworkManager *network.Manager `json:"-"`
 }
 
@@ -55,6 +54,15 @@ type ConfigureResult struct {
 // container, allowing orchestrators to manage container lifecycle independently
 // while still leveraging coi's network isolation, SSH forwarding, timezone,
 // git identity guard, and managed settings features.
+//
+// With opts.NetworkConfig set, the network policy is applied before anything
+// runs in the container. The caller:
+//   - installs network.ApplyBootBlockRule right after it starts the container
+//     (this call lifts it once the policy is in place; coi cannot close the
+//     window between the caller's start and this call);
+//   - runs ConfigureResult.NetworkManager.Teardown before it deletes the
+//     container, or the rules stay until coi clean --orphans. The allowlist
+//     refresher stops with ctx; allowlist addresses are then pinned.
 func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureResult, error) {
 	if opts.ContainerName == "" {
 		return nil, fmt.Errorf("container name is required")
@@ -77,13 +85,9 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 		return nil, fmt.Errorf("container %s is not running", opts.ContainerName)
 	}
 
-	// 0. Network isolation first: every exec below (the code user probe
-	// included) runs with the container's policy already in place.
-	// SetupForContainer runs for every mode, like coi container start: open
-	// mode replaces a previous session's rules with its accept rule, and it
-	// lifts a boot block the caller installed with network.ApplyBootBlockRule
-	// right after starting the container (coi cannot close the window between
-	// the caller's start and this call).
+	// 1. Network isolation first, so every exec below (the code user probe
+	// included) runs under the policy. Every mode, open included: open mode
+	// replaces a previous session's rules with its accept rule.
 	var networkManager *network.Manager
 	var networkApplied string
 	if opts.NetworkConfig != nil && opts.NetworkConfig.Mode != "" {
@@ -124,7 +128,7 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 		NetworkManager: networkManager,
 	}
 
-	// 1. SSH agent forwarding
+	// 2. SSH agent forwarding
 	if opts.ForwardSSH {
 		socketPath, err := SetupSSHAgentForwarding(mgr, opts.ContainerName, opts.Logger)
 		if err != nil {
@@ -134,13 +138,13 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 		}
 	}
 
-	// 2. Git identity guard
+	// 3. Git identity guard
 	if opts.GitGuard {
 		SetupGitIdentityGuard(mgr, homeDir, opts.Logger)
 		SetupGitIdentity(mgr, homeDir, opts.GitIdentity, opts.Logger)
 	}
 
-	// 2.1. AI-attribution strip hook (#788) + branch guard (protected_branches):
+	// 3.1. AI-attribution strip hook (#788) + branch guard (protected_branches):
 	// global commit-msg strip and/or pre-commit/pre-push guard. Installed whenever
 	// either is active.
 	if opts.GitStripAttribution || len(opts.GitProtectedBranches) > 0 {
@@ -150,7 +154,7 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 		SetupGitHooks(mgr, homeDir, opts.GitIdentity, opts.GitStripAttribution, opts.GitStripAttributionPatterns, false, true, opts.GitProtectedBranches, opts.Logger)
 	}
 
-	// 3. Claude managed settings: auto-mode suppression (skipped under
+	// 4. Claude managed settings: auto-mode suppression (skipped under
 	// interactive mode — #764) + empty commit/PR attribution when attribution
 	// stripping is on (#788). No-op for other tools / nothing enabled.
 	if opts.ToolName == "claude" {
@@ -159,7 +163,7 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 			opts.GitStripAttribution, opts.Logger)
 	}
 
-	// 4. Timezone
+	// 5. Timezone
 	result.Timezone = opts.Timezone
 	if opts.Timezone != "" {
 		opts.Logger(fmt.Sprintf("Setting timezone to %s...", opts.Timezone))
@@ -169,7 +173,7 @@ func ConfigureContainer(ctx context.Context, opts ConfigureOptions) (*ConfigureR
 		}
 	}
 
-	// 5. Mise trust for workspace
+	// 6. Mise trust for workspace
 	if opts.WorkspacePath != "" {
 		containerWorkspacePath := mgr.GetWorkspacePath()
 		if containerWorkspacePath == "" {

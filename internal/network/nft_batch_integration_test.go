@@ -171,7 +171,8 @@ func TestTeardownRulesAtomically_Integration(t *testing.T) {
 	if err := NewNftManager(batchTestIP, "10.253.7.1").ApplyRestricted(restrictedTestConfig()); err != nil {
 		t.Fatal(err)
 	}
-	// The netdev chains need a real device to hook: a dummy stands in for the veth.
+	// The netdev chains need a real device to hook: a dummy stands in for the
+	// veth.
 	const dev = "coibatchtest0"
 	if out, err := exec.Command("sudo", "-n", "ip", "link", "add", dev, "type", "dummy").CombinedOutput(); err != nil {
 		t.Fatalf("cannot create dummy device: %v (%s)", err, out)

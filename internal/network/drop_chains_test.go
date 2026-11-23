@@ -36,7 +36,8 @@ func TestParseDropChainContainers(t *testing.T) {
 }
 
 func TestParseDropChainContainers_None(t *testing.T) {
-	// Output with no coi6-/coi-boot- chains yields no names (not nil-vs-empty sensitive).
+	// Output with no coi6-/coi-boot- chains yields no names (not nil-vs-empty
+	// sensitive).
 	if got := parseDropChainContainers("table netdev coi {\n\tchain other {\n\t}\n}"); len(got) != 0 {
 		t.Errorf("expected no names, got %v", got)
 	}
