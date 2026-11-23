@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -66,14 +67,14 @@ func forwardConfiguredSockets(mgr socketForwarder, sc *SocketConfig, includeSSHA
 	// Listed before forwarding: the list shares the config cache entry that
 	// forwardSocket reads next, while a list after the device writes would
 	// cost another `incus config show`.
-	var existing map[string]bool
+	existing := map[string]bool{}
 	if reused {
-		existing = existingSocketDevices(mgr, logger)
 		requested := make(map[string]bool, len(entries))
 		for _, e := range entries {
 			requested[e.DeviceName] = true
 		}
-		for d := range existing {
+		for _, d := range existingSocketDevices(mgr, logger) {
+			existing[d] = true
 			if !requested[d] {
 				removeSocketDevice(mgr, d, logger)
 			}
@@ -87,8 +88,10 @@ func forwardConfiguredSockets(mgr socketForwarder, sc *SocketConfig, includeSSHA
 	for _, e := range forwarded {
 		done[e.DeviceName] = true
 	}
+	// forwardSocket replaces the device of an entry it tried and leaves
+	// alone the one whose host socket it skipped.
 	for _, e := range entries {
-		if existing[e.DeviceName] && !done[e.DeviceName] {
+		if existing[e.DeviceName] && !done[e.DeviceName] && hostSocketSkipReason(filepath.Clean(e.HostPath)) != "" {
 			removeSocketDevice(mgr, e.DeviceName, logger)
 		}
 	}
@@ -113,19 +116,21 @@ func isSocketDevice(name string) bool {
 	return true
 }
 
-// existingSocketDevices returns the names of the container's socket devices.
-func existingSocketDevices(mgr container.ContainerDevices, logger func(string)) map[string]bool {
+// existingSocketDevices returns the names of the container's socket devices,
+// sorted.
+func existingSocketDevices(mgr container.ContainerDevices, logger func(string)) []string {
 	devices, err := mgr.ListDevices()
 	if err != nil {
 		logger(fmt.Sprintf("Warning: could not list devices to remove stale socket forwards: %v", err))
 		return nil
 	}
-	out := map[string]bool{}
+	var out []string
 	for _, d := range devices {
 		if isSocketDevice(d) {
-			out[d] = true
+			out = append(out, d)
 		}
 	}
+	sort.Strings(out)
 	return out
 }
 
@@ -192,15 +197,8 @@ func forwardSockets(mgr socketForwarder, entries []SocketEntry, logger func(stri
 // original SSH-agent behavior.
 func forwardSocket(mgr socketForwarder, e SocketEntry, logger func(string)) (string, bool, error) {
 	hostSocket := filepath.Clean(e.HostPath)
-	if hostSocket == "." || hostSocket == "" {
-		logger("Socket forwarding skipped: empty host socket path")
-		return "", false, nil
-	}
-	if fi, err := os.Stat(hostSocket); err != nil {
-		logger(fmt.Sprintf("Socket forwarding skipped: %s not accessible: %v", hostSocket, err))
-		return "", false, nil
-	} else if fi.Mode()&os.ModeSocket == 0 {
-		logger(fmt.Sprintf("Socket forwarding skipped: %s is not a Unix domain socket", hostSocket))
+	if reason := hostSocketSkipReason(hostSocket); reason != "" {
+		logger("Socket forwarding skipped: " + reason)
 		return "", false, nil
 	}
 
@@ -240,6 +238,22 @@ func forwardSocket(mgr socketForwarder, e SocketEntry, logger func(string)) (str
 		return "", false, nil
 	}
 	return e.ContainerPath, true, nil
+}
+
+// hostSocketSkipReason says why hostSocket can't be forwarded, or "" when it
+// is a Unix domain socket.
+func hostSocketSkipReason(hostSocket string) string {
+	if hostSocket == "." || hostSocket == "" {
+		return "empty host socket path"
+	}
+	fi, err := os.Stat(hostSocket)
+	if err != nil {
+		return fmt.Sprintf("%s not accessible: %v", hostSocket, err)
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Sprintf("%s is not a Unix domain socket", hostSocket)
+	}
+	return ""
 }
 
 // deviceConfigReader is implemented by *container.Manager (kept out of the
