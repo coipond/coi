@@ -18,9 +18,9 @@ func ContainerMarkedPersistent(name string) bool {
 
 // AllocateSlotPreferPersisted is AllocateSlot that first returns the lowest
 // slot whose container for the identity is stopped and marked persistent
-// (see ContainerMarkedPersistent), with persisted=true, so a launch restarts
-// a container kept by `coi persist` instead of forking a fresh slot. It
-// lists instances once; the key is read only for stopped containers.
+// (user.coi.persistent=true), with persisted=true, so a launch restarts a
+// container kept by `coi persist` instead of forking a fresh slot. The key
+// comes from the one instance listing.
 func AllocateSlotPreferPersisted(workspacePath, sessionName string, maxSlots int) (slot int, persisted bool, err error) {
 	if maxSlots == 0 {
 		maxSlots = MaxSlots
@@ -31,17 +31,17 @@ func AllocateSlotPreferPersisted(workspacePath, sessionName string, maxSlots int
 	}
 	re := slotNameRegexp(workspacePath, sessionName)
 	used := make(map[int]bool)
-	stopped := make(map[int]bool)
+	kept := make(map[int]bool)
 	for _, c := range instances {
 		if n, ok := slotOf(re, c.Name); ok {
 			used[n] = true
-			if container.StatusIsStopped(c.Status) {
-				stopped[n] = true
+			if container.StatusIsStopped(c.Status) && c.Key == "true" {
+				kept[n] = true
 			}
 		}
 	}
 	for n := 1; n <= maxSlots; n++ {
-		if stopped[n] && ContainerMarkedPersistent(ContainerName(workspacePath, sessionName, n)) {
+		if kept[n] {
 			return n, true, nil
 		}
 	}

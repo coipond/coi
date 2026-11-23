@@ -1179,25 +1179,38 @@ func parseNamesCSV(output string) []string {
 type ContainerStatus struct {
 	Name   string
 	Status string
+	// Key is the value of the config key ListContainerStatusesKey asked for.
+	Key string
 }
 
 // ListContainerStatuses lists container names and statuses, optionally
 // narrowed by an Incus name filter. Like ListContainerNames, it asks for the
 // name and status columns only (CSV), which need no instance state.
 func ListContainerStatuses(filter string) ([]ContainerStatus, error) {
+	return ListContainerStatusesKey(filter, "")
+}
+
+// ListContainerStatusesKey is ListContainerStatuses that also reads one
+// config key per container (ContainerStatus.Key) in the same listing.
+func ListContainerStatusesKey(filter, key string) ([]ContainerStatus, error) {
 	args := []string{"list"}
 	if filter != "" {
 		args = append(args, filter)
 	}
-	output, err := IncusOutput(append(args, "--format=csv", "--columns=ns")...)
+	columns := "ns"
+	if key != "" {
+		columns += "," + key
+	}
+	output, err := IncusOutput(append(args, "--format=csv", "--columns="+columns)...)
 	if err != nil {
 		return nil, err
 	}
 	return parseStatusesCSV(output), nil
 }
 
-// parseStatusesCSV parses `incus list --format=csv --columns=ns` output
-// ("name,STATUS" per line). Instance names cannot contain commas.
+// parseStatusesCSV parses `incus list --format=csv --columns=ns[,<key>]`
+// output ("name,STATUS[,value]" per line). Instance names cannot contain
+// commas.
 func parseStatusesCSV(output string) []ContainerStatus {
 	var out []ContainerStatus
 	for _, line := range strings.Split(output, "\n") {
@@ -1205,8 +1218,9 @@ func parseStatusesCSV(output string) []ContainerStatus {
 		if line == "" {
 			continue
 		}
-		name, status, _ := strings.Cut(line, ",")
-		out = append(out, ContainerStatus{Name: name, Status: status})
+		name, rest, _ := strings.Cut(line, ",")
+		status, key, _ := strings.Cut(rest, ",")
+		out = append(out, ContainerStatus{Name: name, Status: status, Key: key})
 	}
 	return out
 }
