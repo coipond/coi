@@ -443,7 +443,7 @@ func TestFilesystemMonitorCountsWorkspaceDevice(t *testing.T) {
 	if unix.Major(st.Dev) == 0 {
 		t.Skip("package dir has no block device")
 	}
-	want := fmt.Sprintf("%d:%d", unix.Major(st.Dev), unix.Minor(st.Dev))
+	want := deviceName(st.Dev)
 	rootDev := unix.Mkdev(unix.Major(st.Dev)+1, 0)
 	fakeSysDevBlock(t, map[string]fakeBlockDev{want: {}, deviceName(rootDev): {}})
 	containerRootDevice = func(context.Context, string) (uint64, error) {

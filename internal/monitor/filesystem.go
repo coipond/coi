@@ -43,7 +43,7 @@ var (
 var sysDevBlock = "/sys/dev/block"
 
 // rootDeviceExecTimeout bounds the stat of the container rootfs.
-var rootDeviceExecTimeout = 10 * time.Second
+const rootDeviceExecTimeout = 10 * time.Second
 
 // NewFilesystemMonitor creates a filesystem monitor for the workspace at
 // workspacePath ("" counts the whole container's I/O).
