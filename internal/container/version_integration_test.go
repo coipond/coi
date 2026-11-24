@@ -18,7 +18,7 @@ func TestIncusVersionIntegration(t *testing.T) {
 		t.Skip("incus daemon not running, skipping integration test")
 	}
 
-	output, err := IncusOutput("version")
+	output, err := IncusVersionOutput()
 	if err != nil {
 		t.Fatalf("incus version failed: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestCheckMinimumVersionIntegration(t *testing.T) {
 	err := CheckMinimumVersion()
 
 	// Get the actual version so we can verify the result makes sense
-	output, verr := IncusOutput("version")
+	output, verr := IncusVersionOutput()
 	if verr != nil {
 		t.Logf("Could not get version for verification: %v", verr)
 		return

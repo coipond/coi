@@ -1245,7 +1245,8 @@ STUB
 }
 
 // check_incus: an Incus server or client below 7.0 is reported by part and
-// version (and the non-interactive run aborts); 7.0+ on both passes.
+// version (and the non-interactive run aborts), also under a translated
+// locale; 7.0+ on both passes.
 func TestInstallSh_CheckIncus_MinimumVersion(t *testing.T) {
 	script := installShPath(t)
 	run := func(versionOutput string) string {
@@ -1253,7 +1254,12 @@ func TestInstallSh_CheckIncus_MinimumVersion(t *testing.T) {
 			tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
 			cat > "$tmpdir/incus" <<'STUB'
 #!/bin/bash
-printf '%s\n' "$VERSION_OUTPUT"
+# Translated labels unless LC_ALL=C, as incus prints them.
+if [ "$LC_ALL" = C ]; then
+  printf '%s\n' "$VERSION_OUTPUT"
+else
+  printf '%s\n' "$VERSION_OUTPUT" | sed 's/ version:/ Version:/'
+fi
 STUB
 			chmod +x "$tmpdir/incus"
 			printf '#!/bin/bash\n"$@"\n' > "$tmpdir/sudo"; chmod +x "$tmpdir/sudo"
@@ -1263,7 +1269,7 @@ STUB
 			check_incus
 			echo "===PASSED==="
 		`
-		out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1", "VERSION_OUTPUT="+versionOutput)
+		out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1", "LANG=de_DE.UTF-8", "LC_ALL=de_DE.UTF-8", "VERSION_OUTPUT="+versionOutput)
 		return out
 	}
 

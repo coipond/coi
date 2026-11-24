@@ -35,7 +35,7 @@ func CheckIncus() HealthCheck {
 	}
 
 	// Get Incus version
-	versionOutput, err := container.IncusOutput("version")
+	versionOutput, err := container.IncusVersionOutput()
 	if err != nil {
 		return HealthCheck{
 			Name:    "incus",

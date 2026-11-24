@@ -54,7 +54,7 @@ func TestCheckIncus_VersionCheck(t *testing.T) {
 	}
 
 	meets := container.MeetsMinimumVersion(v)
-	if output, err := container.IncusOutput("version"); err == nil {
+	if output, err := container.IncusVersionOutput(); err == nil {
 		if clientStr, err := container.ExtractClientVersion(output); err == nil {
 			if cv, err := container.ParseIncusVersion(clientStr); err == nil {
 				meets = meets && container.MeetsMinimumVersion(cv)

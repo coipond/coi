@@ -227,3 +227,18 @@ func TestCheckMinimumVersionOutput(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckMinimumVersion_TranslatedOutput(t *testing.T) {
+	t.Setenv("LANG", "de_DE.UTF-8")
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+	fakeIncusScript(t, `if [ "$LC_ALL" = C ]; then
+  printf 'Client version: 6.21\nServer version: 7.5\n'
+else
+  printf 'Client Version: 6.21\nServer Version: 7.5\n'
+fi`)
+
+	err := CheckMinimumVersion()
+	if err == nil || !strings.Contains(err.Error(), "Incus client version 6.21") {
+		t.Errorf("CheckMinimumVersion() = %v, want the old client refused", err)
+	}
+}

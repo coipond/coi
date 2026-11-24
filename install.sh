@@ -256,8 +256,9 @@ check_incus() {
         # current session predates the membership) cannot reach the daemon
         # socket, so a plain `incus version` returns non-zero and — under
         # `set -e` — would abort the whole installer here. root always can.
+        # LC_ALL=C: incus translates the "Client/Server version:" labels.
         local incus_version_output
-        incus_version_output="$(sudo incus version 2>/dev/null || true)"
+        incus_version_output="$(sudo env LC_ALL=C incus version 2>/dev/null || true)"
         echo -e "${GREEN}✓ Incus found: ${incus_version_output}${NC}"
 
         # Check minimum version (>= 7.0) of the server and the client
@@ -290,7 +291,7 @@ check_incus() {
                 if install_incus_zabbly; then
                     sudo systemctl restart incus 2>/dev/null || true
                     sudo incus admin waitready --timeout=60 2>/dev/null || true
-                    echo -e "${GREEN}✓ Incus upgraded ($(sudo incus version 2>/dev/null | grep -i '^Server version:' | cut -d: -f2 | tr -d ' '))${NC}"
+                    echo -e "${GREEN}✓ Incus upgraded ($(sudo env LC_ALL=C incus version 2>/dev/null | grep -i '^Server version:' | cut -d: -f2 | tr -d ' '))${NC}"
                 else
                     echo -e "${YELLOW}⚠ Incus upgrade did not complete${NC}"
                     prompt_continue "Continue with the current Incus anyway?"

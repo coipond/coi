@@ -1,7 +1,10 @@
 package container
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -126,11 +129,29 @@ func MeetsRecommendedVersion(v *IncusVersion) bool {
 // an error if either is below the minimum required version. Returns nil if both
 // are OK or cannot be determined (graceful degradation).
 func CheckMinimumVersion() error {
-	output, err := IncusOutput("version")
+	output, err := IncusVersionOutput()
 	if err != nil {
 		return nil // Can't get version, don't block
 	}
 	return checkMinimumVersionOutput(output)
+}
+
+// IncusVersionOutput returns the `incus version` output in the C locale:
+// incus translates its "Client version:" and "Server version:" labels.
+func IncusVersionOutput() (string, error) {
+	cmd := execIncusCommandContext(context.Background(), buildIncusCommand("version"))
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := runIncus(cmd)
+	output := strings.TrimSpace(stdout.String())
+	if err != nil {
+		return output, toExitError(err, strings.TrimSpace(stderr.String()))
+	}
+	return output, nil
 }
 
 // checkMinimumVersionOutput checks the server and client versions in raw
