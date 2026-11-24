@@ -10,9 +10,9 @@ from support.monitoring import (
     cleanup_container,
     container_io_stat,
     get_container_name_from_workspace,
-    get_container_state,
     get_threat_events,
     wait_for_container_running,
+    wait_for_frozen,
 )
 
 
@@ -79,18 +79,8 @@ def test_file_read_at_threshold_triggers(
         stderr=subprocess.DEVNULL,
     )
 
-    # Wait for detection and pause with extended polling budget.
-    # On slow CI runners, monitoring detection can take longer due to
-    # disk I/O contention and polling interval alignment.
-    time.sleep(10)
-
-    paused = False
-    for _ in range(30):
-        time.sleep(1)
-        state = get_container_state(container_name)
-        if state == "Frozen":
-            paused = True
-            break
+    # Poll for the auto-pause from the moment dd starts.
+    paused = wait_for_frozen(container_name)
 
     # Close stderr and print debug log BEFORE assertions
     proc.terminate()

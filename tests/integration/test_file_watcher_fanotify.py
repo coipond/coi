@@ -37,6 +37,8 @@ from support.monitoring import coi_session_logs
 
 # Grace period (30 s) + a backstop cycle (30 s) + margin.
 _DETECT_DEADLINE = 90
+# Long enough for a read to land after the grace period and one backstop.
+_GRACE_AND_BACKSTOP = 70
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -279,6 +281,62 @@ class TestFileWatcherFanotify:
             assert threats, (
                 f"No CRITICAL persistence threat for an authorized_keys write within "
                 f"{_DETECT_DEADLINE}s. Events: {_get_threat_events(container_name)}"
+                f"{coi_session_logs(container_name)}"
+            )
+        finally:
+            proc.terminate()
+            _cleanup(container_name, coi_binary)
+
+    def test_sudo_shadow_read_not_flagged(self, coi_binary, tmp_path, _monitoring_enabled):
+        """sudo by the code user raises no /etc/shadow read threat; cat does.
+
+        sudo (PAM) opens /etc/shadow on every use. The watcher skips that read
+        by the reader's /proc/<pid>/exe, which the host must resolve to the
+        container path of sudo. sudo runs every 3 s past the grace period and
+        a backstop cycle with no read threat; then a read by cat is detected,
+        so the watcher was live while sudo ran.
+        """
+        workspace = str(tmp_path / "workspace")
+        os.makedirs(workspace, exist_ok=True)
+        container_name = _container_name(workspace, 74)
+
+        proc = subprocess.Popen(
+            [coi_binary, "shell", "--workspace", workspace, "--slot", "74"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        def is_shadow_read(e):
+            return (
+                _sensitive_file(e).get("path") == "etc/shadow"
+                and _sensitive_file(e).get("access") == "read"
+            )
+
+        try:
+            if not _wait_running(container_name):
+                pytest.fail(f"Container {container_name} did not start")
+
+            sudo_ok = 0
+            deadline = time.monotonic() + _GRACE_AND_BACKSTOP
+            while time.monotonic() < deadline:
+                result = subprocess.run(
+                    ["incus", "exec", container_name, "--user", "1000", "--", "sudo", "-n", "true"],
+                    capture_output=True,
+                    timeout=15,
+                )
+                sudo_ok += result.returncode == 0
+                flagged = [e for e in _get_threat_events(container_name) if is_shadow_read(e)]
+                assert not flagged, f"sudo's /etc/shadow read was flagged: {flagged}"
+                time.sleep(3)
+            assert sudo_ok, f"`sudo -n true` never succeeded as uid 1000: {result.stderr!r}"
+
+            threats = _trigger_until_detected(
+                container_name, "cat /etc/shadow > /dev/null", is_shadow_read
+            )
+            assert threats, (
+                "No /etc/shadow read threat for cat either, so the watcher was not "
+                f"live while sudo ran. Events: {_get_threat_events(container_name)}"
                 f"{coi_session_logs(container_name)}"
             )
         finally:

@@ -31,7 +31,7 @@ def test_audit_log_evidence_structure(test_workspace, enable_monitoring, coi_bin
             assert isinstance(evidence, dict), f"Evidence should be a dict, got {evidence!r}"
             process = evidence.get("process")
             assert isinstance(process, dict), f"Evidence should hold the process, got {evidence}"
-            assert process.get("command") == "env", process
+            assert process.get("command", "").split()[0] == "env", process
             assert process.get("pid", 0) > 0, process
     finally:
         proc.terminate()

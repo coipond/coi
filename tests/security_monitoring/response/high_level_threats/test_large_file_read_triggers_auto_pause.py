@@ -13,6 +13,7 @@ from support.monitoring import (
     get_container_state,
     get_threat_events,
     wait_for_container_running,
+    wait_for_frozen,
 )
 
 
@@ -65,17 +66,8 @@ def test_large_file_read_triggers_auto_pause(
         stderr=subprocess.DEVNULL,
     )
 
-    # Wait for monitoring to detect large read
-    time.sleep(10)
-
-    # Container should be paused (not killed)
-    paused = False
-    for _ in range(15):
-        time.sleep(1)
-        state = get_container_state(container_name)
-        if state == "Frozen":
-            paused = True
-            break
+    # Poll for the auto-pause from the moment dd starts.
+    paused = wait_for_frozen(container_name)
 
     if not paused:
         events = get_threat_events(container_name)

@@ -10,9 +10,9 @@ from support.monitoring import (
     cleanup_container,
     container_io_stat,
     get_container_name_from_workspace,
-    get_container_state,
     get_threat_events,
     wait_for_container_running,
+    wait_for_frozen,
 )
 
 
@@ -84,14 +84,8 @@ def test_file_read_above_threshold_triggers(
     # Poll for the container to be frozen.  The security monitor (1s poll
     # interval) will detect the >50MB delta and freeze the container either
     # during or shortly after the dd read completes.
-    paused = False
-    for _ in range(30):
-        time.sleep(1)
-        state = get_container_state(container_name)
-        if state == "Frozen":
-            paused = True
-            dd_proc.kill()
-            break
+    paused = wait_for_frozen(container_name)
+    dd_proc.kill()
 
     # Close stderr and print debug log BEFORE assertions
     proc.terminate()
