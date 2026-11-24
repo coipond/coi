@@ -365,19 +365,44 @@ func isAuthHelper(pid int) bool {
 	return !sudoEdits(strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"))
 }
 
-// sudoValueOpts are the sudo short options that take a value, and
-// sudoValueLongOpts the long ones.
+// sudoValueOpts are the sudo short options that take a value. sudoLongOpts
+// are sudo's long options, true for those that take a value.
 var (
-	sudoValueOpts     = "CDghpRrTtUu"
-	sudoValueLongOpts = map[string]bool{
-		"--close-from": true, "--chdir": true, "--group": true, "--host": true,
-		"--prompt": true, "--chroot": true, "--role": true, "--command-timeout": true,
-		"--type": true, "--other-user": true, "--user": true,
+	sudoValueOpts = "CDghpRrTtUu"
+	sudoLongOpts  = map[string]bool{
+		"askpass": false, "background": false, "bell": false, "close-from": true,
+		"chdir": true, "preserve-env": false, "edit": false, "group": true,
+		"set-home": false, "help": false, "host": true, "login": false,
+		"remove-timestamp": false, "reset-timestamp": false, "list": false,
+		"non-interactive": false, "preserve-groups": false, "prompt": true,
+		"chroot": true, "role": true, "stdin": false, "shell": false, "type": true,
+		"command-timeout": true, "other-user": true, "user": true,
+		"version": false, "validate": false,
 	}
 )
 
+// sudoLongOpt resolves a long option name as getopt_long does: an exact
+// name, or a prefix of exactly one name. ok is false for an unknown or
+// ambiguous name.
+func sudoLongOpt(name string) (resolved string, ok bool) {
+	if _, exact := sudoLongOpts[name]; exact {
+		return name, true
+	}
+	for opt := range sudoLongOpts {
+		if strings.HasPrefix(opt, name) {
+			if resolved != "" {
+				return "", false
+			}
+			resolved = opt
+		}
+	}
+	return resolved, resolved != ""
+}
+
 // sudoEdits reports whether argv runs sudo in edit mode: argv[0] sudoedit,
-// or -e/--edit among sudo's own options (before the command).
+// or -e/--edit (or a prefix of it) among sudo's own options (before the
+// command). An unknown or ambiguous long option counts as edit mode: sudo
+// rejects it, so nothing is exempted that sudo would accept.
 func sudoEdits(argv []string) bool {
 	if len(argv) == 0 {
 		return false
@@ -388,12 +413,15 @@ func sudoEdits(argv []string) bool {
 	for i := 1; i < len(argv); i++ {
 		arg := argv[i]
 		switch {
-		case arg == "--edit":
-			return true
 		case arg == "--" || !strings.HasPrefix(arg, "-") || arg == "-":
 			return false
 		case strings.HasPrefix(arg, "--"):
-			if sudoValueLongOpts[arg] {
+			name, _, inline := strings.Cut(arg[2:], "=")
+			opt, ok := sudoLongOpt(name)
+			if !ok || opt == "edit" {
+				return true
+			}
+			if sudoLongOpts[opt] && !inline {
 				i++
 			}
 		default:

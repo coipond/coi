@@ -278,6 +278,7 @@ func TestHandleIgnoresAuthHelperReads(t *testing.T) {
 		15: {"/usr/bin/sudo", "sudo\x00-u\x00root\x00-e\x00/etc/shadow"},
 		20: {"/usr/bin/cat", "cat\x00/etc/shadow"},
 		21: {"/tmp/sudo", "/tmp/sudo\x00true"},
+		22: {"/usr/bin/sudo", ""},
 	}
 	for pid, p := range procs {
 		pdir := filepath.Join(dir, strconv.Itoa(pid))
@@ -286,6 +287,9 @@ func TestHandleIgnoresAuthHelperReads(t *testing.T) {
 		}
 		if err := os.Symlink(p.exe, filepath.Join(pdir, "exe")); err != nil {
 			t.Fatal(err)
+		}
+		if p.cmdline == "" {
+			continue // no cmdline: the process is gone
 		}
 		if err := os.WriteFile(filepath.Join(pdir, "cmdline"), []byte(p.cmdline+"\x00"), 0o644); err != nil {
 			t.Fatal(err)
@@ -314,6 +318,7 @@ func TestHandleIgnoresAuthHelperReads(t *testing.T) {
 		{10, "root/.ssh/id_rsa", unix.FAN_OPEN, true},
 		{20, "etc/shadow", unix.FAN_OPEN, true},
 		{21, "etc/shadow", unix.FAN_OPEN, true},
+		{22, "etc/shadow", unix.FAN_OPEN, true},
 		{30, "etc/shadow", unix.FAN_OPEN, true},
 		{10, "etc/shadow", unix.FAN_CLOSE_WRITE, true},
 	} {
@@ -341,6 +346,16 @@ func TestSudoEdits(t *testing.T) {
 		{[]string{"sudo", "-u", "root", "-e", "f"}, true},
 		{[]string{"sudo", "-uroot", "-e", "f"}, true},
 		{[]string{"sudo", "--user", "root", "--edit", "f"}, true},
+		{[]string{"sudo", "--ed", "/etc/shadow"}, true},
+		{[]string{"sudo", "--edi", "/etc/shadow"}, true},
+		{[]string{"sudo", "--us", "root", "-e", "/etc/shadow"}, true},
+		{[]string{"sudo", "--user=root", "-e", "f"}, true},
+		{[]string{"sudo", "--bogus", "f"}, true},
+		{[]string{"sudo", "--re", "true"}, true},
+		{[]string{"sudo", "--us", "root", "true"}, false},
+		{[]string{"sudo", "--user=e", "true"}, false},
+		{[]string{"sudo", "--preserve-env=PATH", "true"}, false},
+		{[]string{"sudo", "--non", "true"}, false},
 		{[]string{"sudo", "true"}, false},
 		{[]string{"sudo", "-E", "env"}, false},
 		{[]string{"sudo", "-u", "e", "true"}, false},
