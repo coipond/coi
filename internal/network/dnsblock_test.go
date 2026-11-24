@@ -1,6 +1,7 @@
 package network
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,12 +34,24 @@ func TestBlockDNSAddsTCPResetBeforeEachReject(t *testing.T) {
 // fakeIncus puts an incus on PATH that logs its arguments.
 func fakeIncus(t *testing.T) string {
 	t.Helper()
+	return fakeIncusInstance(t, "", "")
+}
+
+// fakeIncusInstance is fakeIncus that also answers the instance query for
+// container name with eth0 address ip (none when name is "").
+func fakeIncusInstance(t *testing.T, name, ip string) string {
+	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "incus.log")
 	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\nexit 0\n"
+	answer := ""
+	if name != "" {
+		answer = fmt.Sprintf(`case "$*" in *"query /1.0/instances/%[1]s?"*) echo '{"name":"%[1]s","state":{"network":{"eth0":{"host_name":"vethx","addresses":[{"family":"inet","address":"%[2]s"}]}}}}' ;; esac
+`, name, ip)
+	}
+	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\n" + answer + "exit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o700); err != nil { //nolint:gosec // test fake must be executable
 		t.Fatal(err)
 	}

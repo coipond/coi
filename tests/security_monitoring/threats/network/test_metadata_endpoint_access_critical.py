@@ -14,7 +14,9 @@ from support.monitoring import (
 )
 
 
-def test_metadata_endpoint_access_critical(test_workspace, enable_monitoring, coi_binary):
+def test_metadata_endpoint_access_critical(
+    test_workspace, enable_monitoring_metadata_open, coi_binary
+):
     """Test connection to cloud metadata endpoint triggers CRITICAL threat."""
     metadata_script = Path(test_workspace) / "metadata.py"
     metadata_script.write_text(

@@ -2,6 +2,7 @@ package network
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -361,6 +362,12 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 			notWant: []string{blockRFC1918, blockMetadata, "on ports"},
 		},
 		{
+			name:    "local access on, metadata blocked",
+			cfg:     config.NetworkConfig{AllowLocalNetworkAccess: &on, BlockMetadataEndpoint: &on},
+			want:    []string{allowRFC1918 + "; allow_local_network_access)", blockMetadata},
+			notWant: []string{blockRFC1918},
+		},
+		{
 			name: "local access on with allowed_ports",
 			cfg: config.NetworkConfig{
 				AllowLocalNetworkAccess: &on,
@@ -392,5 +399,141 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Open mode rejects metadataCIDR ahead of its accept under
+// block_metadata_endpoint; a reused container with exactly those rules is
+// left alone.
+func TestApplyOpenRules_MetadataBlock(t *testing.T) {
+	on, off := true, false
+	const ip = "10.0.0.2"
+	listing := func(texts []string) string {
+		var b strings.Builder
+		for i, text := range texts {
+			fmt.Fprintf(&b, "\t\t%s # handle %d\n", text, 5+i)
+		}
+		return b.String()
+	}
+	for _, tc := range []struct {
+		name    string
+		block   *bool
+		listing string
+		want    []string // rules added, in order; nil: no nft script
+	}{
+		{"blocked", &on, "", []string{"ip daddr 169.254.0.0/16 meta l4proto tcp reject with tcp reset", "ip daddr 169.254.0.0/16 reject", "ip saddr 10.0.0.2 accept"}},
+		{"not blocked", &off, "", []string{"ip saddr 10.0.0.2 accept"}},
+		{"blocked, reused", &on, listing(openModeRuleTexts(ip, true)), nil},
+		{"blocked, reused without the reject", &on, listing(openModeRuleTexts(ip, false)), []string{"handle 5", "169.254.0.0/16 meta l4proto tcp reject", "169.254.0.0/16 reject", "accept"}},
+		{"not blocked, reused with the reject", &off, listing(openModeRuleTexts(ip, true)), []string{"handle 5", "handle 6", "handle 7", "ip saddr 10.0.0.2 accept"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := fakeNftSudo(t, "table ip coi {\n\tchain forward { # handle 1\n"+tc.listing+"\t}\n}\n", "")
+			fakeIncus(t)
+			m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: tc.block}, logger.NewDiscard())
+			m.applyOpenRules(ip)
+			calls := readCalls(t, logPath)
+			script := calls[strings.Index(calls, "-f -\n")+1:]
+			if tc.want == nil {
+				if strings.Contains(calls, "-f -") {
+					t.Fatalf("reuse must not touch the rules, got:\n%s", calls)
+				}
+				return
+			}
+			lines := strings.Split(strings.TrimSpace(script), "\n")
+			var got []string
+			for _, l := range lines {
+				if strings.HasPrefix(l, "delete rule ip coi forward") || strings.HasPrefix(l, "add rule ip coi forward") {
+					got = append(got, l)
+				}
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("script rules = %q, want %q", got, tc.want)
+			}
+			for i, w := range tc.want {
+				if !strings.Contains(got[i], w) {
+					t.Errorf("rule %d = %q, want %q", i, got[i], w)
+				}
+			}
+		})
+	}
+}
+
+// Open mode's header says whether metadata is blocked; with no usable nft
+// the block is not enforced, and the session log and MetadataUnenforced say so.
+func TestSetupForContainer_OpenMetadataLog(t *testing.T) {
+	on, off := true, false
+	prev := SudoEnabled()
+	SetSudoAllowed(false)
+	t.Cleanup(func() { SetSudoAllowed(prev) })
+	for _, tc := range []struct {
+		name       string
+		block      *bool
+		header     string
+		unenforced bool
+	}{
+		{"blocked", &on, "Network mode: open (only cloud metadata endpoints blocked)", true},
+		{"not blocked", &off, "Network mode: open (no restrictions)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sl := logger.New("open-log", t.TempDir())
+			m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: tc.block, UseSudo: &off}, sl)
+			if err := m.SetupForContainer(t.Context(), "c1"); err != nil {
+				t.Fatal(err)
+			}
+			_ = sl.Close()
+			out, _ := os.ReadFile(sl.OutPath())
+			errOut, _ := os.ReadFile(sl.ErrPath())
+			if !strings.Contains(string(out), tc.header) {
+				t.Errorf("log missing %q; got %q", tc.header, out)
+			}
+			warned := strings.Contains(string(errOut), "block_metadata_endpoint is not enforced in open mode")
+			if warned != tc.unenforced || m.MetadataUnenforced() != tc.unenforced {
+				t.Errorf("warned=%v MetadataUnenforced=%v, want %v; stderr log %q", warned, m.MetadataUnenforced(), tc.unenforced, errOut)
+			}
+		})
+	}
+}
+
+// When the forward chain cannot be listed, open mode falls back to purge then
+// add, and the fallback keeps the metadata reject ahead of the accept.
+func TestApplyOpenRules_FallbackKeepsMetadataBlock(t *testing.T) {
+	logPath := fakeNftSudoFailing(t, nftFakeFailures{list: true})
+
+	on := true
+	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: &on}, logger.NewDiscard())
+	if !m.applyOpenRules("10.0.0.2") {
+		t.Fatal("fallback reported failure")
+	}
+	calls := readCalls(t, logPath)
+	reject := strings.Index(calls, "ip daddr 169.254.0.0/16 meta l4proto tcp reject")
+	accept := strings.Index(calls, "ip saddr 10.0.0.2 accept")
+	if reject < 0 || accept < reject {
+		t.Errorf("fallback must add the metadata reject before the accept, got:\n%s", calls)
+	}
+}
+
+// When open mode's nft rules fail, the metadata block is not enforced:
+// MetadataUnenforced is true and the session log warns.
+func TestSetupForContainer_OpenMetadataRulesFail(t *testing.T) {
+	fakeNftSudoFailing(t, nftFakeFailures{list: true, script: true})
+	fakeIncusInstance(t, "coi-rules-fail", "10.0.0.9")
+
+	on := true
+	sl := logger.New("open-fail-log", t.TempDir())
+	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: &on}, sl)
+	if err := m.SetupForContainer(t.Context(), "coi-rules-fail"); err != nil {
+		t.Fatal(err)
+	}
+	_ = sl.Close()
+	errOut, _ := os.ReadFile(sl.ErrPath())
+	if m.containerIP != "10.0.0.9" {
+		t.Fatalf("container IP = %q: the fake incus was not used", m.containerIP)
+	}
+	if !m.MetadataUnenforced() {
+		t.Error("MetadataUnenforced = false, want true when the rules failed")
+	}
+	if !strings.Contains(string(errOut), "block_metadata_endpoint is not enforced in open mode") {
+		t.Errorf("stderr log missing the warning: %q", errOut)
 	}
 }
