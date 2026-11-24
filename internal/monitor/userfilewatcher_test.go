@@ -24,14 +24,14 @@ func TestUserFiles(t *testing.T) {
 		t.Fatalf("userFiles() = %d files, want %d", len(files), len(want))
 	}
 	for _, f := range files {
-		if want[f.rel] != f.category || f.title == "" || f.desc == "" {
+		if want[f.rel] != f.category || f.writeLevel != ThreatLevelHigh || f.writeTitle == "" || f.writeDesc == "" {
 			t.Errorf("userFiles(): %+v", f)
 		}
 	}
 }
 
 func TestUserFileWatcherWatchedDirs(t *testing.T) {
-	w := NewUserFileWatcher("c", "", "dev", []string{".pi/agent/auth.json"}, nil, nil)
+	w := NewUserFileWatcher("c", "dev", []string{".pi/agent/auth.json"}, nil, nil)
 	got := w.watchedDirs()
 	want := []string{
 		"home/dev/.ssh", "home/dev", "var/spool/cron/crontabs", "var/spool/cron", "var/spool",
@@ -52,35 +52,29 @@ func TestUserFileWatcherFromHost(t *testing.T) {
 	t.Cleanup(func() { procCgroupFmt = orig })
 
 	cases := map[int]struct {
-		cgroup   string
-		host     bool // container coi-1 in the default project
-		hostInP1 bool // container coi-1 in project p1
+		cgroup string
+		host   bool
 	}{
-		1: {"0::/lxc.payload.coi-1/user.slice\n", false, true},
-		2: {"0::/lxc.payload.coi-1\n", false, true},
-		3: {"0::/lxc.payload/coi-1/init.scope\n", false, true},
-		4: {"0::/system.slice/incus.service\n", true, true},
-		5: {"0::/lxc.payload.coi-12\n", true, true},
-		6: {"0::/lxc.payload.p1_coi-1/user.slice\n", true, false},
-		7: {"0::/lxc.payload.p1_coi-1\n", true, false},
+		1: {"0::/lxc.payload.coi-1/user.slice\n", false},
+		2: {"0::/lxc.payload.coi-1\n", false},
+		3: {"0::/system.slice/incus.service\n", true},
+		4: {"0::/lxc.payload.coi-12\n", true},
 	}
 	for pid, c := range cases {
 		if err := os.WriteFile(fmt.Sprintf(procCgroupFmt, pid), []byte(c.cgroup), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	def := NewUserFileWatcher("coi-1", "default", "code", nil, nil, nil)
-	p1 := NewUserFileWatcher("coi-1", "p1", "code", nil, nil, nil)
 	for pid, c := range cases {
-		if got := def.fromHost(pid); got != c.host {
-			t.Errorf("default project: fromHost(%q) = %v, want %v", c.cgroup, got, c.host)
-		}
-		if got := p1.fromHost(pid); got != c.hostInP1 {
-			t.Errorf("project p1: fromHost(%q) = %v, want %v", c.cgroup, got, c.hostInP1)
+		if got := fromHost(pid, "/lxc.payload.coi-1"); got != c.host {
+			t.Errorf("fromHost(%q) = %v, want %v", c.cgroup, got, c.host)
 		}
 	}
-	if def.fromHost(99) {
+	if fromHost(99, "/lxc.payload.coi-1") {
 		t.Error("fromHost of a gone process = true, want false")
+	}
+	if fromHost(3, "") {
+		t.Error("fromHost with an unresolved cgroup = true, want false")
 	}
 }
 
@@ -126,8 +120,9 @@ func newWatchHarness(t *testing.T, prepare func(root string)) *watchHarness {
 	if prepare != nil {
 		prepare(h.root)
 	}
-	h.w = NewUserFileWatcher("c", "", "code", []string{".claude/.credentials.json"}, func(e ThreatEvent) { h.threats = append(h.threats, e) }, nil)
+	h.w = NewUserFileWatcher("c", "code", []string{".claude/.credentials.json"}, func(e ThreatEvent) { h.threats = append(h.threats, e) }, nil)
 	h.st = newUserWatchState()
+	h.st.relCgroup = "/lxc.payload.c"
 	h.w.mark(ifd, 1, h.st)
 	h.st.graceUntil = time.Time{}
 	return h
@@ -270,7 +265,6 @@ func TestUserFileWatcherInodeWrites(t *testing.T) {
 	h.waitFor("home/code/.bashrc")
 	f.Close()
 
-	// truncate(2) by path.
 	if err := os.Truncate(filepath.Join(h.home, ".profile"), 0); err != nil {
 		t.Fatal(err)
 	}
@@ -351,9 +345,10 @@ func TestUserFileWatcherGracePeriod(t *testing.T) {
 	}
 	containerCgroups(t, 1, 2, 3, 4)
 	var threats int
-	w := NewUserFileWatcher("c", "", "code", nil, func(ThreatEvent) { threats++ }, nil)
+	w := NewUserFileWatcher("c", "code", nil, func(ThreatEvent) { threats++ }, nil)
 	st := newUserWatchState()
 	st.pid, st.dirs["k"], st.graceUntil = 1, "home/code", time.Now().Add(time.Minute)
+	st.relCgroup = "/lxc.payload.c"
 	w.handle(-1, fanFidEvent{mask: unix.FAN_CLOSE_WRITE, pid: 1, dir: "k", name: ".bashrc"}, st)
 	if threats != 0 {
 		t.Errorf("threat raised in the grace period")
@@ -376,9 +371,9 @@ func TestUserFileWatcherGracePeriod(t *testing.T) {
 func TestUserFileWatcherRefire(t *testing.T) {
 	containerCgroups(t, 7, 8)
 	var threats int
-	w := NewUserFileWatcher("c", "", "code", nil, func(ThreatEvent) { threats++ }, nil)
+	w := NewUserFileWatcher("c", "code", nil, func(ThreatEvent) { threats++ }, nil)
 	st := newUserWatchState()
-	st.pid, st.files["f"] = 1, "home/code/.bashrc"
+	st.pid, st.files["f"], st.relCgroup = 1, "home/code/.bashrc", "/lxc.payload.c"
 	for range 5 {
 		w.handle(-1, fanFidEvent{mask: unix.FAN_MODIFY, pid: 7, obj: "f"}, st)
 	}

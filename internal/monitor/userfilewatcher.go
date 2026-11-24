@@ -13,47 +13,40 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// userFile is a container-rootfs-relative file of the code user whose
-// creation, modification or replacement (rename over it) raises a threat.
-type userFile struct {
-	rel      string // e.g. "home/code/.bashrc"
-	category string
-	title    string
-	desc     string
-}
-
 // userFiles returns the persistence and credential files of the code user
-// named user: shell startup files, authorized_keys, the user crontab and the
-// tool credential files coi copies (secretPaths, relative to the home).
-func userFiles(user string, secretPaths []string) []userFile {
+// named user, whose creation, modification or replacement (rename over it)
+// raises a threat: shell startup files, authorized_keys, the user crontab and
+// the tool credential files coi copies (credentialPaths, relative to the
+// home).
+func userFiles(user string, credentialPaths []string) []monitoredFile {
 	home := "home/" + user
-	files := []userFile{
+	files := []monitoredFile{
 		{
-			rel: home + "/.ssh/authorized_keys", category: "persistence",
-			title: "User authorized_keys modified",
-			desc:  "A process wrote to the code user's authorized_keys, potentially adding a backdoor SSH key",
+			rel: home + "/.ssh/authorized_keys", writeLevel: ThreatLevelHigh, category: "persistence",
+			writeTitle: "User authorized_keys modified",
+			writeDesc:  "A process wrote to the code user's authorized_keys, potentially adding a backdoor SSH key",
 		},
 		{
-			rel: home + "/.bashrc", category: "persistence",
-			title: "User .bashrc modified",
-			desc:  "A process wrote to the code user's .bashrc, potentially adding persistent shell commands",
+			rel: home + "/.bashrc", writeLevel: ThreatLevelHigh, category: "persistence",
+			writeTitle: "User .bashrc modified",
+			writeDesc:  "A process wrote to the code user's .bashrc, potentially adding persistent shell commands",
 		},
 		{
-			rel: home + "/.profile", category: "persistence",
-			title: "User .profile modified",
-			desc:  "A process wrote to the code user's .profile, potentially adding persistent shell commands",
+			rel: home + "/.profile", writeLevel: ThreatLevelHigh, category: "persistence",
+			writeTitle: "User .profile modified",
+			writeDesc:  "A process wrote to the code user's .profile, potentially adding persistent shell commands",
 		},
 		{
-			rel: "var/spool/cron/crontabs/" + user, category: "persistence",
-			title: "User crontab modified",
-			desc:  "A process wrote to the code user's crontab, potentially adding a persistent scheduled task",
+			rel: "var/spool/cron/crontabs/" + user, writeLevel: ThreatLevelHigh, category: "persistence",
+			writeTitle: "User crontab modified",
+			writeDesc:  "A process wrote to the code user's crontab, potentially adding a persistent scheduled task",
 		},
 	}
-	for _, p := range secretPaths {
-		files = append(files, userFile{
-			rel: home + "/" + p, category: "credential_access",
-			title: "Tool credential file modified",
-			desc:  "A process in the container wrote to a tool credential file that coi copies in",
+	for _, p := range credentialPaths {
+		files = append(files, monitoredFile{
+			rel: home + "/" + p, writeLevel: ThreatLevelHigh, category: "credential_access",
+			writeTitle: "Tool credential file modified",
+			writeDesc:  "A process in the container wrote to a tool credential file that coi copies in",
 		})
 	}
 	return files
@@ -95,35 +88,30 @@ type fanFidEvent struct {
 // applies too.
 type UserFileWatcher struct {
 	containerName string
-	instance      string // the LXC name: <project>_<name> outside "default"
 	user          string
-	files         []userFile
+	files         []monitoredFile
 	onThreat      func(ThreatEvent)
 	onError       func(error)
 }
 
 // NewUserFileWatcher creates a UserFileWatcher for the files of the code
-// user named user in containerName, in Incus project project.
-func NewUserFileWatcher(containerName, project, user string, secretPaths []string, onThreat func(ThreatEvent), onError func(error)) *UserFileWatcher {
-	instance := containerName
-	if project != "" && project != "default" {
-		instance = project + "_" + containerName
-	}
+// user named user in containerName.
+func NewUserFileWatcher(containerName, user string, credentialPaths []string, onThreat func(ThreatEvent), onError func(error)) *UserFileWatcher {
 	return &UserFileWatcher{
 		containerName: containerName,
-		instance:      instance,
 		user:          user,
-		files:         userFiles(user, secretPaths),
+		files:         userFiles(user, credentialPaths),
 		onThreat:      onThreat,
 		onError:       onError,
 	}
 }
 
-// userWatchState is what Run keeps between mark passes: the marked
-// directories and files by key (their container-relative path), the grace
-// period and when each file was last flagged for each PID.
+// userWatchState is what Run keeps between mark passes: the container's
+// cgroup, the marked directories and files by key (their container-relative
+// path), the grace period and when each file was last flagged for each PID.
 type userWatchState struct {
 	pid        int
+	relCgroup  string // relative to /sys/fs/cgroup; "" counts every process in
 	dirs       map[fidKey]string
 	files      map[fidKey]string
 	graceUntil time.Time
@@ -149,6 +137,7 @@ func (w *UserFileWatcher) Run(ctx context.Context) {
 
 	st := newUserWatchState()
 	if pid, _ := GetContainerInitPID(ctx, w.containerName); pid > 0 {
+		w.resolveCgroup(ctx, pid, st)
 		w.mark(ifd, pid, st)
 	}
 
@@ -175,10 +164,21 @@ func (w *UserFileWatcher) Run(ctx context.Context) {
 			w.handle(ifd, ev, st)
 		case <-backstop.C:
 			if pid, _ := GetContainerInitPID(ctx, w.containerName); pid > 0 {
+				w.resolveCgroup(ctx, pid, st)
 				w.mark(ifd, pid, st)
 			}
 		}
 	}
+}
+
+// resolveCgroup sets st.relCgroup for a new init PID (first pass,
+// container restart). If it cannot be resolved, every process counts as in
+// the container.
+func (w *UserFileWatcher) resolveCgroup(ctx context.Context, pid int, st *userWatchState) {
+	if pid == st.pid && st.relCgroup != "" {
+		return
+	}
+	st.relCgroup, _ = containerRelCgroup(ctx, w.containerName)
 }
 
 // newUserWatchState returns an empty userWatchState.
@@ -204,7 +204,6 @@ func (w *UserFileWatcher) handle(ifd int, ev fanFidEvent, st *userWatchState) {
 		return
 	}
 	if rel, ok := st.files[ev.obj]; ok && ev.mask&unix.FAN_ONDIR == 0 && ev.mask&(unix.FAN_MODIFY|unix.FAN_CLOSE_WRITE) != 0 {
-		// The inode of a watched file, through any path.
 		w.flag(w.file(rel), ev.pid, st)
 		return
 	}
@@ -217,9 +216,8 @@ func (w *UserFileWatcher) handle(ifd int, ev fanFidEvent, st *userWatchState) {
 		if !w.onWatchedPath(rel) {
 			return
 		}
-		// A directory on a watched path appeared (created, or a prepared
-		// one renamed into place): mark it and flag the watched files
-		// already in it.
+		// A directory renamed into place brings its files with no event of
+		// their own.
 		w.mark(ifd, st.pid, st)
 		for i := range w.files {
 			f := &w.files[i]
@@ -250,9 +248,9 @@ func (w *UserFileWatcher) handle(ifd int, ev fanFidEvent, st *userWatchState) {
 // flag raises the threat for a write to f by host process pid, unless it
 // is in the grace period, from a process outside the container, or raised
 // for f and pid in the last refireAfter.
-func (w *UserFileWatcher) flag(f *userFile, pid int, st *userWatchState) {
+func (w *UserFileWatcher) flag(f *monitoredFile, pid int, st *userWatchState) {
 	now := time.Now()
-	if f == nil || now.Before(st.graceUntil) || w.fromHost(pid) {
+	if f == nil || now.Before(st.graceUntil) || fromHost(pid, st.relCgroup) {
 		return
 	}
 	key := fmt.Sprintf("%s\x00%d", f.rel, pid)
@@ -385,7 +383,7 @@ func (w *UserFileWatcher) onWatchedPath(rel string) bool {
 }
 
 // file returns the watched file at rel, or nil.
-func (w *UserFileWatcher) file(rel string) *userFile {
+func (w *UserFileWatcher) file(rel string) *monitoredFile {
 	for i := range w.files {
 		if w.files[i].rel == rel {
 			return &w.files[i]
@@ -395,29 +393,22 @@ func (w *UserFileWatcher) file(rel string) *userFile {
 }
 
 // fromHost reports whether host process pid runs outside the container's
-// cgroup (lxc.payload.<instance>), as Incus does for coi's file pushes. A
-// process that is gone counts as in the container.
-func (w *UserFileWatcher) fromHost(pid int) bool {
+// cgroup subtree relCgroup, as Incus does for coi's file pushes. A process
+// that is gone counts as in the container.
+func fromHost(pid int, relCgroup string) bool {
 	data, err := os.ReadFile(fmt.Sprintf(procCgroupFmt, pid))
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		_, cg, _ := strings.Cut(line, "::")
-		cg += "/"
-		if strings.Contains(cg, "/lxc.payload."+w.instance+"/") || strings.Contains(cg, "/lxc.payload/"+w.instance+"/") {
-			return false
-		}
-	}
-	return true
+	return !processBelongsToContainerCgroup(string(data), relCgroup)
 }
 
-// fire emits the HIGH threat for a write to f by host process pid.
-func (w *UserFileWatcher) fire(f *userFile, pid int) {
+// fire emits the threat for a write to f by host process pid.
+func (w *UserFileWatcher) fire(f *monitoredFile, pid int) {
 	if w.onThreat == nil {
 		return
 	}
-	(&FileWatcher{onThreat: w.onThreat}).fire(ThreatLevelHigh, f.category, f.title, f.desc, f.rel, "write", pid)
+	w.onThreat(sensitiveFileThreat(f.writeLevel, f.category, f.writeTitle, f.writeDesc, f.rel, "write", pid))
 }
 
 // readFidEvents polls the fanotify fd and decodes its events into evCh

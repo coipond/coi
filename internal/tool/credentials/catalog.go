@@ -24,7 +24,7 @@ var catalogTOML string
 type Bundle struct {
 	ConfigDir           string   `toml:"config_dir"`
 	Files               []string `toml:"files"`
-	SecretFiles         []string `toml:"secret_files"`
+	CredentialFiles     []string `toml:"credential_files"`
 	StateFile           string   `toml:"state_file"`
 	SandboxSettingsFile string   `toml:"sandbox_settings_file"`
 	AlwaysSetup         bool     `toml:"always_setup"`
@@ -64,13 +64,13 @@ func Names() []string {
 	return names
 }
 
-// SecretPaths returns the home-relative paths of every bundle's secret
+// CredentialPaths returns the home-relative paths of every bundle's credential
 // files, sorted and without duplicates.
-func SecretPaths() []string {
+func CredentialPaths() []string {
 	seen := make(map[string]bool)
 	var paths []string
 	for _, b := range catalog {
-		for _, f := range b.SecretFiles {
+		for _, f := range b.CredentialFiles {
 			p := path.Join(b.ConfigDir, f)
 			if !seen[p] {
 				seen[p] = true

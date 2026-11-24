@@ -199,24 +199,24 @@ func TestGooseBundle_MatchesHardcodedValues(t *testing.T) {
 	}
 }
 
-// TestSecretFiles_AreCopiedFiles checks every secret file is one the bundle
+// TestCredentialFiles_AreCopiedFiles checks every credential file is one the bundle
 // copies: the monitor watches the copies.
-func TestSecretFiles_AreCopiedFiles(t *testing.T) {
+func TestCredentialFiles_AreCopiedFiles(t *testing.T) {
 	for _, name := range Names() {
 		b, _ := Lookup(name)
 		files := make(map[string]bool)
 		for _, f := range b.Files {
 			files[f] = true
 		}
-		for _, f := range b.SecretFiles {
+		for _, f := range b.CredentialFiles {
 			if !files[f] {
-				t.Errorf("bundle %q: secret file %q is not in files", name, f)
+				t.Errorf("bundle %q: credential file %q is not in files", name, f)
 			}
 		}
 	}
 }
 
-func TestSecretPaths(t *testing.T) {
+func TestCredentialPaths(t *testing.T) {
 	want := []string{
 		".claude/.credentials.json",
 		".codex/auth.json",
@@ -230,7 +230,7 @@ func TestSecretPaths(t *testing.T) {
 		".omp/auth.json",
 		".pi/agent/auth.json",
 	}
-	if got := SecretPaths(); !reflect.DeepEqual(got, want) {
-		t.Errorf("SecretPaths() = %v, want %v", got, want)
+	if got := CredentialPaths(); !reflect.DeepEqual(got, want) {
+		t.Errorf("CredentialPaths() = %v, want %v", got, want)
 	}
 }

@@ -35,7 +35,12 @@ from pathlib import Path
 import pytest
 
 from support.helpers import exec_as_code_user
-from support.monitoring import coi_session_logs, get_threat_events, monitored_shell
+from support.monitoring import (
+    coi_session_logs,
+    get_threat_events,
+    monitored_shell,
+    wait_for_threats,
+)
 
 # Sensitive-file monitoring needs CAP_SYS_ADMIN for fanotify_init, which a
 # standard (non-root) coi install doesn't have: every session logs
@@ -382,24 +387,14 @@ def host_credentials():
         cred.unlink()
 
 
-def _write_threats(container_name, rel):
-    return [
-        e
-        for e in get_threat_events(container_name)
-        if (e.get("evidence", {}).get("sensitive_file") or {}).get("path") == rel
-    ]
+def _is_write_to(rel):
+    """A threat for a write to the container-relative file rel."""
+    return lambda e: (e.get("evidence", {}).get("sensitive_file") or {}).get("path") == rel
 
 
 def _repeat_until_flagged(container_name, rel, write):
-    """Run write every 3 s until a threat for rel is logged; return it."""
-    deadline = time.monotonic() + _MAX_WAIT
-    while time.monotonic() < deadline:
-        write()
-        found = _write_threats(container_name, rel)
-        if found:
-            return found[0]
-        time.sleep(3)
-    found = _write_threats(container_name, rel)
+    """Repeat write on each poll until a threat for rel is logged; return it."""
+    found = wait_for_threats(container_name, _is_write_to(rel), max_wait=_MAX_WAIT, action=write)
     assert found, (
         f"no threat for a write to {rel} within {_MAX_WAIT} s; threat events: "
         f"{get_threat_events(container_name)}{coi_session_logs(container_name)}"
@@ -412,7 +407,7 @@ def test_user_persistence_and_credential_writes_flagged(
 ):
     """A container write to each code user file raises HIGH; coi's copy at
     session start and a host-side `coi file push` raise nothing. Each write
-    repeats every 3 s until its threat is logged: the watcher ignores the
+    repeats on each poll (2 s) until its threat is logged: the watcher ignores the
     first 30 s, and a directory missing at the mark pass is marked when
     created or by the 30 s backstop."""
     with monitored_shell(workspace_dir, coi_binary, 7, _MONITORING_CONFIG) as (container_name, _):
@@ -451,9 +446,11 @@ def test_user_persistence_and_credential_writes_flagged(
                 " && mv ~/.profile.new ~/.profile",
             ),
         )
-        assert not _write_threats(container_name, _CREDENTIALS), (
-            "coi's copy or a host-side push of the credential file raised a threat: "
-            f"{_write_threats(container_name, _CREDENTIALS)}"
+        cred_threats = [
+            e for e in get_threat_events(container_name) if _is_write_to(_CREDENTIALS)(e)
+        ]
+        assert not cred_threats, (
+            f"coi's copy or a host-side push of the credential file raised a threat: {cred_threats}"
         )
 
         authorized_keys = _repeat_until_flagged(

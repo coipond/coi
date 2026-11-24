@@ -693,11 +693,14 @@ def is_metadata_threat(event):
     )
 
 
-def wait_for_threats(container_name, match, max_wait=45, nft=False):
+def wait_for_threats(container_name, match, max_wait=45, nft=False, action=None):
     """Poll the audit log until a threat event satisfies match; return those.
-    nft as in get_threat_events."""
+    nft as in get_threat_events. action, if given, runs before each poll
+    (e.g. repeat an access the monitor may not watch yet)."""
     deadline = time.monotonic() + max_wait
     while time.monotonic() < deadline:
+        if action is not None:
+            action()
         found = [e for e in get_threat_events(container_name, nft) if match(e)]
         if found:
             return found
