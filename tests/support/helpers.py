@@ -734,10 +734,10 @@ def child_output(child):
     return ""
 
 
-def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
+def poweroff_session(child, timeout=60):
     """Run `sudo poweroff` in the coi shell's bash pane (which saves the
-    session), wait for coi to exit and the container to go, and force-delete
-    it if it stays. Return whether it went without the force-delete."""
+    session), wait for coi to exit and close the child. Return what the
+    child printed (child_output)."""
     child.send("sudo poweroff")
     time.sleep(0.3)
     child.send("\x0d")
@@ -745,10 +745,18 @@ def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
         child.expect(EOF, timeout=timeout)
     except TIMEOUT:
         pass
+    output = child_output(child)
     try:
         child.close(force=False)
     except Exception:
         child.close(force=True)
+    return output
+
+
+def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
+    """poweroff_session, then wait for the container to go, and force-delete
+    it if it stays. Return whether it went without the force-delete."""
+    poweroff_session(child, timeout=timeout)
     deleted = wait_for_specific_container_deletion(container_name, timeout=timeout)
     if not deleted:
         subprocess.run(

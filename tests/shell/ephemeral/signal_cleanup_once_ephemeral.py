@@ -16,6 +16,7 @@ import time
 from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
+    child_output,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
@@ -58,12 +59,7 @@ def test_signal_cleanup_runs_once(coi_binary, cleanup_containers, workspace_dir)
     time.sleep(2)
 
     # Capture output before closing
-    if hasattr(child.logfile_read, "get_raw_output"):
-        output = child.logfile_read.get_raw_output()
-    elif hasattr(child.logfile_read, "get_output"):
-        output = child.logfile_read.get_output()
-    else:
-        output = ""
+    output = child_output(child)
 
     try:
         child.close(force=False)

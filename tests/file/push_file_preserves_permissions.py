@@ -12,7 +12,7 @@ import os
 import subprocess
 import time
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, exec_in
 
 MARKER = "push-permissions-ran-4417"
 
@@ -62,40 +62,19 @@ def test_push_file_preserves_permissions(coi_binary, cleanup_containers, workspa
 
     # === Phase 4: Verify mode, owner, and that it runs ===
 
-    result = subprocess.run(
-        [
-            coi_binary,
-            "container",
-            "exec",
-            container_name,
-            "--",
-            "stat",
-            "-c",
-            "%a %u %g",
-            "/tmp/push-perm.sh",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
+    code, output = exec_in(
+        coi_binary, container_name, "stat -c '%a %u %g' /tmp/push-perm.sh", timeout=30
     )
-    assert result.returncode == 0, f"stat should succeed. stderr: {result.stderr}"
+    assert code == 0, f"stat should succeed. output: {output}"
 
     expected = f"755 {host_stat.st_uid} {host_stat.st_gid}"
-    combined_output = result.stdout + result.stderr
-    assert expected in combined_output, (
-        f"Pushed file should keep host mode/UID/GID '{expected}', got:\n{combined_output}"
+    assert expected in output, (
+        f"Pushed file should keep host mode/UID/GID '{expected}', got:\n{output}"
     )
 
-    result = subprocess.run(
-        [coi_binary, "container", "exec", container_name, "--", "/tmp/push-perm.sh"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"Pushed script should run. stderr: {result.stderr}"
-    assert MARKER in result.stdout + result.stderr, (
-        f"Pushed script should print its marker. Got:\n{result.stdout}{result.stderr}"
-    )
+    code, output = exec_in(coi_binary, container_name, "/tmp/push-perm.sh", timeout=30)
+    assert code == 0, f"Pushed script should run. output: {output}"
+    assert MARKER in output, f"Pushed script should print its marker. Got:\n{output}"
 
     # === Phase 5: Cleanup ===
 

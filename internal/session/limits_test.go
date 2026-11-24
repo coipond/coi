@@ -21,7 +21,9 @@ func fakeLimitsIncus(t *testing.T, name, configYAML string) (logPath string) {
 }
 
 // fakeLimitsIncusStatus is fakeLimitsIncus whose `incus list` also reports
-// the container as existing with status (STOPPED, RUNNING) when set.
+// the container as existing with status (STOPPED, RUNNING) when set. In the
+// returned log's directory, a file keys/<key> answers `config get` for that
+// key, and a home/ dir is what a session save's tar pull streams.
 func fakeLimitsIncusStatus(t *testing.T, name, configYAML, status string) (logPath string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -33,6 +35,8 @@ func fakeLimitsIncusStatus(t *testing.T, name, configYAML, status string) (logPa
 echo "$*" >> ` + logPath + `
 case "$*" in
   *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
+  *"config get "*` + name + `" "*) k=${*##* }; [ -f ` + filepath.Join(dir, "keys") + `/"$k" ] && cat ` + filepath.Join(dir, "keys") + `/"$k" ;;
+  *" exec "*"coi-tar-pull"*) [ -d ` + filepath.Join(dir, "home") + ` ] && exec tar -C ` + filepath.Join(dir, "home") + ` -cf - "${*##* }" ;;
   *"list "*"--columns=ns"*) [ -n "` + status + `" ] && echo "` + name + `,` + status + `" ;;
   *"list "*"--columns=n"*) [ -n "` + status + `" ] && echo "` + name + `" ;;
 esac
