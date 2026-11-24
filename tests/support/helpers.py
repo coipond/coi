@@ -734,10 +734,10 @@ def child_output(child):
     return ""
 
 
-def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
+def poweroff_session(child, timeout=60):
     """Run `sudo poweroff` in the coi shell's bash pane (which saves the
-    session), wait for coi to exit and the container to go, and force-delete
-    it if it stays. Return whether it went without the force-delete."""
+    session), wait for coi to exit and close the child. Return what the
+    child printed (child_output)."""
     child.send("sudo poweroff")
     time.sleep(0.3)
     child.send("\x0d")
@@ -745,10 +745,18 @@ def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
         child.expect(EOF, timeout=timeout)
     except TIMEOUT:
         pass
+    output = child_output(child)
     try:
         child.close(force=False)
     except Exception:
         child.close(force=True)
+    return output
+
+
+def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
+    """poweroff_session, then wait for the container to go, and force-delete
+    it if it stays. Return whether it went without the force-delete."""
+    poweroff_session(child, timeout=timeout)
     deleted = wait_for_specific_container_deletion(container_name, timeout=timeout)
     if not deleted:
         subprocess.run(
@@ -1496,41 +1504,85 @@ def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
     return result.returncode, result.stdout + result.stderr
 
 
-def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5):
+def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5, match=None):
     """
     Poll nftables until the default-deny rule is active for a container.
 
     Queries ``sudo nft -a list chain ip coi forward`` and looks for a rule
-    whose source matches the container's IP.  Returns ``True`` once the rule
-    appears, or ``False`` on timeout.
+    whose source matches the container's IP (and, with match, contains it).
+    Returns ``True`` once the rule appears, or ``False`` on timeout.
 
     Args:
         container_name: Incus container name (used to look up the IP).
         timeout: Maximum seconds to wait (default 30).
         poll_interval: Seconds between polls (default 0.5).
+        match: Text the rule must contain (default: any rule of the IP).
     """
     container_ip = container_ipv4(container_name)
     if not container_ip:
         return False
 
-    # Poll for a rule referencing this container IP in the ip coi forward chain.
-    # Match the IP on word boundaries (not a bare `in` substring): a substring
-    # test reports a false positive when a prefix-overlapping sibling IP has a
-    # rule (e.g. 10.0.0.2 spuriously matching a rule for 10.0.0.20).
-    ip_re = re.compile(r"(?<![\d.])" + re.escape(container_ip) + r"(?![\d.])")
     start = time.time()
     while time.time() - start < timeout:
-        result = subprocess.run(
-            ["sudo", "-n", "nft", "-a", "list", "chain", "ip", "coi", "forward"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0 and ip_re.search(result.stdout):
+        if any(match is None or match in text for _, text in container_forward_rules(container_ip)):
             return True
         time.sleep(poll_interval)
 
     return False
+
+
+def container_forward_rules(container_ip):
+    """Return (handle, text) for each ip coi forward rule whose source is
+    container_ip, in chain order; text is the rule without its handle."""
+    result = subprocess.run(
+        ["sudo", "-n", "nft", "-a", "list", "chain", "ip", "coi", "forward"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return []
+    src_re = re.compile(r"\bip saddr " + re.escape(container_ip) + r"(?![\d.])")
+    rules = []
+    for line in result.stdout.splitlines():
+        m = re.match(r"\s*(.*?)\s+# handle (\d+)$", line)
+        if m and src_re.search(m.group(1)):
+            rules.append((int(m.group(2)), m.group(1)))
+    return rules
+
+
+def count_forward_rules(container_ip, match):
+    """Replace each forward rule of container_ip containing match with the same
+    rule plus a counter before its verdict; return how many were replaced.
+    Read the counts with forward_rule_packets."""
+    replaced = 0
+    for handle, text in container_forward_rules(container_ip):
+        if match not in text or " counter " in text:
+            continue
+        counted, n = re.subn(r"\s(accept|reject)\b", r" counter \1", text, count=1)
+        if not n:
+            continue
+        result = subprocess.run(
+            ["sudo", "-n", "nft", "-f", "-"],
+            input=f"replace rule ip coi forward handle {handle} {counted}\n",
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"nft replace rule failed: {result.stderr}"
+        replaced += 1
+    return replaced
+
+
+def forward_rule_packets(container_ip, match):
+    """Sum the counter packets of the forward rules of container_ip containing
+    match (see count_forward_rules)."""
+    total = 0
+    for _, text in container_forward_rules(container_ip):
+        if match in text:
+            m = re.search(r"\bcounter packets (\d+)", text)
+            total += int(m.group(1)) if m else 0
+    return total
 
 
 def get_screen_display(child, refresh=False, clear_buffer=False):
