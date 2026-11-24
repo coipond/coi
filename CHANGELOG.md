@@ -4,6 +4,7 @@
 
 ### Features
 
+- [Feature] **The security monitor flags a shell whose stdin or stdout is a TCP socket** — bash, sh, dash, zsh, ash and other shells with fd 0 or fd 1 on a TCP connection of the container are a CRITICAL reverse-shell threat (auto-killed when `auto_kill_on_critical` is on), as `bash -i` already is. This catches `/dev/tcp` redirects and payloads that put the socket on the shell's stdio with no `-i` or `/dev/tcp/` in any command line.
 - [Feature] **`coi shell --json` prints the effective grants report as JSON** — one JSON line on stderr in place of the text block, with the same sections (workspace, mounts, protected and masked paths, network, ports, sockets, env, tool files, credentials, agent, limits) as data in `snake_case` keys. Like the text report, it lists paths and variable names, never values. Network settings the mode does not enforce are `null`.
 - [Feature] **goose is supported as an opt-in agent (#970)** — add `"goose"` to `[container.build] agents` and set `[tool] name = "goose"`. coi brings in your host goose config and credentials, keeps goose sessions per workspace, `coi shell --resume` picks up the latest one, `permission_mode` sets goose's `GOOSE_MODE` (`bypass`: `auto`, `interactive`: `approve`), `coi run --prompt` runs goose headless (`goose run --quiet`), and coi's sandbox context reaches goose through `~/.config/goose/.goosehints`, next to your own hints. The `coi run --prompt` error for an unsupported tool now names every supported tool.
 

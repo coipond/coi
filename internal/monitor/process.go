@@ -24,6 +24,7 @@ func CollectProcessStats(ctx context.Context, containerName string) (ProcessStat
 	for i := range processes {
 		processes[i].EnvAccess = checkEnvAccess(processes[i].Command)
 	}
+	markSocketShells(ctx, containerName, processes)
 	return ProcessStats{
 		Available:  true,
 		TotalCount: len(processes),
@@ -262,6 +263,10 @@ const (
 	ReverseShellClassOneLiner = "oneliner"
 )
 
+// stdioTCPSocketPattern is the Pattern of a shell flagged by its file
+// descriptors rather than its command line (see markSocketShells).
+const stdioTCPSocketPattern = "shell stdio on tcp socket"
+
 // DetectReverseShells checks processes for reverse shell indicators
 func DetectReverseShells(processes []Process) []ProcessThreat {
 	var threats []ProcessThreat
@@ -388,6 +393,16 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 				matched = i
 				break // strong wins outright — stop looking
 			}
+		}
+		if matched < 0 && proc.StdioTCPSocket {
+			threats = append(threats, ProcessThreat{
+				PID:        proc.PID,
+				Command:    proc.Command,
+				User:       proc.User,
+				Pattern:    stdioTCPSocketPattern,
+				Indicators: []string{"shell stdin/stdout on a TCP socket"},
+				Class:      ReverseShellClassStrong,
+			})
 		}
 		if matched >= 0 {
 			p := reverseShellPatterns[matched]
