@@ -161,8 +161,34 @@ func TestUserFileWatcherEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	drain(3)
+	// A prepared directory renamed into place: its watched file is flagged.
+	prepared := filepath.Join(root, "1", "prepared")
+	if err := os.MkdirAll(prepared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prepared, "authorized_keys"), []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(prepared, filepath.Join(home, ".ssh")); err != nil {
+		t.Fatal(err)
+	}
+	drain(4)
+	// A symlink at a watched path (no write to it) is flagged.
+	if err := os.Symlink("/tmp/elsewhere", filepath.Join(home, ".ssh", "x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(home, ".bashrc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp/elsewhere", filepath.Join(home, ".bashrc")); err != nil {
+		t.Fatal(err)
+	}
+	drain(5)
 
-	for i, rel := range []string{"home/code/.bashrc", "home/code/.profile", "home/code/.claude/.credentials.json"} {
+	for i, rel := range []string{
+		"home/code/.bashrc", "home/code/.profile", "home/code/.claude/.credentials.json",
+		"home/code/.ssh/authorized_keys", "home/code/.bashrc",
+	} {
 		got := threats[i]
 		if got.Level != ThreatLevelHigh || got.Evidence.SensitiveFile == nil ||
 			got.Evidence.SensitiveFile.Path != rel || got.Evidence.SensitiveFile.Pid != self {
@@ -187,12 +213,22 @@ func TestUserFileWatcherEvents(t *testing.T) {
 		}
 		break
 	}
-	if len(threats) != 3 {
-		t.Errorf("host-side write raised a threat: %+v", threats[3:])
+	if len(threats) != 5 {
+		t.Errorf("host-side write raised a threat: %+v", threats[5:])
 	}
 }
 
 func TestUserFileWatcherGracePeriod(t *testing.T) {
+	root := t.TempDir()
+	orig := procRootFmt
+	procRootFmt = root + "/%d"
+	t.Cleanup(func() { procRootFmt = orig })
+	if err := os.MkdirAll(filepath.Join(root, "1", "home", "code"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "1", "home", "code", ".bashrc"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	var threats int
 	w := NewUserFileWatcher("c", "code", nil, func(ThreatEvent) { threats++ }, nil)
 	st := userWatchState{pid: 1, dirs: map[dirKey]string{"k": "home/code"}, graceUntil: time.Now().Add(time.Minute)}
@@ -204,7 +240,12 @@ func TestUserFileWatcherGracePeriod(t *testing.T) {
 	w.handle(-1, fanNameEvent{mask: unix.FAN_CLOSE_WRITE, pid: -1, dir: "k", name: ".bashrc"}, &st)
 	w.handle(-1, fanNameEvent{mask: unix.FAN_CREATE, pid: -1, dir: "k", name: ".bashrc"}, &st)
 	if threats != 1 {
-		t.Errorf("threats = %d, want 1 (close-write only, not create)", threats)
+		t.Errorf("threats = %d, want 1 (close-write only, not the create of a regular file)", threats)
+	}
+	// fanotify merges the create and the close-write of a new file.
+	w.handle(-1, fanNameEvent{mask: unix.FAN_CREATE | unix.FAN_CLOSE_WRITE, pid: -1, dir: "k", name: ".bashrc"}, &st)
+	if threats != 2 {
+		t.Errorf("threats = %d, want 2 (merged create and close-write)", threats)
 	}
 }
 

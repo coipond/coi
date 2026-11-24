@@ -173,21 +173,57 @@ func (w *UserFileWatcher) handle(ifd int, ev fanNameEvent, st *userWatchState) {
 	}
 	rel := path.Join(dir, ev.name)
 	if ev.mask&unix.FAN_ONDIR != 0 {
-		// A directory on a watched path appeared: mark it now.
-		if w.onWatchedPath(rel) {
-			w.mark(ifd, st.pid, st)
+		if !w.onWatchedPath(rel) {
+			return
+		}
+		// A directory on a watched path appeared (created, or a prepared
+		// one renamed into place): mark it and flag the watched files
+		// already in it.
+		w.mark(ifd, st.pid, st)
+		if w.flaggable(ev.pid, st) {
+			for i := range w.files {
+				f := &w.files[i]
+				if strings.HasPrefix(f.rel, rel+"/") && w.exists(st.pid, f.rel) {
+					w.fire(f, ev.pid)
+				}
+			}
 		}
 		return
 	}
-	if time.Now().Before(st.graceUntil) {
+	f := w.file(rel)
+	if f == nil || !w.flaggable(ev.pid, st) {
 		return
 	}
-	if ev.mask&unix.FAN_CREATE != 0 {
-		return // the FAN_CLOSE_WRITE of the creator follows
+	// A new regular file is flagged by the FAN_CLOSE_WRITE of its creator
+	// (fanotify may merge both into one event); a symlink or hard link is
+	// written through another path.
+	if ev.mask&(unix.FAN_CLOSE_WRITE|unix.FAN_MOVED_TO) == 0 && w.newRegularFile(st.pid, f.rel) {
+		return
 	}
-	if f := w.file(rel); f != nil && !w.fromHost(ev.pid) {
-		w.fire(f, ev.pid)
+	w.fire(f, ev.pid)
+}
+
+// flaggable reports whether an event by host process pid can raise a
+// threat: past the grace period and from a process in the container.
+func (w *UserFileWatcher) flaggable(pid int, st *userWatchState) bool {
+	return !time.Now().Before(st.graceUntil) && !w.fromHost(pid)
+}
+
+// exists reports whether rel exists (not followed) in the container whose
+// init PID is pid.
+func (w *UserFileWatcher) exists(pid int, rel string) bool {
+	var stat unix.Stat_t
+	return unix.Lstat(fmt.Sprintf(procRootFmt+"/%s", pid, rel), &stat) == nil
+}
+
+// newRegularFile reports whether rel in the container whose init PID is pid
+// is a regular file with one link.
+func (w *UserFileWatcher) newRegularFile(pid int, rel string) bool {
+	var stat unix.Stat_t
+	if err := unix.Lstat(fmt.Sprintf(procRootFmt+"/%s", pid, rel), &stat); err != nil {
+		return false
 	}
+	return stat.Mode&unix.S_IFMT == unix.S_IFREG && stat.Nlink == 1
 }
 
 // mark marks every existing directory on a watched path in the container
