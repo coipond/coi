@@ -261,56 +261,96 @@ func TestMarkReportsNoFileMarked(t *testing.T) {
 }
 
 // TestHandleIgnoresAuthHelperReads checks a read of /etc/shadow by sudo, su
-// or unix_chkpwd raises nothing, while a read by any other program, one whose
-// executable is unreadable, and a write by sudo do.
+// or unix_chkpwd raises nothing, while a read by any other program, by
+// sudoedit, by an unreadable process, a read of another file by sudo and a
+// write by sudo do.
 func TestHandleIgnoresAuthHelperReads(t *testing.T) {
 	dir := t.TempDir()
-	old := procExePattern
-	procExePattern = dir + "/%d/exe"
-	t.Cleanup(func() { procExePattern = old })
-	exes := map[int]string{
-		10: "/usr/bin/sudo",
-		11: "/usr/lib/cargo/bin/sudo",
-		12: "/usr/sbin/unix_chkpwd",
-		13: "/usr/bin/su",
-		20: "/usr/bin/cat",
-		21: "/tmp/sudo",
+	old := procPidPattern
+	procPidPattern = dir + "/%d"
+	t.Cleanup(func() { procPidPattern = old })
+	procs := map[int]struct{ exe, cmdline string }{
+		10: {"/usr/bin/sudo", "sudo\x00true"},
+		11: {"/usr/lib/cargo/bin/sudo", "sudo\x00-u\x00root\x00grep\x00-e\x00x\x00f"},
+		12: {"/usr/sbin/unix_chkpwd", "/usr/sbin/unix_chkpwd\x00code\x00chkexpiry"},
+		13: {"/usr/bin/su", "su\x00-"},
+		14: {"/usr/lib/cargo/bin/sudo", "sudoedit\x00/etc/shadow"},
+		15: {"/usr/bin/sudo", "sudo\x00-u\x00root\x00-e\x00/etc/shadow"},
+		20: {"/usr/bin/cat", "cat\x00/etc/shadow"},
+		21: {"/tmp/sudo", "/tmp/sudo\x00true"},
 	}
-	for pid, exe := range exes {
-		if err := os.MkdirAll(filepath.Join(dir, strconv.Itoa(pid)), 0o755); err != nil {
+	for pid, p := range procs {
+		pdir := filepath.Join(dir, strconv.Itoa(pid))
+		if err := os.MkdirAll(pdir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(exe, filepath.Join(dir, strconv.Itoa(pid), "exe")); err != nil {
+		if err := os.Symlink(p.exe, filepath.Join(pdir, "exe")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pdir, "cmdline"), []byte(p.cmdline+"\x00"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	var shadow *monitoredFile
+	files := map[string]*monitoredFile{}
 	for i := range sensitiveFiles {
-		if sensitiveFiles[i].rel == "etc/shadow" {
-			shadow = &sensitiveFiles[i]
-		}
+		files[sensitiveFiles[i].rel] = &sensitiveFiles[i]
 	}
 
 	var got []ThreatEvent
 	w := NewFileWatcher("test-container", func(e ThreatEvent) { got = append(got, e) }, nil)
 	for _, tc := range []struct {
 		pid  int
+		rel  string
 		mask uint64
 		want bool
 	}{
-		{10, unix.FAN_OPEN, false},
-		{11, unix.FAN_OPEN, false},
-		{12, unix.FAN_OPEN, false},
-		{13, unix.FAN_OPEN, false},
-		{20, unix.FAN_OPEN, true},
-		{21, unix.FAN_OPEN, true},
-		{30, unix.FAN_OPEN, true},
-		{10, unix.FAN_CLOSE_WRITE, true},
+		{10, "etc/shadow", unix.FAN_OPEN, false},
+		{11, "etc/shadow", unix.FAN_OPEN, false},
+		{12, "etc/shadow", unix.FAN_OPEN, false},
+		{13, "etc/shadow", unix.FAN_OPEN, false},
+		{14, "etc/shadow", unix.FAN_OPEN, true},
+		{15, "etc/shadow", unix.FAN_OPEN, true},
+		{14, "root/.ssh/id_rsa", unix.FAN_OPEN, true},
+		{10, "root/.ssh/id_rsa", unix.FAN_OPEN, true},
+		{20, "etc/shadow", unix.FAN_OPEN, true},
+		{21, "etc/shadow", unix.FAN_OPEN, true},
+		{30, "etc/shadow", unix.FAN_OPEN, true},
+		{10, "etc/shadow", unix.FAN_CLOSE_WRITE, true},
 	} {
 		got = nil
-		w.handle(inodeEntry{file: shadow}, tc.mask, tc.pid)
+		w.handle(inodeEntry{file: files[tc.rel]}, tc.mask, tc.pid)
 		if (len(got) > 0) != tc.want {
-			t.Errorf("pid %d (%s) mask %#x: threats %v, want threat %v", tc.pid, exes[tc.pid], tc.mask, got, tc.want)
+			t.Errorf("pid %d (%q) %s mask %#x: threats %v, want threat %v",
+				tc.pid, procs[tc.pid].cmdline, tc.rel, tc.mask, got, tc.want)
+		}
+	}
+}
+
+// TestSudoEdits checks edit mode is found among sudo's own options only.
+func TestSudoEdits(t *testing.T) {
+	for _, tc := range []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"sudoedit", "/etc/shadow"}, true},
+		{[]string{"/usr/bin/sudoedit", "f"}, true},
+		{[]string{"sudo", "-e", "f"}, true},
+		{[]string{"sudo", "--edit", "f"}, true},
+		{[]string{"sudo", "-nE", "-e", "f"}, true},
+		{[]string{"sudo", "-ne", "f"}, true},
+		{[]string{"sudo", "-u", "root", "-e", "f"}, true},
+		{[]string{"sudo", "-uroot", "-e", "f"}, true},
+		{[]string{"sudo", "--user", "root", "--edit", "f"}, true},
+		{[]string{"sudo", "true"}, false},
+		{[]string{"sudo", "-E", "env"}, false},
+		{[]string{"sudo", "-u", "e", "true"}, false},
+		{[]string{"sudo", "grep", "-e", "x", "f"}, false},
+		{[]string{"sudo", "--", "-e"}, false},
+		{[]string{"su", "-"}, false},
+		{nil, false},
+	} {
+		if got := sudoEdits(tc.argv); got != tc.want {
+			t.Errorf("sudoEdits(%q) = %v, want %v", tc.argv, got, tc.want)
 		}
 	}
 }

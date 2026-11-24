@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +24,7 @@ type monitoredFile struct {
 	openDesc   string
 	writeTitle string
 	writeDesc  string
+	authRead   bool // reads by an authentication helper are not flagged
 }
 
 // sensitiveFiles is the list of files watched inside every monitored container.
@@ -30,6 +33,7 @@ var sensitiveFiles = []monitoredFile{
 	{
 		rel: "etc/shadow", openLevel: ThreatLevelHigh, writeLevel: ThreatLevelCritical,
 		category:   "credential_access",
+		authRead:   true,
 		openTitle:  "Shadow password file read",
 		openDesc:   "A process opened /etc/shadow which contains hashed passwords",
 		writeTitle: "Shadow password file modified",
@@ -311,11 +315,11 @@ func (w *FileWatcher) mark(ifd, pid int, st *watchState) {
 	}
 }
 
-// handle raises the threat for one event on a watched file. A read by an
-// authentication helper (sudo, su, PAM's unix_chkpwd) is how they work, so
-// only reads by other programs count.
+// handle raises the threat for one event on a watched file. An
+// authentication helper (sudo, su, PAM's unix_chkpwd) reads /etc/shadow on
+// every use, so its reads of a file marked authRead do not count.
 func (w *FileWatcher) handle(entry inodeEntry, mask uint64, pid int) {
-	if mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" && !isAuthHelper(pid) {
+	if mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" && !(entry.file.authRead && isAuthHelper(pid)) {
 		w.fire(entry.file.openLevel, entry.file.category,
 			entry.file.openTitle, entry.file.openDesc,
 			entry.file.rel, "read", pid)
@@ -327,11 +331,11 @@ func (w *FileWatcher) handle(entry inodeEntry, mask uint64, pid int) {
 	}
 }
 
-// procRootPattern and procExePattern are the host paths of a process's root
-// and executable; tests point them at a temp dir.
+// procRootPattern and procPidPattern are the host paths of a process's root
+// and of its /proc directory; tests point them at a temp dir.
 var (
 	procRootPattern = "/proc/%d/root"
-	procExePattern  = "/proc/%d/exe"
+	procPidPattern  = "/proc/%d"
 )
 
 // authHelpers are the container paths of the programs that read /etc/shadow
@@ -345,10 +349,68 @@ var authHelpers = map[string]bool{
 }
 
 // isAuthHelper reports whether host process pid runs an authentication
-// helper. An unreadable executable (the process is gone) counts as not one.
+// helper that is not editing a file: sudoedit (sudo -e) opens the file it
+// edits itself, as root. An unreadable executable or command line (the
+// process is gone) counts as not one.
 func isAuthHelper(pid int) bool {
-	exe, err := os.Readlink(fmt.Sprintf(procExePattern, pid))
-	return err == nil && authHelpers[exe]
+	dir := fmt.Sprintf(procPidPattern, pid)
+	exe, err := os.Readlink(dir + "/exe")
+	if err != nil || !authHelpers[exe] {
+		return false
+	}
+	cmdline, err := os.ReadFile(dir + "/cmdline")
+	if err != nil {
+		return false
+	}
+	return !sudoEdits(strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"))
+}
+
+// sudoValueOpts are the sudo short options that take a value, and
+// sudoValueLongOpts the long ones.
+var (
+	sudoValueOpts     = "CDghpRrTtUu"
+	sudoValueLongOpts = map[string]bool{
+		"--close-from": true, "--chdir": true, "--group": true, "--host": true,
+		"--prompt": true, "--chroot": true, "--role": true, "--command-timeout": true,
+		"--type": true, "--other-user": true, "--user": true,
+	}
+)
+
+// sudoEdits reports whether argv runs sudo in edit mode: argv[0] sudoedit,
+// or -e/--edit among sudo's own options (before the command).
+func sudoEdits(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	if filepath.Base(argv[0]) == "sudoedit" {
+		return true
+	}
+	for i := 1; i < len(argv); i++ {
+		arg := argv[i]
+		switch {
+		case arg == "--edit":
+			return true
+		case arg == "--" || !strings.HasPrefix(arg, "-") || arg == "-":
+			return false
+		case strings.HasPrefix(arg, "--"):
+			if sudoValueLongOpts[arg] {
+				i++
+			}
+		default:
+			for j := 1; j < len(arg); j++ {
+				if arg[j] == 'e' {
+					return true
+				}
+				if strings.IndexByte(sudoValueOpts, arg[j]) >= 0 {
+					if j == len(arg)-1 {
+						i++
+					}
+					break
+				}
+			}
+		}
+	}
+	return false
 }
 
 // markFiles registers FAN_MARK_INODE watches for all sensitive files inside
