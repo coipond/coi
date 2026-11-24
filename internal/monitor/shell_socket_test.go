@@ -153,6 +153,42 @@ func TestMarkSocketShellsIgnoresShellsWithoutSocket(t *testing.T) {
 	}
 }
 
+func TestMarkSocketShellsReadsTablesOncePerNetns(t *testing.T) {
+	root := fakeSocketProc(t)
+	fakeTCPTables(t, root, 30, []uint64{4242}, nil)
+	fakeTCPTables(t, root, 32, []uint64{5151}, nil) // nested netns
+	// 31 shares 30's netns: same /proc/<pid>/net.
+	if err := os.MkdirAll(filepath.Join(root, "31"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "30", "net"), filepath.Join(root, "31", "net")); err != nil {
+		t.Fatal(err)
+	}
+	fakeFDs(t, root, 30, "socket:[4242]", "socket:[4242]")
+	fakeFDs(t, root, 31, "socket:[999]", "socket:[4242]")
+	fakeFDs(t, root, 32, "socket:[5151]", "pipe:[1]")
+
+	reads := map[int]int{}
+	readTCPInodes = func(pid int) map[uint64]bool { reads[pid]++; return tcpSocketInodes(pid) }
+	t.Cleanup(func() { readTCPInodes = tcpSocketInodes })
+
+	procs := []Process{
+		{PID: 30, Name: "sh", Command: "sh"},
+		{PID: 31, Name: "bash", Command: "bash"},
+		{PID: 32, Name: "sh", Command: "sh"},
+	}
+	markSocketShells(t.Context(), "c", procs)
+
+	for _, p := range procs {
+		if !p.StdioTCPSocket {
+			t.Errorf("PID %d not marked", p.PID)
+		}
+	}
+	if reads[30]+reads[31] != 1 || reads[32] != 1 {
+		t.Errorf("table reads per pid = %v, want one for the netns of 30/31 and one for 32", reads)
+	}
+}
+
 func TestSocketInode(t *testing.T) {
 	cases := map[string]uint64{
 		"socket:[4242]": 4242,

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/coipond/coi/internal/container"
 )
 
@@ -74,14 +76,35 @@ func markSocketShells(ctx context.Context, containerName string, processes []Pro
 		}
 	}
 
+	byNetns := map[uint64]map[uint64]bool{} // netns key -> TCP socket inodes
 	for i, fdInodes := range sockets {
-		inodes := tcpSocketInodes(processes[i].PID)
+		key, ok := netnsKey(processes[i].PID)
+		inodes := byNetns[key]
+		if !ok || inodes == nil {
+			inodes = readTCPInodes(processes[i].PID)
+			if ok {
+				byNetns[key] = inodes
+			}
+		}
 		for _, inode := range fdInodes {
 			if inodes[inode] {
 				processes[i].StdioTCPSocket = true
 			}
 		}
 	}
+}
+
+// readTCPInodes reads the TCP socket inodes of a pid's netns; tests count calls.
+var readTCPInodes = tcpSocketInodes
+
+// netnsKey identifies the network namespace of host pid without ptrace
+// rights: /proc/<pid>/net/tcp has one inode per namespace.
+func netnsKey(pid int) (uint64, bool) {
+	var st unix.Stat_t
+	if err := unix.Stat(fmt.Sprintf("%s/%d/net/tcp", procRoot, pid), &st); err != nil {
+		return 0, false
+	}
+	return st.Ino, true
 }
 
 // tcpSocketInodes returns the socket inodes in the TCP tables of the network
