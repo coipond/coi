@@ -169,23 +169,11 @@ func (w *FileWatcher) Run(ctx context.Context) {
 	}
 	defer unix.Close(ifd)
 
-	var (
-		lastPID    int
-		inodes     map[inodeKey]inodeEntry
-		graceUntil time.Time // suppress threats until container boot settles
-	)
+	st := watchState{inodes: make(map[inodeKey]inodeEntry)}
 
 	// Initial mark pass.
 	if pid, _ := GetContainerInitPID(ctx, w.containerName); pid > 0 {
-		inodes = w.markFiles(ifd, pid)
-		lastPID = pid
-		// System daemons (PAM, sshd, cron) open /etc/shadow and other sensitive
-		// files during container boot. Suppress threats for 30 s so these normal
-		// init reads don't trigger false-positive auto-pause events.
-		graceUntil = time.Now().Add(30 * time.Second)
-	}
-	if inodes == nil {
-		inodes = make(map[inodeKey]inodeEntry)
+		w.mark(ifd, pid, &st)
 	}
 
 	// Background goroutine: poll the fanotify fd and decode events into evCh.
@@ -227,7 +215,7 @@ func (w *FileWatcher) Run(ctx context.Context) {
 			// Suppress events during the post-boot grace period to avoid
 			// false positives from system daemons accessing sensitive files
 			// as part of normal container initialisation.
-			if time.Now().Before(graceUntil) {
+			if time.Now().Before(st.graceUntil) {
 				unix.Close(ev.fd)
 				continue
 			}
@@ -238,34 +226,13 @@ func (w *FileWatcher) Run(ctx context.Context) {
 				continue
 			}
 			key := inodeKey{dev: stat.Dev, ino: stat.Ino}
-			entry, ok := inodes[key]
-			if !ok {
-				continue
-			}
-			if ev.mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" {
-				w.fire(entry.file.openLevel, entry.file.category,
-					entry.file.openTitle, entry.file.openDesc,
-					entry.file.rel, "read", ev.pid)
-			}
-			if ev.mask&unix.FAN_CLOSE_WRITE != 0 && entry.file.writeLevel != "" {
-				w.fire(entry.file.writeLevel, entry.file.category,
-					entry.file.writeTitle, entry.file.writeDesc,
-					entry.file.rel, "write", ev.pid)
+			if entry, ok := st.inodes[key]; ok {
+				w.handle(entry, ev.mask, ev.pid)
 			}
 
 		case <-backstop.C:
-			pid, _ := GetContainerInitPID(ctx, w.containerName)
-			if pid <= 0 {
-				continue
-			}
-			// Replace the map: it picks up new inodes from copy-up and drops
-			// deleted or moved files, which a group without FAN_REPORT_FID
-			// cannot be told about.
-			inodes = w.markFiles(ifd, pid)
-			if pid != lastPID {
-				// Container restarted — reset the grace period.
-				lastPID = pid
-				graceUntil = time.Now().Add(30 * time.Second)
+			if pid, _ := GetContainerInitPID(ctx, w.containerName); pid > 0 {
+				w.mark(ifd, pid, &st)
 			}
 		}
 	}
@@ -317,6 +284,73 @@ func (w *FileWatcher) readEvents(ctx context.Context, ifd int, evCh chan<- rawFa
 	}
 }
 
+// watchState is what Run keeps between mark passes.
+type watchState struct {
+	lastPID    int
+	inodes     map[inodeKey]inodeEntry
+	graceUntil time.Time // suppress threats until container boot settles
+	warned     bool      // the "no file marked" error was reported
+}
+
+// mark re-marks the sensitive files of the container whose init PID is pid.
+// The inode map is replaced, not merged: that picks up new inodes from
+// copy-up and drops deleted or moved files, which a group without
+// FAN_REPORT_FID is not told about. A new PID (first pass, container restart)
+// starts the grace period: system daemons (PAM, sshd, cron) open /etc/shadow
+// and other sensitive files during boot.
+func (w *FileWatcher) mark(ifd, pid int, st *watchState) {
+	st.inodes = w.markFiles(ifd, pid)
+	if pid != st.lastPID {
+		st.lastPID = pid
+		st.graceUntil = time.Now().Add(30 * time.Second)
+	}
+	if len(st.inodes) == 0 && !st.warned && w.onError != nil {
+		st.warned = true
+		w.onError(fmt.Errorf("filewatcher: no sensitive file could be marked under "+procRootPattern+
+			" (needs CAP_SYS_PTRACE and CAP_DAC_READ_SEARCH besides CAP_SYS_ADMIN; sensitive file monitoring disabled)", pid))
+	}
+}
+
+// handle raises the threat for one event on a watched file. A read by an
+// authentication helper (sudo, su, PAM's unix_chkpwd) is how they work, so
+// only reads by other programs count.
+func (w *FileWatcher) handle(entry inodeEntry, mask uint64, pid int) {
+	if mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" && !isAuthHelper(pid) {
+		w.fire(entry.file.openLevel, entry.file.category,
+			entry.file.openTitle, entry.file.openDesc,
+			entry.file.rel, "read", pid)
+	}
+	if mask&unix.FAN_CLOSE_WRITE != 0 && entry.file.writeLevel != "" {
+		w.fire(entry.file.writeLevel, entry.file.category,
+			entry.file.writeTitle, entry.file.writeDesc,
+			entry.file.rel, "write", pid)
+	}
+}
+
+// procRootPattern and procExePattern are the host paths of a process's root
+// and executable; tests point them at a temp dir.
+var (
+	procRootPattern = "/proc/%d/root"
+	procExePattern  = "/proc/%d/exe"
+)
+
+// authHelpers are the container paths of the programs that read /etc/shadow
+// to authenticate: sudo (also sudo-rs), su and PAM's unix_chkpwd.
+var authHelpers = map[string]bool{
+	"/usr/bin/sudo":           true,
+	"/usr/lib/cargo/bin/sudo": true,
+	"/usr/bin/su":             true,
+	"/usr/lib/cargo/bin/su":   true,
+	"/usr/sbin/unix_chkpwd":   true,
+}
+
+// isAuthHelper reports whether host process pid runs an authentication
+// helper. An unreadable executable (the process is gone) counts as not one.
+func isAuthHelper(pid int) bool {
+	exe, err := os.Readlink(fmt.Sprintf(procExePattern, pid))
+	return err == nil && authHelpers[exe]
+}
+
 // markFiles registers FAN_MARK_INODE watches for all sensitive files inside
 // the container rooted at /proc/<pid>/root and returns the resulting inode map.
 // Files that don't exist yet are silently skipped; the backstop retries them.
@@ -324,7 +358,7 @@ func (w *FileWatcher) markFiles(ifd, pid int) map[inodeKey]inodeEntry {
 	inodes := make(map[inodeKey]inodeEntry)
 	for i := range sensitiveFiles {
 		sf := &sensitiveFiles[i]
-		hostPath := fmt.Sprintf("/proc/%d/root/%s", pid, sf.rel)
+		hostPath := fmt.Sprintf(procRootPattern+"/%s", pid, sf.rel)
 
 		if err := unix.FanotifyMark(ifd, unix.FAN_MARK_ADD, sf.markMask(), unix.AT_FDCWD, hostPath); err != nil {
 			// File does not exist (ENOENT) or not accessible — skip silently.

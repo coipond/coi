@@ -1,6 +1,10 @@
 package monitor
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -160,4 +164,153 @@ func TestFileWatcherFireNilCallback(t *testing.T) {
 	w := NewFileWatcher("test-container", nil, nil)
 	// Must not panic.
 	w.fire(ThreatLevelHigh, "credential_access", "title", "desc", "etc/shadow", "read", 1)
+}
+
+// fakeProcRoot points procRootPattern at a temp dir and returns the root of
+// pid 1 in it.
+func fakeProcRoot(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	old := procRootPattern
+	procRootPattern = dir + "/%d"
+	t.Cleanup(func() { procRootPattern = old })
+	root := filepath.Join(dir, "1")
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// fidGroup returns a fanotify group an unprivileged process may create.
+func fidGroup(t *testing.T) int {
+	t.Helper()
+	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_REPORT_FID, unix.O_RDONLY)
+	if err != nil {
+		t.Skipf("unprivileged fanotify unavailable: %v", err)
+	}
+	t.Cleanup(func() { unix.Close(ifd) })
+	return ifd
+}
+
+func inodeOf(t *testing.T, path string) inodeKey {
+	t.Helper()
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		t.Fatal(err)
+	}
+	return inodeKey{dev: st.Dev, ino: st.Ino}
+}
+
+// TestMarkReplacesInodeMap checks a mark pass drops a moved file's inode:
+// without FAN_REPORT_FID the watcher is not told about the move, and a merged
+// map would keep flagging the file under its old name.
+func TestMarkReplacesInodeMap(t *testing.T) {
+	root := fakeProcRoot(t)
+	ifd := fidGroup(t)
+	sudoers := filepath.Join(root, "etc", "sudoers")
+	if err := os.WriteFile(sudoers, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := inodeOf(t, sudoers)
+
+	w := NewFileWatcher("test-container", nil, nil)
+	st := watchState{}
+	w.mark(ifd, 1, &st)
+	if st.inodes[old].file == nil || st.inodes[old].file.rel != "etc/sudoers" {
+		t.Fatalf("first pass did not mark etc/sudoers: %v", st.inodes)
+	}
+	grace := st.graceUntil
+	if grace.IsZero() {
+		t.Fatal("first pass did not start the grace period")
+	}
+
+	if err := os.Rename(sudoers, filepath.Join(root, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sudoers, []byte("y"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.mark(ifd, 1, &st)
+	if _, ok := st.inodes[old]; ok {
+		t.Error("the moved file's inode is still in the map")
+	}
+	if st.inodes[inodeOf(t, sudoers)].file == nil {
+		t.Error("the new etc/sudoers is not in the map")
+	}
+	if !st.graceUntil.Equal(grace) {
+		t.Error("a pass with the same PID restarted the grace period")
+	}
+}
+
+// TestMarkReportsNoFileMarked checks a pass that marks nothing (e.g. coi has
+// CAP_SYS_ADMIN but cannot reach /proc/<pid>/root) is reported, once.
+func TestMarkReportsNoFileMarked(t *testing.T) {
+	fakeProcRoot(t)
+	ifd := fidGroup(t)
+	var errs []error
+	w := NewFileWatcher("test-container", nil, func(err error) { errs = append(errs, err) })
+	st := watchState{}
+	w.mark(ifd, 1, &st)
+	w.mark(ifd, 1, &st)
+	if len(errs) != 1 {
+		t.Fatalf("got %d errors, want 1: %v", len(errs), errs)
+	}
+	if !strings.Contains(errs[0].Error(), "CAP_SYS_PTRACE") {
+		t.Errorf("error does not name the missing capabilities: %v", errs[0])
+	}
+}
+
+// TestHandleIgnoresAuthHelperReads checks a read of /etc/shadow by sudo, su
+// or unix_chkpwd raises nothing, while a read by any other program, one whose
+// executable is unreadable, and a write by sudo do.
+func TestHandleIgnoresAuthHelperReads(t *testing.T) {
+	dir := t.TempDir()
+	old := procExePattern
+	procExePattern = dir + "/%d/exe"
+	t.Cleanup(func() { procExePattern = old })
+	exes := map[int]string{
+		10: "/usr/bin/sudo",
+		11: "/usr/lib/cargo/bin/sudo",
+		12: "/usr/sbin/unix_chkpwd",
+		13: "/usr/bin/su",
+		20: "/usr/bin/cat",
+		21: "/tmp/sudo",
+	}
+	for pid, exe := range exes {
+		if err := os.MkdirAll(filepath.Join(dir, strconv.Itoa(pid)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(exe, filepath.Join(dir, strconv.Itoa(pid), "exe")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var shadow *monitoredFile
+	for i := range sensitiveFiles {
+		if sensitiveFiles[i].rel == "etc/shadow" {
+			shadow = &sensitiveFiles[i]
+		}
+	}
+
+	var got []ThreatEvent
+	w := NewFileWatcher("test-container", func(e ThreatEvent) { got = append(got, e) }, nil)
+	for _, tc := range []struct {
+		pid  int
+		mask uint64
+		want bool
+	}{
+		{10, unix.FAN_OPEN, false},
+		{11, unix.FAN_OPEN, false},
+		{12, unix.FAN_OPEN, false},
+		{13, unix.FAN_OPEN, false},
+		{20, unix.FAN_OPEN, true},
+		{21, unix.FAN_OPEN, true},
+		{30, unix.FAN_OPEN, true},
+		{10, unix.FAN_CLOSE_WRITE, true},
+	} {
+		got = nil
+		w.handle(inodeEntry{file: shadow}, tc.mask, tc.pid)
+		if (len(got) > 0) != tc.want {
+			t.Errorf("pid %d (%s) mask %#x: threats %v, want threat %v", tc.pid, exes[tc.pid], tc.mask, got, tc.want)
+		}
+	}
 }
