@@ -66,7 +66,6 @@ def test_large_file_read_triggers_auto_pause(
         stderr=subprocess.DEVNULL,
     )
 
-    # Poll for the auto-pause from the moment dd starts.
     paused = wait_for_frozen(container_name)
 
     if not paused:

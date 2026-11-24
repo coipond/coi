@@ -79,7 +79,6 @@ def test_file_read_at_threshold_triggers(
         stderr=subprocess.DEVNULL,
     )
 
-    # Poll for the auto-pause from the moment dd starts.
     paused = wait_for_frozen(container_name)
 
     # Close stderr and print debug log BEFORE assertions
