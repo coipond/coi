@@ -3,6 +3,8 @@ package health
 import (
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -493,5 +495,45 @@ func TestEvaluateIncusVersion_BelowRecommendedStaysOK(t *testing.T) {
 	result = evaluateIncusVersion("Server version: 7.5.1")
 	if result.Status != StatusOK || strings.Contains(result.Message, "recommended") {
 		t.Errorf("7.5.1 should pass without a note, got %s: %s", result.Status, result.Message)
+	}
+}
+
+func TestEvaluateIncusVersion_BelowMinimumWarns(t *testing.T) {
+	result := evaluateIncusVersion("Client version: 7.5\nServer version: 6.21")
+	if result.Status != StatusWarning || !strings.Contains(result.Message, "Incus server version 6.21 is below the minimum required 7.0") {
+		t.Errorf("an old server should warn, got %s: %s", result.Status, result.Message)
+	}
+
+	result = evaluateIncusVersion("Client version: 6.21\nServer version: 7.5")
+	if result.Status != StatusWarning || !strings.Contains(result.Message, "Incus client version 6.21 is below the minimum required 7.0") {
+		t.Errorf("an old client should warn, got %s: %s", result.Status, result.Message)
+	}
+	if result.Details["client_version"] != "6.21" {
+		t.Errorf("details should carry the client version, got %v", result.Details)
+	}
+}
+
+func TestCheckIncus_TranslatedOutput(t *testing.T) {
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$*" in
+  *version*)
+    if [ "$LC_ALL" = C ]; then
+      printf 'Client version: 6.21\nServer version: 7.5\n'
+    else
+      printf 'Client Version: 6.21\nServer Version: 7.5\n'
+    fi ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("LANG", "de_DE.UTF-8")
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+
+	result := CheckIncus()
+	if result.Status != StatusWarning || !strings.Contains(result.Message, "Incus client version 6.21") {
+		t.Errorf("an old client should warn under a translated locale, got %s: %s", result.Status, result.Message)
 	}
 }

@@ -144,7 +144,7 @@ detect_platform() {
 
 # Install Incus from the Zabbly stable repository (apt only).
 #
-# Ubuntu ships Incus 6.0.x, which is below coi's 6.1 minimum, so a plain
+# Ubuntu 24.04 ships Incus 6.0.x, which is below coi's 7.0 minimum, so a plain
 # `apt install incus` is a trap on Ubuntu — Zabbly provides a current Incus.
 # Also used to UPGRADE an existing too-old Incus (apt-get install pulls the
 # newer Zabbly build). Returns non-zero if Incus could not be installed.
@@ -208,6 +208,16 @@ user_agrees() {
     [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
+# Return 0 if the given Incus version (major.minor[.patch]) is below coi's 7.0
+# minimum. An empty or unparseable version is not below it.
+incus_version_below_min() {
+    local major minor
+    major="$(echo "$1" | cut -d. -f1)"
+    minor="$(echo "$1" | cut -d. -f2)"
+    [[ "$major" =~ ^[0-9]+$ ]] && [[ "$minor" =~ ^[0-9]+$ ]] || return 1
+    [ "$major" -lt 7 ]
+}
+
 # Check if Incus is installed
 check_incus() {
     echo -e "${BLUE}→ Checking Incus installation...${NC}"
@@ -229,7 +239,7 @@ check_incus() {
         fi
 
         echo ""
-        echo "  Coi requires Incus (>= 6.1) to be installed."
+        echo "  Coi requires Incus (>= 7.0) to be installed."
         echo "  Install Incus: https://linuxcontainers.org/incus/docs/main/installing/"
         echo ""
         echo "  Quick install examples:"
@@ -246,50 +256,50 @@ check_incus() {
         # current session predates the membership) cannot reach the daemon
         # socket, so a plain `incus version` returns non-zero and — under
         # `set -e` — would abort the whole installer here. root always can.
+        # LC_ALL=C: incus translates the "Client/Server version:" labels.
         local incus_version_output
-        incus_version_output="$(sudo incus version 2>/dev/null || true)"
+        incus_version_output="$(sudo env LC_ALL=C incus version 2>/dev/null || true)"
         echo -e "${GREEN}✓ Incus found: ${incus_version_output}${NC}"
 
-        # Check minimum version (>= 6.1)
-        local server_version
-        server_version="$(echo "$incus_version_output" | grep '^Server version:' | cut -d: -f2 | tr -d ' ')"
+        local server_version client_version
+        server_version="$(echo "$incus_version_output" | grep '^Server version:' | cut -d: -f2 | tr -d ' ' || true)"
         if [ -z "$server_version" ]; then
             # Fallback: single-line output (older Incus)
             server_version="$(echo "$incus_version_output" | head -n1 | tr -d ' ')"
         fi
+        client_version="$(echo "$incus_version_output" | grep '^Client version:' | cut -d: -f2 | tr -d ' ' || true)"
 
-        if [ -n "$server_version" ]; then
-            local ver_major ver_minor
-            ver_major="$(echo "$server_version" | cut -d. -f1)"
-            ver_minor="$(echo "$server_version" | cut -d. -f2)"
+        local old_part="" old_version=""
+        if incus_version_below_min "$server_version"; then
+            old_part="server"
+            old_version="$server_version"
+        elif incus_version_below_min "$client_version"; then
+            old_part="client"
+            old_version="$client_version"
+        fi
 
-            if [ -n "$ver_major" ] && [ -n "$ver_minor" ]; then
-                if [ "$ver_major" -lt 6 ] || { [ "$ver_major" -eq 6 ] && [ "$ver_minor" -lt 1 ]; }; then
-                    echo ""
-                    echo -e "${YELLOW}⚠ Incus version ${server_version} is below the minimum required 6.1${NC}"
-                    echo ""
-                    echo "  Ubuntu ships Incus 6.0.x which lacks required idmapping support."
-                    echo "  You may see errors like:"
-                    echo "    'Failed to setup device mount: idmapping abilities are required'"
-                    echo ""
+        if [ -n "$old_part" ]; then
+            echo ""
+            echo -e "${YELLOW}⚠ Incus ${old_part} version ${old_version} is below the minimum required 7.0${NC}"
+            echo ""
+            echo "  Distribution packages are often older (Ubuntu 24.04 ships Incus 6.0.x)."
+            echo ""
 
-                    # On apt we can upgrade in place from Zabbly; elsewhere, guide.
-                    if [ "$PKG_MANAGER" = "apt" ] && user_agrees "  Upgrade Incus from the Zabbly repo now? [Y/n]: "; then
-                        if install_incus_zabbly; then
-                            sudo systemctl restart incus 2>/dev/null || true
-                            sudo incus admin waitready --timeout=60 2>/dev/null || true
-                            echo -e "${GREEN}✓ Incus upgraded ($(sudo incus version 2>/dev/null | grep -i '^Server version:' | cut -d: -f2 | tr -d ' '))${NC}"
-                        else
-                            echo -e "${YELLOW}⚠ Incus upgrade did not complete${NC}"
-                            prompt_continue "Continue with the current Incus anyway?"
-                        fi
-                    else
-                        echo "  Install Incus >= 6.1 from the Zabbly repository:"
-                        echo "    https://github.com/zabbly/incus"
-                        echo ""
-                        prompt_continue "Continue installation anyway?"
-                    fi
+            # On apt we can upgrade in place from Zabbly; elsewhere, guide.
+            if [ "$PKG_MANAGER" = "apt" ] && user_agrees "  Upgrade Incus from the Zabbly repo now? [Y/n]: "; then
+                if install_incus_zabbly; then
+                    sudo systemctl restart incus 2>/dev/null || true
+                    sudo incus admin waitready --timeout=60 2>/dev/null || true
+                    echo -e "${GREEN}✓ Incus upgraded ($(sudo env LC_ALL=C incus version 2>/dev/null | grep -i '^Server version:' | cut -d: -f2 | tr -d ' '))${NC}"
+                else
+                    echo -e "${YELLOW}⚠ Incus upgrade did not complete${NC}"
+                    prompt_continue "Continue with the current Incus anyway?"
                 fi
+            else
+                echo "  Install Incus >= 7.0 from the Zabbly repository:"
+                echo "    https://github.com/zabbly/incus"
+                echo ""
+                prompt_continue "Continue installation anyway?"
             fi
         fi
     fi

@@ -15,8 +15,8 @@ import (
 )
 
 // CheckIncus should return a parseable version string in its details and the status should
-// match the version: StatusOK when >= 6.1 (with version in message), StatusFailed when below
-// (with zabbly upgrade link in message).
+// match the server and client versions: StatusOK when both are >= 7.0 (with version in message),
+// StatusWarning when either is below (with zabbly upgrade link in message).
 func TestCheckIncus_VersionCheck(t *testing.T) {
 	if _, err := exec.LookPath("incus"); err != nil {
 		t.Skip("incus not found, skipping integration test")
@@ -53,9 +53,18 @@ func TestCheckIncus_VersionCheck(t *testing.T) {
 		t.Fatalf("Version from CheckIncus (%q) should be parseable: %v", versionStr, err)
 	}
 
-	if container.MeetsMinimumVersion(v) {
+	meets := container.MeetsMinimumVersion(v)
+	if output, err := container.IncusVersionOutput(); err == nil {
+		if clientStr, err := container.ExtractClientVersion(output); err == nil {
+			if cv, err := container.ParseIncusVersion(clientStr); err == nil {
+				meets = meets && container.MeetsMinimumVersion(cv)
+			}
+		}
+	}
+
+	if meets {
 		// At or above the hard minimum the check is StatusOK — including the
-		// [6.1, recommended) band, which only adds an advisory note so `coi
+		// [7.0, recommended) band, which only adds an advisory note so `coi
 		// health` exit 0 is preserved on supported hosts.
 		if result.Status != StatusOK {
 			t.Errorf("Version %s meets the minimum but status is %s: %s", versionStr, result.Status, result.Message)
@@ -75,10 +84,12 @@ func TestCheckIncus_VersionCheck(t *testing.T) {
 	t.Logf("CheckIncus: status=%s version=%s message=%s", result.Status, versionStr, result.Message)
 }
 
-// evaluateIncusVersion should return StatusWarning with zabbly upgrade instructions for old versions
-// (6.0.x, 5.x), StatusOK with a "recommended" note for versions between the hard minimum and
-// the recommended floor, StatusOK for recommended-or-newer versions, and degrade gracefully
-// (StatusOK) when the version output is unparseable or empty.
+// evaluateIncusVersion should return StatusWarning with zabbly upgrade
+// instructions for old versions (6.x, 5.x) of the server or the client,
+// StatusOK with a "recommended" note for versions between the hard minimum and
+// the recommended floor, StatusOK for recommended-or-newer versions, and
+// degrade gracefully (StatusOK) when the version output is unparseable or
+// empty.
 func TestEvaluateIncusVersion_OldVersion(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -96,7 +107,7 @@ func TestEvaluateIncusVersion_OldVersion(t *testing.T) {
 			"6.0.0 warns",
 			"Client version: 6.0.0\nServer version: 6.0.0",
 			StatusWarning,
-			"6.1",
+			"7.0",
 		},
 		{
 			"5.x warns",
@@ -105,8 +116,20 @@ func TestEvaluateIncusVersion_OldVersion(t *testing.T) {
 			"zabbly",
 		},
 		{
-			"6.1 meets the minimum; recommended-floor note stays StatusOK (must not flip exit code)",
-			"Client version: 6.1\nServer version: 6.1",
+			"latest 6.x server warns",
+			"Client version: 7.0\nServer version: 6.21",
+			StatusWarning,
+			"Incus server version 6.21 is below the minimum required 7.0",
+		},
+		{
+			"6.x client warns",
+			"Client version: 6.21\nServer version: 7.5",
+			StatusWarning,
+			"Incus client version 6.21 is below the minimum required 7.0",
+		},
+		{
+			"7.0 meets the minimum; recommended-floor note stays StatusOK (must not flip exit code)",
+			"Client version: 7.0\nServer version: 7.0",
 			StatusOK,
 			"recommended",
 		},

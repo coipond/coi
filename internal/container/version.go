@@ -1,6 +1,7 @@
 package container
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,9 +10,9 @@ import (
 
 const (
 	// MinIncusVersionMajor is the minimum required Incus major version
-	MinIncusVersionMajor = 6
+	MinIncusVersionMajor = 7
 	// MinIncusVersionMinor is the minimum required Incus minor version
-	MinIncusVersionMinor = 1
+	MinIncusVersionMinor = 0
 
 	// RecommendedIncusVersionMajor and RecommendedIncusVersionMinor give the
 	// version below which `coi health` adds a recommendation note to the
@@ -32,7 +33,7 @@ type IncusVersion struct {
 	Raw   string
 }
 
-// ParseIncusVersion parses a version string like "6.20", "6.1", "6.0.3", "7.0"
+// ParseIncusVersion parses a version string like "6.20", "6.0.3", "7.0", "7.5"
 func ParseIncusVersion(str string) (*IncusVersion, error) {
 	str = strings.TrimSpace(str)
 	if str == "" {
@@ -83,7 +84,23 @@ func ExtractServerVersion(output string) (string, error) {
 	return strings.TrimSpace(strings.Split(output, "\n")[0]), nil
 }
 
-// MeetsMinimumVersion checks if the given version meets the minimum requirement (>= 6.1)
+// ExtractClientVersion extracts the client version string from the
+// "Client version:" line of `incus version` output.
+func ExtractClientVersion(output string) (string, error) {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Client version:") {
+			version := strings.TrimSpace(strings.TrimPrefix(line, "Client version:"))
+			if version == "" {
+				return "", fmt.Errorf("empty client version in output")
+			}
+			return version, nil
+		}
+	}
+	return "", fmt.Errorf("no client version in output")
+}
+
+// MeetsMinimumVersion checks if the given version meets the minimum requirement
+// (see MinIncusVersionMajor/Minor).
 func MeetsMinimumVersion(v *IncusVersion) bool {
 	if v.Major > MinIncusVersionMajor {
 		return true
@@ -106,40 +123,62 @@ func MeetsRecommendedVersion(v *IncusVersion) bool {
 	return false
 }
 
-// CheckMinimumVersion checks the running Incus server version and returns an error
-// if it is below the minimum required version. Returns nil if the version is OK or
-// cannot be determined (graceful degradation).
+// CheckMinimumVersion checks the Incus server and client versions and returns
+// an error if either is below the minimum required version. Returns nil if both
+// are OK or cannot be determined (graceful degradation).
 func CheckMinimumVersion() error {
-	output, err := IncusOutput("version")
+	output, err := IncusVersionOutput()
 	if err != nil {
 		return nil // Can't get version, don't block
 	}
+	return checkMinimumVersionOutput(output)
+}
 
-	versionStr, err := ExtractServerVersion(output)
-	if err != nil {
-		return nil
+// IncusVersionOutput returns the `incus version` output in the C locale:
+// incus translates its "Client version:" and "Server version:" labels.
+func IncusVersionOutput() (string, error) {
+	return incusOutputEnv(context.Background(), []string{"LC_ALL=C"}, "version")
+}
+
+// checkMinimumVersionOutput checks the server and client versions in raw
+// `incus version` output. A version that cannot be parsed is not checked.
+func checkMinimumVersionOutput(output string) error {
+	if versionStr, err := ExtractServerVersion(output); err == nil {
+		if v, err := ParseIncusVersion(versionStr); err == nil && !MeetsMinimumVersion(v) {
+			return fmt.Errorf("%s", FormatMinServerVersionError(v))
+		}
 	}
 
-	v, err := ParseIncusVersion(versionStr)
-	if err != nil {
-		return nil
-	}
-
-	if !MeetsMinimumVersion(v) {
-		return fmt.Errorf("%s", FormatMinVersionError(v))
+	if versionStr, err := ExtractClientVersion(output); err == nil {
+		if v, err := ParseIncusVersion(versionStr); err == nil && !MeetsMinimumVersion(v) {
+			return fmt.Errorf("%s", FormatMinClientVersionError(v))
+		}
 	}
 
 	return nil
 }
 
-// FormatMinVersionError returns an actionable error message for users with old Incus versions
-func FormatMinVersionError(v *IncusVersion) string {
+// FormatMinServerVersionError returns an actionable error message for users
+// with an old Incus server.
+func FormatMinServerVersionError(v *IncusVersion) string {
+	return formatMinVersionError("server", v)
+}
+
+// FormatMinClientVersionError returns an actionable error message for users
+// with an old incus client.
+func FormatMinClientVersionError(v *IncusVersion) string {
+	return formatMinVersionError("client", v)
+}
+
+// formatMinVersionError builds the below-minimum message for the given part
+// ("server" or "client") of the Incus install.
+func formatMinVersionError(part string, v *IncusVersion) string {
 	return fmt.Sprintf(
-		"Incus version %s is below the minimum required %d.%d. "+
-			"Ubuntu ships Incus 6.0.x which lacks required idmapping support. "+
+		"Incus %s version %s is below the minimum required %d.%d. "+
+			"Distribution packages are often older (Ubuntu 24.04 ships Incus 6.0.x). "+
 			"Please install Incus >= %d.%d from the Zabbly repository: "+
 			"https://github.com/zabbly/incus",
-		v.Raw, MinIncusVersionMajor, MinIncusVersionMinor,
+		part, v.Raw, MinIncusVersionMajor, MinIncusVersionMinor,
 		MinIncusVersionMajor, MinIncusVersionMinor,
 	)
 }
