@@ -365,19 +365,22 @@ func isAuthHelper(pid int) bool {
 	return !sudoEdits(strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"))
 }
 
-// sudoValueOpts are the sudo short options that take a value. sudoLongOpts
-// are sudo's long options, true for those that take a value.
+// sudo's option tables (sudo_short_opts and sudo_long_opts in sudo 1.9's
+// src/parse_args.c). sudoValueOpts are the short options that take a value;
+// -h takes one only when attached ("h::"). sudoLongOpts are the long options,
+// true for those that take a value (preserve-env only as --preserve-env=).
 var (
-	sudoValueOpts = "CDghpRrTtUu"
+	sudoValueOpts = "aCcDgpRrTtUu"
 	sudoLongOpts  = map[string]bool{
-		"askpass": false, "background": false, "bell": false, "close-from": true,
-		"chdir": true, "preserve-env": false, "edit": false, "group": true,
-		"set-home": false, "help": false, "host": true, "login": false,
-		"remove-timestamp": false, "reset-timestamp": false, "list": false,
-		"non-interactive": false, "preserve-groups": false, "prompt": true,
-		"chroot": true, "role": true, "stdin": false, "shell": false, "type": true,
-		"command-timeout": true, "other-user": true, "user": true,
-		"version": false, "validate": false,
+		"askpass": false, "auth-type": true, "background": false, "bell": false,
+		"chdir": true, "chroot": true, "close-from": true, "command-timeout": true,
+		"edit": false, "group": true, "help": false, "host": true, "list": false,
+		"login": false, "login-class": true, "no-update": false,
+		"non-interactive": false, "other-user": true, "preserve-env": false,
+		"preserve-groups": false, "prompt": true, "remove-timestamp": false,
+		"reset-timestamp": false, "role": true, "set-home": false, "shell": false,
+		"stdin": false, "type": true, "user": true, "validate": false,
+		"version": false,
 	}
 )
 
@@ -428,6 +431,9 @@ func sudoEdits(argv []string) bool {
 			for j := 1; j < len(arg); j++ {
 				if arg[j] == 'e' {
 					return true
+				}
+				if arg[j] == 'h' {
+					break
 				}
 				if strings.IndexByte(sudoValueOpts, arg[j]) >= 0 {
 					if j == len(arg)-1 {
