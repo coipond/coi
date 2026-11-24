@@ -49,14 +49,15 @@ sudo apt-get update
 # unconditionally (tests/conftest.py) and a missing binary raises FileNotFoundError.
 sudo apt-get install -y btrfs-progs tmux nftables python3-venv curl ca-certificates
 
-echo "=== Incus: Zabbly stable with Ubuntu-archive fallback (mirrors ci.yml) ==="
+echo "=== Incus: Zabbly stable (mirrors ci.yml) ==="
+# Zabbly only: Ubuntu's own incus (6.0.x) is below coi's minimum 7.0.
 sudo mkdir -p /etc/apt/keyrings/
 ZABBLY_SOURCES=/etc/apt/sources.list.d/zabbly-incus-stable.sources
-if sudo curl -fsSL --connect-timeout 10 --retry 2 --retry-delay 5 \
-    https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc 2>/dev/null; then
-    CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME}")
-    ARCH=$(dpkg --print-architecture)
-    sudo tee "$ZABBLY_SOURCES" >/dev/null <<SOURCES
+sudo curl -fsSL --connect-timeout 10 --retry 2 --retry-delay 5 \
+    https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
+CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME}")
+ARCH=$(dpkg --print-architecture)
+sudo tee "$ZABBLY_SOURCES" >/dev/null <<SOURCES
 Enabled: yes
 Types: deb
 URIs: https://pkgs.zabbly.com/incus/stable
@@ -65,17 +66,8 @@ Components: main
 Architectures: ${ARCH}
 Signed-By: /etc/apt/keyrings/zabbly.asc
 SOURCES
-    echo "Zabbly repo configured"
-else
-    echo "WARNING: Zabbly repo unreachable, will use Ubuntu-archive incus"
-fi
 sudo apt-get update
-if ! sudo apt-get install -y incus; then
-    echo "WARNING: install failed, removing Zabbly repo and falling back to Ubuntu-archive incus"
-    sudo rm -f "$ZABBLY_SOURCES"
-    sudo apt-get update
-    sudo apt-get install -y incus
-fi
+sudo apt-get install -y incus
 incus version || incus --version || true
 
 echo "=== subuid/subgid for raw.idmap (mirrors ci.yml, uid parametrized) ==="
@@ -83,8 +75,8 @@ sudo systemctl start incus.socket || true
 sleep 3
 echo "root:$(id -u):1" | sudo tee -a /etc/subuid
 echo "root:$(id -g):1" | sudo tee -a /etc/subgid
-# The Zabbly package grants root a wide range on install; the Ubuntu-archive
-# fallback may not — unprivileged containers need one, so add it guardedly.
+# Unprivileged containers need a wide root range; the Zabbly package normally
+# grants one on install, so add it only when missing.
 grep -q '^root:1000000:' /etc/subuid || echo 'root:1000000:1000000000' | sudo tee -a /etc/subuid
 grep -q '^root:1000000:' /etc/subgid || echo 'root:1000000:1000000000' | sudo tee -a /etc/subgid
 sudo systemctl restart incus || true
