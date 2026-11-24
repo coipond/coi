@@ -21,34 +21,26 @@ var procRoot = "/proc"
 // collector waits for every source, so a hung exec would stall detection.
 var fdScanTimeout = 5 * time.Second
 
-// socketCheckInitPID resolves the container's init PID; tests replace it.
-var socketCheckInitPID = GetContainerInitPID
-
 // readContainerFDLinks resolves fd links from inside the container when the
 // host may not read them (no CAP_SYS_PTRACE over the container's uids). It
-// takes container-side paths and returns their link targets.
+// takes container-side paths and returns their link targets. It runs the
+// container's own sh and find, so root in the container can blind it; the
+// host-side argv patterns do not depend on it.
 var readContainerFDLinks = readContainerFDLinksViaIncus
 
 // markSocketShells sets StdioTCPSocket on every shell in processes whose fd 0
-// or fd 1 is a TCP socket of the container (an inode in its /proc/net/tcp or
-// tcp6). Host /proc is read first; fds the host may not read are resolved with
-// one incus exec. The TCP tables are read only when a shell has a socket or an
-// unreadable fd. Errors leave the processes unmarked: argv matching still
-// runs.
+// or fd 1 is a TCP socket (an inode in the /proc/<pid>/net/tcp or tcp6 of the
+// shell itself, so a shell in a nested network namespace counts too). Host
+// /proc is read first; fds the host may not read are resolved with one incus
+// exec. TCP tables are read only for shells with a socket on fd 0 or fd 1.
+// Errors leave the processes unmarked: argv matching still runs.
 func markSocketShells(ctx context.Context, containerName string, processes []Process) {
-	var shells []int
-	for i := range processes {
-		if isShellProcess(processes[i], strings.ToLower(processes[i].Command)) {
-			shells = append(shells, i)
-		}
-	}
-	if len(shells) == 0 {
-		return
-	}
-
 	sockets := map[int][]uint64{} // index in processes -> socket inodes on fd 0/1
 	denied := map[string]int{}    // container-side fd path -> index in processes
-	for _, i := range shells {
+	for i := range processes {
+		if !isShellProcess(processes[i], strings.ToLower(processes[i].Command)) {
+			continue
+		}
 		for _, fd := range []int{0, 1} {
 			link, err := os.Readlink(fmt.Sprintf("%s/%d/fd/%d", procRoot, processes[i].PID, fd))
 			if err == nil {
@@ -65,46 +57,35 @@ func markSocketShells(ctx context.Context, containerName string, processes []Pro
 			}
 		}
 	}
-	if len(sockets) == 0 && len(denied) == 0 {
-		return
+
+	if len(denied) > 0 {
+		paths := make([]string, 0, len(denied))
+		for p := range denied {
+			paths = append(paths, p)
+		}
+		if links, err := readContainerFDLinks(ctx, containerName, paths); err == nil {
+			for p, link := range links {
+				if i, ok := denied[p]; ok {
+					if inode := socketInode(link); inode != 0 {
+						sockets[i] = append(sockets[i], inode)
+					}
+				}
+			}
+		}
 	}
 
-	pid, err := socketCheckInitPID(ctx, containerName)
-	if err != nil || pid <= 0 {
-		return
-	}
-	inodes := tcpSocketInodes(pid)
-	if len(inodes) == 0 {
-		return
-	}
 	for i, fdInodes := range sockets {
+		inodes := tcpSocketInodes(processes[i].PID)
 		for _, inode := range fdInodes {
 			if inodes[inode] {
 				processes[i].StdioTCPSocket = true
 			}
 		}
 	}
-	if len(denied) == 0 {
-		return
-	}
-
-	paths := make([]string, 0, len(denied))
-	for p := range denied {
-		paths = append(paths, p)
-	}
-	links, err := readContainerFDLinks(ctx, containerName, paths)
-	if err != nil {
-		return
-	}
-	for p, link := range links {
-		if i, ok := denied[p]; ok && inodes[socketInode(link)] {
-			processes[i].StdioTCPSocket = true
-		}
-	}
 }
 
 // tcpSocketInodes returns the socket inodes in the TCP tables of the network
-// namespace of host pid.
+// namespace of host pid (/proc/<pid>/net is readable without ptrace rights).
 func tcpSocketInodes(pid int) map[uint64]bool {
 	inodes := map[uint64]bool{}
 	for _, table := range []string{"tcp", "tcp6"} {

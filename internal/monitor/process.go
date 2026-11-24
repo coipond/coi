@@ -394,7 +394,9 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 				break // strong wins outright — stop looking
 			}
 		}
-		if matched < 0 && proc.StdioTCPSocket {
+		// A shell on a TCP socket is always strong evidence: it replaces a
+		// one-liner match so the one-liner knob cannot downgrade it.
+		if proc.StdioTCPSocket && (matched < 0 || reverseShellPatterns[matched].class != ReverseShellClassStrong) {
 			threats = append(threats, ProcessThreat{
 				PID:        proc.PID,
 				Command:    proc.Command,
@@ -403,6 +405,7 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 				Indicators: []string{"shell stdin/stdout on a TCP socket"},
 				Class:      ReverseShellClassStrong,
 			})
+			continue
 		}
 		if matched >= 0 {
 			p := reverseShellPatterns[matched]
