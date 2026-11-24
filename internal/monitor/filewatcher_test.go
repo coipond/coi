@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestSensitiveFilesTable verifies the sensitiveFiles table is self-consistent:
@@ -57,6 +59,25 @@ func TestSensitiveFilesThreatLevels(t *testing.T) {
 		}
 		if sf.writeLevel != tc.writeLevel {
 			t.Errorf("%q writeLevel: got %q, want %q", tc.rel, sf.writeLevel, tc.writeLevel)
+		}
+	}
+}
+
+// TestMarkMaskOnlyFdEvents checks every mark mask holds only events that
+// carry an fd: fanotify_mark refuses any other event with EINVAL in a group
+// without FAN_REPORT_FID, so the file would never be watched.
+func TestMarkMaskOnlyFdEvents(t *testing.T) {
+	for i := range sensitiveFiles {
+		sf := &sensitiveFiles[i]
+		mask := sf.markMask()
+		if extra := mask &^ (unix.FAN_OPEN | unix.FAN_CLOSE_WRITE); extra != 0 {
+			t.Errorf("%q mark mask has events without an fd: %#x", sf.rel, extra)
+		}
+		if sf.openLevel != "" && mask&unix.FAN_OPEN == 0 {
+			t.Errorf("%q has openLevel but no FAN_OPEN", sf.rel)
+		}
+		if sf.writeLevel != "" && mask&unix.FAN_CLOSE_WRITE == 0 {
+			t.Errorf("%q has writeLevel but no FAN_CLOSE_WRITE", sf.rel)
 		}
 	}
 }

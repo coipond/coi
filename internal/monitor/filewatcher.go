@@ -242,12 +242,6 @@ func (w *FileWatcher) Run(ctx context.Context) {
 			if !ok {
 				continue
 			}
-			// File deleted or moved — drop the inode entry; the backstop will
-			// re-mark the path if/when a new file appears there.
-			if ev.mask&(unix.FAN_DELETE_SELF|unix.FAN_MOVE_SELF) != 0 {
-				delete(inodes, key)
-				continue
-			}
 			if ev.mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" {
 				w.fire(entry.file.openLevel, entry.file.category,
 					entry.file.openTitle, entry.file.openDesc,
@@ -264,17 +258,14 @@ func (w *FileWatcher) Run(ctx context.Context) {
 			if pid <= 0 {
 				continue
 			}
-			newInodes := w.markFiles(ifd, pid)
+			// Replace the map: it picks up new inodes from copy-up and drops
+			// deleted or moved files, which a group without FAN_REPORT_FID
+			// cannot be told about.
+			inodes = w.markFiles(ifd, pid)
 			if pid != lastPID {
-				// Container restarted — replace the map and reset the grace period.
-				inodes = newInodes
+				// Container restarted — reset the grace period.
 				lastPID = pid
 				graceUntil = time.Now().Add(30 * time.Second)
-			} else {
-				// Same container — merge to pick up new inodes from copy-up.
-				for k, v := range newInodes {
-					inodes[k] = v
-				}
 			}
 		}
 	}
@@ -335,15 +326,7 @@ func (w *FileWatcher) markFiles(ifd, pid int) map[inodeKey]inodeEntry {
 		sf := &sensitiveFiles[i]
 		hostPath := fmt.Sprintf("/proc/%d/root/%s", pid, sf.rel)
 
-		mask := uint64(unix.FAN_DELETE_SELF | unix.FAN_MOVE_SELF)
-		if sf.openLevel != "" {
-			mask |= unix.FAN_OPEN
-		}
-		if sf.writeLevel != "" {
-			mask |= unix.FAN_CLOSE_WRITE
-		}
-
-		if err := unix.FanotifyMark(ifd, unix.FAN_MARK_ADD, mask, unix.AT_FDCWD, hostPath); err != nil {
+		if err := unix.FanotifyMark(ifd, unix.FAN_MARK_ADD, sf.markMask(), unix.AT_FDCWD, hostPath); err != nil {
 			// File does not exist (ENOENT) or not accessible — skip silently.
 			continue
 		}
@@ -355,6 +338,20 @@ func (w *FileWatcher) markFiles(ifd, pid int) map[inodeKey]inodeEntry {
 		inodes[inodeKey{dev: stat.Dev, ino: stat.Ino}] = inodeEntry{file: sf}
 	}
 	return inodes
+}
+
+// markMask returns the fanotify events to mark sf with. Only events that
+// carry an fd: FAN_DELETE_SELF or FAN_MOVE_SELF needs a FAN_REPORT_FID group,
+// and fanotify_mark refuses the whole mask with EINVAL without one.
+func (sf *monitoredFile) markMask() uint64 {
+	var mask uint64
+	if sf.openLevel != "" {
+		mask |= unix.FAN_OPEN
+	}
+	if sf.writeLevel != "" {
+		mask |= unix.FAN_CLOSE_WRITE
+	}
+	return mask
 }
 
 // fire emits a ThreatEvent via the onThreat callback.
