@@ -4,6 +4,7 @@ package container
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -41,7 +42,7 @@ func TestIncusVersionIntegration(t *testing.T) {
 
 // CheckMinimumVersion should return nil (no error) when the running Incus daemon meets the
 // minimum version requirement, or a non-nil error containing "zabbly" when it does not.
-// On a system with Incus >= 6.1 this test expects nil; on older Incus it expects an error.
+// On a system with Incus >= 7.0 this test expects nil; on older Incus it expects an error.
 func TestCheckMinimumVersionIntegration(t *testing.T) {
 	if _, err := exec.LookPath("incus"); err != nil {
 		t.Skip("incus not found, skipping integration test")
@@ -69,15 +70,25 @@ func TestCheckMinimumVersionIntegration(t *testing.T) {
 		return
 	}
 
-	if MeetsMinimumVersion(v) {
-		if err != nil {
-			t.Errorf("Version %s meets minimum but CheckMinimumVersion returned error: %v", versionStr, err)
-		}
-	} else {
-		if err == nil {
-			t.Errorf("Version %s is below minimum but CheckMinimumVersion returned nil", versionStr)
+	meets := MeetsMinimumVersion(v)
+	clientStr, cerr := ExtractClientVersion(output)
+	if cerr == nil {
+		if cv, cerr := ParseIncusVersion(clientStr); cerr == nil {
+			meets = meets && MeetsMinimumVersion(cv)
 		}
 	}
 
-	t.Logf("CheckMinimumVersion: version=%s err=%v", versionStr, err)
+	if meets {
+		if err != nil {
+			t.Errorf("Server %s / client %s meet minimum but CheckMinimumVersion returned error: %v", versionStr, clientStr, err)
+		}
+	} else {
+		if err == nil {
+			t.Errorf("Server %s / client %s are below minimum but CheckMinimumVersion returned nil", versionStr, clientStr)
+		} else if !strings.Contains(err.Error(), "zabbly") {
+			t.Errorf("CheckMinimumVersion error should mention zabbly, got %v", err)
+		}
+	}
+
+	t.Logf("CheckMinimumVersion: server=%s client=%s err=%v", versionStr, clientStr, err)
 }

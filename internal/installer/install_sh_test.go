@@ -1244,6 +1244,52 @@ STUB
 	}
 }
 
+// check_incus: an Incus server or client below 7.0 is reported by part and
+// version (and the non-interactive run aborts); 7.0+ on both passes.
+func TestInstallSh_CheckIncus_MinimumVersion(t *testing.T) {
+	script := installShPath(t)
+	run := func(versionOutput string) string {
+		snippet := `
+			tmpdir=$(mktemp -d); trap "rm -rf $tmpdir" EXIT
+			cat > "$tmpdir/incus" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$VERSION_OUTPUT"
+STUB
+			chmod +x "$tmpdir/incus"
+			printf '#!/bin/bash\n"$@"\n' > "$tmpdir/sudo"; chmod +x "$tmpdir/sudo"
+			export PATH="$tmpdir:$PATH"
+			export NONINTERACTIVE=1 PKG_MANAGER=dnf
+			source <(sed '/^main "\$@"/d; /^trap error_handler ERR/d' "` + script + `")
+			check_incus
+			echo "===PASSED==="
+		`
+		out, _, _ := runBashSnippet(t, snippet, "NONINTERACTIVE=1", "VERSION_OUTPUT="+versionOutput)
+		return out
+	}
+
+	cases := []struct {
+		name, output, want string
+	}{
+		{"old server", "Client version: 7.5\nServer version: 6.0.3", "Incus server version 6.0.3 is below the minimum required 7.0"},
+		{"old client", "Client version: 6.21\nServer version: 7.0.2", "Incus client version 6.21 is below the minimum required 7.0"},
+		{"single-line old", "6.20", "Incus server version 6.20 is below the minimum required 7.0"},
+	}
+	for _, tc := range cases {
+		out := run(tc.output)
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%s: expected %q; out:\n%s", tc.name, tc.want, out)
+		}
+		if strings.Contains(out, "===PASSED===") {
+			t.Errorf("%s: non-interactive check_incus should abort; out:\n%s", tc.name, out)
+		}
+	}
+
+	out := run("Client version: 7.0.2\nServer version: 7.0.2")
+	if strings.Contains(out, "below the minimum") || !strings.Contains(out, "===PASSED===") {
+		t.Errorf("7.0.2 should pass; out:\n%s", out)
+	}
+}
+
 // check_group: with consent (COI_ASSUME_YES in non-interactive), a user not in
 // the group is added via usermod; declining prints the manual instruction.
 func TestInstallSh_CheckGroup_AddsOnConsent(t *testing.T) {

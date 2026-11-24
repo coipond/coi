@@ -495,3 +495,18 @@ func TestEvaluateIncusVersion_BelowRecommendedStaysOK(t *testing.T) {
 		t.Errorf("7.5.1 should pass without a note, got %s: %s", result.Status, result.Message)
 	}
 }
+
+func TestEvaluateIncusVersion_BelowMinimumWarns(t *testing.T) {
+	result := evaluateIncusVersion("Client version: 7.5\nServer version: 6.21")
+	if result.Status != StatusWarning || !strings.Contains(result.Message, "Incus server version 6.21 is below the minimum required 7.0") {
+		t.Errorf("an old server should warn, got %s: %s", result.Status, result.Message)
+	}
+
+	result = evaluateIncusVersion("Client version: 6.21\nServer version: 7.5")
+	if result.Status != StatusWarning || !strings.Contains(result.Message, "Incus client version 6.21 is below the minimum required 7.0") {
+		t.Errorf("an old client should warn, got %s: %s", result.Status, result.Message)
+	}
+	if result.Details["client_version"] != "6.21" {
+		t.Errorf("details should carry the client version, got %v", result.Details)
+	}
+}

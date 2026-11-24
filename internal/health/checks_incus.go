@@ -82,9 +82,23 @@ func evaluateIncusVersion(versionOutput string) HealthCheck {
 		}
 	}
 
+	if clientStr, err := container.ExtractClientVersion(versionOutput); err == nil {
+		if cv, err := container.ParseIncusVersion(clientStr); err == nil && !container.MeetsMinimumVersion(cv) {
+			return HealthCheck{
+				Name:    "incus",
+				Status:  StatusWarning,
+				Message: container.FormatMinClientVersionError(cv),
+				Details: map[string]interface{}{
+					"version":        versionStr,
+					"client_version": clientStr,
+				},
+			}
+		}
+	}
+
 	if !container.MeetsRecommendedVersion(v) {
 		// Advisory only — NOT a warning. The version meets Coi's hard minimum
-		// (6.1) and works, so this must not flip the overall status to degraded
+		// (7.0) and works, so this must not flip the overall status to degraded
 		// or the exit code to 1: scripts that gate on `coi health` exit 0 run on
 		// supported hosts and would break. The recommendation rides along in the
 		// message/details for anyone reading the report.
