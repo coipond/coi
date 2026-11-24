@@ -1,6 +1,5 @@
 """Test HIGH-level threats that trigger auto-pause."""
 
-import os
 import subprocess
 import time
 from pathlib import Path
@@ -9,6 +8,7 @@ import pytest
 
 from support.monitoring import (
     cleanup_container,
+    container_io_stat,
     get_container_name_from_workspace,
     get_container_state,
     get_threat_events,
@@ -16,12 +16,6 @@ from support.monitoring import (
 )
 
 
-@pytest.mark.skipif(
-    os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="cgroup io.stat does not track bind-mount I/O on GitHub Actions runners; "
-    "reads from /workspace are served from the host page cache and not attributed "
-    "to the container's cgroup, so the security monitor sees 0 bytes read.",
-)
 def test_large_file_read_triggers_auto_pause(
     test_workspace, enable_monitoring_low_thresholds, coi_binary
 ):
@@ -97,7 +91,10 @@ def test_large_file_read_triggers_auto_pause(
 
     proc.terminate()
 
-    assert paused, "Container should be auto-paused on HIGH threat (large file read)"
+    assert paused, (
+        "Container should be auto-paused on HIGH threat (large file read)"
+        + container_io_stat(container_name)
+    )
 
     # Verify HIGH threat in audit log
     events = get_threat_events(container_name)

@@ -191,6 +191,19 @@ def find_container_cgroup_path(container_name: str) -> str | None:
     return path if os.path.isdir(path) else None
 
 
+def container_io_stat(container_name):
+    """The container cgroup's io.stat, for a failure message about an I/O
+    threshold."""
+    path = find_container_cgroup_path(container_name)
+    if path is None:
+        return "\n(container cgroup not found)"
+    try:
+        stat = Path(path, "io.stat").read_text()
+    except OSError as e:
+        stat = f"(unreadable: {e})"
+    return f"\n--- {path}/io.stat ---\n{stat or '(empty)'}"
+
+
 def cleanup_container(name, coi_binary):
     """Force cleanup container."""
     subprocess.run(
