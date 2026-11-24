@@ -101,7 +101,9 @@ func TestParseStatusesCSV(t *testing.T) {
 		"c1,RUNNING\r\n\nc2,FROZEN\n": {
 			{Name: "c1", Status: "RUNNING"}, {Name: "c2", Status: "FROZEN"},
 		},
-		"bad\n": {{Name: "bad"}},
+		"bad\n":             {{Name: "bad"}},
+		"c1,STOPPED,true\n": {{Name: "c1", Status: "STOPPED", KeyValue: "true"}},
+		"c1,RUNNING,\n":     {{Name: "c1", Status: "RUNNING"}},
 	} {
 		if got := parseStatusesCSV(in); !reflect.DeepEqual(got, want) {
 			t.Errorf("parseStatusesCSV(%q) = %v, want %v", in, got, want)
@@ -118,6 +120,19 @@ func TestListContainerStatuses(t *testing.T) {
 		t.Fatalf("statuses = %v, %v", got, err)
 	}
 	if calls := calls(t, logPath); len(calls) != 1 || calls[0] != "--project default list ^coi- --format=csv --columns=ns" {
+		t.Errorf("calls = %q", calls)
+	}
+}
+
+func TestListContainerStatusesKey(t *testing.T) {
+	logPath := fakeListIncus(t, "c1,STOPPED,true\nc2,RUNNING,\n")
+
+	got, err := ListContainerStatusesKey("", "user.coi.persistent")
+	want := []ContainerStatus{{Name: "c1", Status: "STOPPED", KeyValue: "true"}, {Name: "c2", Status: "RUNNING"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("statuses = %v, %v", got, err)
+	}
+	if calls := calls(t, logPath); len(calls) != 1 || calls[0] != "--project default list --format=csv --columns=ns,user.coi.persistent" {
 		t.Errorf("calls = %q", calls)
 	}
 }
