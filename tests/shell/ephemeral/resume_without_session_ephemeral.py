@@ -12,6 +12,7 @@ import time
 from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
+    child_output,
     get_container_list,
     spawn_coi,
     with_live_screen,
@@ -53,12 +54,7 @@ def test_resume_without_session(coi_binary, cleanup_containers, workspace_dir):
         time.sleep(1)
 
     # Get output for verification
-    if hasattr(child.logfile_read, "get_raw_output"):
-        output = child.logfile_read.get_raw_output()
-    elif hasattr(child.logfile_read, "get_output"):
-        output = child.logfile_read.get_output()
-    else:
-        output = ""
+    output = child_output(child)
 
     # Close the child process
     try:
