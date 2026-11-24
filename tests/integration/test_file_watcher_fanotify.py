@@ -5,19 +5,23 @@ These tests verify that the host-side fanotify watcher detects:
 - Reads of credential files (/etc/shadow) — detected via FAN_OPEN after the
   30-second startup grace period expires.
 - Writes to persistence-relevant files (/etc/sudoers, root authorized_keys) —
-  detected after the grace period AND a backstop re-mark cycle, because overlayfs
-  copy-up replaces the inode on the first write to a lower-layer file.
+  detected via FAN_CLOSE_WRITE once the file is marked. A file replaced on
+  its first write (overlayfs copy-up) or created after the start is marked by
+  the 30-second backstop re-mark cycle.
 
 All access is performed via `incus exec` so the monitor daemon (which runs as
 a host-side process) sees the event from outside the container.
 
 Timing note: the FileWatcher suppresses all events for 30 seconds after the
-container's init PID is first resolved. This prevents false positives from
-system daemons (PAM, sshd, cron) that legitimately access sensitive files
-during container boot. Tests that check FAN_OPEN on /etc/shadow must therefore
-wait at least 35 seconds (30 s grace + margin) before triggering the access.
-Write-detection tests require both the grace period and a backstop cycle (~65 s
-total: 5 s init + 30 s grace/backstop + write + poll).
+container's init PID is first resolved, to avoid false positives from system
+daemons (PAM, sshd, cron) that access sensitive files during container boot.
+Each test repeats its access every few seconds until the threat appears, and
+fails once a deadline covering the grace period and a backstop cycle passes.
+
+The watcher needs CAP_SYS_ADMIN (fanotify_init), CAP_SYS_PTRACE (paths under
+/proc/<pid>/root) and CAP_DAC_READ_SEARCH (marking and opening root-only
+files). The CI lane grants them to the coi binary with setcap; without them
+the session log says "sensitive file monitoring disabled" and these tests fail.
 """
 
 import hashlib
@@ -29,18 +33,10 @@ from pathlib import Path
 
 import pytest
 
-# Sensitive-file monitoring needs CAP_SYS_ADMIN for fanotify_init, which a
-# standard (non-root) coi install doesn't have: every session logs
-# "filewatcher: fanotify_init: operation not permitted (sensitive file
-# monitoring disabled)" and nothing is detected. Expected to fail until coi
-# gets that privilege some other way (e.g. a sudo helper, like the nft
-# monitor). strict=True: once it works, these XPASS and fail, so the marker
-# gets removed.
-pytestmark = pytest.mark.xfail(
-    os.geteuid() != 0,
-    reason="fanotify needs CAP_SYS_ADMIN, which a non-root coi doesn't have",
-    strict=True,
-)
+from support.monitoring import coi_session_logs
+
+# Grace period (30 s) + a backstop cycle (30 s) + margin.
+_DETECT_DEADLINE = 90
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -86,18 +82,17 @@ def _get_threat_events(container_name: str) -> list[dict]:
     return events
 
 
-def _poll_file_threats(
-    container_name: str,
-    max_wait: int,
-    predicate,
-) -> list[dict]:
-    deadline = time.time() + max_wait
-    while time.time() < deadline:
-        events = _get_threat_events(container_name)
-        matched = [e for e in events if predicate(e)]
-        if matched:
-            return matched
-        time.sleep(1)
+def _trigger_until_detected(container_name: str, cmd: str, predicate) -> list[dict]:
+    """Run cmd in the container every 3 s until a threat event matches
+    predicate or _DETECT_DEADLINE seconds pass. Returns the matching events."""
+    deadline = time.monotonic() + _DETECT_DEADLINE
+    while time.monotonic() < deadline:
+        _incus_exec(container_name, cmd)
+        for _ in range(3):
+            matched = [e for e in _get_threat_events(container_name) if predicate(e)]
+            if matched:
+                return matched
+            time.sleep(1)
     return []
 
 
@@ -116,6 +111,10 @@ def _incus_exec(container_name: str, cmd: str) -> int:
         timeout=15,
     )
     return result.returncode
+
+
+def _sensitive_file(event: dict) -> dict:
+    return event.get("evidence", {}).get("sensitive_file") or {}
 
 
 # ── shared config ─────────────────────────────────────────────────────────────
@@ -158,15 +157,10 @@ class TestFileWatcherFanotify:
     def test_shadow_read_detected(self, coi_binary, tmp_path, _monitoring_enabled):
         """Reading /etc/shadow inside the container raises a HIGH credential_access threat.
 
-        The shadow file exists on the lower overlayfs layer from the container
-        image. A read (cat) does not trigger copy-up so the fanotify mark placed
-        on the original inode fires via FAN_OPEN.
-
-        The FileWatcher suppresses all events for 30 seconds after the container's
-        init PID is first resolved, to avoid false positives from system daemons
-        (PAM, sshd, cron) that access /etc/shadow during normal container boot.
-        The test therefore waits 35 seconds before triggering the read so the
-        access falls outside the grace window.
+        The shadow file exists in the container image, so the initial mark
+        pass marks it and a read (cat) fires FAN_OPEN. Reads during the 30 s
+        startup grace period are dropped; the read repeats until one lands
+        after it.
         """
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
@@ -183,35 +177,25 @@ class TestFileWatcherFanotify:
             if not _wait_running(container_name):
                 pytest.fail(f"Container {container_name} did not start")
 
-            # Wait for: daemon init (5 s) + 30 s grace period + 2 s safety margin.
-            # Reads during the grace window are silently dropped to avoid triggering
-            # auto-pause from legitimate system-daemon accesses at boot.
-            time.sleep(37)
-
-            # Ensure /etc/shadow exists inside the container before reading.
-            # Minimal images may not ship it; create a stub if absent.
-            _incus_exec(
-                container_name,
-                "[ -f /etc/shadow ] || (touch /etc/shadow && chmod 640 /etc/shadow)",
+            assert _incus_exec(container_name, "test -f /etc/shadow") == 0, (
+                "/etc/shadow is missing from the container image"
             )
 
-            # Read /etc/shadow — triggers FAN_OPEN on the inode.
-            _incus_exec(container_name, "cat /etc/shadow > /dev/null 2>&1 || true")
-
-            threats = _poll_file_threats(
+            threats = _trigger_until_detected(
                 container_name,
-                max_wait=15,
-                predicate=lambda e: (
+                "cat /etc/shadow > /dev/null",
+                lambda e: (
                     e.get("category") == "credential_access"
                     and e.get("level") == "high"
-                    and "shadow" in e.get("evidence", {}).get("sensitive_file", {}).get("path", "")
-                    and e.get("evidence", {}).get("sensitive_file", {}).get("access") == "read"
+                    and "shadow" in _sensitive_file(e).get("path", "")
+                    and _sensitive_file(e).get("access") == "read"
                 ),
             )
 
-            assert len(threats) > 0, (
-                f"Expected HIGH credential_access threat for /etc/shadow read. "
-                f"Events: {_get_threat_events(container_name)}"
+            assert threats, (
+                f"No HIGH credential_access threat for an /etc/shadow read within "
+                f"{_DETECT_DEADLINE}s. Events: {_get_threat_events(container_name)}"
+                f"{coi_session_logs(container_name)}"
             )
         finally:
             proc.terminate()
@@ -220,13 +204,9 @@ class TestFileWatcherFanotify:
     def test_sudoers_write_detected(self, coi_binary, tmp_path, _monitoring_enabled):
         """Writing to /etc/sudoers raises a CRITICAL persistence threat.
 
-        The first write to /etc/sudoers triggers overlayfs copy-up, moving the
-        file to the upper layer with a new inode. The FileWatcher's 30-second
-        backstop then re-marks the new inode. A second write (after both the
-        backstop and the 30-second startup grace period) is detected.
-
-        Timing: ~55 s total (5 s init + first write + 35 s wait covering both
-        grace period and backstop + second write + 15 s poll).
+        Where the first write replaces the inode (overlayfs copy-up), the
+        backstop marks the new one within 30 s; the write repeats until one is
+        detected.
         """
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
@@ -243,43 +223,21 @@ class TestFileWatcherFanotify:
             if not _wait_running(container_name):
                 pytest.fail(f"Container {container_name} did not start")
 
-            time.sleep(5)
-
-            # Ensure /etc/sudoers exists before the test.
-            _incus_exec(
-                container_name,
-                "[ -f /etc/sudoers ] || touch /etc/sudoers",
-            )
-
-            # First write: triggers overlayfs copy-up → new inode (current mark misses it).
-            _incus_exec(
+            threats = _trigger_until_detected(
                 container_name,
                 "echo '# coi-test' >> /etc/sudoers",
-            )
-
-            # Wait for the backstop ticker to re-mark the new inode (≤30 s + margin).
-            time.sleep(35)
-
-            # Second write: now on the upper-layer inode — fanotify detects it.
-            _incus_exec(
-                container_name,
-                "echo '# coi-test-2' >> /etc/sudoers",
-            )
-
-            threats = _poll_file_threats(
-                container_name,
-                max_wait=15,
-                predicate=lambda e: (
+                lambda e: (
                     e.get("category") == "persistence"
                     and e.get("level") == "critical"
-                    and "sudoers" in e.get("evidence", {}).get("sensitive_file", {}).get("path", "")
-                    and e.get("evidence", {}).get("sensitive_file", {}).get("access") == "write"
+                    and "sudoers" in _sensitive_file(e).get("path", "")
+                    and _sensitive_file(e).get("access") == "write"
                 ),
             )
 
-            assert len(threats) > 0, (
-                f"Expected CRITICAL persistence threat for /etc/sudoers write. "
-                f"Events: {_get_threat_events(container_name)}"
+            assert threats, (
+                f"No CRITICAL persistence threat for an /etc/sudoers write within "
+                f"{_DETECT_DEADLINE}s. Events: {_get_threat_events(container_name)}"
+                f"{coi_session_logs(container_name)}"
             )
         finally:
             proc.terminate()
@@ -288,10 +246,9 @@ class TestFileWatcherFanotify:
     def test_authorized_keys_write_detected(self, coi_binary, tmp_path, _monitoring_enabled):
         """Writing to /root/.ssh/authorized_keys raises a CRITICAL persistence threat.
 
-        authorized_keys typically does not exist in a fresh container image, so
-        the initial mark attempt is silently skipped (ENOENT). The first write
-        creates the file in the overlayfs upper layer. After the 30-second backstop
-        (and grace period) the new inode is marked. A second write triggers detection.
+        authorized_keys does not exist in a fresh container, so the initial
+        mark pass skips it. The first write creates it, the backstop marks it
+        within 30 s, and the write repeats until one is detected.
         """
         workspace = str(tmp_path / "workspace")
         os.makedirs(workspace, exist_ok=True)
@@ -308,38 +265,21 @@ class TestFileWatcherFanotify:
             if not _wait_running(container_name):
                 pytest.fail(f"Container {container_name} did not start")
 
-            time.sleep(5)
-
-            # First write: creates the file on the upper layer (initial mark was absent).
-            _incus_exec(
+            threats = _trigger_until_detected(
                 container_name,
-                "mkdir -p /root/.ssh && echo 'ssh-rsa AAAAB3N coi-test' > /root/.ssh/authorized_keys",
-            )
-
-            # Wait for the backstop to mark the newly created file.
-            time.sleep(35)
-
-            # Second write: the file's inode is now in the map — detected.
-            _incus_exec(
-                container_name,
-                "echo 'ssh-rsa AAAAB3N coi-test-2' >> /root/.ssh/authorized_keys",
-            )
-
-            threats = _poll_file_threats(
-                container_name,
-                max_wait=15,
-                predicate=lambda e: (
+                "mkdir -p /root/.ssh && echo 'ssh-rsa AAAAB3N coi-test' >> /root/.ssh/authorized_keys",
+                lambda e: (
                     e.get("category") == "persistence"
                     and e.get("level") == "critical"
-                    and "authorized_keys"
-                    in e.get("evidence", {}).get("sensitive_file", {}).get("path", "")
-                    and e.get("evidence", {}).get("sensitive_file", {}).get("access") == "write"
+                    and "authorized_keys" in _sensitive_file(e).get("path", "")
+                    and _sensitive_file(e).get("access") == "write"
                 ),
             )
 
-            assert len(threats) > 0, (
-                f"Expected CRITICAL persistence threat for authorized_keys write. "
-                f"Events: {_get_threat_events(container_name)}"
+            assert threats, (
+                f"No CRITICAL persistence threat for an authorized_keys write within "
+                f"{_DETECT_DEADLINE}s. Events: {_get_threat_events(container_name)}"
+                f"{coi_session_logs(container_name)}"
             )
         finally:
             proc.terminate()
