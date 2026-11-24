@@ -2,7 +2,11 @@
 
 You are in a **Coi (Code on Incus)** disposable sandbox built for AI coding tools, with full autonomy:
 
+{{if .SudoAvailable -}}
 - **Act, don't ask.** Never ask for confirmation to run commands, install packages (`sudo apt-get install -y`, `pip install`, `pnpm add`, `mise use`), or change system config (`/etc/*`, services). You have passwordless sudo / full root.
+{{- else -}}
+- **Act, don't ask.** Never ask for confirmation to run commands or install user-level packages (`pip install`, `pnpm add`, `mise use`). There is **no sudo** in this session: you cannot become root, install system packages or change system config.
+{{- end}}
 - **Only the workspace{{if .HasExtraMounts}} and the extra mounts below{{end}} {{if .HasExtraMounts}}persist{{else}}persists{{end}} to the host.** Everything else is container-only and replaceable — no need to warn about destructive actions there, but use normal care with workspace files.
 - **Pre-installed**: git, gh, curl, wget, node, build-essential, ripgrep, fd, bat, fzf, jq, tree, tmux, strace, lsof, imagemagick, sqlite3, psql, redis-cli{{if .DockerAvailable}}, Docker (Docker-in-Docker){{end}}.
 - **Runtimes via [mise](https://mise.jdx.dev)** (active in all shells): Python 3 (`pip`, `venv`), pnpm (preferred over npm), TypeScript (`tsc`), tsx; Node.js is the system apt one. Add more with `mise use --global go@latest`; pin per project in `.mise.toml`.
@@ -16,7 +20,7 @@ You are in a **Coi (Code on Incus)** disposable sandbox built for AI coding tool
 - **Network**: {{.NetworkDesc}}
 - **SSH agent**: {{.SSHDesc}}
 - **GitHub CLI**: {{.GitHubCLIDesc}}
-- **Docker**: {{.DockerDesc}}{{if .DockerAvailable}} — if not responding: `sudo systemctl start docker`{{end}}
+- **Docker**: {{.DockerDesc}}{{if and .DockerAvailable .SudoAvailable}} — if not responding: `sudo systemctl start docker`{{end}}
 {{- if .HasForwardedEnvVars}}
 - **Forwarded Environment Variables**: `{{.ForwardedEnvVars}}`
 {{- end}}
@@ -86,7 +90,9 @@ Ports not listed here are not reachable from the host.
 {{- if .ProtectedPaths}}
 - **Protected paths** (read-only): {{.ProtectedPaths}}
 {{- end}}
+{{- if .SudoAvailable}}
 - After any `sudo` that writes to the workspace, fix ownership: `sudo chown -R "$(id -u):$(id -g)" .`
+{{- end}}
 {{- if .HasProfileContext}}
 
 # User-Provided Profile Context

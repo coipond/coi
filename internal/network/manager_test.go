@@ -253,13 +253,93 @@ func TestOtherContainersRunning(t *testing.T) {
 	}
 }
 
+// TestLogRestrictedPrivateAccess verifies the restricted session log matches the
+// RFC1918 and metadata rules addRestrictedRules installs.
+func TestLogRestrictedPrivateAccess(t *testing.T) {
+	const (
+		blockRFC1918  = "Blocking private networks (RFC1918, 100.64.0.0/10)"
+		blockMetadata = "Blocking cloud metadata endpoints"
+		allowRFC1918  = "Allowing private networks (RFC1918, 100.64.0.0/10"
+	)
+	on, off := true, false
+	tests := []struct {
+		name    string
+		cfg     config.NetworkConfig
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "local access off",
+			cfg: config.NetworkConfig{
+				AllowLocalNetworkAccess: &off,
+				BlockPrivateNetworks:    &on,
+				BlockMetadataEndpoint:   &on,
+			},
+			want:    []string{blockRFC1918, blockMetadata},
+			notWant: []string{allowRFC1918},
+		},
+		{
+			name: "local access on",
+			cfg: config.NetworkConfig{
+				AllowLocalNetworkAccess: &on,
+				BlockPrivateNetworks:    &on,
+				BlockMetadataEndpoint:   &on,
+			},
+			want:    []string{allowRFC1918 + "; allow_local_network_access)", blockMetadata},
+			notWant: []string{blockRFC1918, "on ports"},
+		},
+		{
+			name: "local access on with allowed_ports",
+			cfg: config.NetworkConfig{
+				AllowLocalNetworkAccess: &on,
+				BlockPrivateNetworks:    &on,
+				AllowedPorts:            []int{443, 8080},
+			},
+			want:    []string{allowRFC1918 + ") on ports [443 8080] (allow_local_network_access)"},
+			notWant: []string{blockRFC1918, blockMetadata},
+		},
+		{
+			name: "nothing blocked",
+			cfg: config.NetworkConfig{
+				AllowLocalNetworkAccess: &off,
+				BlockPrivateNetworks:    &off,
+				BlockMetadataEndpoint:   &off,
+			},
+			notWant: []string{blockRFC1918, blockMetadata, allowRFC1918},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sl := logger.New("restricted-log", t.TempDir())
+			m := &Manager{config: &tt.cfg, logger: sl}
+			m.logRestrictedPrivateAccess()
+			_ = sl.Close()
+
+			out, err := os.ReadFile(sl.OutPath())
+			if err != nil {
+				t.Fatalf("read session log: %v", err)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(string(out), w) {
+					t.Errorf("log missing %q; got: %q", w, out)
+				}
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(string(out), nw) {
+					t.Errorf("log has %q; got: %q", nw, out)
+				}
+			}
+		})
+	}
+}
+
 // TestLogAllowlistPrivateAccess verifies the allowlist session log matches the
 // RFC1918 and metadata rules for allow_local_network_access.
 func TestLogAllowlistPrivateAccess(t *testing.T) {
 	const (
-		blockRFC1918  = "Blocking all RFC1918 private networks"
+		blockRFC1918  = "Blocking all private networks (RFC1918, 100.64.0.0/10)"
 		blockMetadata = "Blocking cloud metadata endpoints"
-		allowRFC1918  = "Allowing RFC1918 private networks"
+		allowRFC1918  = "Allowing private networks (RFC1918, 100.64.0.0/10"
 	)
 	on, off := true, false
 	tests := []struct {
@@ -277,7 +357,7 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 		{
 			name:    "local access on",
 			cfg:     config.NetworkConfig{AllowLocalNetworkAccess: &on},
-			want:    []string{allowRFC1918 + " (allow_local_network_access)"},
+			want:    []string{allowRFC1918 + "; allow_local_network_access)"},
 			notWant: []string{blockRFC1918, blockMetadata, "on ports"},
 		},
 		{
@@ -286,7 +366,7 @@ func TestLogAllowlistPrivateAccess(t *testing.T) {
 				AllowLocalNetworkAccess: &on,
 				AllowedPorts:            []int{443, 8080},
 			},
-			want:    []string{allowRFC1918 + " on ports [443 8080] (allow_local_network_access)"},
+			want:    []string{allowRFC1918 + ") on ports [443 8080] (allow_local_network_access)"},
 			notWant: []string{blockRFC1918, blockMetadata},
 		},
 	}

@@ -314,7 +314,12 @@ func Cleanup(opts CleanupOptions) error {
 	// Containers are always launched as non-ephemeral, so they should exist even when stopped
 	exists, err := mgr.Exists()
 	if err != nil {
-		opts.Logger(fmt.Sprintf("Warning: Could not check container existence: %v", err))
+		// Incus can't answer: the container may still exist. Fail safe as
+		// the state check below does - no save, no network teardown, no
+		// delete.
+		opts.Logger(fmt.Sprintf("Warning: could not check the container (incus unreachable: %v) - leaving it untouched; session data was NOT saved. When incus is back, use 'coi attach' or 'coi shell --resume'", err))
+		closeSessionLogger(opts)
+		return nil
 	}
 
 	// Save session data immediately — no pre-delay regardless of persistence mode.
@@ -438,13 +443,18 @@ func Cleanup(opts CleanupOptions) error {
 		}
 	}
 
+	closeSessionLogger(opts)
+
+	return nil
+}
+
+// closeSessionLogger closes the session log, if any, and logs a close error
+func closeSessionLogger(opts CleanupOptions) {
 	if opts.SessionLogger != nil {
 		if err := opts.SessionLogger.Close(); err != nil && opts.Logger != nil {
 			opts.Logger(fmt.Sprintf("Warning: failed to close session log: %v", err))
 		}
 	}
-
-	return nil
 }
 
 // saveSessionData saves the tool config directory from the container
@@ -470,7 +480,10 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 	// the new one is complete: deleting the old copy up front lost the only
 	// backup whenever the pull then failed.
 	localConfigDir := filepath.Join(localSessionDir, configDirName)
-	stagingDir := localConfigDir + ".coi-new"
+	if err := finishSavedConfigSwap(localConfigDir); err != nil {
+		return fmt.Errorf("failed to recover interrupted save: %w", err)
+	}
+	stagingDir := localConfigDir + pullingSuffix
 	if err := os.RemoveAll(stagingDir); err != nil {
 		return fmt.Errorf("failed to clear staging directory: %w", err)
 	}
@@ -543,13 +556,11 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 	}
 
 	// Swap the new copy in.
-	if _, err := os.Stat(localConfigDir); err == nil {
-		logger("Removing old session data before saving new state")
-		if err := os.RemoveAll(localConfigDir); err != nil {
-			return fmt.Errorf("failed to remove old %s directory: %w", configDirName, err)
-		}
+	if err := os.Rename(stagingDir, localConfigDir+completeSuffix); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return fmt.Errorf("failed to store pulled %s directory: %w", configDirName, err)
 	}
-	if err := os.Rename(stagingDir, localConfigDir); err != nil {
+	if err := finishSavedConfigSwap(localConfigDir); err != nil {
 		return fmt.Errorf("failed to store pulled %s directory: %w", configDirName, err)
 	}
 

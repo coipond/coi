@@ -578,50 +578,30 @@ systemctl --force "$1" || { rc=$?; rm -f "$marker"; exit "$rc"; }
 WRAPPER_EOF
     chmod 755 /usr/local/libexec/coi-power
 
-    # Power-off wrappers.
+    # Power-off wrappers. Without sudo ([security] passwordless_sudo = false)
+    # they say how to stop the session instead of failing with a sudo error.
     #
     # In Ubuntu 24.04 containers systemd-logind can be mid-start when a shutdown
     # is requested, producing a D-Bus transaction conflict.  One --force flag
     # makes systemctl talk directly to systemd (bypassing logind) without
     # resorting to a hard reboot() syscall, which lets Coi clean up the session.
-    for cmd in poweroff halt; do
-        cat > "/usr/local/bin/${cmd}" << 'WRAPPER_EOF'
+    #
+    # "close" and "stop" are poweroff aliases that do not exist on the host, so
+    # typing them outside the container is harmless (unlike "poweroff").
+    local cmd action
+    for cmd in poweroff halt shutdown close stop reboot; do
+        action=poweroff
+        [ "$cmd" = reboot ] && action=reboot
+        cat > "/usr/local/bin/${cmd}" << WRAPPER_EOF
 #!/bin/bash
-exec sudo /usr/local/libexec/coi-power poweroff
+if ! sudo -n true 2>/dev/null; then
+    echo "${cmd}: no sudo in this session; exit the tool or run 'coi shutdown' on the host" >&2
+    exit 1
+fi
+exec sudo /usr/local/libexec/coi-power ${action}
 WRAPPER_EOF
         chmod 755 "/usr/local/bin/${cmd}"
     done
-
-    cat > "/usr/local/bin/reboot" << 'WRAPPER_EOF'
-#!/bin/bash
-exec sudo /usr/local/libexec/coi-power reboot
-WRAPPER_EOF
-    chmod 755 "/usr/local/bin/reboot"
-
-    cat > "/usr/local/bin/shutdown" << 'WRAPPER_EOF'
-#!/bin/bash
-exec sudo /usr/local/libexec/coi-power poweroff
-WRAPPER_EOF
-    chmod 755 "/usr/local/bin/shutdown"
-
-    # Create "close" as an alias for poweroff
-    # This provides a safe alternative that doesn't exist on the host machine,
-    # preventing accidental host shutdowns when typed outside the container
-    cat > "/usr/local/bin/close" << 'WRAPPER_EOF'
-#!/bin/bash
-exec sudo /usr/local/libexec/coi-power poweroff
-WRAPPER_EOF
-    chmod 755 "/usr/local/bin/close"
-
-    # Create "stop" as another poweroff alias
-    # Same rationale as "close": it does not exist on the host, so typing it
-    # outside the container is harmless. Provided because the two names are
-    # easy to confuse and are used interchangeably.
-    cat > "/usr/local/bin/stop" << 'WRAPPER_EOF'
-#!/bin/bash
-exec sudo /usr/local/libexec/coi-power poweroff
-WRAPPER_EOF
-    chmod 755 "/usr/local/bin/stop"
 
     log "Power management wrappers configured"
 }

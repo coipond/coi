@@ -167,8 +167,11 @@ type Process struct {
 
 // FilesystemStats holds workspace access statistics
 type FilesystemStats struct {
-	Available         bool    `json:"available"`
-	WorkspacePath     string  `json:"workspace_path,omitempty"`
+	Available     bool   `json:"available"`
+	WorkspacePath string `json:"workspace_path,omitempty"`
+	// WorkspaceDevice is the io.stat device the I/O counts cover; "" means
+	// the whole container.
+	WorkspaceDevice   string  `json:"workspace_device,omitempty"`
 	TotalReadMB       float64 `json:"total_read_mb"`
 	ReadRateMBPerSec  float64 `json:"read_rate_mb_per_sec"`
 	TotalWriteMB      float64 `json:"total_write_mb"`
@@ -221,7 +224,7 @@ type DaemonConfig struct {
 	AllowedCIDRs   []string // CIDR ranges for allowed networks (static snapshot / fallback)
 	AllowedDomains []string // Domains from network allowlist
 	// NetworkMode is the container's [network] mode. Open mode allows LAN
-	// traffic, so RFC1918 destinations are not flagged there.
+	// traffic, so private destinations are not flagged there.
 	NetworkMode config.NetworkMode
 
 	// AllowedCIDRsProvider, when set, is consulted on every collection for the

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -104,6 +105,10 @@ func (a *App) shellCommand(cmd *cobra.Command, args []string) error {
 	)
 }
 
+// permissionModeWarning prints the unknown permission_mode warning once:
+// a command can call getConfiguredTool more than once.
+var permissionModeWarning sync.Once
+
 // getConfiguredTool returns the tool to use based on config
 func getConfiguredTool(cfg *config.Config) (tool.Tool, error) {
 	toolName := cfg.Tool.Name
@@ -166,10 +171,14 @@ func getConfiguredTool(cfg *config.Config) (tool.Tool, error) {
 		}
 	}
 
+	if msg := config.UnknownPermissionModeWarning(cfg.Tool.PermissionMode); msg != "" {
+		permissionModeWarning.Do(func() { fmt.Fprintln(os.Stderr, msg) })
+	}
+
 	// Set permission mode if the tool supports it
 	if twpm, ok := t.(tool.ToolWithPermissionMode); ok {
 		if cfg.Tool.PermissionMode != "" {
-			twpm.SetPermissionMode(cfg.Tool.PermissionMode)
+			twpm.SetPermissionMode(string(cfg.Tool.PermissionMode))
 		}
 	}
 

@@ -629,6 +629,9 @@ type ContextInfo struct {
 	// it. When true, the context tells the agent Docker is unavailable instead
 	// of advertising Docker-in-Docker it cannot use.
 	DockerUnavailable bool
+	// SudoUnavailable is set when [security] passwordless_sudo is false: the
+	// code user has no sudo, so the context must not promise root or apt.
+	SudoUnavailable bool
 }
 
 // withDefaults fills the fields setup leaves zero-valued (OS name, architecture)
@@ -702,6 +705,7 @@ type contextTemplateData struct {
 	SSHAgentForwarded     bool
 	GHCLIAuthenticated    bool
 	DockerAvailable       bool
+	SudoAvailable         bool
 }
 
 // RenderContextFileContent renders the embedded sandbox context template with
@@ -723,9 +727,10 @@ func RenderContextFileContent(info ContextInfo) string {
 		DockerAvailable: !info.DockerUnavailable,
 		UserDesc:        "Non-root user (code)",
 		SudoDesc:        "Available via passwordless sudo",
+		SudoAvailable:   !info.SudoUnavailable,
 	}
 	if info.DockerUnavailable {
-		data.DockerDesc = "Not available (kernel-surface hardening disabled Docker/nesting for this session)"
+		data.DockerDesc = "Not available (Docker/nesting is disabled for this session)"
 	}
 
 	if info.Persistent {
@@ -800,9 +805,13 @@ func RenderContextFileContent(info ContextInfo) string {
 		data.HasForwardedEnvVars = true
 	}
 
+	if info.SudoUnavailable {
+		data.SudoDesc = "Not available (disabled for this session: no root, no system package installs; system packages come from the image or the profile's build scripts)"
+	}
 	if info.RunAsRoot {
 		data.UserDesc = "Root user"
 		data.SudoDesc = "Already running as root"
+		data.SudoAvailable = true
 	}
 
 	if len(info.ProtectedPaths) > 0 {
@@ -932,6 +941,7 @@ type SandboxContextJSON struct {
 	SSHAgentForwarded  bool              `json:"ssh_agent_forwarded"`
 	GHCLIAuthenticated bool              `json:"gh_cli_authenticated"`
 	DockerAvailable    bool              `json:"docker_available"`
+	SudoAvailable      bool              `json:"sudo_available"` // false: [security] passwordless_sudo is off (true when running as root)
 	ForwardedEnvVars   []string          `json:"forwarded_env_vars"`
 	ProtectedPaths     []string          `json:"protected_paths"`
 	ProtectedBranches  []string          `json:"protected_branches"`
@@ -1015,6 +1025,7 @@ func RenderContextFileJSON(info ContextInfo) (string, error) {
 		SSHAgentForwarded:  info.SSHAgentForwarded,
 		GHCLIAuthenticated: info.GHCLIAuthenticated,
 		DockerAvailable:    !info.DockerUnavailable,
+		SudoAvailable:      info.RunAsRoot || !info.SudoUnavailable,
 		ProtectedBranches:  nonNilStrings(info.ProtectedBranches),
 		ForwardedEnvVars:   nonNilStrings(info.ForwardedEnvVars),
 		ProtectedPaths:     nonNilStrings(info.ProtectedPaths),

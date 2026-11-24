@@ -395,10 +395,10 @@ func checkSuspicious(conn Connection, mode config.NetworkMode, allowedCIDRs []st
 	// Only asked once a check would otherwise fire.
 	firewallPermits := func() bool { return permitted != nil && permitted(conn.Protocol, remoteIP, port) }
 
-	// The firewall blocks RFC1918 destinations in every mode except open, which
+	// The firewall blocks private destinations in every mode except open, which
 	// allows LAN traffic.
-	if mode != config.NetworkModeOpen && isRFC1918(remoteIP) && !firewallPermits() {
-		return "RFC1918 private address (should be blocked by firewall)"
+	if mode != config.NetworkModeOpen && config.IsPrivateNetworkIP(remoteIP) && !firewallPermits() {
+		return "Private address (should be blocked by firewall)"
 	}
 
 	// Check metadata endpoint
@@ -434,22 +434,6 @@ func extractPort(addr string) int {
 		return port
 	}
 	return 0
-}
-
-// rfc1918Nets are the private ranges, parsed once: checkSuspicious asks for
-// every connection on every poll.
-var rfc1918Nets = func() []*net.IPNet {
-	var nets []*net.IPNet
-	for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
-		_, network, _ := net.ParseCIDR(cidr)
-		nets = append(nets, network)
-	}
-	return nets
-}()
-
-// isRFC1918 checks if IP is in private address space
-func isRFC1918(ipStr string) bool {
-	return inNets(ipStr, rfc1918Nets)
 }
 
 // inAllowlist checks if IP is in allowed CIDR ranges

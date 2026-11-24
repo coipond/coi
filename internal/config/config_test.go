@@ -992,9 +992,9 @@ func TestMergeBoolZeroValueBug(t *testing.T) {
 func TestPermissionModeMerge(t *testing.T) {
 	tests := []struct {
 		name         string
-		baseMode     string
-		otherMode    string
-		expectedMode string
+		baseMode     PermissionMode
+		otherMode    PermissionMode
+		expectedMode PermissionMode
 	}{
 		{
 			name:         "empty base + interactive other = interactive",
@@ -1507,5 +1507,40 @@ func TestConfigMerge_ReverseShellOneLiners(t *testing.T) {
 	base.Merge(&Config{Monitoring: MonitoringConfig{ReverseShellOneLiners: nil}})
 	if got := StringVal(base.Monitoring.ReverseShellOneLiners); got != "warn" {
 		t.Errorf("nil override reset reverse_shell_one_liners to %q, want \"warn\"", got)
+	}
+}
+
+func TestIsPrivateNetworkIP(t *testing.T) {
+	tests := []struct {
+		ip       string
+		expected bool
+	}{
+		{"10.0.0.1", true},
+		{"10.255.255.255", true},
+		{"172.16.0.1", true},
+		{"172.31.255.255", true},
+		{"192.168.0.1", true},
+		{"192.168.255.255", true},
+		{"172.15.0.1", false}, // Just outside 172.16/12
+		{"172.32.0.1", false}, // Just outside 172.16/12
+		{"100.64.0.1", true},  // RFC 6598 shared address space
+		{"100.127.255.255", true},
+		{"100.63.255.255", false}, // Just outside 100.64/10
+		{"100.128.0.1", false},    // Just outside 100.64/10
+		{"8.8.8.8", false},        // Public
+		{"1.1.1.1", false},        // Public
+		{"127.0.0.1", false},      // Loopback (not RFC1918)
+		{"169.254.0.1", false},    // Link-local (not RFC1918)
+		{"invalid", false},        // Invalid IP
+		{"", false},               // Empty
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.ip, func(t *testing.T) {
+			result := IsPrivateNetworkIP(tt.ip)
+			if result != tt.expected {
+				t.Errorf("IsPrivateNetworkIP(%q) = %v, expected %v", tt.ip, result, tt.expected)
+			}
+		})
 	}
 }
