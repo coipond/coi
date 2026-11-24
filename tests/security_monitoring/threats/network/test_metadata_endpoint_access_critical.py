@@ -1,16 +1,12 @@
 """Test network-based threat detection."""
 
-import subprocess
-import time
-from pathlib import Path
-
-import pytest
-
 from support.monitoring import (
     cleanup_container,
-    get_container_name_from_workspace,
-    poll_network_threats,
-    wait_for_container_running,
+    get_threat_events,
+    hold_connect,
+    is_metadata_threat,
+    start_shell,
+    wait_for_threats,
 )
 
 
@@ -18,60 +14,21 @@ def test_metadata_endpoint_access_critical(
     test_workspace, enable_monitoring_metadata_open, coi_binary
 ):
     """Test connection to cloud metadata endpoint triggers CRITICAL threat."""
-    metadata_script = Path(test_workspace) / "metadata.py"
-    metadata_script.write_text(
-        """#!/usr/bin/env python3
-import subprocess
-import time
-
-# Try to access cloud metadata endpoint (AWS/GCP/Azure)
-subprocess.Popen(
-    ["timeout", "5", "curl", "-s", "http://169.254.169.254/latest/meta-data/"],
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
-)
-
-time.sleep(60)
-"""
-    )
-    metadata_script.chmod(0o755)
-
-    proc = subprocess.Popen(
-        [coi_binary, "shell", "--workspace", str(test_workspace), "--slot", "9"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    container_name = get_container_name_from_workspace(str(test_workspace)).rsplit("-", 1)[0] + "-9"
-
-    if not wait_for_container_running(container_name):
-        proc.terminate()
-        pytest.fail(f"Container {container_name} did not start")
-
-    # Wait for monitoring baseline to stabilize
-    time.sleep(10)
-
-    # Execute metadata access attempt
-    subprocess.Popen(
-        ["incus", "exec", container_name, "--", "python3", "/workspace/metadata.py"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
+    container_name, proc = start_shell(test_workspace, coi_binary, 9)
+    holder = None
     try:
-        # Best-effort connection (the metadata endpoint is blocked, so the SYN
-        # may never establish): poll, and skip honestly if nothing is detected
-        # rather than pass vacuously. test_network_connection_detection.py has
-        # the reliable unconditional metadata-endpoint coverage.
-        network_threats = poll_network_threats(container_name)
-        if not network_threats:
-            pytest.skip(
-                "no network threat detected within the poll window (best-effort "
-                "metadata connection); see test_network_connection_detection.py"
-            )
-        critical = [e for e in network_threats if e.get("level") == "critical"]
-        assert len(critical) > 0, "Metadata endpoint access should be CRITICAL"
+        # A connected UDP socket stays in /proc/net/udp for every poll; a TCP
+        # connect to the endpoint (no server on most hosts) can be gone before one.
+        holder = hold_connect(container_name, "169.254.169.254", 80, proto="udp")
+        threats = wait_for_threats(container_name, is_metadata_threat)
+        assert threats, (
+            "no threat for a connection to the metadata endpoint 169.254.169.254:80; "
+            f"threat events: {get_threat_events(container_name)}"
+        )
+        critical = [e for e in threats if e.get("level") == "critical"]
+        assert len(critical) > 0, f"Metadata endpoint access should be CRITICAL, got {threats}"
     finally:
+        if holder is not None:
+            holder.terminate()
         proc.terminate()
         cleanup_container(container_name, coi_binary)
