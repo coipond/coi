@@ -261,7 +261,6 @@ check_incus() {
         incus_version_output="$(sudo env LC_ALL=C incus version 2>/dev/null || true)"
         echo -e "${GREEN}✓ Incus found: ${incus_version_output}${NC}"
 
-        # Check minimum version (>= 7.0) of the server and the client
         local server_version client_version
         server_version="$(echo "$incus_version_output" | grep '^Server version:' | cut -d: -f2 | tr -d ' ' || true)"
         if [ -z "$server_version" ]; then

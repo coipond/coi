@@ -84,10 +84,12 @@ func TestCheckIncus_VersionCheck(t *testing.T) {
 	t.Logf("CheckIncus: status=%s version=%s message=%s", result.Status, versionStr, result.Message)
 }
 
-// evaluateIncusVersion should return StatusWarning with zabbly upgrade instructions for old versions
-// (6.x, 5.x) of the server or the client, StatusOK with a "recommended" note for versions
-// between the hard minimum and the recommended floor, StatusOK for recommended-or-newer versions, and degrade gracefully
-// (StatusOK) when the version output is unparseable or empty.
+// evaluateIncusVersion should return StatusWarning with zabbly upgrade
+// instructions for old versions (6.x, 5.x) of the server or the client,
+// StatusOK with a "recommended" note for versions between the hard minimum and
+// the recommended floor, StatusOK for recommended-or-newer versions, and
+// degrade gracefully (StatusOK) when the version output is unparseable or
+// empty.
 func TestEvaluateIncusVersion_OldVersion(t *testing.T) {
 	tests := []struct {
 		name           string

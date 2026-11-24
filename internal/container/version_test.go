@@ -152,11 +152,11 @@ func TestMeetsRecommendedVersion(t *testing.T) {
 	}
 }
 
-func TestFormatMinVersionError(t *testing.T) {
+func TestFormatMinServerVersionError(t *testing.T) {
 	v := &IncusVersion{Major: 6, Minor: 0, Raw: "6.0.3"}
 
 	for name, msg := range map[string]string{
-		"server": FormatMinVersionError(v),
+		"server": FormatMinServerVersionError(v),
 		"client": FormatMinClientVersionError(v),
 	} {
 		if !strings.Contains(msg, "Incus "+name+" version 6.0.3") {

@@ -75,7 +75,7 @@ func evaluateIncusVersion(versionOutput string) HealthCheck {
 		return HealthCheck{
 			Name:    "incus",
 			Status:  StatusWarning,
-			Message: container.FormatMinVersionError(v),
+			Message: container.FormatMinServerVersionError(v),
 			Details: map[string]interface{}{
 				"version": versionStr,
 			},

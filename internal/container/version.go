@@ -145,7 +145,7 @@ func IncusVersionOutput() (string, error) {
 func checkMinimumVersionOutput(output string) error {
 	if versionStr, err := ExtractServerVersion(output); err == nil {
 		if v, err := ParseIncusVersion(versionStr); err == nil && !MeetsMinimumVersion(v) {
-			return fmt.Errorf("%s", FormatMinVersionError(v))
+			return fmt.Errorf("%s", FormatMinServerVersionError(v))
 		}
 	}
 
@@ -158,9 +158,9 @@ func checkMinimumVersionOutput(output string) error {
 	return nil
 }
 
-// FormatMinVersionError returns an actionable error message for users with an
-// old Incus server.
-func FormatMinVersionError(v *IncusVersion) string {
+// FormatMinServerVersionError returns an actionable error message for users
+// with an old Incus server.
+func FormatMinServerVersionError(v *IncusVersion) string {
 	return formatMinVersionError("server", v)
 }
 
