@@ -190,8 +190,17 @@ func IncusOutputContext(ctx context.Context, args ...string) (string, error) {
 
 // incusOutputUncached is IncusOutputContext without the config cache.
 func incusOutputUncached(ctx context.Context, args ...string) (string, error) {
+	return incusOutputEnv(ctx, nil, args...)
+}
+
+// incusOutputEnv is incusOutputUncached with env added to the inherited
+// environment.
+func incusOutputEnv(ctx context.Context, env []string, args ...string) (string, error) {
 	cmdArgs := buildIncusCommand(args...)
 	cmd := execIncusCommandContext(ctx, cmdArgs)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
