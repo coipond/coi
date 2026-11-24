@@ -225,7 +225,10 @@ type DaemonConfig struct {
 	WorkspacePath string
 	// CodeUser is the in-container user whose persistence and credential
 	// files are watched. Empty: they are not watched.
-	CodeUser       string
+	CodeUser string
+	// IncusProject is the container's Incus project; outside "default" its
+	// cgroup is lxc.payload.<project>_<name>.
+	IncusProject   string
 	PollInterval   time.Duration
 	AuditLogPath   string
 	AllowedCIDRs   []string // CIDR ranges for allowed networks (static snapshot / fallback)

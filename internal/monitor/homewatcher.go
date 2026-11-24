@@ -59,38 +59,43 @@ func userFiles(user string, secretPaths []string) []userFile {
 	return files
 }
 
-// dirKey identifies a directory by its filesystem id and file handle, as a
-// FAN_REPORT_DFID_NAME event names it.
-type dirKey string
+// fidKey identifies a file or directory by its filesystem id and file
+// handle, as a FAN_REPORT_FID or FAN_REPORT_DFID_NAME record names it.
+type fidKey string
 
-// newDirKey builds the dirKey of a filesystem id and file handle.
-func newDirKey(fsid [8]byte, handleType int32, handle []byte) dirKey {
+// newFidKey builds the fidKey of a filesystem id and file handle.
+func newFidKey(fsid [8]byte, handleType int32, handle []byte) fidKey {
 	var b bytes.Buffer
 	b.Write(fsid[:])
 	_ = binary.Write(&b, binary.NativeEndian, handleType)
 	b.Write(handle)
-	return dirKey(b.String())
+	return fidKey(b.String())
 }
 
-// fanNameEvent is a decoded FAN_REPORT_DFID_NAME event: the directory, the
-// name of the entry in it, and the host PID of the process that caused it.
-type fanNameEvent struct {
+// fanFidEvent is a decoded event of a FAN_REPORT_DFID_NAME|FAN_REPORT_FID
+// group: the object it is about, its directory and name in it (when the
+// kernel reports them), and the host PID of the process that caused it.
+type fanFidEvent struct {
 	mask uint64
 	pid  int
-	dir  dirKey
+	obj  fidKey
+	dir  fidKey
 	name string
 }
 
 // UserFileWatcher watches the code user's persistence and credential files
-// with a FAN_REPORT_DFID_NAME fanotify group. It marks the parent
-// directories, so a file created after the mark pass, written in place or
-// replaced by a rename is reported, with the PID of the writer. A write by
-// a process outside the container (coi's own copy through Incus) is not
-// flagged. Directories that do not exist yet are marked when created in a
-// marked ancestor, and by the 30-second backstop. The 30-second boot grace
-// period of FileWatcher applies too.
+// with a FAN_REPORT_DFID_NAME|FAN_REPORT_FID fanotify group. It marks the
+// parent directories, so a file created after the mark pass or replaced by
+// a rename is reported, and each existing file's inode, so a write through
+// a hard link, a write on an fd held open and a truncate are reported too.
+// Each event carries the PID of the writer. A write by a process outside
+// the container (coi's own copy through Incus) is not flagged. Directories
+// that do not exist yet are marked when created in a marked ancestor, and
+// by the 30-second backstop. The 30-second boot grace period of FileWatcher
+// applies too.
 type UserFileWatcher struct {
 	containerName string
+	instance      string // the LXC name: <project>_<name> outside "default"
 	user          string
 	files         []userFile
 	onThreat      func(ThreatEvent)
@@ -98,10 +103,15 @@ type UserFileWatcher struct {
 }
 
 // NewUserFileWatcher creates a UserFileWatcher for the files of the code
-// user named user in containerName.
-func NewUserFileWatcher(containerName, user string, secretPaths []string, onThreat func(ThreatEvent), onError func(error)) *UserFileWatcher {
+// user named user in containerName, in Incus project project.
+func NewUserFileWatcher(containerName, project, user string, secretPaths []string, onThreat func(ThreatEvent), onError func(error)) *UserFileWatcher {
+	instance := containerName
+	if project != "" && project != "default" {
+		instance = project + "_" + containerName
+	}
 	return &UserFileWatcher{
 		containerName: containerName,
+		instance:      instance,
 		user:          user,
 		files:         userFiles(user, secretPaths),
 		onThreat:      onThreat,
@@ -110,37 +120,44 @@ func NewUserFileWatcher(containerName, user string, secretPaths []string, onThre
 }
 
 // userWatchState is what Run keeps between mark passes: the marked
-// directories by key (their container-relative path) and the grace period.
+// directories and files by key (their container-relative path), the grace
+// period and when each file was last flagged for each PID.
 type userWatchState struct {
 	pid        int
-	dirs       map[dirKey]string
+	dirs       map[fidKey]string
+	files      map[fidKey]string
 	graceUntil time.Time
+	flagged    map[string]time.Time
 }
 
+// refireAfter is how long a threat for one file and PID is not raised
+// again: a process appending to a file causes a FAN_MODIFY per write.
+var refireAfter = 10 * time.Second
+
 // Run starts the watch loop and blocks until ctx is cancelled. Without
-// fanotify name events (kernel before 5.9, no CAP_SYS_ADMIN) it reports
+// fanotify FID events (kernel before 5.9, no CAP_SYS_ADMIN) it reports
 // once via onError and returns.
 func (w *UserFileWatcher) Run(ctx context.Context) {
-	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK|unix.FAN_REPORT_DFID_NAME, unix.O_RDONLY|unix.O_LARGEFILE)
+	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK|unix.FAN_REPORT_DFID_NAME|unix.FAN_REPORT_FID, unix.O_RDONLY|unix.O_LARGEFILE)
 	if err != nil {
 		if w.onError != nil {
-			w.onError(fmt.Errorf("filewatcher: fanotify_init(FAN_REPORT_DFID_NAME): %w (user persistence and credential file monitoring disabled)", err))
+			w.onError(fmt.Errorf("filewatcher: fanotify_init(FAN_REPORT_DFID_NAME|FAN_REPORT_FID): %w (user persistence and credential file monitoring disabled)", err))
 		}
 		return
 	}
 	defer unix.Close(ifd)
 
-	st := userWatchState{dirs: make(map[dirKey]string)}
+	st := newUserWatchState()
 	if pid, _ := GetContainerInitPID(ctx, w.containerName); pid > 0 {
-		w.mark(ifd, pid, &st)
+		w.mark(ifd, pid, st)
 	}
 
-	evCh := make(chan fanNameEvent, 64)
+	evCh := make(chan fanFidEvent, 64)
 	readCtx, stopReading := context.WithCancel(ctx)
 	readDone := make(chan struct{})
 	go func() {
 		defer close(readDone)
-		readNameEvents(readCtx, ifd, evCh)
+		readFidEvents(readCtx, ifd, evCh)
 	}()
 	defer func() {
 		stopReading()
@@ -155,20 +172,44 @@ func (w *UserFileWatcher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case ev := <-evCh:
-			w.handle(ifd, ev, &st)
+			w.handle(ifd, ev, st)
 		case <-backstop.C:
 			if pid, _ := GetContainerInitPID(ctx, w.containerName); pid > 0 {
-				w.mark(ifd, pid, &st)
+				w.mark(ifd, pid, st)
 			}
 		}
 	}
 }
 
-// handle raises the threat for one event in a marked directory, or marks a
-// directory on a watched path that was just created.
-func (w *UserFileWatcher) handle(ifd int, ev fanNameEvent, st *userWatchState) {
+// newUserWatchState returns an empty userWatchState.
+func newUserWatchState() *userWatchState {
+	return &userWatchState{
+		dirs:    make(map[fidKey]string),
+		files:   make(map[fidKey]string),
+		flagged: make(map[string]time.Time),
+	}
+}
+
+// handle raises the threat for one event on a marked file or in a marked
+// directory, or marks a directory on a watched path that was just created.
+func (w *UserFileWatcher) handle(ifd int, ev fanFidEvent, st *userWatchState) {
+	if st.pid == 0 {
+		return
+	}
+	if ev.mask&unix.FAN_Q_OVERFLOW != 0 {
+		if w.onError != nil {
+			w.onError(fmt.Errorf("filewatcher: user file event queue overflowed, writes may be missed"))
+		}
+		w.mark(ifd, st.pid, st)
+		return
+	}
+	if rel, ok := st.files[ev.obj]; ok && ev.mask&unix.FAN_ONDIR == 0 && ev.mask&(unix.FAN_MODIFY|unix.FAN_CLOSE_WRITE) != 0 {
+		// The inode of a watched file, through any path.
+		w.flag(w.file(rel), ev.pid, st)
+		return
+	}
 	dir, ok := st.dirs[ev.dir]
-	if !ok || st.pid == 0 {
+	if !ok {
 		return
 	}
 	rel := path.Join(dir, ev.name)
@@ -180,19 +221,22 @@ func (w *UserFileWatcher) handle(ifd int, ev fanNameEvent, st *userWatchState) {
 		// one renamed into place): mark it and flag the watched files
 		// already in it.
 		w.mark(ifd, st.pid, st)
-		if w.flaggable(ev.pid, st) {
-			for i := range w.files {
-				f := &w.files[i]
-				if strings.HasPrefix(f.rel, rel+"/") && w.exists(st.pid, f.rel) {
-					w.fire(f, ev.pid)
-				}
+		for i := range w.files {
+			f := &w.files[i]
+			if strings.HasPrefix(f.rel, rel+"/") && w.exists(st.pid, f.rel) {
+				w.flag(f, ev.pid, st)
 			}
 		}
 		return
 	}
 	f := w.file(rel)
-	if f == nil || !w.flaggable(ev.pid, st) {
+	if f == nil {
 		return
+	}
+	// A new inode at a watched path: mark it, so later writes to it are
+	// seen through any path.
+	if ev.mask&(unix.FAN_CREATE|unix.FAN_MOVED_TO) != 0 {
+		w.mark(ifd, st.pid, st)
 	}
 	// A new regular file is flagged by the FAN_CLOSE_WRITE of its creator
 	// (fanotify may merge both into one event); a symlink or hard link is
@@ -200,13 +244,30 @@ func (w *UserFileWatcher) handle(ifd int, ev fanNameEvent, st *userWatchState) {
 	if ev.mask&(unix.FAN_CLOSE_WRITE|unix.FAN_MOVED_TO) == 0 && w.newRegularFile(st.pid, f.rel) {
 		return
 	}
-	w.fire(f, ev.pid)
+	w.flag(f, ev.pid, st)
 }
 
-// flaggable reports whether an event by host process pid can raise a
-// threat: past the grace period and from a process in the container.
-func (w *UserFileWatcher) flaggable(pid int, st *userWatchState) bool {
-	return !time.Now().Before(st.graceUntil) && !w.fromHost(pid)
+// flag raises the threat for a write to f by host process pid, unless it
+// is in the grace period, from a process outside the container, or raised
+// for f and pid in the last refireAfter.
+func (w *UserFileWatcher) flag(f *userFile, pid int, st *userWatchState) {
+	now := time.Now()
+	if f == nil || now.Before(st.graceUntil) || w.fromHost(pid) {
+		return
+	}
+	key := fmt.Sprintf("%s\x00%d", f.rel, pid)
+	if last, ok := st.flagged[key]; ok && now.Sub(last) < refireAfter {
+		return
+	}
+	if len(st.flagged) > 1024 {
+		for k, t := range st.flagged {
+			if now.Sub(t) >= refireAfter {
+				delete(st.flagged, k)
+			}
+		}
+	}
+	st.flagged[key] = now
+	w.fire(f, pid)
 }
 
 // exists reports whether rel exists (not followed) in the container whose
@@ -226,28 +287,41 @@ func (w *UserFileWatcher) newRegularFile(pid int, rel string) bool {
 	return stat.Mode&unix.S_IFMT == unix.S_IFREG && stat.Nlink == 1
 }
 
-// mark marks every existing directory on a watched path in the container
-// whose init PID is pid and replaces st.dirs. A new PID (first pass,
-// container restart) starts the grace period.
+// mark marks every existing directory on a watched path and every existing
+// watched file in the container whose init PID is pid, and replaces
+// st.dirs and st.files. A new PID (first pass, container restart) starts
+// the grace period.
 func (w *UserFileWatcher) mark(ifd, pid int, st *userWatchState) {
 	if pid != st.pid {
 		st.pid = pid
 		st.graceUntil = time.Now().Add(30 * time.Second)
 	}
-	dirs := make(map[dirKey]string)
+	const flags = unix.FAN_MARK_ADD | unix.FAN_MARK_DONT_FOLLOW
+	dirs := make(map[fidKey]string)
 	for _, rel := range w.watchedDirs() {
-		hostPath := fmt.Sprintf(procRootFmt+"/%s", pid, rel)
 		mask := uint64(unix.FAN_CLOSE_WRITE | unix.FAN_MOVED_TO | unix.FAN_CREATE | unix.FAN_ONDIR | unix.FAN_EVENT_ON_CHILD)
-		if err := unix.FanotifyMark(ifd, unix.FAN_MARK_ADD|unix.FAN_MARK_ONLYDIR|unix.FAN_MARK_DONT_FOLLOW, mask, unix.AT_FDCWD, hostPath); err != nil {
-			continue // not there yet: marked once created
+		if key, ok := markPath(ifd, flags|unix.FAN_MARK_ONLYDIR, mask, fmt.Sprintf(procRootFmt+"/%s", pid, rel)); ok {
+			dirs[key] = rel
 		}
-		key, err := dirKeyOf(hostPath)
-		if err != nil {
-			continue
-		}
-		dirs[key] = rel
 	}
-	st.dirs = dirs
+	files := make(map[fidKey]string)
+	for _, f := range w.files {
+		mask := uint64(unix.FAN_MODIFY | unix.FAN_CLOSE_WRITE)
+		if key, ok := markPath(ifd, flags, mask, fmt.Sprintf(procRootFmt+"/%s", pid, f.rel)); ok {
+			files[key] = f.rel
+		}
+	}
+	st.dirs, st.files = dirs, files
+}
+
+// markPath marks p (not followed) with mask and returns its fidKey. ok is
+// false when p does not exist yet: it is marked once created.
+func markPath(ifd int, flags uint, mask uint64, p string) (key fidKey, ok bool) {
+	if err := unix.FanotifyMark(ifd, flags, mask, unix.AT_FDCWD, p); err != nil {
+		return "", false
+	}
+	key, err := fidKeyOf(p)
+	return key, err == nil
 }
 
 // procRootFmt is the host path of a process's root directory; tests point
@@ -258,8 +332,8 @@ var procRootFmt = "/proc/%d/root"
 // at a temp dir.
 var procCgroupFmt = "/proc/%d/cgroup"
 
-// dirKeyOf returns the dirKey fanotify reports for the directory at p.
-func dirKeyOf(p string) (dirKey, error) {
+// fidKeyOf returns the fidKey fanotify reports for p (not followed).
+func fidKeyOf(p string) (fidKey, error) {
 	var sfs unix.Statfs_t
 	if err := unix.Statfs(p, &sfs); err != nil {
 		return "", err
@@ -271,22 +345,27 @@ func dirKeyOf(p string) (dirKey, error) {
 	var fsid [8]byte
 	binary.NativeEndian.PutUint32(fsid[0:], uint32(sfs.Fsid.Val[0])) //nolint:gosec // raw fsid bytes
 	binary.NativeEndian.PutUint32(fsid[4:], uint32(sfs.Fsid.Val[1])) //nolint:gosec // raw fsid bytes
-	return newDirKey(fsid, fh.Type(), fh.Bytes()), nil
+	return newFidKey(fsid, fh.Type(), fh.Bytes()), nil
 }
 
 // watchedDirs returns every directory on the path of a watched file, from
-// the home (or the crontab directory) down, without duplicates.
+// the home (or /var/spool, for the crontab) down, without duplicates. The
+// parents are marked so a missing directory is marked when created.
 func (w *UserFileWatcher) watchedDirs() []string {
 	home := "home/" + w.user
 	seen := make(map[string]bool)
 	var dirs []string
 	for _, f := range w.files {
+		top := home
+		if !strings.HasPrefix(f.rel, home+"/") {
+			top = "var/spool"
+		}
 		for d := path.Dir(f.rel); d != "." && d != "/"; d = path.Dir(d) {
 			if !seen[d] {
 				seen[d] = true
 				dirs = append(dirs, d)
 			}
-			if d == home || !strings.HasPrefix(d, home+"/") {
+			if d == top || !strings.HasPrefix(d, top+"/") {
 				break
 			}
 		}
@@ -316,18 +395,21 @@ func (w *UserFileWatcher) file(rel string) *userFile {
 }
 
 // fromHost reports whether host process pid runs outside the container's
-// cgroup, as Incus does for coi's file pushes. A process that is gone
-// counts as in the container.
+// cgroup (lxc.payload.<instance>), as Incus does for coi's file pushes. A
+// process that is gone counts as in the container.
 func (w *UserFileWatcher) fromHost(pid int) bool {
 	data, err := os.ReadFile(fmt.Sprintf(procCgroupFmt, pid))
 	if err != nil {
 		return false
 	}
-	cg := string(data)
-	return !strings.Contains(cg, "/lxc.payload."+w.containerName+"/") &&
-		!strings.HasSuffix(strings.TrimSpace(cg), "/lxc.payload."+w.containerName) &&
-		!strings.Contains(cg, "/lxc.payload/"+w.containerName+"/") &&
-		!strings.HasSuffix(strings.TrimSpace(cg), "/lxc.payload/"+w.containerName)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		_, cg, _ := strings.Cut(line, "::")
+		cg += "/"
+		if strings.Contains(cg, "/lxc.payload."+w.instance+"/") || strings.Contains(cg, "/lxc.payload/"+w.instance+"/") {
+			return false
+		}
+	}
+	return true
 }
 
 // fire emits the HIGH threat for a write to f by host process pid.
@@ -338,9 +420,10 @@ func (w *UserFileWatcher) fire(f *userFile, pid int) {
 	(&FileWatcher{onThreat: w.onThreat}).fire(ThreatLevelHigh, f.category, f.title, f.desc, f.rel, "write", pid)
 }
 
-// readNameEvents polls the FAN_REPORT_DFID_NAME fanotify fd and decodes its
-// events into evCh until ctx is cancelled.
-func readNameEvents(ctx context.Context, ifd int, evCh chan<- fanNameEvent) {
+// readFidEvents polls the fanotify fd and decodes its events into evCh
+// until ctx is cancelled. It blocks on a full evCh: a dropped event could
+// be the one write that matters.
+func readFidEvents(ctx context.Context, ifd int, evCh chan<- fanFidEvent) {
 	buf := make([]byte, 8192)
 	pfds := []unix.PollFd{{Fd: int32(ifd), Events: unix.POLLIN}} //nolint:gosec // fanotify fd fits in int32
 	for {
@@ -357,40 +440,42 @@ func readNameEvents(ctx context.Context, ifd int, evCh chan<- fanNameEvent) {
 		if err != nil {
 			continue
 		}
-		for _, ev := range parseNameEvents(buf[:nr]) {
+		for _, ev := range parseFidEvents(buf[:nr]) {
 			select {
 			case evCh <- ev:
-			default: // drop if buffer full rather than blocking
+			case <-ctx.Done():
+				return
 			}
 		}
 	}
 }
 
-// parseNameEvents decodes the events in buf, read from a
-// FAN_REPORT_DFID_NAME group: event metadata (24 bytes), then info records.
-// An event without a DFID_NAME record is skipped.
-func parseNameEvents(buf []byte) []fanNameEvent {
+// parseFidEvents decodes the events in buf, read from a
+// FAN_REPORT_DFID_NAME|FAN_REPORT_FID group: event metadata (24 bytes),
+// then info records. A record is hdr (4), fsid (8), handle_bytes (4),
+// handle_type (4), handle, and for DFID_NAME a NUL-terminated name.
+func parseFidEvents(buf []byte) []fanFidEvent {
 	const metaLen = 24
-	var events []fanNameEvent
+	var events []fanFidEvent
 	for pos := 0; pos+metaLen <= len(buf); {
 		evLen := int(binary.NativeEndian.Uint32(buf[pos:]))
 		if evLen < metaLen || pos+evLen > len(buf) {
 			break
 		}
-		ev := buf[pos : pos+evLen]
+		mask := binary.NativeEndian.Uint64(buf[pos+8:])
+		pid := int(binary.NativeEndian.Uint32(buf[pos+20:]))
+		raw := buf[pos : pos+evLen]
 		pos += evLen
-		mask := binary.NativeEndian.Uint64(ev[8:])
-		pid := int(binary.NativeEndian.Uint32(ev[20:]))
-		for off := metaLen; off+4 <= len(ev); {
-			infoType := ev[off]
-			infoLen := int(binary.NativeEndian.Uint16(ev[off+2:]))
-			if infoLen < 4 || off+infoLen > len(ev) {
+		ev := fanFidEvent{mask: mask, pid: pid}
+		for off := metaLen; off+4 <= len(raw); {
+			infoType := raw[off]
+			infoLen := int(binary.NativeEndian.Uint16(raw[off+2:]))
+			if infoLen < 4 || off+infoLen > len(raw) {
 				break
 			}
-			rec := ev[off : off+infoLen]
+			rec := raw[off : off+infoLen]
 			off += infoLen
-			// hdr (4), fsid (8), handle_bytes (4), handle_type (4), handle, name.
-			if infoType != unix.FAN_EVENT_INFO_TYPE_DFID_NAME || len(rec) < 20 {
+			if len(rec) < 20 {
 				continue
 			}
 			hlen := int(binary.NativeEndian.Uint32(rec[12:]))
@@ -400,15 +485,16 @@ func parseNameEvents(buf []byte) []fanNameEvent {
 			var fsid [8]byte
 			copy(fsid[:], rec[4:12])
 			htype := int32(binary.NativeEndian.Uint32(rec[16:])) //nolint:gosec // handle_type is an int32
-			name, _, _ := bytes.Cut(rec[20+hlen:], []byte{0})
-			events = append(events, fanNameEvent{
-				mask: mask,
-				pid:  pid,
-				dir:  newDirKey(fsid, htype, rec[20:20+hlen]),
-				name: string(name),
-			})
-			break
+			key := newFidKey(fsid, htype, rec[20:20+hlen])
+			switch infoType {
+			case unix.FAN_EVENT_INFO_TYPE_FID:
+				ev.obj = key
+			case unix.FAN_EVENT_INFO_TYPE_DFID_NAME:
+				name, _, _ := bytes.Cut(rec[20+hlen:], []byte{0})
+				ev.dir, ev.name = key, string(name)
+			}
 		}
+		events = append(events, ev)
 	}
 	return events
 }

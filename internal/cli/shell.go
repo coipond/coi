@@ -820,6 +820,7 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 		ContainerName:              containerName,
 		WorkspacePath:              workspacePath,
 		CodeUser:                   container.CodeUser,
+		IncusProject:               container.IncusProject,
 		PollInterval:               time.Duration(cfg.Monitoring.PollIntervalSec) * time.Second,
 		AuditLogPath:               auditLogPath,
 		AllowedCIDRs:               allowedCIDRs,

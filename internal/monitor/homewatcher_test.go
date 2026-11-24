@@ -31,14 +31,17 @@ func TestUserFiles(t *testing.T) {
 }
 
 func TestUserFileWatcherWatchedDirs(t *testing.T) {
-	w := NewUserFileWatcher("c", "dev", []string{".pi/agent/auth.json"}, nil, nil)
+	w := NewUserFileWatcher("c", "", "dev", []string{".pi/agent/auth.json"}, nil, nil)
 	got := w.watchedDirs()
-	want := []string{"home/dev/.ssh", "home/dev", "var/spool/cron/crontabs", "home/dev/.pi/agent", "home/dev/.pi"}
+	want := []string{
+		"home/dev/.ssh", "home/dev", "var/spool/cron/crontabs", "var/spool/cron", "var/spool",
+		"home/dev/.pi/agent", "home/dev/.pi",
+	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("watchedDirs() = %v, want %v", got, want)
 	}
-	if !w.onWatchedPath("home/dev/.pi") || w.onWatchedPath("home/dev/.cache") {
-		t.Error("onWatchedPath: wrong answer for .pi or .cache")
+	if !w.onWatchedPath("home/dev/.pi") || !w.onWatchedPath("var/spool/cron") || w.onWatchedPath("home/dev/.cache") {
+		t.Error("onWatchedPath: wrong answer for .pi, var/spool/cron or .cache")
 	}
 }
 
@@ -49,173 +52,253 @@ func TestUserFileWatcherFromHost(t *testing.T) {
 	t.Cleanup(func() { procCgroupFmt = orig })
 
 	cases := map[int]struct {
-		cgroup string
-		host   bool
+		cgroup   string
+		host     bool // container coi-1 in the default project
+		hostInP1 bool // container coi-1 in project p1
 	}{
-		1: {"0::/lxc.payload.coi-1/user.slice\n", false},
-		2: {"0::/lxc.payload.coi-1\n", false},
-		3: {"0::/lxc.payload/coi-1/init.scope\n", false},
-		4: {"0::/system.slice/incus.service\n", true},
-		5: {"0::/lxc.payload.coi-12\n", true},
+		1: {"0::/lxc.payload.coi-1/user.slice\n", false, true},
+		2: {"0::/lxc.payload.coi-1\n", false, true},
+		3: {"0::/lxc.payload/coi-1/init.scope\n", false, true},
+		4: {"0::/system.slice/incus.service\n", true, true},
+		5: {"0::/lxc.payload.coi-12\n", true, true},
+		6: {"0::/lxc.payload.p1_coi-1/user.slice\n", true, false},
+		7: {"0::/lxc.payload.p1_coi-1\n", true, false},
 	}
 	for pid, c := range cases {
 		if err := os.WriteFile(fmt.Sprintf(procCgroupFmt, pid), []byte(c.cgroup), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	w := NewUserFileWatcher("coi-1", "code", nil, nil, nil)
+	def := NewUserFileWatcher("coi-1", "default", "code", nil, nil, nil)
+	p1 := NewUserFileWatcher("coi-1", "p1", "code", nil, nil, nil)
 	for pid, c := range cases {
-		if got := w.fromHost(pid); got != c.host {
-			t.Errorf("fromHost(%q) = %v, want %v", c.cgroup, got, c.host)
+		if got := def.fromHost(pid); got != c.host {
+			t.Errorf("default project: fromHost(%q) = %v, want %v", c.cgroup, got, c.host)
+		}
+		if got := p1.fromHost(pid); got != c.hostInP1 {
+			t.Errorf("project p1: fromHost(%q) = %v, want %v", c.cgroup, got, c.hostInP1)
 		}
 	}
-	if w.fromHost(99) {
+	if def.fromHost(99) {
 		t.Error("fromHost of a gone process = true, want false")
 	}
 }
 
-// TestUserFileWatcherEvents runs the watcher's mark pass and event handling
-// on a temp root with an unprivileged FAN_REPORT_DFID_NAME group.
-func TestUserFileWatcherEvents(t *testing.T) {
-	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK|unix.FAN_REPORT_DFID_NAME, unix.O_RDONLY|unix.O_LARGEFILE)
+// watchHarness runs the watcher's mark pass and event handling on a temp
+// root (init PID 1) with an unprivileged fanotify FID group, as the test
+// process, which counts as in the container.
+type watchHarness struct {
+	t       *testing.T
+	root    string
+	home    string
+	ifd     int
+	w       *UserFileWatcher
+	st      *userWatchState
+	evCh    chan fanFidEvent
+	threats []ThreatEvent
+	seen    int // threats before this index were matched by waitFor
+}
+
+// newWatchHarness creates the temp root with home/code and var/spool, and
+// prepare(root) run before the first mark pass. Call start before events.
+func newWatchHarness(t *testing.T, prepare func(root string)) *watchHarness {
+	t.Helper()
+	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK|unix.FAN_REPORT_DFID_NAME|unix.FAN_REPORT_FID, unix.O_RDONLY|unix.O_LARGEFILE)
 	if err != nil {
-		t.Skipf("unprivileged fanotify name events unavailable: %v", err)
+		t.Skipf("unprivileged fanotify FID events unavailable: %v", err)
 	}
-	defer unix.Close(ifd)
+	t.Cleanup(func() { unix.Close(ifd) })
 
 	root := t.TempDir()
-	origRoot, origCgroup := procRootFmt, procCgroupFmt
+	origRoot, origCgroup, origRefire := procRootFmt, procCgroupFmt, refireAfter
 	procRootFmt = root + "/%d"
 	procCgroupFmt = root + "/cgroup-%d"
-	t.Cleanup(func() { procRootFmt, procCgroupFmt = origRoot, origCgroup })
-	self := os.Getpid()
-	if err := os.WriteFile(fmt.Sprintf(procCgroupFmt, self), []byte("0::/lxc.payload.c/x\n"), 0o644); err != nil {
-		t.Fatal(err)
+	refireAfter = 0
+	t.Cleanup(func() { procRootFmt, procCgroupFmt, refireAfter = origRoot, origCgroup, origRefire })
+	h := &watchHarness{t: t, root: filepath.Join(root, "1"), ifd: ifd}
+	h.home = filepath.Join(h.root, "home", "code")
+	h.setCgroup("0::/lxc.payload.c/x\n")
+	for _, d := range []string{h.home, filepath.Join(h.root, "var", "spool")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	home := filepath.Join(root, "1", "home", "code")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
+	if prepare != nil {
+		prepare(h.root)
 	}
+	h.w = NewUserFileWatcher("c", "", "code", []string{".claude/.credentials.json"}, func(e ThreatEvent) { h.threats = append(h.threats, e) }, nil)
+	h.st = newUserWatchState()
+	h.w.mark(ifd, 1, h.st)
+	h.st.graceUntil = time.Time{}
+	return h
+}
 
-	var threats []ThreatEvent
-	w := NewUserFileWatcher("c", "code", []string{".claude/.credentials.json"}, func(e ThreatEvent) { threats = append(threats, e) }, nil)
-	st := userWatchState{dirs: make(map[dirKey]string)}
-	w.mark(ifd, 1, &st)
-	if len(st.dirs) != 1 {
-		t.Fatalf("marked %v, want only home/code", st.dirs)
-	}
-	st.graceUntil = time.Time{}
-
+// start starts reading events into an evCh of capacity n.
+func (h *watchHarness) start(n int) *watchHarness {
+	h.evCh = make(chan fanFidEvent, n)
 	ctx, cancel := context.WithCancel(context.Background())
-	evCh := make(chan fanNameEvent, 64)
 	done := make(chan struct{})
-	go func() { defer close(done); readNameEvents(ctx, ifd, evCh) }()
-	defer func() { cancel(); <-done }()
+	go func() { defer close(done); readFidEvents(ctx, h.ifd, h.evCh) }()
+	h.t.Cleanup(func() { cancel(); <-done })
+	return h
+}
 
-	// drain handles events until want threats were raised or 5 s passed.
-	drain := func(want int) {
-		t.Helper()
-		deadline := time.After(5 * time.Second)
-		for len(threats) < want {
-			select {
-			case ev := <-evCh:
-				w.handle(ifd, ev, &st)
-			case <-deadline:
-				t.Fatalf("threats = %d, want %d: %+v", len(threats), want, threats)
+// setCgroup writes the test process's cgroup file.
+func (h *watchHarness) setCgroup(cg string) {
+	if err := os.WriteFile(fmt.Sprintf(procCgroupFmt, os.Getpid()), []byte(cg), 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// write writes data to rel (under the temp root).
+func (h *watchHarness) write(rel, data string) {
+	h.t.Helper()
+	if err := os.WriteFile(filepath.Join(h.root, rel), []byte(data), 0o600); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// waitFor handles events until a new threat for rel by this process is
+// raised, or fails after 5 s.
+func (h *watchHarness) waitFor(rel string) {
+	h.t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		for ; h.seen < len(h.threats); h.seen++ {
+			got := h.threats[h.seen]
+			if got.Evidence.SensitiveFile != nil && got.Evidence.SensitiveFile.Path == rel {
+				if got.Level != ThreatLevelHigh || got.Evidence.SensitiveFile.Pid != os.Getpid() {
+					h.t.Errorf("threat %+v, want HIGH by %d", got, os.Getpid())
+				}
+				h.seen++
+				return
 			}
 		}
-	}
-
-	// Create, then rename over.
-	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	drain(1)
-	tmp := filepath.Join(root, "1", "tmp-profile")
-	if err := os.WriteFile(tmp, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(tmp, filepath.Join(home, ".profile")); err != nil {
-		t.Fatal(err)
-	}
-	drain(2)
-	// A directory on a watched path is marked when created.
-	if err := os.Mkdir(filepath.Join(home, ".claude"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "unwatched"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// The write to an unwatched file is handled after the mkdir, so once it
-	// is in, the new directory is marked.
-	deadline := time.After(5 * time.Second)
-	for len(st.dirs) < 2 {
 		select {
-		case ev := <-evCh:
-			w.handle(ifd, ev, &st)
+		case ev := <-h.evCh:
+			h.w.handle(h.ifd, ev, h.st)
 		case <-deadline:
-			t.Fatalf("new .claude directory not marked: %v", st.dirs)
+			h.t.Fatalf("no threat for %s; threats: %+v", rel, h.threats)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte("{}"), 0o600); err != nil {
+}
+
+// quiet handles events for d and returns the threats raised meanwhile.
+func (h *watchHarness) quiet(d time.Duration) []ThreatEvent {
+	before := len(h.threats)
+	end := time.After(d)
+	for {
+		select {
+		case ev := <-h.evCh:
+			h.w.handle(h.ifd, ev, h.st)
+		case <-end:
+			return h.threats[before:]
+		}
+	}
+}
+
+func TestUserFileWatcherEvents(t *testing.T) {
+	h := newWatchHarness(t, nil).start(64)
+
+	// Create, then rename over.
+	h.write("home/code/.bashrc", "x")
+	h.waitFor("home/code/.bashrc")
+	h.write("tmp-profile", "x")
+	if err := os.Rename(filepath.Join(h.root, "tmp-profile"), filepath.Join(h.home, ".profile")); err != nil {
 		t.Fatal(err)
 	}
-	drain(3)
+	h.waitFor("home/code/.profile")
+	// A directory on a watched path is marked when created.
+	if err := os.Mkdir(filepath.Join(h.home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.quiet(200 * time.Millisecond)
+	h.write("home/code/.claude/.credentials.json", "{}")
+	h.waitFor("home/code/.claude/.credentials.json")
 	// A prepared directory renamed into place: its watched file is flagged.
-	prepared := filepath.Join(root, "1", "prepared")
+	prepared := filepath.Join(h.root, "prepared")
 	if err := os.MkdirAll(prepared, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(prepared, "authorized_keys"), []byte("k"), 0o600); err != nil {
+	h.write("prepared/authorized_keys", "k")
+	if err := os.Rename(prepared, filepath.Join(h.home, ".ssh")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(prepared, filepath.Join(home, ".ssh")); err != nil {
-		t.Fatal(err)
-	}
-	drain(4)
+	h.waitFor("home/code/.ssh/authorized_keys")
 	// A symlink at a watched path (no write to it) is flagged.
-	if err := os.Symlink("/tmp/elsewhere", filepath.Join(home, ".ssh", "x")); err != nil {
+	if err := os.Remove(filepath.Join(h.home, ".bashrc")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(home, ".bashrc")); err != nil {
+	if err := os.Symlink("/tmp/elsewhere", filepath.Join(h.home, ".bashrc")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("/tmp/elsewhere", filepath.Join(home, ".bashrc")); err != nil {
-		t.Fatal(err)
-	}
-	drain(5)
-
-	for i, rel := range []string{
-		"home/code/.bashrc", "home/code/.profile", "home/code/.claude/.credentials.json",
-		"home/code/.ssh/authorized_keys", "home/code/.bashrc",
-	} {
-		got := threats[i]
-		if got.Level != ThreatLevelHigh || got.Evidence.SensitiveFile == nil ||
-			got.Evidence.SensitiveFile.Path != rel || got.Evidence.SensitiveFile.Pid != self {
-			t.Errorf("threat %d = %+v, want HIGH write of %s by %d", i, got, rel, self)
-		}
-	}
+	h.waitFor("home/code/.bashrc")
 
 	// A write from outside the container's cgroup (coi's copy) is not flagged.
-	if err := os.WriteFile(fmt.Sprintf(procCgroupFmt, self), []byte("0::/system.slice/incus.service\n"), 0o644); err != nil {
-		t.Fatal(err)
+	h.setCgroup("0::/system.slice/incus.service\n")
+	h.write("home/code/.claude/.credentials.json", "{}")
+	if got := h.quiet(500 * time.Millisecond); len(got) != 0 {
+		t.Errorf("host-side write raised a threat: %+v", got)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	quiet := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case ev := <-evCh:
-			w.handle(ifd, ev, &st)
-			continue
-		case <-quiet:
+}
+
+// TestUserFileWatcherInodeWrites checks writes that reach a watched file
+// without a close or not through its path: the inode mark sees them.
+func TestUserFileWatcherInodeWrites(t *testing.T) {
+	h := newWatchHarness(t, func(root string) {
+		if err := os.WriteFile(filepath.Join(root, "home", "code", ".bashrc"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		break
+		if err := os.WriteFile(filepath.Join(root, "home", "code", ".profile"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}).start(64)
+
+	// A hard link in an unmarked directory.
+	link := filepath.Join(h.root, "link")
+	if err := os.Link(filepath.Join(h.home, ".bashrc"), link); err != nil {
+		t.Fatal(err)
 	}
-	if len(threats) != 5 {
-		t.Errorf("host-side write raised a threat: %+v", threats[5:])
+	f, err := os.OpenFile(link, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if _, err := f.WriteString("evil\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Kept open: the write alone is seen.
+	h.waitFor("home/code/.bashrc")
+	f.Close()
+
+	// truncate(2) by path.
+	if err := os.Truncate(filepath.Join(h.home, ".profile"), 0); err != nil {
+		t.Fatal(err)
+	}
+	h.waitFor("home/code/.profile")
+}
+
+// TestUserFileWatcherBurst checks a burst of unrelated events does not
+// drop the write that follows it.
+// The events are queued before the reader starts, and its channel holds
+// one: the reader must wait for the handler, not drop.
+func TestUserFileWatcherBurst(t *testing.T) {
+	h := newWatchHarness(t, nil)
+	for i := range 300 {
+		h.write(fmt.Sprintf("home/code/a%d", i), "x")
+	}
+	h.write("home/code/.bashrc", "x")
+	h.start(1).waitFor("home/code/.bashrc")
+}
+
+// TestUserFileWatcherCrontabDirCreated checks a crontab written in a
+// crontabs directory created after the mark pass.
+func TestUserFileWatcherCrontabDirCreated(t *testing.T) {
+	h := newWatchHarness(t, nil).start(64)
+	if err := os.MkdirAll(filepath.Join(h.root, "var", "spool", "cron", "crontabs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.write("var/spool/cron/crontabs/code", "* * * * * true\n")
+	h.waitFor("var/spool/cron/crontabs/code")
 }
 
 func TestUserFileWatcherGracePeriod(t *testing.T) {
@@ -230,32 +313,52 @@ func TestUserFileWatcherGracePeriod(t *testing.T) {
 		t.Fatal(err)
 	}
 	var threats int
-	w := NewUserFileWatcher("c", "code", nil, func(ThreatEvent) { threats++ }, nil)
-	st := userWatchState{pid: 1, dirs: map[dirKey]string{"k": "home/code"}, graceUntil: time.Now().Add(time.Minute)}
-	w.handle(-1, fanNameEvent{mask: unix.FAN_CLOSE_WRITE, pid: -1, dir: "k", name: ".bashrc"}, &st)
+	w := NewUserFileWatcher("c", "", "code", nil, func(ThreatEvent) { threats++ }, nil)
+	st := newUserWatchState()
+	st.pid, st.dirs["k"], st.graceUntil = 1, "home/code", time.Now().Add(time.Minute)
+	w.handle(-1, fanFidEvent{mask: unix.FAN_CLOSE_WRITE, pid: 1, dir: "k", name: ".bashrc"}, st)
 	if threats != 0 {
 		t.Errorf("threat raised in the grace period")
 	}
 	st.graceUntil = time.Time{}
-	w.handle(-1, fanNameEvent{mask: unix.FAN_CLOSE_WRITE, pid: -1, dir: "k", name: ".bashrc"}, &st)
-	w.handle(-1, fanNameEvent{mask: unix.FAN_CREATE, pid: -1, dir: "k", name: ".bashrc"}, &st)
+	w.handle(-1, fanFidEvent{mask: unix.FAN_CLOSE_WRITE, pid: 2, dir: "k", name: ".bashrc"}, st)
+	w.handle(-1, fanFidEvent{mask: unix.FAN_CREATE, pid: 3, dir: "k", name: ".bashrc"}, st)
 	if threats != 1 {
 		t.Errorf("threats = %d, want 1 (close-write only, not the create of a regular file)", threats)
 	}
-	// fanotify merges the create and the close-write of a new file.
-	w.handle(-1, fanNameEvent{mask: unix.FAN_CREATE | unix.FAN_CLOSE_WRITE, pid: -1, dir: "k", name: ".bashrc"}, &st)
+	// fanotify merges the create and the close-write of a new file. The
+	// create re-marks; with no fanotify fd here, that clears st.dirs.
+	st.dirs["k"] = "home/code"
+	w.handle(-1, fanFidEvent{mask: unix.FAN_CREATE | unix.FAN_CLOSE_WRITE, pid: 4, dir: "k", name: ".bashrc"}, st)
 	if threats != 2 {
 		t.Errorf("threats = %d, want 2 (merged create and close-write)", threats)
 	}
 }
 
-func TestParseNameEventsTruncated(t *testing.T) {
-	if evs := parseNameEvents([]byte{1, 2, 3}); len(evs) != 0 {
-		t.Errorf("parseNameEvents(short) = %v", evs)
+func TestUserFileWatcherRefire(t *testing.T) {
+	var threats int
+	w := NewUserFileWatcher("c", "", "code", nil, func(ThreatEvent) { threats++ }, nil)
+	st := newUserWatchState()
+	st.pid, st.files["f"] = 1, "home/code/.bashrc"
+	for range 5 {
+		w.handle(-1, fanFidEvent{mask: unix.FAN_MODIFY, pid: 7, obj: "f"}, st)
+	}
+	if threats != 1 {
+		t.Errorf("threats = %d for 5 writes by one process, want 1", threats)
+	}
+	w.handle(-1, fanFidEvent{mask: unix.FAN_MODIFY, pid: 8, obj: "f"}, st)
+	if threats != 2 {
+		t.Errorf("threats = %d, want 2 (another process)", threats)
+	}
+}
+
+func TestParseFidEventsTruncated(t *testing.T) {
+	if evs := parseFidEvents([]byte{1, 2, 3}); len(evs) != 0 {
+		t.Errorf("parseFidEvents(short) = %v", evs)
 	}
 	buf := make([]byte, 24)
 	buf[0] = 200 // event_len past the buffer
-	if evs := parseNameEvents(buf); len(evs) != 0 {
-		t.Errorf("parseNameEvents(truncated) = %v", evs)
+	if evs := parseFidEvents(buf); len(evs) != 0 {
+		t.Errorf("parseFidEvents(truncated) = %v", evs)
 	}
 }

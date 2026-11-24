@@ -217,19 +217,20 @@ func TestSecretFiles_AreCopiedFiles(t *testing.T) {
 }
 
 func TestSecretPaths(t *testing.T) {
-	paths := SecretPaths()
-	for _, want := range []string{".claude/.credentials.json", ".codex/auth.json", ".pi/agent/auth.json"} {
-		found := false
-		for _, p := range paths {
-			found = found || p == want
-		}
-		if !found {
-			t.Errorf("SecretPaths() = %v, missing %q", paths, want)
-		}
+	want := []string{
+		".claude/.credentials.json",
+		".codex/auth.json",
+		".config/goose/chatgpt_codex/tokens.json",
+		".config/goose/gemini_oauth/tokens.json",
+		".config/goose/githubcopilot/info.json",
+		".config/goose/kimicode/token.json",
+		".config/goose/secrets.yaml",
+		".config/goose/xai_oauth/tokens.json",
+		".ollama/id_ed25519",
+		".omp/auth.json",
+		".pi/agent/auth.json",
 	}
-	for _, p := range paths {
-		if p == ".claude/settings.json" {
-			t.Errorf("SecretPaths() lists the non-secret %q", p)
-		}
+	if got := SecretPaths(); !reflect.DeepEqual(got, want) {
+		t.Errorf("SecretPaths() = %v, want %v", got, want)
 	}
 }

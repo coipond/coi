@@ -78,7 +78,7 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 		default: // drop if buffer full rather than blocking
 		}
 	}, cfg.OnError)
-	userFileWatcher := NewUserFileWatcher(cfg.ContainerName, cfg.CodeUser, credentials.SecretPaths(), func(t ThreatEvent) {
+	userFileWatcher := NewUserFileWatcher(cfg.ContainerName, cfg.IncusProject, cfg.CodeUser, credentials.SecretPaths(), func(t ThreatEvent) {
 		select {
 		case fileThreatCh <- t:
 		default: // drop if buffer full rather than blocking
