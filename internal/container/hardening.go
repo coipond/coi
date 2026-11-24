@@ -57,7 +57,7 @@ func (p HardeningPolicy) DockerEnabled() bool {
 // the syscall families behind most recent container-escape/LPE chains, none
 // required by a typical agent workflow. Denied syscalls fail with EPERM (see
 // kernelSurfaceDenyAction); libuv (Node >= 20.3) probes io_uring at startup and
-// silently falls back to its thread pool, so Node/npm keep working. Incus >= 7.0
+// silently falls back to its thread pool, so Node/npm keep working. Incus >= 6.1
 // (Coi's hard floor) always supports the key. This is the canonical NAME list;
 // the actual config value is built by kernelSurfaceDenyValue.
 const KernelSurfaceDenySyscalls = "io_uring_setup io_uring_enter io_uring_register bpf userfaultfd keyctl add_key request_key"
