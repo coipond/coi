@@ -277,6 +277,28 @@ func TestUserFileWatcherInodeWrites(t *testing.T) {
 	h.waitFor("home/code/.profile")
 }
 
+// TestUserFileWatcherNewInodeMarked checks a watched file created after
+// the mark pass gets an inode mark: a write through a hard link elsewhere
+// is seen.
+func TestUserFileWatcherNewInodeMarked(t *testing.T) {
+	h := newWatchHarness(t, nil).start(64)
+	h.write("home/code/.bashrc", "x")
+	h.waitFor("home/code/.bashrc")
+	link := filepath.Join(h.root, "link")
+	if err := os.Link(filepath.Join(h.home, ".bashrc"), link); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(link, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("evil\n"); err != nil {
+		t.Fatal(err)
+	}
+	h.waitFor("home/code/.bashrc")
+}
+
 // TestUserFileWatcherBurst checks a burst of unrelated events does not
 // drop the write that follows it.
 // The events are queued before the reader starts, and its channel holds
@@ -301,6 +323,21 @@ func TestUserFileWatcherCrontabDirCreated(t *testing.T) {
 	h.waitFor("var/spool/cron/crontabs/code")
 }
 
+// containerCgroups points procCgroupFmt at a temp dir where each of pids
+// runs in container c's cgroup.
+func containerCgroups(t *testing.T, pids ...int) {
+	t.Helper()
+	dir := t.TempDir()
+	orig := procCgroupFmt
+	procCgroupFmt = dir + "/%d"
+	t.Cleanup(func() { procCgroupFmt = orig })
+	for _, pid := range pids {
+		if err := os.WriteFile(fmt.Sprintf(procCgroupFmt, pid), []byte("0::/lxc.payload.c/x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestUserFileWatcherGracePeriod(t *testing.T) {
 	root := t.TempDir()
 	orig := procRootFmt
@@ -312,6 +349,7 @@ func TestUserFileWatcherGracePeriod(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "1", "home", "code", ".bashrc"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	containerCgroups(t, 1, 2, 3, 4)
 	var threats int
 	w := NewUserFileWatcher("c", "", "code", nil, func(ThreatEvent) { threats++ }, nil)
 	st := newUserWatchState()
@@ -336,6 +374,7 @@ func TestUserFileWatcherGracePeriod(t *testing.T) {
 }
 
 func TestUserFileWatcherRefire(t *testing.T) {
+	containerCgroups(t, 7, 8)
 	var threats int
 	w := NewUserFileWatcher("c", "", "code", nil, func(ThreatEvent) { threats++ }, nil)
 	st := newUserWatchState()
