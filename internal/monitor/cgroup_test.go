@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coipond/coi/internal/container"
 )
 
 func TestInitPIDFromCgroupProcs_SingleProc(t *testing.T) {
@@ -183,6 +185,30 @@ func TestWellKnownCgroupPaths_DotPayloadFirst(t *testing.T) {
 	paths := wellKnownCgroupPaths("coi-abc-1")
 	if want := "/sys/fs/cgroup/lxc.payload.coi-abc-1"; len(paths) == 0 || paths[0] != want {
 		t.Fatalf("first candidate: want %q (all: %v)", want, paths)
+	}
+}
+
+// Outside the default project, Incus names the LXC container
+// <project>_<name>: every candidate must use that name, or a same-named
+// container in the default project is found instead.
+func TestWellKnownCgroupPaths_Project(t *testing.T) {
+	old := container.IncusProject
+	t.Cleanup(func() { container.IncusProject = old })
+
+	container.IncusProject = "p1"
+	paths := wellKnownCgroupPaths("coi-abc-1")
+	if want := "/sys/fs/cgroup/lxc.payload.p1_coi-abc-1"; paths[0] != want {
+		t.Errorf("first candidate: want %q (all: %v)", want, paths)
+	}
+	for _, p := range paths {
+		if !strings.HasSuffix(p, "p1_coi-abc-1") {
+			t.Errorf("candidate %q does not use the project's LXC name", p)
+		}
+	}
+
+	container.IncusProject = "default"
+	if got := wellKnownCgroupPaths("coi-abc-1")[0]; got != "/sys/fs/cgroup/lxc.payload.coi-abc-1" {
+		t.Errorf("default project: first candidate %q", got)
 	}
 }
 
