@@ -8,6 +8,7 @@ package credentials
 import (
 	_ "embed"
 	"fmt"
+	"path"
 	"sort"
 
 	"github.com/BurntSushi/toml"
@@ -23,6 +24,7 @@ var catalogTOML string
 type Bundle struct {
 	ConfigDir           string   `toml:"config_dir"`
 	Files               []string `toml:"files"`
+	SecretFiles         []string `toml:"secret_files"`
 	StateFile           string   `toml:"state_file"`
 	SandboxSettingsFile string   `toml:"sandbox_settings_file"`
 	AlwaysSetup         bool     `toml:"always_setup"`
@@ -60,4 +62,22 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// SecretPaths returns the home-relative paths of every bundle's secret
+// files, sorted and without duplicates.
+func SecretPaths() []string {
+	seen := make(map[string]bool)
+	var paths []string
+	for _, b := range catalog {
+		for _, f := range b.SecretFiles {
+			p := path.Join(b.ConfigDir, f)
+			if !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	sort.Strings(paths)
+	return paths
 }

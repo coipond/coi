@@ -221,8 +221,11 @@ type ResourceStats struct {
 
 // DaemonConfig configures the security monitor
 type DaemonConfig struct {
-	ContainerName  string
-	WorkspacePath  string
+	ContainerName string
+	WorkspacePath string
+	// CodeUser is the in-container user whose persistence and credential
+	// files are watched. Empty: they are not watched.
+	CodeUser       string
 	PollInterval   time.Duration
 	AuditLogPath   string
 	AllowedCIDRs   []string // CIDR ranges for allowed networks (static snapshot / fallback)

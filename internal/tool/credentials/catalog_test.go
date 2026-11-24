@@ -198,3 +198,38 @@ func TestGooseBundle_MatchesHardcodedValues(t *testing.T) {
 		t.Errorf("AutoContextFile = %q, want %q", b.AutoContextFile, ".config/goose/.goosehints")
 	}
 }
+
+// TestSecretFiles_AreCopiedFiles checks every secret file is one the bundle
+// copies: the monitor watches the copies.
+func TestSecretFiles_AreCopiedFiles(t *testing.T) {
+	for _, name := range Names() {
+		b, _ := Lookup(name)
+		files := make(map[string]bool)
+		for _, f := range b.Files {
+			files[f] = true
+		}
+		for _, f := range b.SecretFiles {
+			if !files[f] {
+				t.Errorf("bundle %q: secret file %q is not in files", name, f)
+			}
+		}
+	}
+}
+
+func TestSecretPaths(t *testing.T) {
+	paths := SecretPaths()
+	for _, want := range []string{".claude/.credentials.json", ".codex/auth.json", ".pi/agent/auth.json"} {
+		found := false
+		for _, p := range paths {
+			found = found || p == want
+		}
+		if !found {
+			t.Errorf("SecretPaths() = %v, missing %q", paths, want)
+		}
+	}
+	for _, p := range paths {
+		if p == ".claude/settings.json" {
+			t.Errorf("SecretPaths() lists the non-secret %q", p)
+		}
+	}
+}
