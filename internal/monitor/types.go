@@ -203,6 +203,7 @@ type Connection struct {
 	RemoteAddr    string `json:"remote_addr"`
 	State         string `json:"state"`
 	UID           int    `json:"uid,omitempty"`
+	Inode         uint64 `json:"-"`                        // Socket inode (matches an fd link socket:[N])
 	Suspicious    bool   `json:"suspicious"`               // Flagged as suspicious
 	SuspectReason string `json:"suspect_reason,omitempty"` // Why flagged
 }

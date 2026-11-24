@@ -1,7 +1,6 @@
 package monitor
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -94,7 +93,8 @@ func markSocketShells(ctx context.Context, containerName string, processes []Pro
 	}
 }
 
-// readTCPInodes reads the TCP socket inodes of a pid's netns; tests count calls.
+// readTCPInodes reads the TCP socket inodes of a pid's netns; tests count
+// calls.
 var readTCPInodes = tcpSocketInodes
 
 // netnsKey identifies the network namespace of host pid without ptrace
@@ -112,31 +112,14 @@ func netnsKey(pid int) (uint64, bool) {
 func tcpSocketInodes(pid int) map[uint64]bool {
 	inodes := map[uint64]bool{}
 	for _, table := range []string{"tcp", "tcp6"} {
-		_ = readSocketInodes(fmt.Sprintf("%s/%d/net/%s", procRoot, pid, table), inodes)
+		conns, _ := parseProcNetTCP(fmt.Sprintf("%s/%d/net/%s", procRoot, pid, table), table)
+		for _, c := range conns {
+			if c.Inode != 0 {
+				inodes[c.Inode] = true
+			}
+		}
 	}
 	return inodes
-}
-
-// readSocketInodes adds the inode column of a /proc/net/tcp[6] file to inodes.
-func readSocketInodes(path string, inodes map[uint64]bool) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	scanner.Scan() // header
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) < 10 {
-			continue
-		}
-		if inode, err := strconv.ParseUint(fields[9], 10, 64); err == nil && inode != 0 {
-			inodes[inode] = true
-		}
-	}
-	return scanner.Err()
 }
 
 // socketInode returns N from an fd link "socket:[N]", or 0.
@@ -152,22 +135,15 @@ func socketInode(link string) uint64 {
 	return inode
 }
 
-// containerPID returns the PID of host pid in the container's PID namespace
-// (the second NSpid entry of /proc/<pid>/status), or 0.
+// containerPID returns the PID of host pid in the container's PID namespace,
+// or 0.
 func containerPID(pid int) int {
 	data, err := os.ReadFile(fmt.Sprintf("%s/%d/status", procRoot, pid))
 	if err != nil {
 		return 0
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 || fields[0] != "NSpid:" {
-			continue
-		}
-		nsPID, _ := strconv.Atoi(fields[2])
-		return nsPID
-	}
-	return 0
+	_, _, _, nsPID := parseStatusFields(string(data))
+	return nsPID
 }
 
 // readContainerFDLinksViaIncus reads the link targets of paths with one find

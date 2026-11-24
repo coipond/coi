@@ -9,11 +9,12 @@ Tests that:
   threat within the poll window."""
 
 import subprocess
-import time
 
 from support.monitoring import (
     assert_established,
+    assert_tcp_state,
     get_threat_events,
+    hold_connect,
     hold_script,
     monitored_shell,
     wait_for_threats,
@@ -37,7 +38,6 @@ file_read_threshold_mb = 500
 file_read_rate_mb_per_sec = 1000
 """
 
-# Accept connections and hold them open without sending anything.
 _LISTEN = """
 import sys, time
 from socket import socket
@@ -61,22 +61,6 @@ os.execvp("sh", ["sh"])
 """
 
 
-def _wait_listening(container_name, port, timeout=30):
-    deadline = time.monotonic() + timeout
-    out = ""
-    while time.monotonic() < deadline:
-        out = subprocess.run(
-            ["incus", "exec", container_name, "--", "ss", "-tlnH"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        ).stdout
-        if f"127.0.0.1:{port}" in out.split():
-            return
-        time.sleep(0.5)
-    raise AssertionError(f"no listener on 127.0.0.1:{port}; sockets:\n{out}")
-
-
 def _is_reverse_shell(event):
     return event.get("title") == "Reverse shell detected"
 
@@ -84,18 +68,9 @@ def _is_reverse_shell(event):
 def test_socket_stdio_shell_detected(test_workspace, coi_binary):
     with monitored_shell(test_workspace, coi_binary, SLOT, CONFIG) as (container_name, holders):
         holders.append(hold_script(container_name, _LISTEN, str(PORT)))
-        _wait_listening(container_name, PORT)
+        assert_tcp_state(container_name, "127.0.0.1", PORT, "listening")
 
-        # Control: a TCP connection held by python and a shell on pipes.
-        holders.append(
-            hold_script(
-                container_name,
-                "import socket, sys, time\n"
-                "s = socket.create_connection(('127.0.0.1', int(sys.argv[1])))\n"
-                "time.sleep(120)\n",
-                str(PORT),
-            )
-        )
+        holders.append(hold_connect(container_name, "127.0.0.1", PORT, seconds=120))
         holders.append(
             subprocess.Popen(
                 ["incus", "exec", container_name, "--", "sh", "-c", "sleep 120; true"],

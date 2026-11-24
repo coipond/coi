@@ -126,7 +126,7 @@ func readProcessFromProc(pid int) (Process, error) {
 		return Process{}, err
 	}
 
-	name, ppid, uid := parseStatusFields(string(statusData))
+	name, ppid, uid, _ := parseStatusFields(string(statusData))
 
 	command := name
 	if cmdlineData, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil && len(cmdlineData) > 0 {
@@ -144,9 +144,10 @@ func readProcessFromProc(pid int) (Process, error) {
 	}, nil
 }
 
-// parseStatusFields extracts Name, PPid, and real Uid from /proc/<pid>/status
+// parseStatusFields extracts Name, PPid, real Uid and the PID one namespace
+// below the host's (the second NSpid entry, 0 if none) from /proc/<pid>/status
 // content. Kept separate so it can be unit-tested without a live /proc.
-func parseStatusFields(status string) (name string, ppid, uid int) {
+func parseStatusFields(status string) (name string, ppid, uid, nsPID int) {
 	for _, line := range strings.Split(status, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
@@ -159,6 +160,10 @@ func parseStatusFields(status string) (name string, ppid, uid int) {
 			ppid, _ = strconv.Atoi(fields[1])
 		case "Uid:":
 			uid, _ = strconv.Atoi(fields[1]) // real UID is the first field
+		case "NSpid:":
+			if len(fields) > 2 {
+				nsPID, _ = strconv.Atoi(fields[2])
+			}
 		}
 	}
 	return
