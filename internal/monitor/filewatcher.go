@@ -319,7 +319,7 @@ func (w *FileWatcher) mark(ifd, pid int, st *watchState) {
 // authentication helper (sudo, su, PAM's unix_chkpwd) reads /etc/shadow on
 // every use, so its reads of a file marked authRead do not count.
 func (w *FileWatcher) handle(entry inodeEntry, mask uint64, pid int) {
-	if mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" && !(entry.file.authRead && isAuthHelper(pid)) {
+	if mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" && (!entry.file.authRead || !isAuthHelper(pid)) {
 		w.fire(entry.file.openLevel, entry.file.category,
 			entry.file.openTitle, entry.file.openDesc,
 			entry.file.rel, "read", pid)
