@@ -67,7 +67,8 @@ func NewNftManager(containerIP, gatewayIP string) *NftManager {
 	}
 }
 
-// ApplyRestricted applies restricted mode rules (block RFC1918, allow internet).
+// ApplyRestricted applies restricted mode rules (block private networks, allow
+// internet).
 //
 // Two optional egress controls layer on top of the classic behaviour, each a
 // no-op when unset so existing configs emit byte-identical rules:
@@ -125,9 +126,10 @@ func (f *NftManager) addRestrictedRules(cfg *config.NetworkConfig, dnsServers []
 		}
 	}
 
-	// DNS pinning must precede the RFC1918 block so a pinned LAN resolver stays
-	// reachable on 53, and must precede the permissive default so a pinned public
-	// resolver is accepted before the port cap / catch-all could touch it.
+	// DNS pinning must precede the private network block so a pinned LAN
+	// resolver stays reachable on 53, and must precede the permissive default
+	// so a pinned public resolver is accepted before the port cap / catch-all
+	// could touch it.
 	if err := f.pinDNSForward(dnsServers); err != nil {
 		return err
 	}
@@ -139,15 +141,15 @@ func (f *NftManager) addRestrictedRules(cfg *config.NetworkConfig, dnsServers []
 			return err
 		}
 	} else if config.BoolVal(cfg.BlockPrivateNetworks) {
-		for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		for _, cidr := range config.PrivateNetworkCIDRs() {
 			if err := f.addRule(f.containerIP, cidr, "reject"); err != nil {
-				return fmt.Errorf("failed to add RFC1918 block rule: %w", err)
+				return fmt.Errorf("failed to add private network block rule: %w", err)
 			}
 		}
 	}
 
 	if config.BoolVal(cfg.BlockMetadataEndpoint) {
-		if err := f.addRule(f.containerIP, "169.254.0.0/16", "reject"); err != nil {
+		if err := f.addRule(f.containerIP, metadataCIDR, "reject"); err != nil {
 			return fmt.Errorf("failed to add metadata block rule: %w", err)
 		}
 	}
@@ -284,15 +286,16 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 	// lands in a private or link-local range would otherwise be matched by the
 	// set-accept rule before any reject runs, opening a DNS-rebinding path to
 	// 169.254.169.254 (cloud metadata → credential theft) or to internal hosts.
-	// (Restricted mode already rejects these ahead of its permissive default;
-	// allowlist mode was rejecting them AFTER its set-accepts, so any set member
-	// in these ranges slipped straight through.) Semantics are unchanged from the
-	// previous placement — only the order is fixed.
 	//
-	// NB: this still keys off allow_local_network_access alone, as the previous
-	// code did; wiring allowlist mode to honor block_private_networks /
-	// block_metadata_endpoint independently (as restricted mode does) — and thus
-	// blocking metadata even when local access is on — is a separate follow-up.
+	// block_metadata_endpoint rejects link-local whatever
+	// allow_local_network_access says, as in restricted mode. Without local
+	// access, link-local stays rejected with the private ranges.
+	blockMetadata := config.BoolVal(cfg.BlockMetadataEndpoint)
+	if blockMetadata {
+		if err := f.addRule(f.containerIP, metadataCIDR, "reject"); err != nil {
+			return fmt.Errorf("failed to add metadata block rule: %w", err)
+		}
+	}
 	if config.BoolVal(cfg.AllowLocalNetworkAccess) {
 		// allowed_ports still applies to the LAN (see addLocalNetworkAllows): local
 		// access opens the LAN, but only on the permitted ports when a cap is set.
@@ -301,8 +304,11 @@ func (f *NftManager) addAllowlistRules(cfg *config.NetworkConfig, allowedPorts [
 		}
 	} else {
 		for _, cidr := range allowlistPrivateCIDRs {
+			if cidr == metadataCIDR && blockMetadata {
+				continue
+			}
 			if err := f.addRule(f.containerIP, cidr, "reject"); err != nil {
-				return fmt.Errorf("failed to add RFC1918/metadata block rule: %w", err)
+				return fmt.Errorf("failed to add private/metadata block rule: %w", err)
 			}
 		}
 	}
@@ -407,10 +413,26 @@ func EnsureBaseRules() error {
 	if err != nil || exists {
 		return err
 	}
-	_, err = runNFTCommand("add", "rule", "ip", "coi", "forward",
-		"ct", "state", "established,related", "accept",
-		"comment", `"coi-base"`)
+	_, err = runNFTCommand(addBaseRuleCmd()...)
 	return err
+}
+
+// addBaseRuleCmd returns the nft command that adds the shared conntrack
+// accept (coi-base) to the ip coi forward chain.
+func addBaseRuleCmd() []string {
+	return []string{
+		"add", "rule", "ip", "coi", "forward",
+		"ct", "state", "established,related", "accept", "comment", `"coi-base"`,
+	}
+}
+
+// addForwardChainCmd returns the nft command that creates family's coi
+// forward chain: hook forward at priority 10, default-accept policy.
+func addForwardChainCmd(family string) []string {
+	return []string{
+		"add", "chain", family, "coi", "forward",
+		"{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}",
+	}
 }
 
 // EnsureOpenModeRules adds an ACCEPT rule for all traffic from a container in open mode.
@@ -545,8 +567,7 @@ func ensureCOIIP6TableAndChain() error {
 	if _, err := runNFTCommand("list", "chain", "ip6", "coi", "forward"); err == nil {
 		return nil
 	}
-	_, err := runNFTCommand("add", "chain", "ip6", "coi", "forward",
-		"{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}")
+	_, err := runNFTCommand(addForwardChainCmd("ip6")...)
 	if err != nil {
 		return fmt.Errorf("failed to create nft chain ip6 coi forward: %w", err)
 	}
@@ -689,7 +710,7 @@ func parseCOIIP6RuleContainers(output string) []string {
 
 // addRule appends a nftables rule to ip coi forward for this container.
 // Rules are appended in call order, so callers must invoke addRule from most-specific
-// to least-specific (gateway → allowlist → RFC1918 block → default).
+// to least-specific (gateway → allowlist → private network block → default).
 func (f *NftManager) addRule(source, destination, action string) error {
 	return f.addRuleWithMatch(source, destination, nil, action)
 }
@@ -742,8 +763,7 @@ func ensureCOITableAndChain() error {
 	if _, err := runNFTCommand("list", "chain", "ip", "coi", "forward"); err == nil {
 		return nil
 	}
-	_, err := runNFTCommand("add", "chain", "ip", "coi", "forward",
-		"{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}")
+	_, err := runNFTCommand(addForwardChainCmd("ip")...)
 	if err != nil {
 		return fmt.Errorf("failed to create nft chain ip coi forward: %w", err)
 	}

@@ -5,11 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -24,6 +26,7 @@ type fakeGrantsManager struct {
 	fromProfile   bool
 	sourceUnknown bool // the instance's own config can't be read
 	limits        map[string]string
+	sockets       map[string]container.SocketDevice
 	pushFail      map[string]bool // host paths whose push fails
 	mkdirFail     bool
 }
@@ -32,6 +35,7 @@ func (f *fakeGrantsManager) AppliedState() (container.AppliedState, error) {
 	return container.AppliedState{
 		Disks: f.disks, EnvNames: f.envNames, Nesting: f.nesting,
 		NestingSet: f.nesting || f.fromProfile || f.sourceUnknown, Limits: f.limits,
+		Sockets: f.sockets,
 	}, f.disksErr
 }
 
@@ -109,6 +113,10 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 		},
 		envNames: []string{"GIT_AUTHOR_NAME"},
 		nesting:  false, // created without Docker, though config now enables it
+		sockets: map[string]container.SocketDevice{
+			"socket-0":  {HostPath: "/run/a.sock", ContainerPath: "/run/a.sock"},
+			"ssh-agent": {HostPath: "/run/user/1000/agent.sock", ContainerPath: "/tmp/ssh-agent.sock"}, // not forwarded, still attached
+		},
 	}
 	st := &setupState{
 		opts: SetupOptions{
@@ -122,8 +130,11 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 				BlockMetadataEndpoint:   boolPtr(true),
 			}},
 		},
-		result:           &SetupResult{Manager: mgr},
-		forwardedSockets: []SocketEntry{{HostPath: "/run/a.sock", ContainerPath: "/run/a.sock"}},
+		result: &SetupResult{Manager: mgr},
+		forwardedSockets: []SocketEntry{
+			{HostPath: "/run/a.sock", ContainerPath: "/run/a.sock", EnvVar: "A_SOCK", DeviceName: "socket-0"},
+			{HostPath: "/run/b.sock", ContainerPath: "/run/b.sock", DeviceName: "socket-1"}, // no device
+		},
 		// What contextInfoFor reports once it read the container's nesting.
 		contextInfo: tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "restricted", DockerUnavailable: true},
 	}
@@ -144,8 +155,12 @@ func TestBuildGrants_FromDevices(t *testing.T) {
 	if strings.Join(g.Protected, ",") != ".git/hooks" {
 		t.Errorf("protected = %v, want only the mounted .git/hooks", g.Protected)
 	}
-	if len(g.Sockets) != 1 {
-		t.Errorf("sockets = %+v", g.Sockets)
+	wantSockets := []SocketEntry{
+		{HostPath: "/run/a.sock", ContainerPath: "/run/a.sock", EnvVar: "A_SOCK", DeviceName: "socket-0"},
+		{HostPath: "/run/user/1000/agent.sock", ContainerPath: "/tmp/ssh-agent.sock", DeviceName: "ssh-agent"},
+	}
+	if !reflect.DeepEqual(g.Sockets, wantSockets) {
+		t.Errorf("sockets = %+v, want the attached devices %+v", g.Sockets, wantSockets)
 	}
 	if len(g.Env.FromHost)+len(g.Env.Minted)+len(g.Env.Configured) != 0 {
 		t.Errorf("Env is the caller's to fill (WithEnv), got %+v", g.Env)
@@ -174,11 +189,15 @@ func TestBuildGrants_DevicesUnreadable(t *testing.T) {
 				SecretPaths:    []string{".env", ".missing-secret"},
 			},
 		},
-		result:      &SetupResult{Manager: mgr},
-		contextInfo: tool.ContextInfo{WorkspacePath: "/workspace"},
+		result:           &SetupResult{Manager: mgr},
+		forwardedSockets: []SocketEntry{{HostPath: "/run/a.sock", ContainerPath: "/run/a.sock", DeviceName: "socket-0"}},
+		contextInfo:      tool.ContextInfo{WorkspacePath: "/workspace"},
 	}
 	g := buildGrants(st)
 
+	if !reflect.DeepEqual(g.Sockets, st.forwardedSockets) {
+		t.Errorf("fallback sockets = %+v, want the forwarded ones", g.Sockets)
+	}
 	if !g.DevicesUnread || len(g.Mounts) != 1 || strings.Join(g.Protected, ",") != ".git/hooks" {
 		t.Fatalf("fallback grants = %+v", g)
 	}
@@ -652,8 +671,13 @@ func TestGrantsRender_Network(t *testing.T) {
 		},
 		{
 			name: "allowlist with LAN access opens metadata",
-			n:    NetworkGrants{Mode: "allowlist", LANAccess: true, MetadataBlock: true},
+			n:    NetworkGrants{Mode: "allowlist", LANAccess: true},
 			want: []string{"allowlist: nothing", "LAN allowed (metadata endpoint not blocked)"},
+		},
+		{
+			name: "allowlist with LAN access keeps metadata blocked",
+			n:    NetworkGrants{Mode: "allowlist", LANAccess: true, MetadataBlock: true},
+			want: []string{"allowlist: nothing", "LAN allowed (metadata endpoint blocked)"},
 		},
 		{
 			name:    "allowlist without LAN access blocks LAN and metadata, never shows a DNS pin",
@@ -671,6 +695,11 @@ func TestGrantsRender_Network(t *testing.T) {
 			n:       NetworkGrants{Mode: "open", Hosts: hosts, AllowedPorts: []int{443}, DNSServers: []string{"1.1.1.1"}},
 			want:    []string{"open (no egress filtering)", "host 10.0.0.5 (db)\n"},
 			notWant: []string{"ports 443", "DNS pinned", "on ports", "LAN", "host services"},
+		},
+		{
+			name: "open with metadata block",
+			n:    NetworkGrants{Mode: "open", MetadataBlock: true},
+			want: []string{"open (only the metadata endpoint blocked)"},
 		},
 	}
 	for _, tc := range cases {
@@ -1018,5 +1047,31 @@ func TestBuildGrants_FallbackWorktreeProtections(t *testing.T) {
 	}
 	if strings.Contains(got, "git internals of") {
 		t.Errorf("fallback still summarizes: %v", g.Protected)
+	}
+}
+
+// fakeMetadataManager is a network manager reporting whether open mode's
+// metadata block was left unenforced.
+type fakeMetadataManager struct {
+	network.NetworkManager
+	unenforced bool
+}
+
+func (f fakeMetadataManager) MetadataUnenforced() bool { return f.unenforced }
+
+// The report claims the open-mode metadata block only when it is enforced.
+func TestBuildGrants_OpenMetadataUnenforced(t *testing.T) {
+	for _, unenforced := range []bool{false, true} {
+		st := &setupState{
+			opts: SetupOptions{Network: NetworkOptions{Config: &config.NetworkConfig{
+				Mode:                  config.NetworkModeOpen,
+				BlockMetadataEndpoint: boolPtr(true),
+			}}},
+			result:      &SetupResult{Manager: &fakeGrantsManager{}, NetworkManager: fakeMetadataManager{unenforced: unenforced}},
+			contextInfo: tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "open"},
+		}
+		if got := buildGrants(st).Network.MetadataBlock; got == unenforced {
+			t.Errorf("unenforced=%v: MetadataBlock = %v", unenforced, got)
+		}
 	}
 }

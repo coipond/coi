@@ -25,6 +25,11 @@
       "enum": ["bypass", "interactive", ""],
       "description": "Permission mode: \"bypass\" (default) skips interactive prompts; \"interactive\" prompts the user"
     },
+    "memory": {
+      "type": "string",
+      "enum": ["keep", "fresh", ""],
+      "description": "Tool memory in a reused persistent container: \"keep\" (default) keeps the tool's conversation history and memory from earlier sessions; \"fresh\" removes them before a new session (not --resume/--continue), keeping everything else in the container (installed packages, files, tool settings and credentials). Saved sessions on the host stay listed and resumable."
+    },
     "context_file": {
       "type": "string",
       "description": "Path to a custom context Markdown file injected into the tool (supports ~ expansion)"

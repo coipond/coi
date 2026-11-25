@@ -3,6 +3,7 @@
 package config
 
 import (
+	"net"
 	"regexp"
 )
 
@@ -19,12 +20,60 @@ const DefaultShutdownTimeoutSeconds = 60
 const (
 	// NetworkModeRestricted blocks local/internal networks, allows internet
 	NetworkModeRestricted NetworkMode = "restricted"
-	// NetworkModeOpen allows all network access (current behavior)
+	// NetworkModeOpen allows all network access but the metadata range under
+	// block_metadata_endpoint
 	NetworkModeOpen NetworkMode = "open"
-	// NetworkModeAllowlist allows only specific domains; RFC1918 and metadata
-	// ranges stay blocked unless allow_local_network_access is set
+	// NetworkModeAllowlist allows only specific domains; private and metadata
+	// ranges stay blocked unless allow_local_network_access is set (metadata
+	// also under block_metadata_endpoint)
 	NetworkModeAllowlist NetworkMode = "allowlist"
 )
+
+// ToolMemory is the [tool] memory setting: whether a new session in a reused
+// persistent container keeps the tool's conversation history and memory files
+// from earlier sessions.
+type ToolMemory string
+
+const (
+	// ToolMemoryKeep keeps the tool's memory files (the default).
+	ToolMemoryKeep ToolMemory = "keep"
+	// ToolMemoryFresh removes them before a new (not resumed) session.
+	ToolMemoryFresh ToolMemory = "fresh"
+)
+
+// PrivateNetworkCIDRs returns the private ranges restricted and allowlist mode
+// block unless allow_local_network_access is set: RFC1918 and the RFC 6598
+// shared address space 100.64.0.0/10 (CGNAT; Tailscale, Headscale and NetBird
+// number their peers there).
+func PrivateNetworkCIDRs() []string {
+	return []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"}
+}
+
+// privateNetworks is PrivateNetworkCIDRs parsed once: the security monitors
+// ask for every connection.
+var privateNetworks = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range PrivateNetworkCIDRs() {
+		_, n, _ := net.ParseCIDR(cidr)
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
+// IsPrivateNetworkIP reports whether ipStr is an address in
+// PrivateNetworkCIDRs. An unparseable address is not.
+func IsPrivateNetworkIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	for _, n := range privateNetworks {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 // HardenedProfileSecretPaths is the default secret-mask set bundled by the
 // built-in "hardened" profile. Exported so docs/tests can reference one source.

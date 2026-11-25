@@ -5,6 +5,8 @@ import (
 	"net"
 	"sort"
 	"strings"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // This file holds the egress-policy primitives shared by restricted and allowlist
@@ -82,7 +84,8 @@ func l4PortMatch(ports []int) []string {
 	return match
 }
 
-// addLocalNetworkAllows opens the RFC1918 ranges for allow_local_network_access.
+// addLocalNetworkAllows opens the private ranges (config.PrivateNetworkCIDRs)
+// for allow_local_network_access.
 //
 // When allowed_ports is set the accept is scoped to those destination ports, so
 // the egress port cap applies to LAN traffic too: a compromised container must
@@ -95,13 +98,13 @@ func l4PortMatch(ports []int) []string {
 // With no port cap it is the historic all-protocol blanket accept, so configs
 // that do not set allowed_ports emit byte-identical rules.
 func (f *NftManager) addLocalNetworkAllows(allowedPorts []int) error {
-	for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+	for _, cidr := range config.PrivateNetworkCIDRs() {
 		if len(allowedPorts) > 0 {
 			if err := f.addRuleWithMatch(f.containerIP, cidr, l4PortMatch(allowedPorts), "accept"); err != nil {
-				return fmt.Errorf("failed to add port-scoped RFC1918 allow rule: %w", err)
+				return fmt.Errorf("failed to add port-scoped private network allow rule: %w", err)
 			}
 		} else if err := f.addRule(f.containerIP, cidr, "accept"); err != nil {
-			return fmt.Errorf("failed to add RFC1918 allow rule: %w", err)
+			return fmt.Errorf("failed to add private network allow rule: %w", err)
 		}
 	}
 	return nil
@@ -119,10 +122,10 @@ func (f *NftManager) addLocalNetworkAllows(allowedPorts []int) error {
 // container's resolv.conf.
 //
 // Ordering matters and is the caller's responsibility: pinDNSForward must run
-// AFTER the gateway accept and BEFORE the RFC1918 block, so a pinned resolver that
-// lives on the LAN (a typical Pi-hole at 192.168.x.y) is reachable on 53 even when
-// private networks are otherwise blocked — but reachable on 53 ONLY, never on
-// other ports.
+// AFTER the gateway accept and BEFORE the private network block, so a pinned
+// resolver that lives on the LAN (a typical Pi-hole at 192.168.x.y) is
+// reachable on 53 even when private networks are otherwise blocked — but
+// reachable on 53 ONLY, never on other ports.
 func (f *NftManager) pinDNSForward(servers []string) error {
 	if f.containerIP == "" || len(servers) == 0 {
 		return nil

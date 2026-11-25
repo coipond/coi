@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/coipond/coi/internal/container"
@@ -39,15 +41,20 @@ func SetupSSHAgentForwarding(mgr container.ContainerManager, containerName strin
 // ForwardConfiguredSockets forwards the host SSH agent (when includeSSHAgent)
 // plus every entry in sc into the container, returning a map of env var name ->
 // in-container socket path for the entries that were forwarded and declare an
-// EnvVar. Per-entry failures are logged, never fatal.
-func ForwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent bool, logger func(string)) map[string]string {
-	env, _ := forwardConfiguredSockets(mgr, sc, includeSSHAgent, logger)
+// EnvVar. Socket devices of earlier sessions on a reused container are
+// removed. Per-entry failures are logged, never fatal.
+func ForwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent, reused bool, logger func(string)) map[string]string {
+	env, _ := forwardConfiguredSockets(mgr, sc, includeSSHAgent, reused, logger)
 	return env
 }
 
 // forwardConfiguredSockets is ForwardConfiguredSockets that also returns the
-// entries actually forwarded, for the startup grants report.
-func forwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, includeSSHAgent bool, logger func(string)) (map[string]string, []SocketEntry) {
+// entries actually forwarded, for the startup grants report. A reused
+// persistent container keeps the socket devices of earlier sessions, so every
+// one this session does not forward is removed: forward_agent turned off, a
+// [[sockets]] entry removed or dropped by the trust gate, a host socket gone.
+// A container created by this session (reused false) has none to remove.
+func forwardConfiguredSockets(mgr socketForwarder, sc *SocketConfig, includeSSHAgent, reused bool, logger func(string)) (map[string]string, []SocketEntry) {
 	var entries []SocketEntry
 	if includeSSHAgent {
 		if e, ok := sshAgentSocketEntry(logger); ok {
@@ -57,10 +64,81 @@ func forwardConfiguredSockets(mgr container.ContainerManager, sc *SocketConfig, 
 	if sc != nil {
 		entries = append(entries, sc.Sockets...)
 	}
+	// Listed before forwarding: the list shares the config cache entry that
+	// forwardSocket reads next, while a list after the device writes would
+	// cost another `incus config show`.
+	existing := map[string]bool{}
+	if reused {
+		requested := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			requested[e.DeviceName] = true
+		}
+		for _, d := range socketDeviceNames(mgr, logger) {
+			existing[d] = true
+			if !requested[d] {
+				removeSocketDevice(mgr, d, logger)
+			}
+		}
+	}
 	if len(entries) == 0 {
 		return nil, nil
 	}
-	return forwardSockets(mgr, entries, logger)
+	env, forwarded := forwardSockets(mgr, entries, logger)
+	done := make(map[string]bool, len(forwarded))
+	for _, e := range forwarded {
+		done[e.DeviceName] = true
+	}
+	// forwardSocket replaces the device of an entry it tried and leaves
+	// alone the one whose host socket it skipped.
+	for _, e := range entries {
+		if existing[e.DeviceName] && !done[e.DeviceName] && hostSocketSkipReason(filepath.Clean(e.HostPath)) != "" {
+			removeSocketDevice(mgr, e.DeviceName, logger)
+		}
+	}
+	return env, forwarded
+}
+
+// isSocketDevice reports whether a device name is one socket forwarding
+// creates: the SSH agent's or a [[sockets]] entry's (socket-<n>).
+func isSocketDevice(name string) bool {
+	if name == sshAgentDevice {
+		return true
+	}
+	n, ok := strings.CutPrefix(name, "socket-")
+	if !ok || n == "" {
+		return false
+	}
+	for _, c := range n {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// socketDeviceNames returns the names of the container's socket devices,
+// sorted.
+func socketDeviceNames(mgr container.ContainerDevices, logger func(string)) []string {
+	devices, err := mgr.ListDevices()
+	if err != nil {
+		logger(fmt.Sprintf("Warning: could not list devices to remove stale socket forwards: %v", err))
+		return nil
+	}
+	var out []string
+	for _, d := range devices {
+		if isSocketDevice(d) {
+			out = append(out, d)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// removeSocketDevice removes a socket device this session does not forward.
+func removeSocketDevice(mgr container.ContainerDevices, name string, logger func(string)) {
+	if err := mgr.RemoveDevice(name); err != nil {
+		logger(fmt.Sprintf("Warning: could not remove stale socket device %s: %v", name, err))
+	}
 }
 
 // sshAgentSocketEntry builds the synthetic socket entry for the host SSH agent,
@@ -119,15 +197,8 @@ func forwardSockets(mgr socketForwarder, entries []SocketEntry, logger func(stri
 // original SSH-agent behavior.
 func forwardSocket(mgr socketForwarder, e SocketEntry, logger func(string)) (string, bool, error) {
 	hostSocket := filepath.Clean(e.HostPath)
-	if hostSocket == "." || hostSocket == "" {
-		logger("Socket forwarding skipped: empty host socket path")
-		return "", false, nil
-	}
-	if fi, err := os.Stat(hostSocket); err != nil {
-		logger(fmt.Sprintf("Socket forwarding skipped: %s not accessible: %v", hostSocket, err))
-		return "", false, nil
-	} else if fi.Mode()&os.ModeSocket == 0 {
-		logger(fmt.Sprintf("Socket forwarding skipped: %s is not a Unix domain socket", hostSocket))
+	if reason := hostSocketSkipReason(hostSocket); reason != "" {
+		logger("Socket forwarding skipped: " + reason)
 		return "", false, nil
 	}
 
@@ -167,6 +238,22 @@ func forwardSocket(mgr socketForwarder, e SocketEntry, logger func(string)) (str
 		return "", false, nil
 	}
 	return e.ContainerPath, true, nil
+}
+
+// hostSocketSkipReason says why hostSocket can't be forwarded, or "" when it
+// is a Unix domain socket.
+func hostSocketSkipReason(hostSocket string) string {
+	if hostSocket == "." || hostSocket == "" {
+		return "empty host socket path"
+	}
+	fi, err := os.Stat(hostSocket)
+	if err != nil {
+		return fmt.Sprintf("%s not accessible: %v", hostSocket, err)
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Sprintf("%s is not a Unix domain socket", hostSocket)
+	}
+	return ""
 }
 
 // deviceConfigReader is implemented by *container.Manager (kept out of the

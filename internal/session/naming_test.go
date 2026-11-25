@@ -336,7 +336,7 @@ func TestFindReusablePersistentSlot(t *testing.T) {
 		t.Errorf("FindReusablePersistentSlot() = %d, %v; want 2, true", slot, ok)
 	}
 	b, _ := os.ReadFile(logPath)
-	if call := strings.TrimSpace(string(b)); call != "--project default list --format=csv --columns=ns" {
+	if call := strings.TrimSpace(string(b)); call != "--project default list --format=csv --columns=ns,"+PersistentConfigKey {
 		t.Errorf("incus call = %q", call)
 	}
 }

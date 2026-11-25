@@ -35,6 +35,7 @@ def test_hardened_profile_hardened_settings(coi_binary):
         "forward_agent = false",  # never forward host SSH agent
         "host_immutable = true",  # host-side immutability
         "reduce_kernel_surface = true",  # kernel attack-surface hardening (also disables docker)
+        "passwordless_sudo = false",  # no sudo for the code user
         'max_duration = "4h"',  # bounded session (12h+ persistence enabled the ToB escapes)
         "secret_paths = [",  # secret masking bundled
         ".env",  # a sensible default secret

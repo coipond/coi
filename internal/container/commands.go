@@ -1179,25 +1179,39 @@ func parseNamesCSV(output string) []string {
 type ContainerStatus struct {
 	Name   string
 	Status string
+	// KeyValue is the value of the config key ListContainerStatusesKey asked
+	// for.
+	KeyValue string
 }
 
 // ListContainerStatuses lists container names and statuses, optionally
 // narrowed by an Incus name filter. Like ListContainerNames, it asks for the
 // name and status columns only (CSV), which need no instance state.
 func ListContainerStatuses(filter string) ([]ContainerStatus, error) {
+	return ListContainerStatusesKey(filter, "")
+}
+
+// ListContainerStatusesKey is ListContainerStatuses that also reads one
+// config key per container (ContainerStatus.KeyValue) in the same listing.
+func ListContainerStatusesKey(filter, key string) ([]ContainerStatus, error) {
 	args := []string{"list"}
 	if filter != "" {
 		args = append(args, filter)
 	}
-	output, err := IncusOutput(append(args, "--format=csv", "--columns=ns")...)
+	columns := "ns"
+	if key != "" {
+		columns += "," + key
+	}
+	output, err := IncusOutput(append(args, "--format=csv", "--columns="+columns)...)
 	if err != nil {
 		return nil, err
 	}
 	return parseStatusesCSV(output), nil
 }
 
-// parseStatusesCSV parses `incus list --format=csv --columns=ns` output
-// ("name,STATUS" per line). Instance names cannot contain commas.
+// parseStatusesCSV parses `incus list --format=csv --columns=ns[,<key>]`
+// output ("name,STATUS[,value]" per line). Instance names cannot contain
+// commas.
 func parseStatusesCSV(output string) []ContainerStatus {
 	var out []ContainerStatus
 	for _, line := range strings.Split(output, "\n") {
@@ -1205,8 +1219,9 @@ func parseStatusesCSV(output string) []ContainerStatus {
 		if line == "" {
 			continue
 		}
-		name, status, _ := strings.Cut(line, ",")
-		out = append(out, ContainerStatus{Name: name, Status: status})
+		name, rest, _ := strings.Cut(line, ",")
+		status, value, _ := strings.Cut(rest, ",")
+		out = append(out, ContainerStatus{Name: name, Status: status, KeyValue: value})
 	}
 	return out
 }
@@ -1248,6 +1263,12 @@ func buildIncusCommand(args ...string) []string {
 // ConfigSet sets a configuration key on a container.
 func ConfigSet(ctx context.Context, containerName, key, value string) error {
 	return IncusExecContext(ctx, "config", "set", containerName, key+"="+value)
+}
+
+// ClearEphemeral turns off the container's Incus ephemeral property, so
+// Incus no longer deletes it when it stops.
+func ClearEphemeral(ctx context.Context, containerName string) error {
+	return IncusExecContext(ctx, "config", "set", containerName, "ephemeral=false", "--property")
 }
 
 // ConfigSetPairs sets several `key=value` pairs on a container in one
