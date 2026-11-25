@@ -62,6 +62,9 @@ type Manager struct {
 	// hostAddrWarned holds resolved allowlist addresses that are host
 	// addresses, already warned about (see warnResolvedHostAddrs).
 	hostAddrWarned map[string]bool
+
+	// metadataBlocked: open mode's metadata reject is in place.
+	metadataBlocked bool
 }
 
 // NewManager creates a new network manager with the specified configuration
@@ -100,16 +103,22 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 	// Handle different network modes
 	switch m.config.Mode {
 	case config.NetworkModeOpen:
-		m.logger.Println("Network mode: open (no restrictions)")
+		blockMetadata := config.BoolVal(m.config.BlockMetadataEndpoint)
+		if blockMetadata {
+			m.logger.Println("Network mode: open (only cloud metadata endpoints blocked)")
+		} else {
+			m.logger.Println("Network mode: open (no restrictions)")
+		}
+		nftUsable := NftUsable(m.config)
 		// Add ACCEPT rules via nft so traffic flows even when FORWARD policy is DROP
-		if NftUsable(m.config) {
+		if nftUsable {
 			containerIP, err := GetContainerIP(containerName)
 			if err != nil {
 				m.logger.Errorf("Warning: could not get container IP for open mode rules: %v", err)
 			} else {
 				m.containerIP = containerIP
 				m.nft = NewNftManager(containerIP, "")
-				m.applyOpenRules(containerIP)
+				m.metadataBlocked = m.applyOpenRules(containerIP) && blockMetadata
 			}
 		} else if m.config.SudoAllowed() && NeedsIptablesFallback() {
 			bridgeName, err := containerNetworkName(containerName)
@@ -123,6 +132,9 @@ func (m *Manager) SetupForContainer(ctx context.Context, containerName string) e
 					m.logger.Printf("iptables fallback: added FORWARD ACCEPT rules for bridge %s (FORWARD policy is DROP, nft not available)", bridgeName)
 				}
 			}
+		}
+		if blockMetadata && !m.metadataBlocked {
+			m.logger.Errorf("Warning: block_metadata_endpoint is not enforced in open mode: no nft rules for the container")
 		}
 		// Open mode always lifts the boot block — errors above are non-fatal
 		// and the user has explicitly opted into unrestricted network access.
@@ -241,17 +253,46 @@ func openModeRuleText(ip string) string {
 	return fmt.Sprintf(`ip saddr %s accept comment "coi-%s"`, ip, ip)
 }
 
-// applyOpenRules installs open mode's single accept rule for ip. A reused
-// container whose rules are already exactly that is left untouched; anything
-// else is replaced in one transaction. Non-fatal, like the code it replaces.
-func (m *Manager) applyOpenRules(ip string) {
+// openModeCmds returns the nft commands for open mode's rules for ip: under
+// block_metadata_endpoint a metadataCIDR reject, then the accept.
+func openModeCmds(ip string, blockMetadata bool) [][]string {
+	comment := []string{"comment", fmt.Sprintf(`"coi-%s"`, ip)}
+	rule := func(match ...string) []string {
+		return append(append([]string{"add", "rule", "ip", "coi", "forward", "ip", "saddr", ip}, match...), comment...)
+	}
+	var cmds [][]string
+	if blockMetadata {
+		cmds = append(cmds,
+			rule(append([]string{"ip", "daddr", metadataCIDR}, tcpReset...)...),
+			rule("ip", "daddr", metadataCIDR, "reject"))
+	}
+	return append(cmds, rule("accept"))
+}
+
+// openModeRuleTexts is how nft lists openModeCmds' rules.
+func openModeRuleTexts(ip string, blockMetadata bool) []string {
+	var texts []string
+	if blockMetadata {
+		texts = append(texts,
+			fmt.Sprintf(`ip saddr %s ip daddr %s reject with tcp reset comment "coi-%s"`, ip, metadataCIDR, ip),
+			fmt.Sprintf(`ip saddr %s ip daddr %s reject comment "coi-%s"`, ip, metadataCIDR, ip))
+	}
+	return append(texts, openModeRuleText(ip))
+}
+
+// applyOpenRules installs open mode's rules for ip (openModeCmds) and reports
+// whether they are in place. A reused container whose rules are already
+// exactly those is left untouched; anything else is replaced in one
+// transaction. Non-fatal, like the code it replaces.
+func (m *Manager) applyOpenRules(ip string) bool {
 	if err := EnsureBaseRules(); err != nil {
 		m.logger.Errorf("Warning: failed to ensure base rules: %v", err)
 	}
+	blockMetadata := config.BoolVal(m.config.BlockMetadataEndpoint)
 	rules, err := forwardRulesWithComment("coi-" + ip)
-	if err == nil && len(rules) == 1 && rules[0].text == openModeRuleText(ip) {
+	if err == nil && ruleTextsEqual(rules, openModeRuleTexts(ip, blockMetadata)) {
 		m.purgeStaleSideStateForIP(ip)
-		return // already in place (a reused container): nothing to do
+		return true // already in place (a reused container): nothing to do
 	}
 	if len(rules) > 0 && m.containerName != "" {
 		// Another mode's rules: a running container from an earlier session,
@@ -260,21 +301,38 @@ func (m *Manager) applyOpenRules(ip string) {
 		m.prepareContainer(m.containerName)
 	}
 	if err == nil {
-		cmds := deleteChainRuleCmds("forward", rules)
-		cmds = append(cmds, []string{
-			"add", "rule", "ip", "coi", "forward",
-			"ip", "saddr", ip, "accept", "comment", fmt.Sprintf(`"coi-%s"`, ip),
-		})
+		cmds := append(deleteChainRuleCmds("forward", rules), openModeCmds(ip, blockMetadata)...)
 		if runNFTScript(cmds) == nil {
 			m.purgeStaleSideStateForIP(ip)
-			return
+			return true
 		}
 	}
-	// Fallback: the original purge-then-add sequence.
 	m.purgeStaleRulesForIP(ip)
-	if err := EnsureOpenModeRules(ip); err != nil {
+	if err := runNFTScript(openModeCmds(ip, blockMetadata)); err != nil {
 		m.logger.Errorf("Warning: could not add open mode rules: %v", err)
+		return false
 	}
+	return true
+}
+
+// MetadataUnenforced reports whether SetupForContainer left open mode's
+// block_metadata_endpoint without its reject (no usable nft, no container IP,
+// or the rules failed), so the grants report does not claim the block.
+func (m *Manager) MetadataUnenforced() bool {
+	return m.config.Mode == config.NetworkModeOpen && config.BoolVal(m.config.BlockMetadataEndpoint) && !m.metadataBlocked
+}
+
+// ruleTextsEqual reports whether rules are, in order, exactly texts.
+func ruleTextsEqual(rules []chainRule, texts []string) bool {
+	if len(rules) != len(texts) {
+		return false
+	}
+	for i, r := range rules {
+		if r.text != texts[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // applyRestrictedReplacing applies restricted mode for ip with the deletes of
@@ -542,18 +600,21 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 
 // logAllowlistPrivateAccess logs how allowlist mode treats private and cloud
 // metadata, matching the rules ApplyAllowlist installs for
-// allow_local_network_access.
+// allow_local_network_access and block_metadata_endpoint.
 func (m *Manager) logAllowlistPrivateAccess() {
-	if !config.BoolVal(m.config.AllowLocalNetworkAccess) {
+	switch {
+	case !config.BoolVal(m.config.AllowLocalNetworkAccess):
 		m.logger.Println("  Blocking all private networks (RFC1918, 100.64.0.0/10)")
 		m.logger.Println("  Blocking cloud metadata endpoints")
 		return
-	}
-	if len(m.config.AllowedPorts) > 0 {
+	case len(m.config.AllowedPorts) > 0:
 		m.logger.Printf("  Allowing private networks (RFC1918, 100.64.0.0/10) on ports %v (allow_local_network_access)", m.config.AllowedPorts)
-		return
+	default:
+		m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10; allow_local_network_access)")
 	}
-	m.logger.Println("  Allowing private networks (RFC1918, 100.64.0.0/10; allow_local_network_access)")
+	if config.BoolVal(m.config.BlockMetadataEndpoint) {
+		m.logger.Println("  Blocking cloud metadata endpoints")
+	}
 }
 
 // installNames resolves the policy's hostnames and writes the result to the two
@@ -838,7 +899,7 @@ func (m *Manager) Teardown(ctx context.Context, containerName string) error {
 		}
 	}
 
-	// For open mode, also clean up nft ACCEPT rules created by EnsureOpenModeRules()
+	// For open mode, also clean up the rules applyOpenRules created
 	if m.config.Mode == config.NetworkModeOpen {
 		if !NftUsable(m.config) && m.iptablesBridgeName == "" {
 			return nil // No nft and no iptables fallback, no rules to clean up

@@ -233,7 +233,8 @@ func (m *Manager) incusQuery(method, queryURL, body string) (string, error) {
 }
 
 // incusQuery runs `incus query args...` and returns stdout. It goes through
-// execIncusCommand because `incus query` rejects --project.
+// execIncusCommand because `incus query` rejects --project. A failed run's
+// error holds the stderr in its *ExitError.
 func incusQuery(args ...string) (string, error) {
 	cmd := execIncusCommand(append([]string{"query"}, args...))
 	var stdout, stderr bytes.Buffer
@@ -1173,15 +1174,13 @@ func (m *Manager) PathKind(p string) (PathKind, error) {
 	// `incus query` rejects --project, so the project goes in the URL.
 	query := fmt.Sprintf("/1.0/instances/%s/files?path=%s&project=%s",
 		url.PathEscape(m.ContainerName), url.QueryEscape(p), url.QueryEscape(IncusProject))
-	cmd := execIncusCommand([]string{"query", query})
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := runIncus(cmd); err != nil {
-		err = ClassifyIncusErr(toExitError(err, strings.TrimSpace(stderr.String())), stderr.String())
+	out, err := incusQuery(query)
+	if err != nil {
 		if errors.Is(err, ErrContainerNotFound) || errors.Is(err, ErrIncusUnavailable) {
 			return "", err
 		}
-		if strings.Contains(strings.ToLower(stderr.String()), "not found") {
+		var exitErr *ExitError
+		if errors.As(err, &exitErr) && strings.Contains(strings.ToLower(exitErr.Stderr), "not found") {
 			return PathNone, nil
 		}
 		return "", err
@@ -1189,7 +1188,7 @@ func (m *Manager) PathKind(p string) (PathKind, error) {
 	// A directory answers with its entry names as JSON; a file or symlink
 	// answers with its raw content.
 	var entries []string
-	if json.Unmarshal(stdout.Bytes(), &entries) == nil {
+	if json.Unmarshal([]byte(out), &entries) == nil {
 		return PathDir, nil
 	}
 	return PathOther, nil

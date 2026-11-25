@@ -28,6 +28,8 @@ import time
 
 from support.helpers import (
     calculate_container_name,
+    container_cat,
+    container_path_exists,
     spawn_coi,
     wait_for_container_ready,
     write_trusted_coi_config,
@@ -47,15 +49,6 @@ def _incus(argv, timeout=30):
         text=True,
         timeout=timeout,
     )
-
-
-def _cat(container, path):
-    r = _incus(f"exec {container} -- cat {path}")
-    return r.returncode == 0, r.stdout
-
-
-def _file_present(container, path):
-    return _incus(f"exec {container} -- test -f {path}").returncode == 0
 
 
 def _env_for(tool_name, fake_home):
@@ -104,11 +97,11 @@ def test_switch_tool_on_reused_container(coi_binary, cleanup_containers, workspa
         )
         wait_for_container_ready(child, timeout=60)
         time.sleep(5)
-        ok, content = _cat(container_name, CLAUDE_CRED_PATH)
-        claude_seeded = ok and content == CLAUDE_CRED
+        ok, content = container_cat(coi_binary, container_name, CLAUDE_CRED_PATH)
+        claude_seeded = ok and content.strip() == CLAUDE_CRED
         # The base image pre-creates ~/.codex empty, so check the SEEDED marker
         # file is absent (codex wasn't the active tool), not the dir.
-        codex_absent_phase1 = not _file_present(container_name, CODEX_AUTH_PATH)
+        codex_absent_phase1 = not container_path_exists(coi_binary, container_name, CODEX_AUTH_PATH)
 
         _close(child)
         time.sleep(2)
@@ -121,10 +114,10 @@ def test_switch_tool_on_reused_container(coi_binary, cleanup_containers, workspa
         )
         wait_for_container_ready(child2, timeout=60)
         time.sleep(5)
-        ok_codex, codex_content = _cat(container_name, CODEX_AUTH_PATH)
-        codex_seeded_on_reuse = ok_codex and codex_content == CODEX_AUTH
-        ok_claude, claude_content = _cat(container_name, CLAUDE_CRED_PATH)
-        claude_still_present = ok_claude and claude_content == CLAUDE_CRED
+        ok_codex, codex_content = container_cat(coi_binary, container_name, CODEX_AUTH_PATH)
+        codex_seeded_on_reuse = ok_codex and codex_content.strip() == CODEX_AUTH
+        ok_claude, claude_content = container_cat(coi_binary, container_name, CLAUDE_CRED_PATH)
+        claude_still_present = ok_claude and claude_content.strip() == CLAUDE_CRED
         _close(child2)
     finally:
         time.sleep(2)

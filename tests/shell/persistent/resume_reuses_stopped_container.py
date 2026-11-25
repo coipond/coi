@@ -25,6 +25,7 @@ from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    child_output,
     get_container_list,
     spawn_coi,
     wait_for_container_ready,
@@ -105,12 +106,7 @@ def test_persistent_resume_reuses_stopped_container(coi_binary, cleanup_containe
         pass
 
     # Get output
-    if hasattr(child.logfile_read, "get_raw_output"):
-        output1 = child.logfile_read.get_raw_output()
-    elif hasattr(child.logfile_read, "get_output"):
-        output1 = child.logfile_read.get_output()
-    else:
-        output1 = ""
+    output1 = child_output(child)
 
     try:
         child.close(force=False)

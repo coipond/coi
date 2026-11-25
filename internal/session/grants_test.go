@@ -11,6 +11,7 @@ import (
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
+	"github.com/coipond/coi/internal/network"
 	"github.com/coipond/coi/internal/tool"
 )
 
@@ -670,8 +671,13 @@ func TestGrantsRender_Network(t *testing.T) {
 		},
 		{
 			name: "allowlist with LAN access opens metadata",
-			n:    NetworkGrants{Mode: "allowlist", LANAccess: true, MetadataBlock: true},
+			n:    NetworkGrants{Mode: "allowlist", LANAccess: true},
 			want: []string{"allowlist: nothing", "LAN allowed (metadata endpoint not blocked)"},
+		},
+		{
+			name: "allowlist with LAN access keeps metadata blocked",
+			n:    NetworkGrants{Mode: "allowlist", LANAccess: true, MetadataBlock: true},
+			want: []string{"allowlist: nothing", "LAN allowed (metadata endpoint blocked)"},
 		},
 		{
 			name:    "allowlist without LAN access blocks LAN and metadata, never shows a DNS pin",
@@ -689,6 +695,11 @@ func TestGrantsRender_Network(t *testing.T) {
 			n:       NetworkGrants{Mode: "open", Hosts: hosts, AllowedPorts: []int{443}, DNSServers: []string{"1.1.1.1"}},
 			want:    []string{"open (no egress filtering)", "host 10.0.0.5 (db)\n"},
 			notWant: []string{"ports 443", "DNS pinned", "on ports", "LAN", "host services"},
+		},
+		{
+			name: "open with metadata block",
+			n:    NetworkGrants{Mode: "open", MetadataBlock: true},
+			want: []string{"open (only the metadata endpoint blocked)"},
 		},
 	}
 	for _, tc := range cases {
@@ -1036,5 +1047,31 @@ func TestBuildGrants_FallbackWorktreeProtections(t *testing.T) {
 	}
 	if strings.Contains(got, "git internals of") {
 		t.Errorf("fallback still summarizes: %v", g.Protected)
+	}
+}
+
+// fakeMetadataManager is a network manager reporting whether open mode's
+// metadata block was left unenforced.
+type fakeMetadataManager struct {
+	network.NetworkManager
+	unenforced bool
+}
+
+func (f fakeMetadataManager) MetadataUnenforced() bool { return f.unenforced }
+
+// The report claims the open-mode metadata block only when it is enforced.
+func TestBuildGrants_OpenMetadataUnenforced(t *testing.T) {
+	for _, unenforced := range []bool{false, true} {
+		st := &setupState{
+			opts: SetupOptions{Network: NetworkOptions{Config: &config.NetworkConfig{
+				Mode:                  config.NetworkModeOpen,
+				BlockMetadataEndpoint: boolPtr(true),
+			}}},
+			result:      &SetupResult{Manager: &fakeGrantsManager{}, NetworkManager: fakeMetadataManager{unenforced: unenforced}},
+			contextInfo: tool.ContextInfo{WorkspacePath: "/workspace", NetworkMode: "open"},
+		}
+		if got := buildGrants(st).Network.MetadataBlock; got == unenforced {
+			t.Errorf("unenforced=%v: MetadataBlock = %v", unenforced, got)
+		}
 	}
 }

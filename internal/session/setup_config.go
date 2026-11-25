@@ -237,6 +237,94 @@ func toolConfigSeeded(mgr containerCommandRunner, homeDir string, tcf tool.ToolW
 	return err == nil
 }
 
+// clearToolMemory removes the tool's memory files (tool.ToolWithMemoryPaths)
+// from the container, so a new session starts without the history of earlier
+// ones while the rest of the container stays. It runs as the session user (the
+// code user, root only for a /root home): the paths sit in a dir the agent
+// controls, and root would follow a planted symlink out of it. Paths are
+// coi-controlled (home + config dir + fixed names), so no shell-quoting is
+// needed. Saved sessions on the host are not touched.
+func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, logger func(string)) error {
+	tmp, ok := t.(tool.ToolWithMemoryPaths)
+	if !ok || t.ConfigDirName() == "" {
+		return nil
+	}
+	dir := filepath.Join(homeDir, t.ConfigDirName())
+	args := make([]string, 0, len(tmp.MemoryPaths()))
+	for _, p := range tmp.MemoryPaths() {
+		args = append(args, filepath.Join(dir, p))
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	logger(fmt.Sprintf("Starting %s without memory of earlier sessions ([tool] memory = \"fresh\")", t.Name()))
+	uid := homeFileOwner(homeDir)
+	if _, err := mgr.ExecCommand("rm -rf -- "+strings.Join(args, " "), container.ExecCommandOptions{User: &uid, Capture: true}); err != nil {
+		return fmt.Errorf("failed to clear %s memory: %w", t.Name(), err)
+	}
+	return nil
+}
+
+// toolSessionLive reports whether the tool may still run in the container:
+// coi's tmux session for it exists, or a process with the tool's name runs
+// (a direct-mode session). A failed probe counts as live, so memory is never
+// removed under a running tool by mistake. It runs as the tool's user: tmux
+// keeps one socket per uid, so root would not see the code user's session.
+// The names are coi-controlled (container name, sanitized [tool] binary), so
+// no shell-quoting is needed.
+func toolSessionLive(mgr containerCommandRunner, containerName, homeDir string, t tool.Tool) bool {
+	comm := filepath.Base(t.Binary())
+	if len(comm) > 15 {
+		comm = comm[:15] // the kernel's comm limit, which pgrep -x matches
+	}
+	uid := homeFileOwner(homeDir)
+	out, err := mgr.ExecCommand(fmt.Sprintf(
+		"if tmux has-session -t %s 2>/dev/null || pgrep -x %s >/dev/null; then echo live; else echo idle; fi",
+		TmuxSessionTarget(containerName), comm,
+	), container.ExecCommandOptions{User: &uid, Capture: true})
+	return err != nil || strings.TrimSpace(out) != "idle"
+}
+
+// restoreToolMemory pushes the tool's memory paths (tool.ToolWithMemoryPaths)
+// from a saved session back into the container's config dir, leaving every
+// other file there as it is.
+func restoreToolMemory(mgr container.ContainerManager, resumeID, homeDir, sessionsDir string, t tool.Tool, logger func(string)) error {
+	tmp, ok := t.(tool.ToolWithMemoryPaths)
+	if !ok || t.ConfigDirName() == "" {
+		return nil
+	}
+	saved := filepath.Join(sessionsDir, resumeID, t.ConfigDirName())
+	if info, err := os.Stat(saved); err != nil || !info.IsDir() {
+		return fmt.Errorf("no saved session data found for %s", resumeID)
+	}
+	dir := filepath.Join(homeDir, t.ConfigDirName())
+	restored := 0
+	for _, p := range tmp.MemoryPaths() {
+		src := filepath.Join(saved, p)
+		info, err := os.Stat(src)
+		if err != nil {
+			continue
+		}
+		dest := filepath.Join(dir, p)
+		if info.IsDir() {
+			err = mgr.PushDirectory(src, dest)
+		} else {
+			err = mgr.PushFile(src, dest)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to restore %s: %w", p, err)
+		}
+		if homeDir != "/root" {
+			if err := mgr.Chown(dest, container.CodeUID, container.CodeUID); err != nil {
+				return fmt.Errorf("failed to set ownership of %s: %w", p, err)
+			}
+		}
+		restored++
+	}
+	logger(fmt.Sprintf("Restored %d memory path(s) of %s from session %s", restored, t.Name(), resumeID))
+	return nil
+}
+
 // setupCLIConfig copies tool config directory and injects sandbox settings. It
 // returns the host files it copied in (the tool's essential config files and
 // state file, e.g. Claude's .credentials.json and .claude.json), even on error,

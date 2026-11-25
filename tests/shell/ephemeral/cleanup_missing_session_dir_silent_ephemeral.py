@@ -70,6 +70,7 @@ from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    child_output,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
@@ -131,26 +132,7 @@ def test_cleanup_silent_when_tool_config_dir_missing(coi_binary, workspace_dir, 
             pass
 
         # === Phase 5: collect all captured output ===
-        #
-        # spawn_coi attaches a terminal-emulator logfile to the pexpect
-        # child; different helper versions expose different accessors.
-        # Try each one, then fall back to child.before as a last resort.
-        output = ""
-        lf = child.logfile_read
-        if hasattr(lf, "get_raw_output"):
-            output = lf.get_raw_output()
-        elif hasattr(lf, "get_output"):
-            output = lf.get_output()
-        elif hasattr(lf, "get_display"):
-            output = lf.get_display()
-        elif hasattr(lf, "get_display_stripped"):
-            output = lf.get_display_stripped()
-        if not output and child.before:
-            output = (
-                child.before.decode(errors="replace")
-                if isinstance(child.before, bytes)
-                else child.before
-            )
+        output = child_output(child)
 
         try:
             child.close(force=False)
