@@ -91,9 +91,10 @@ def test_ephemeral_resume_picks_latest_conversation(coi_binary, cleanup_containe
     screen = get_screen_display(child2)
 
     # Clean up before asserting so a failure never leaks the container.
-    exit_tool_to_bash(child2)
+    in_bash2 = exit_tool_to_bash(child2)
     poweroff_and_wait(child2, coi_binary, container_name)
 
+    assert in_bash2, "the resumed tool should exit to bash"
     assert resumed, f"the tool should be started in resume mode. Screen:\n{screen}"
     assert STUB_ID not in screen and STALE_ID not in screen, (
         f"--resume picked a decoy transcript instead of the latest conversation. Screen:\n{screen}"

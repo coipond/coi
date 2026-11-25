@@ -774,11 +774,11 @@ def leave_session(child, command, timeout=60, require_exit=False):
     return output
 
 
-def poweroff_session(child, timeout=60, require_exit=False):
+def poweroff_session(child, timeout=60):
     """Run `sudo poweroff` in the coi shell's bash pane (which saves the
     session), wait for coi to exit and close the child. Return what the
     child printed (child_output)."""
-    return leave_session(child, "sudo poweroff", timeout=timeout, require_exit=require_exit)
+    return leave_session(child, "sudo poweroff", timeout=timeout)
 
 
 def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
