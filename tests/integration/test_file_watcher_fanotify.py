@@ -7,6 +7,10 @@ These tests verify that the host-side fanotify watcher detects:
 - Writes to persistence-relevant files (/etc/sudoers, root authorized_keys) —
   detected after the grace period AND a backstop re-mark cycle, because overlayfs
   copy-up replaces the inode on the first write to a lower-layer file.
+- Writes to the code user's persistence and credential files (~/.bashrc,
+  ~/.profile, ~/.ssh/authorized_keys, the user crontab, the tool credential
+  file) — created, written or renamed over — detected by the directory
+  watcher; coi's own copy and host-side pushes are not flagged.
 
 All access is performed via `incus exec` so the monitor daemon (which runs as
 a host-side process) sees the event from outside the container.
@@ -23,11 +27,20 @@ total: 5 s init + 30 s grace/backstop + write + poll).
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
+
+from support.helpers import exec_as_code_user
+from support.monitoring import (
+    coi_session_logs,
+    get_threat_events,
+    monitored_shell,
+    wait_for_threats,
+)
 
 # Sensitive-file monitoring needs CAP_SYS_ADMIN for fanotify_init, which a
 # standard (non-root) coi install doesn't have: every session logs
@@ -35,8 +48,9 @@ import pytest
 # monitoring disabled)" and nothing is detected. Expected to fail until coi
 # gets that privilege some other way (e.g. a sudo helper, like the nft
 # monitor). strict=True: once it works, these XPASS and fail, so the marker
-# gets removed.
-pytestmark = pytest.mark.xfail(
+# gets removed. Applied to TestFileWatcherFanotify only: the code user file
+# test below must fail, not xfail, when nothing is detected.
+_xfail_non_root = pytest.mark.xfail(
     os.geteuid() != 0,
     reason="fanotify needs CAP_SYS_ADMIN, which a non-root coi doesn't have",
     strict=True,
@@ -152,6 +166,7 @@ def _monitoring_enabled():
 # ── tests ─────────────────────────────────────────────────────────────────────
 
 
+@_xfail_non_root
 class TestFileWatcherFanotify:
     """Host-side fanotify sensitive file monitoring integration tests."""
 
@@ -344,3 +359,143 @@ class TestFileWatcherFanotify:
         finally:
             proc.terminate()
             _cleanup(container_name, coi_binary)
+
+
+# ── code user persistence and credential files ──────────────────────────────
+
+_CREDENTIALS = "home/code/.claude/.credentials.json"
+
+# Grace period (30 s) + one backstop cycle (30 s) + margin.
+_MAX_WAIT = 90
+
+
+@pytest.fixture
+def host_credentials():
+    """A host ~/.claude/.credentials.json for coi to copy; restored after."""
+    claude_dir = Path.home() / ".claude"
+    cred = claude_dir / ".credentials.json"
+    existed = claude_dir.exists()
+    backup = cred.read_bytes() if cred.exists() else None
+    claude_dir.mkdir(exist_ok=True)
+    cred.write_text('{"claudeAiOauth": {"accessToken": "e2e-host-token"}}')
+    yield cred
+    if backup is not None:
+        cred.write_bytes(backup)
+    elif not existed:
+        shutil.rmtree(claude_dir)
+    else:
+        cred.unlink()
+
+
+def _is_write_to(rel):
+    """A threat for a write to the container-relative file rel."""
+    return lambda e: (e.get("evidence", {}).get("sensitive_file") or {}).get("path") == rel
+
+
+def _repeat_until_flagged(container_name, rel, write):
+    """Repeat write on each poll until a threat for rel is logged; return it.
+
+    write returns a CompletedProcess or an exit code; a write that fails is
+    an error here, not a missing threat."""
+
+    def checked_write():
+        r = write()
+        rc = r if isinstance(r, int) else r.returncode
+        assert rc == 0, f"the write to {rel} failed ({rc}): {getattr(r, 'stderr', '')}"
+
+    found = wait_for_threats(
+        container_name, _is_write_to(rel), max_wait=_MAX_WAIT, action=checked_write
+    )
+    assert found, (
+        f"no threat for a write to {rel} within {_MAX_WAIT} s; threat events: "
+        f"{get_threat_events(container_name)}{coi_session_logs(container_name)}"
+    )
+    return found[0]
+
+
+def test_user_persistence_and_credential_writes_flagged(
+    coi_binary, workspace_dir, host_credentials, tmp_path
+):
+    """A container write to each code user file raises HIGH; coi's copy at
+    session start and a host-side `coi file push` raise nothing. Each write
+    repeats on each poll (2 s) until its threat is logged: the watcher ignores the
+    first 30 s, and a directory missing at the mark pass is marked when
+    created or by the 30 s backstop."""
+    with monitored_shell(workspace_dir, coi_binary, 7, _MONITORING_CONFIG) as (container_name, _):
+        copied = exec_as_code_user(container_name, "cat", "/home/code/.claude/.credentials.json")
+        assert "e2e-host-token" in copied.stdout, (
+            f"coi did not copy the credential file: {copied.stdout}{copied.stderr}"
+        )
+
+        bashrc = _repeat_until_flagged(
+            container_name,
+            "home/code/.bashrc",
+            lambda: exec_as_code_user(container_name, "sh", "-c", "echo '# e2e' >> ~/.bashrc"),
+        )
+
+        # The monitor is past its grace period: a host-side push now is seen.
+        pushed = tmp_path / "pushed.json"
+        pushed.write_text('{"claudeAiOauth": {"accessToken": "e2e-pushed-token"}}')
+        result = subprocess.run(
+            [coi_binary, "file", "push", str(pushed), f"{container_name}:/{_CREDENTIALS}"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, f"coi file push failed: {result.stdout}{result.stderr}"
+
+        # Renamed over. The watcher handles events in order: once this threat
+        # is logged, a threat for the push above would be logged too.
+        profile = _repeat_until_flagged(
+            container_name,
+            "home/code/.profile",
+            lambda: exec_as_code_user(
+                container_name,
+                "sh",
+                "-c",
+                "{ cat ~/.profile 2>/dev/null; echo '# e2e'; } > ~/.profile.new"
+                " && mv ~/.profile.new ~/.profile",
+            ),
+        )
+        cred_threats = [
+            e for e in get_threat_events(container_name) if _is_write_to(_CREDENTIALS)(e)
+        ]
+        assert not cred_threats, (
+            f"coi's copy or a host-side push of the credential file raised a threat: {cred_threats}"
+        )
+
+        authorized_keys = _repeat_until_flagged(
+            container_name,
+            "home/code/.ssh/authorized_keys",
+            lambda: exec_as_code_user(
+                container_name,
+                "sh",
+                "-c",
+                "mkdir -p ~/.ssh && echo 'ssh-ed25519 AAAA e2e' >> ~/.ssh/authorized_keys",
+            ),
+        )
+        crontab = _repeat_until_flagged(
+            container_name,
+            "var/spool/cron/crontabs/code",
+            lambda: _incus_exec(
+                container_name,
+                "mkdir -p /var/spool/cron/crontabs"
+                " && echo '* * * * * true' >> /var/spool/cron/crontabs/code",
+            ),
+        )
+        # As root: the push above gave the file the host user's uid, which
+        # is not the code user's on a host whose uid is not 1000.
+        credentials = _repeat_until_flagged(
+            container_name,
+            _CREDENTIALS,
+            lambda: _incus_exec(
+                container_name,
+                f"echo '{{\"claudeAiOauth\": {{}}}}' > /{_CREDENTIALS}",
+            ),
+        )
+
+        for event in (bashrc, profile, authorized_keys, crontab, credentials):
+            assert event["level"] == "high", event
+            assert event["evidence"]["sensitive_file"]["access"] == "write", event
+        assert credentials["category"] == "credential_access", credentials
+        assert bashrc["category"] == "persistence", bashrc

@@ -140,30 +140,12 @@ func (pw *ProcEventWatcher) Run(ctx context.Context) {
 	pw.patterns = loadExecPatterns(pw.gtfobinsDir)
 	pw.sigmaPatterns = loadSigmaPatterns(pw.sigmaDir)
 
-	cgroupPath, err := GetCgroupPath(ctx, pw.containerName)
+	relCgroup, err := containerRelCgroup(ctx, pw.containerName)
 	if err != nil {
 		if ctx.Err() == nil && pw.onError != nil {
-			pw.onError(fmt.Errorf("procwatcher: could not resolve cgroup: %w", err))
+			pw.onError(fmt.Errorf("procwatcher: %w", err))
 		}
 		return
-	}
-
-	const cgroupMount = "/sys/fs/cgroup"
-	relCgroup := strings.TrimPrefix(cgroupPath, cgroupMount)
-	if relCgroup == cgroupPath {
-		if pw.onError != nil {
-			pw.onError(fmt.Errorf("procwatcher: unexpected cgroup path format: %s", cgroupPath))
-		}
-		return
-	}
-	// Strip the trailing init.scope or init.service sub-cgroup so the prefix
-	// matches all container processes, not only those under the init slice.
-	// Guard against producing an empty relCgroup (would match every process).
-	if idx := strings.LastIndex(relCgroup, "/"); idx > 0 {
-		last := relCgroup[idx+1:]
-		if strings.HasSuffix(last, ".scope") || strings.HasSuffix(last, ".service") {
-			relCgroup = relCgroup[:idx]
-		}
 	}
 
 	sock, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_DGRAM, unix.NETLINK_CONNECTOR)
@@ -415,6 +397,31 @@ func (pw *ProcEventWatcher) handleUIDToRoot(pid int, relCgroup string) {
 	if pw.onThreat != nil {
 		pw.onThreat(ev)
 	}
+}
+
+// containerRelCgroup returns the cgroup subtree of every process of
+// containerName, relative to /sys/fs/cgroup.
+func containerRelCgroup(ctx context.Context, containerName string) (string, error) {
+	cgroupPath, err := GetCgroupPath(ctx, containerName)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve cgroup: %w", err)
+	}
+
+	const cgroupMount = "/sys/fs/cgroup"
+	relCgroup := strings.TrimPrefix(cgroupPath, cgroupMount)
+	if relCgroup == cgroupPath {
+		return "", fmt.Errorf("unexpected cgroup path format: %s", cgroupPath)
+	}
+	// Strip the trailing init.scope or init.service sub-cgroup so the prefix
+	// matches all container processes, not only those under the init slice.
+	// Guard against producing an empty relCgroup (would match every process).
+	if idx := strings.LastIndex(relCgroup, "/"); idx > 0 {
+		last := relCgroup[idx+1:]
+		if strings.HasSuffix(last, ".scope") || strings.HasSuffix(last, ".service") {
+			relCgroup = relCgroup[:idx]
+		}
+	}
+	return relCgroup, nil
 }
 
 // procInContainerCgroup returns true if /proc/<pid>/cgroup shows membership in

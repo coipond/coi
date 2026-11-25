@@ -85,8 +85,13 @@ func getInitPIDViaIncus(ctx context.Context, containerName string) (int, error) 
 // (lxc.payload.<name>) comes first: Incus 7.5 on cgroup2 names the payload
 // cgroup that way, and missing it sends every lookup to the incus info
 // fallback. Non-existent candidates are Stat-probed and skipped, so listing
-// extra forms is always safe.
+// extra forms is always safe. Outside the default Incus project the LXC
+// name is <project>_<name>; the bare name would find a same-named
+// container of the default project.
 func wellKnownCgroupPaths(containerName string) []string {
+	if container.IncusProject != "" && container.IncusProject != "default" {
+		containerName = container.IncusProject + "_" + containerName
+	}
 	return []string{
 		fmt.Sprintf("/sys/fs/cgroup/lxc.payload.%s", containerName),
 		fmt.Sprintf("/sys/fs/cgroup/incus.payload/%s", containerName),

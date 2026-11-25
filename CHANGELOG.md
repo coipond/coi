@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Breaking
+
+- [Breaking] **The security monitor flags writes to the code user's persistence and credential files** — with monitoring on, creating, writing or replacing (renaming over) `~/.ssh/authorized_keys`, `~/.bashrc`, `~/.profile`, the user crontab or a tool credential file coi copies in (e.g. `~/.claude/.credentials.json`) raises a HIGH threat, which pauses the session under `auto_pause_on_high`. These writes used to raise no threat. coi's own copy at session start is not flagged; reads are not flagged. A tool refreshing its token in its credential file, or an installer adding a line to `~/.bashrc`, now pauses the session: run `coi unfreeze` to continue.
+
 ### Bug Fixes
 
 - [Bug Fix] **Session save no longer hangs on special files (FIFOs, sockets) in the tool config directory** — when the fast save is unavailable, the `incus file pull` fallback opened every file in the tool config directory, so a FIFO there blocked the save, and coi, forever, and a socket failed it. In a running container the fallback now skips FIFOs, sockets and devices (they are never session data). In a stopped container, an entry the pull is stuck on for 15 seconds, or cannot open (a socket), is skipped with a warning; after 2 minutes of such waits, or more than 16 such entries that cannot be opened, the save stops and keeps what it pulled.
@@ -9,6 +13,7 @@
 - [Bug Fix] **`coi update patterns` updates existing databases** — it failed with `Not possible to fast-forward` whenever GTFOBins or Sigma had new commits or rewrote their history, so the databases never updated after the first clone. coi now moves its clones to the latest upstream commit.
 - [Bug Fix] **The security monitor no longer kills or pauses a container for a service on a port you permitted** — a connection to a common C2/backdoor port (e.g. `8080`, `1234`) was flagged even when you permitted that exact port: a `[[network.hosts]]` entry with `ports = [8080]` (or `coi hosts add ... --ports 8080`), or an `allowed_domains` entry such as `"10.0.0.5:8080"` (an HTTP proxy). The nft monitor rated it CRITICAL, so `auto_kill_on_critical` killed the container; the process monitor rated it HIGH, so `auto_pause_on_high` paused it. That host and port are now exempt from the C2-port check in both monitors. A host permitted without `ports`, another port on that host, and any other host on a C2 port are still flagged.
 - [Bug Fix] **IPv6 and boot-time egress are now dropped at the container's veth, so `restricted` and `allowlist` modes also hold on bridged networks** — IPv6 from the container is dropped to every destination, the host included, even when root inside re-enables it. Until the mode's rules are in place, a starting container can send only DHCP broadcasts. `coi clean --orphans` removes leftover drops, also those older versions left.
+- [Bug Fix] **The security monitor finds the right container in a non-default Incus project** — with `[incus] project` set, the monitor looked up the container's cgroup by its bare name. If a container of the same name ran in the `default` project (the same workspace and slot used in both), the monitor watched that container's processes and resources instead. It now uses the `<project>_<name>` cgroup Incus creates.
 
 ## 0.17.0 (2026-11-25)
 
