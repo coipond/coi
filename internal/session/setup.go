@@ -555,8 +555,14 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 	// directory the caller happens to be in would both break the
 	// testing flow and silently mount an unintended directory
 	// (e.g. $HOME) read-write into the container.
+	// From here to the start, the workspace remount and the security devices
+	// are collected and applied in one Incus update (deviceBatch) instead of a
+	// remove/add round trip per device. The stale-source removals above already
+	// ran, before the kernel-surface and limits config changes (#610).
+	batch := newDeviceBatch(result.Manager, opts.Logger)
+	secDevices.ContainerManager = batch
 	if opts.ContainerName == "" {
-		if cwp, moved, remountErr := RemountMovedWorkspace(result.Manager, opts.WorkspacePath, opts.PreserveWorkspacePath, reuseLayout, reuseUseShift, opts.Logger); remountErr != nil {
+		if cwp, moved, remountErr := RemountMovedWorkspace(batch, opts.WorkspacePath, opts.PreserveWorkspacePath, reuseLayout, reuseUseShift, opts.Logger); remountErr != nil {
 			return remountErr
 		} else if moved {
 			reuseCWP = cwp
@@ -576,6 +582,9 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 	}
 	if reuseErr != nil {
 		return reuseErr
+	}
+	if err := batch.Flush(); err != nil {
+		return err
 	}
 	// Reuse gets the same start fallbacks as a fresh launch and as
 	// run's persistent reuse (internal/cli/run.go): a persistent
