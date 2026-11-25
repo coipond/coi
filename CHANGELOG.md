@@ -5,6 +5,7 @@
 ### Bug Fixes
 
 - [Bug Fix] **Session save no longer hangs on special files (FIFOs, sockets) in the tool config directory** — when the fast save is unavailable, the `incus file pull` fallback opened every file in the tool config directory, so a FIFO there blocked the save, and coi, forever, and a socket failed it. In a running container the fallback now skips FIFOs, sockets and devices (they are never session data). In a stopped container, an entry the pull is stuck on for 15 seconds, or cannot open (a socket), is skipped with a warning; after 2 minutes of such waits, or more than 16 such entries that cannot be opened, the save stops and keeps what it pulled.
+
 ## 0.17.0 (2026-11-25)
 
 ### Features
