@@ -393,8 +393,19 @@ def _is_write_to(rel):
 
 
 def _repeat_until_flagged(container_name, rel, write):
-    """Repeat write on each poll until a threat for rel is logged; return it."""
-    found = wait_for_threats(container_name, _is_write_to(rel), max_wait=_MAX_WAIT, action=write)
+    """Repeat write on each poll until a threat for rel is logged; return it.
+
+    write returns a CompletedProcess or an exit code; a write that fails is
+    an error here, not a missing threat."""
+
+    def checked_write():
+        r = write()
+        rc = r if isinstance(r, int) else r.returncode
+        assert rc == 0, f"the write to {rel} failed ({rc}): {getattr(r, 'stderr', '')}"
+
+    found = wait_for_threats(
+        container_name, _is_write_to(rel), max_wait=_MAX_WAIT, action=checked_write
+    )
     assert found, (
         f"no threat for a write to {rel} within {_MAX_WAIT} s; threat events: "
         f"{get_threat_events(container_name)}{coi_session_logs(container_name)}"
@@ -472,14 +483,14 @@ def test_user_persistence_and_credential_writes_flagged(
                 " && echo '* * * * * true' >> /var/spool/cron/crontabs/code",
             ),
         )
+        # As root: the push above gave the file the host user's uid, which
+        # is not the code user's on a host whose uid is not 1000.
         credentials = _repeat_until_flagged(
             container_name,
             _CREDENTIALS,
-            lambda: exec_as_code_user(
+            lambda: _incus_exec(
                 container_name,
-                "sh",
-                "-c",
-                "echo '{\"claudeAiOauth\": {}}' > ~/.claude/.credentials.json",
+                f"echo '{{\"claudeAiOauth\": {{}}}}' > /{_CREDENTIALS}",
             ),
         )
 
