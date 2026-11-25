@@ -39,6 +39,8 @@ from support.helpers import (
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
+    wait_for_text_in_monitor,
+    with_live_screen,
     write_trusted_coi_config,
 )
 
@@ -74,23 +76,41 @@ TOOLS = {
 }
 
 
+def _wait_for_bash(child, timeout=30):
+    """Poll until the pane's bash runs a command: the echoed input holds
+    "4100+23", only bash prints 4123. Return whether it did in time."""
+    deadline = time.monotonic() + timeout
+    with with_live_screen(child) as monitor:
+        while time.monotonic() < deadline:
+            child.send("echo $((4100+23))")
+            time.sleep(0.3)
+            child.send("\x0d")
+            if wait_for_text_in_monitor(monitor, "4123", timeout=3):
+                return True
+    return False
+
+
 def _leave(child, stop):
     """Exit the tool, then exit bash (container keeps running) or power off."""
     child.send("exit")
     time.sleep(0.3)
     child.send("\x0d")
-    time.sleep(3)
+    if not _wait_for_bash(child):
+        child.close(force=True)
+        raise AssertionError("the tool did not exit to bash")
     child.send("sudo poweroff" if stop == "poweroff" else "exit")
     time.sleep(0.3)
     child.send("\x0d")
     try:
         child.expect(EOF, timeout=60)
+        exited = True
     except TIMEOUT:
-        pass
+        exited = False
     try:
         child.close(force=False)
     except Exception:
         child.close(force=True)
+    assert exited, f"coi shell did not exit after {stop}"
 
 
 def _has_old(coi_binary, container, path):
@@ -192,7 +212,6 @@ def test_fresh_tool_memory_persistent(
             f"--resume must not revert {spec['setup']} to the saved copy: {setup_after_resume!r}"
         )
     finally:
-        time.sleep(2)
         subprocess.run(
             [coi_binary, "container", "delete", container, "--force"],
             capture_output=True,

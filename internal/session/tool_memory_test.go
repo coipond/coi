@@ -275,3 +275,44 @@ func TestPhaseResumeRestore_FreshClearsBeforeRestore(t *testing.T) {
 		t.Errorf("want the memory removed, then the saved projects/ pushed; calls: %q", m.log)
 	}
 }
+
+func TestPhaseSetupCLIConfig_FreshClearsOnNewSession(t *testing.T) {
+	cases := []struct {
+		name     string
+		fresh    bool
+		resumeID string
+		wantRm   bool
+	}{
+		{"fresh new session", true, "", true},
+		{"fresh resume (restored in phaseResumeRestore)", true, "s1", false},
+		{"keep", false, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := &memoryManager{}
+			st := &setupState{
+				skipLaunch: true,
+				restarted:  true,
+				result:     &SetupResult{ContainerName: "coi-abc-1", Manager: m, HomeDir: "/home/code"},
+			}
+			st.opts.FreshToolMemory = c.fresh
+			st.opts.Persistent = true
+			st.opts.Tool = mustTool(t, "claude")
+			st.opts.ResumeFromID = c.resumeID
+			st.opts.Logger = func(string) {}
+
+			if _, err := st.phaseSetupCLIConfig(t.Context()); err != nil {
+				t.Fatalf("phaseSetupCLIConfig: %v", err)
+			}
+			rm := false
+			for _, e := range m.execs {
+				if strings.HasPrefix(e, "rm -rf -- ") && strings.Contains(e, "/home/code/.claude/projects") {
+					rm = true
+				}
+			}
+			if rm != c.wantRm {
+				t.Errorf("memory removed = %v, want %v; execs: %q", rm, c.wantRm, m.execs)
+			}
+		})
+	}
+}
