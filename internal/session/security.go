@@ -20,6 +20,10 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 // errSymlinkedPath refuses a protected path that is, or lies below, a symlink.
 var errSymlinkedPath = errors.New("refusing to mount through a symlink")
 
+// ErrProtectFailed reports existing protected paths that could not be mounted
+// read-only. The session must not start without them.
+var ErrProtectFailed = errors.New("cannot protect protected paths")
+
 // SetupSecurityMounts mounts protected paths as read-only for security.
 // This prevents containers from modifying files that could execute automatically
 // on the host (git hooks, IDE configs, etc.).
@@ -45,10 +49,13 @@ var errSymlinkedPath = errors.New("refusing to mount through a symlink")
 // The dirs between the workspace root and each protected path are pinned
 // (parentPinMounts), except at or below a sec.SecretPaths mask.
 //
-// Returns the effective (expanded) protected-path list, so the caller can drive
-// its logging and host-immutable passes over the same set that was mounted, and an
-// error if a mount failed. The list is returned even on error so a partial failure
-// still applies the immutable attribute to the full set.
+// Every path is tried even after one fails. Returns the effective (expanded)
+// protected-path list, so the caller can drive its logging and host-immutable
+// passes over the same set that was mounted, and an error. An error wrapping
+// ErrProtectFailed names each existing path that could not be mounted and its
+// cause: the caller must abort the session start. Any other error carries
+// warnings (refused paths, unpinned parent dirs); the list is returned with it
+// so the immutable attribute still covers the full set.
 func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) ([]string, error) {
 	dirs := realDirs{}
 	protectedPaths = expandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec, dirs)
@@ -57,7 +64,7 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 		return protectedPaths, nil
 	}
 
-	var warnings, prepared []string
+	var warnings, failed, prepared []string
 	var batch []container.DiskMount
 	for _, relPath := range protectedPaths {
 		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift, dirs)
@@ -78,10 +85,10 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 			// a file-type default whose parent directory is missing, or a
 			// user-added path that does not exist in the workspace) surface
 			// as os.ErrNotExist and are skipped silently. Any other failure
-			// (validation / stat / mount errors) is propagated and surfaces
-			// as a warning at the caller in setup.go.
+			// (validation / stat / mount errors) fails the setup once every
+			// later path was tried.
 			if !errors.Is(err, os.ErrNotExist) {
-				return protectedPaths, fmt.Errorf("failed to protect %s: %w", relPath, err)
+				failed = append(failed, fmt.Sprintf("%s: %v", relPath, err))
 			}
 		}
 	}
@@ -95,7 +102,10 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 	pins := parentPinMounts(workspacePath, containerWorkspacePath, prepared, masked, useShift)
 	pinWarnings, err := mountNestedAndPins(mgr, batch, pins)
 	if err != nil {
-		return protectedPaths, fmt.Errorf("failed to protect nested git paths: %w", err)
+		failed = append(failed, err.Error())
+	}
+	if len(failed) > 0 {
+		return protectedPaths, fmt.Errorf("%w: %s", ErrProtectFailed, strings.Join(failed, "; "))
 	}
 	warnings = append(warnings, pinWarnings...)
 
@@ -187,10 +197,11 @@ func StripSecurityDevices(mgr securityDeviceStripper, logger func(string)) {
 //
 // Returns the effective (expanded) protected-path list — which the caller adopts
 // as canonical for downstream logging/context — and whether the host-immutable
-// attribute was applied. The error is non-nil only for a FAIL-CLOSED secret-mask
-// failure (a configured secret could not be masked); the caller must abort start
-// rather than launch with the secret exposed. Read-only protected-mount failures
-// are logged and non-fatal, matching prior behavior.
+// attribute was applied. The error is non-nil only for a FAIL-CLOSED failure: an
+// existing protected path could not be mounted read-only (ErrProtectFailed), or
+// a configured secret could not be masked. The caller must abort start rather
+// than launch with the path writable or the secret exposed. Refused protected
+// paths and unpinned parent dirs are logged and non-fatal.
 func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, containerWorkspacePath string, useShift bool, worktreeLayout *GitWorktreeLayout, worktreeWritableHooks bool, containerName string, nestedScan NestedGitScan) (effectivePaths []string, hasImmutable bool, err error) {
 	securityPaths := opts.Security.ProtectedPaths
 	if worktreeLayout != nil {
@@ -200,9 +211,11 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 		securityPaths = StripGitProtectedPaths(securityPaths)
 	}
 	effectivePaths, mErr := SetupSecurityMounts(mgr, opts.WorkspacePath, containerWorkspacePath, securityPaths, useShift, opts.Security.Config, nestedScan, worktreeWritableHooks)
+	if errors.Is(mErr, ErrProtectFailed) {
+		return effectivePaths, false, mErr
+	}
 	if mErr != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to setup security mounts: %v", mErr))
-		// Non-fatal: continue even if a read-only protection mount fails.
 	} else if len(effectivePaths) > 0 {
 		if actual := GetProtectedPathsForLogging(opts.WorkspacePath, effectivePaths); len(actual) > 0 {
 			opts.Logger(fmt.Sprintf("Protected paths (mounted read-only): %s", strings.Join(actual, ", ")))
@@ -312,34 +325,38 @@ func pinDeviceName(containerPath string) string {
 // A pin can share its path with a device added elsewhere (a user mount), so
 // a failed pin is a warning and never costs the nested git entries or the
 // other pins. A batch is retried as separate PATCHes, which merge the devices
-// map, so re-sending a device that an earlier chunk added is a no-op.
+// map, so re-sending a device that an earlier chunk added is a no-op. When
+// the nested entries fail as a batch, each is tried alone, so the error names
+// every entry that failed and no other entry is skipped.
 func mountNestedAndPins(mgr container.ContainerDevices, nested, pins []container.DiskMount) (pinWarnings []string, err error) {
 	bm, ok := mgr.(diskBatchMounter)
-	if !ok {
-		for _, d := range nested {
-			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
-				return nil, err
-			}
+	mount := func(d container.DiskMount) error {
+		if ok {
+			return bm.MountDisks([]container.DiskMount{d})
 		}
-		for _, d := range pins {
-			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
-				pinWarnings = append(pinWarnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
-			}
+		return mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly)
+	}
+	if ok {
+		if len(nested)+len(pins) == 0 || bm.MountDisks(append(nested, pins...)) == nil {
+			return nil, nil
 		}
-		return pinWarnings, nil
+		if len(nested) > 0 && bm.MountDisks(nested) == nil {
+			nested = nil
+		}
 	}
-	if len(nested)+len(pins) == 0 || bm.MountDisks(append(nested, pins...)) == nil {
-		return nil, nil
-	}
-	if len(nested) > 0 {
-		if err := bm.MountDisks(nested); err != nil {
-			return nil, err
+	var failed []string
+	for _, d := range nested {
+		if err := mount(d); err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", d.Path, err))
 		}
 	}
 	for _, d := range pins {
-		if err := bm.MountDisks([]container.DiskMount{d}); err != nil {
+		if err := mount(d); err != nil {
 			pinWarnings = append(pinWarnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
 		}
+	}
+	if len(failed) > 0 {
+		return pinWarnings, errors.New(strings.Join(failed, "; "))
 	}
 	return pinWarnings, nil
 }

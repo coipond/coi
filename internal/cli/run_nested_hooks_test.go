@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,6 +29,43 @@ func (m *mountRecorder) MountDisks(mounts []container.DiskMount) error {
 		m.paths = append(m.paths, d.Path)
 	}
 	return nil
+}
+
+// failingMountRecorder is a mountRecorder that refuses mounts at fail.
+type failingMountRecorder struct {
+	mountRecorder
+	fail string
+}
+
+func (m *failingMountRecorder) MountDisk(name, source, path string, shift, readonly bool) error {
+	if path == m.fail {
+		return errors.New("Failed to add device")
+	}
+	return m.mountRecorder.MountDisk(name, source, path, shift, readonly)
+}
+
+// coi run aborts when a protected path cannot be mounted read-only, after
+// trying the later paths.
+func TestApplySecurityMounts_MountFailureAborts(t *testing.T) {
+	ws := t.TempDir()
+	for _, d := range []string{filepath.Join(ws, ".git", "hooks"), filepath.Join(ws, ".vscode")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.GetDefaultConfig()
+	off := false
+	cfg.Security.HostImmutable = &off
+	cfg.Security.ProtectedPaths = []string{".git/hooks", ".vscode"}
+	mgr := &failingMountRecorder{fail: "/workspace/.git/hooks"}
+
+	err := (&App{cfg: cfg}).applySecurityMounts(mgr, ws, "/workspace", "c1", false, nil, session.NestedGitScan{})
+	if !errors.Is(err, session.ErrProtectFailed) || !strings.Contains(err.Error(), ".git/hooks") {
+		t.Fatalf("want ErrProtectFailed naming .git/hooks, got %v", err)
+	}
+	if !slices.Contains(mgr.paths, "/workspace/.vscode") {
+		t.Errorf(".vscode skipped after the .git/hooks failure, mounted %v", mgr.paths)
+	}
 }
 
 // [git] writable_hooks reaches the nested git expansion: a submodule's hooks

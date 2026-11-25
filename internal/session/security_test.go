@@ -1171,3 +1171,133 @@ func TestSetupSecurityMounts_ExpandsWorktreeConfigsAtChokepoint(t *testing.T) {
 		t.Errorf("disable_protection must mount nothing at the chokepoint, got paths=%v mounts=%+v", eff2, rec2.mounts)
 	}
 }
+
+// failingDevices fails, like a refused Incus device, any mount at a path in
+// fail and records the others.
+type failingDevices struct {
+	container.ContainerManager
+	fail     map[string]bool
+	attempts []string
+	mounted  []string
+}
+
+func (d *failingDevices) MountDisk(_, _, path string, _, _ bool) error {
+	d.attempts = append(d.attempts, path)
+	if d.fail[path] {
+		return errors.New("Failed to add device")
+	}
+	d.mounted = append(d.mounted, path)
+	return nil
+}
+
+// failingBatchDevices is failingDevices with the MountDisks batch method.
+type failingBatchDevices struct {
+	failingDevices
+}
+
+func (d *failingBatchDevices) MountDisks(mounts []container.DiskMount) error {
+	for _, m := range mounts {
+		if d.fail[m.Path] {
+			d.attempts = append(d.attempts, m.Path)
+			return errors.New("Failed to add device")
+		}
+	}
+	for _, m := range mounts {
+		d.attempts = append(d.attempts, m.Path)
+		d.mounted = append(d.mounted, m.Path)
+	}
+	return nil
+}
+
+// newFailingDevices returns devices failing every path in fail, with the
+// MountDisks batch method when batch is set, and their record.
+func newFailingDevices(batch bool, fail ...string) (container.ContainerDevices, *failingDevices) {
+	f := &failingDevices{fail: map[string]bool{}}
+	for _, p := range fail {
+		f.fail[p] = true
+	}
+	if !batch {
+		return f, f
+	}
+	bd := &failingBatchDevices{failingDevices: *f}
+	return bd, &bd.failingDevices
+}
+
+// A protected path that cannot be mounted fails the setup with an error
+// naming it, after every later path, the nested git entries and the parent
+// pins were tried: one failure skips nothing.
+func TestSetupSecurityMounts_MountFailureTriesEveryPath(t *testing.T) {
+	tmp := t.TempDir()
+	mkGitDir(t, tmp, ".git")
+	mkGitDir(t, tmp, ".git/modules/lib")
+	if err := os.MkdirAll(filepath.Join(tmp, ".vscode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	later := []string{"/workspace/.git/config", "/workspace/.vscode", "/workspace/.git/modules/lib/hooks", "/workspace/.git/modules/lib/config", "/workspace/.git/modules"}
+
+	for _, batch := range []bool{true, false} {
+		dev, f := newFailingDevices(batch, "/workspace/.git/hooks")
+		_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", ".git/config", ".vscode"}, false, nil, NestedGitScan{}, false)
+		if want := ".git/hooks: Failed to add device"; !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), want) {
+			t.Errorf("batch=%v: want ErrProtectFailed naming %q, got %v", batch, want, err)
+		}
+		for _, p := range later {
+			if !slices.Contains(f.mounted, p) {
+				t.Errorf("batch=%v: %s skipped after the .git/hooks failure, mounted %v", batch, p, f.mounted)
+			}
+		}
+	}
+}
+
+// A nested git entry that cannot be mounted fails the setup with an error
+// naming it; the other nested entries and the parent pins are still mounted.
+func TestSetupSecurityMounts_NestedMountFailureNamesEntry(t *testing.T) {
+	tmp := t.TempDir()
+	mkGitDir(t, tmp, ".git")
+	mkGitDir(t, tmp, ".git/modules/lib")
+	bad := "/workspace/.git/modules/lib/config"
+
+	for _, batch := range []bool{true, false} {
+		dev, f := newFailingDevices(batch, bad)
+		_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks"}, false, nil, NestedGitScan{}, false)
+		if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), bad+": Failed to add device") {
+			t.Errorf("batch=%v: want ErrProtectFailed naming %s, got %v", batch, bad, err)
+		}
+		for _, p := range []string{"/workspace/.git/hooks", "/workspace/.git/modules/lib/hooks", "/workspace/.git/modules/lib/commondir", "/workspace/.git/modules", "/workspace/.git/modules/lib/info"} {
+			if !slices.Contains(f.mounted, p) {
+				t.Errorf("batch=%v: %s skipped after the %s failure, mounted %v", batch, p, bad, f.mounted)
+			}
+		}
+	}
+}
+
+// A missing protected path is still skipped silently: nothing to protect.
+func TestSetupSecurityMounts_MissingPathIsNotAFailure(t *testing.T) {
+	tmp := t.TempDir()
+	dev, f := newFailingDevices(true)
+	if _, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", "missing/dir"}, false, nil, NestedGitScan{}, false); err != nil {
+		t.Fatalf("want no error for missing paths, got %v", err)
+	}
+	if len(f.attempts) != 0 {
+		t.Errorf("want no mounts, got %v", f.attempts)
+	}
+}
+
+// A protected path that cannot be mounted aborts the session start: the
+// error reaches the caller instead of a warning.
+func TestApplySessionSecurity_MountFailureAbortsStart(t *testing.T) {
+	ws := t.TempDir()
+	mkGitDir(t, ws, ".git")
+	var logged []string
+	opts := SetupOptions{WorkspacePath: ws, Logger: func(s string) { logged = append(logged, s) }}
+	opts.Security.ProtectedPaths = []string{".git/hooks", ".git/config"}
+	dev, f := newFailingDevices(true, "/workspace/.git/hooks")
+
+	_, _, err := applySessionSecurity(dev.(container.ContainerManager), opts, "/workspace", false, nil, false, "c1", NestedGitScan{})
+	if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), ".git/hooks") {
+		t.Fatalf("want ErrProtectFailed naming .git/hooks, got %v (logged %q)", err, logged)
+	}
+	if !slices.Contains(f.mounted, "/workspace/.git/config") {
+		t.Errorf(".git/config skipped after the .git/hooks failure, mounted %v", f.mounted)
+	}
+}
