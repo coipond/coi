@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -110,7 +111,31 @@ func wellKnownCgroupPaths(containerName string) []string {
 // init.scope, so walking the full tree (rather than reading only the root
 // cgroup.procs) is necessary.
 func initPIDFromCgroupProcs(cgroupPath string) (int, error) {
-	var minPID int
+	pids, err := cgroupPIDs(cgroupPath)
+	if err != nil {
+		return 0, err
+	}
+	if len(pids) == 0 {
+		return 0, fmt.Errorf("no PIDs found in cgroup %s", cgroupPath)
+	}
+	return slices.Min(pids), nil
+}
+
+// containerPIDs returns the host PIDs in the container's cgroup tree, found
+// through the well-known cgroup paths only (no incus subprocess per poll), or
+// nil.
+func containerPIDs(containerName string) []int {
+	for _, cgroupPath := range wellKnownCgroupPaths(containerName) {
+		if pids, err := cgroupPIDs(cgroupPath); err == nil && len(pids) > 0 {
+			return pids
+		}
+	}
+	return nil
+}
+
+// cgroupPIDs returns the PIDs in every cgroup.procs file under cgroupPath.
+func cgroupPIDs(cgroupPath string) ([]int, error) {
+	var pids []int
 	err := filepath.WalkDir(cgroupPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Name() != "cgroup.procs" {
 			return nil
@@ -124,19 +149,11 @@ func initPIDFromCgroupProcs(cgroupPath string) (int, error) {
 			if err != nil || pid <= 0 {
 				continue
 			}
-			if minPID == 0 || pid < minPID {
-				minPID = pid
-			}
+			pids = append(pids, pid)
 		}
 		return nil
 	})
-	if err != nil {
-		return 0, err
-	}
-	if minPID == 0 {
-		return 0, fmt.Errorf("no PIDs found in cgroup %s", cgroupPath)
-	}
-	return minPID, nil
+	return pids, err
 }
 
 // parseInitPIDFromIncusInfo extracts the container init PID from `incus info`

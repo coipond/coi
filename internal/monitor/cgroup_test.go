@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -225,5 +226,27 @@ func TestGetInitPIDViaIncusTimesOut(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("incus info fallback took %v, want it bounded by the timeout", elapsed)
+	}
+}
+
+func TestCgroupPIDs_WalksNestedCgroups(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "system.slice", "docker-abc.scope")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cgroup.procs"), []byte("100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "cgroup.procs"), []byte("300\n301\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pids, err := cgroupPIDs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	slices.Sort(pids)
+	if !slices.Equal(pids, []int{100, 300, 301}) {
+		t.Errorf("got %v, want [100 300 301]", pids)
 	}
 }
