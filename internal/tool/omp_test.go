@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -66,7 +67,7 @@ func TestOmpTool_EssentialConfigFiles(t *testing.T) {
 		t.Fatal("OmpTool does not implement ToolWithConfigDirFiles")
 	}
 	files := tcf.EssentialConfigFiles()
-	expected := []string{"settings.json", "models.json", "auth.json", "AGENTS.md"}
+	expected := []string{"agent/config.yml", "agent/models.yml", "agent/agent.db", "agent/agent.db-wal", "agent/AGENTS.md"}
 	if len(files) != len(expected) {
 		t.Fatalf("EssentialConfigFiles() = %v, want %v", files, expected)
 	}
@@ -77,14 +78,24 @@ func TestOmpTool_EssentialConfigFiles(t *testing.T) {
 	}
 }
 
+func TestOmpTool_SQLiteWALFiles(t *testing.T) {
+	sw, ok := NewOmp().(ToolWithSQLiteWALFiles)
+	if !ok {
+		t.Fatal("OmpTool does not implement ToolWithSQLiteWALFiles")
+	}
+	if got, want := sw.SQLiteWALFiles(), []string{"agent/agent.db"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SQLiteWALFiles() = %v, want %v", got, want)
+	}
+}
+
 func TestOmpTool_SandboxSettingsFileName(t *testing.T) {
 	omp := NewOmp()
 	tcf, ok := omp.(ToolWithConfigDirFiles)
 	if !ok {
 		t.Fatal("OmpTool does not implement ToolWithConfigDirFiles")
 	}
-	if tcf.SandboxSettingsFileName() != "settings.json" {
-		t.Errorf("SandboxSettingsFileName() = %q, want %q", tcf.SandboxSettingsFileName(), "settings.json")
+	if tcf.SandboxSettingsFileName() != "" {
+		t.Errorf("SandboxSettingsFileName() = %q, want empty", tcf.SandboxSettingsFileName())
 	}
 }
 
@@ -111,17 +122,23 @@ func TestOmpTool_RegistryLookup(t *testing.T) {
 
 func TestOmpTool_PreLaunch_WithContext(t *testing.T) {
 	omp := &OmpTool{contextFilePath: "/home/code/SANDBOX_CONTEXT.md"}
-	cmds := omp.PreLaunch()
-	if len(cmds) != 2 {
-		t.Fatalf("PreLaunch() returned %d commands, want 2", len(cmds))
+	want := [][]string{
+		{"mkdir", "-p", "/home/code/.omp/agent"},
+		{"ln", "-sf", "/home/code/SANDBOX_CONTEXT.md", "/home/code/.omp/agent/APPEND_SYSTEM.md"},
 	}
-	expectedMkdir := []string{"mkdir", "-p", "/home/code/.omp"}
-	if len(cmds[0]) != len(expectedMkdir) {
-		t.Fatalf("PreLaunch()[0] = %v, want %v", cmds[0], expectedMkdir)
+	if cmds := omp.PreLaunch(); !reflect.DeepEqual(cmds, want) {
+		t.Errorf("PreLaunch() = %v, want %v", cmds, want)
 	}
-	expectedLn := []string{"ln", "-sf", "/home/code/SANDBOX_CONTEXT.md", "/home/code/.omp/APPEND_SYSTEM.md"}
-	if len(cmds[1]) != len(expectedLn) {
-		t.Fatalf("PreLaunch()[1] = %v, want %v", cmds[1], expectedLn)
+}
+
+func TestOmpTool_GetContainerEnv(t *testing.T) {
+	omp := &OmpTool{}
+	want := map[string]string{
+		"PI_CODING_AGENT_SESSION_DIR": "/home/user/project/.omp-sessions",
+		"OMP_SESSION_DIR":             "/home/user/project/.omp-sessions",
+	}
+	if env := omp.GetContainerEnv("/home/user/project"); !reflect.DeepEqual(env, want) {
+		t.Errorf("GetContainerEnv() = %v, want %v", env, want)
 	}
 }
 

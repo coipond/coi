@@ -157,15 +157,36 @@ func TestOmpBundle_MatchesHardcodedValues(t *testing.T) {
 	if b.ConfigDir != ".omp" {
 		t.Errorf("ConfigDir = %q, want %q", b.ConfigDir, ".omp")
 	}
-	want := []string{"settings.json", "models.json", "auth.json", "AGENTS.md"}
+	want := []string{"agent/config.yml", "agent/models.yml", "agent/agent.db", "agent/agent.db-wal", "agent/AGENTS.md"}
 	if !reflect.DeepEqual(b.Files, want) {
 		t.Errorf("Files = %v, want %v", b.Files, want)
 	}
-	if b.SandboxSettingsFile != "settings.json" {
-		t.Errorf("SandboxSettingsFile = %q, want %q", b.SandboxSettingsFile, "settings.json")
+	if b.SandboxSettingsFile != "" {
+		t.Errorf("SandboxSettingsFile = %q, want empty", b.SandboxSettingsFile)
 	}
 	if !b.AlwaysSetup {
 		t.Error("AlwaysSetup = false, want true")
+	}
+	if want := []string{"agent/agent.db"}; !reflect.DeepEqual(b.SQLiteWALFiles, want) {
+		t.Errorf("SQLiteWALFiles = %v, want %v", b.SQLiteWALFiles, want)
+	}
+}
+
+// TestSQLiteWALFiles_ListedWithWALInFiles verifies that every sqlite_wal_files
+// entry is copied together with its -wal: a DB copied without its WAL lacks the
+// writes not yet checkpointed.
+func TestSQLiteWALFiles_ListedWithWALInFiles(t *testing.T) {
+	for _, name := range Names() {
+		b, _ := Lookup(name)
+		files := map[string]bool{}
+		for _, f := range b.Files {
+			files[f] = true
+		}
+		for _, db := range b.SQLiteWALFiles {
+			if !files[db] || !files[db+"-wal"] {
+				t.Errorf("%s: sqlite_wal_files entry %q needs %q and %q in files %v", name, db, db, db+"-wal", b.Files)
+			}
+		}
 	}
 }
 
@@ -227,7 +248,6 @@ func TestCredentialPaths(t *testing.T) {
 		".config/goose/secrets.yaml",
 		".config/goose/xai_oauth/tokens.json",
 		".ollama/id_ed25519",
-		".omp/auth.json",
 		".pi/agent/auth.json",
 	}
 	if got := CredentialPaths(); !reflect.DeepEqual(got, want) {
