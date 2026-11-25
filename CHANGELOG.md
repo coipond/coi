@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+- [Bug Fix] **`coi update patterns` updates existing databases** — it failed with `Not possible to fast-forward` whenever GTFOBins or Sigma had new commits or rewrote their history, so the databases never updated after the first clone. coi now moves its clones to the latest upstream commit.
 - [Bug Fix] **The security monitor no longer kills or pauses a container for a service on a port you permitted** — a connection to a common C2/backdoor port (e.g. `8080`, `1234`) was flagged even when you permitted that exact port: a `[[network.hosts]]` entry with `ports = [8080]` (or `coi hosts add ... --ports 8080`), or an `allowed_domains` entry such as `"10.0.0.5:8080"` (an HTTP proxy). The nft monitor rated it CRITICAL, so `auto_kill_on_critical` killed the container; the process monitor rated it HIGH, so `auto_pause_on_high` paused it. That host and port are now exempt from the C2-port check in both monitors. A host permitted without `ports`, another port on that host, and any other host on a C2 port are still flagged.
 - [Bug Fix] **IPv6 and boot-time egress are now dropped at the container's veth, so `restricted` and `allowlist` modes also hold on bridged networks** — IPv6 from the container is dropped to every destination, the host included, even when root inside re-enables it. Until the mode's rules are in place, a starting container can send only DHCP broadcasts. `coi clean --orphans` removes leftover drops, also those older versions left.
 
