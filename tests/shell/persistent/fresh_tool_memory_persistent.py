@@ -39,6 +39,7 @@ from support.helpers import (
     leave_session,
     spawn_coi,
     wait_for_container_ready,
+    wait_for_container_stopped,
     wait_for_prompt,
     write_trusted_coi_config,
 )
@@ -75,12 +76,19 @@ TOOLS = {
 }
 
 
-def _leave(child, stop):
-    """Exit the tool, then exit bash (container keeps running) or power off."""
+def _leave(coi_binary, container, child, stop):
+    """Exit the tool, then exit bash (container keeps running) or power off.
+
+    After a poweroff, wait until the container is stopped: coi can exit
+    while it still shuts down, and the next session would reuse it as
+    running and see it stop during setup."""
     if not exit_tool_to_bash(child):
         child.close(force=True)
         raise AssertionError("the tool did not exit to bash")
     leave_session(child, "sudo poweroff" if stop == "poweroff" else "exit", require_exit=True)
+    if stop == "poweroff":
+        stopped, last = wait_for_container_stopped(coi_binary, container)
+        assert stopped, f"{container} still running after poweroff: {last.stdout}{last.stderr}"
 
 
 def _has_old(coi_binary, container, path):
@@ -138,7 +146,7 @@ def test_fresh_tool_memory_persistent(
         )
         rc, out = exec_in(coi_binary, container, plant, user=1000)
         assert rc == 0, f"planting files failed: {out}"
-        _leave(child, "poweroff")
+        _leave(coi_binary, container, child, "poweroff")
 
         sessions = _wait_for_saved_sessions(sessions_dir, config_dir, 1)
         assert len(sessions) == 1, f"expected one saved session, got: {sessions}"
@@ -157,7 +165,7 @@ def test_fresh_tool_memory_persistent(
             user=1000,
         )
         assert rc == 0, f"changing the config file failed: {out}"
-        _leave(child, stop)
+        _leave(coi_binary, container, child, stop)
         saved = _wait_for_saved_sessions(sessions_dir, config_dir, 2)
         assert len(saved) == 2, f"expected the second session saved, got: {saved}"
 
@@ -170,7 +178,7 @@ def test_fresh_tool_memory_persistent(
         memory_missing = [p for p in spec["memory"] if not _has_old(coi_binary, container, p)]
         _, setup_after_resume = container_cat(coi_binary, container, spec["setup"], user=1000)
         later_after_resume = container_path_exists(coi_binary, container, spec["later"])
-        _leave(child, "poweroff")
+        _leave(coi_binary, container, child, "poweroff")
 
         assert not memory_missing, (
             f"--resume {first_session} should restore its memory: missing {memory_missing}"
