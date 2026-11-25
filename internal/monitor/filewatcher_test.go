@@ -71,17 +71,23 @@ func TestSensitiveFilesThreatLevels(t *testing.T) {
 // carry an fd: fanotify_mark refuses any other event with EINVAL in a group
 // without FAN_REPORT_FID, so the file would never be watched.
 func TestMarkMaskOnlyFdEvents(t *testing.T) {
-	for i := range sensitiveFiles {
-		sf := &sensitiveFiles[i]
-		mask := sf.markMask()
-		if extra := mask &^ (unix.FAN_OPEN | unix.FAN_CLOSE_WRITE); extra != 0 {
-			t.Errorf("%q mark mask has events without an fd: %#x", sf.rel, extra)
-		}
-		if sf.openLevel != "" && mask&unix.FAN_OPEN == 0 {
-			t.Errorf("%q has openLevel but no FAN_OPEN", sf.rel)
-		}
-		if sf.writeLevel != "" && mask&unix.FAN_CLOSE_WRITE == 0 {
-			t.Errorf("%q has writeLevel but no FAN_CLOSE_WRITE", sf.rel)
+	for _, perm := range []bool{false, true} {
+		for i := range sensitiveFiles {
+			sf := &sensitiveFiles[i]
+			mask := sf.markMask(perm)
+			if extra := mask &^ (unix.FAN_OPEN | unix.FAN_OPEN_PERM | unix.FAN_CLOSE_WRITE); extra != 0 {
+				t.Errorf("%q mark mask has events without an fd: %#x", sf.rel, extra)
+			}
+			open := uint64(unix.FAN_OPEN)
+			if perm && sf.authRead {
+				open = unix.FAN_OPEN_PERM
+			}
+			if sf.openLevel != "" && mask&(unix.FAN_OPEN|unix.FAN_OPEN_PERM) != open {
+				t.Errorf("%q (perm %v) open mask %#x, want %#x", sf.rel, perm, mask&(unix.FAN_OPEN|unix.FAN_OPEN_PERM), open)
+			}
+			if sf.writeLevel != "" && mask&unix.FAN_CLOSE_WRITE == 0 {
+				t.Errorf("%q has writeLevel but no FAN_CLOSE_WRITE", sf.rel)
+			}
 		}
 	}
 }
@@ -323,10 +329,42 @@ func TestHandleIgnoresAuthHelperReads(t *testing.T) {
 		{10, "etc/shadow", unix.FAN_CLOSE_WRITE, true},
 	} {
 		got = nil
-		w.handle(inodeEntry{file: files[tc.rel]}, tc.mask, tc.pid)
+		w.handle(inodeEntry{file: files[tc.rel]}, rawFanEvent{mask: tc.mask, pid: tc.pid})
 		if (len(got) > 0) != tc.want {
 			t.Errorf("pid %d (%q) %s mask %#x: threats %v, want threat %v",
 				tc.pid, procs[tc.pid].cmdline, tc.rel, tc.mask, got, tc.want)
+		}
+	}
+}
+
+// TestHandlePermEventUsesEarlyCheck checks a FAN_OPEN_PERM read of
+// /etc/shadow is judged by the check made while the opener waited, not by a
+// late /proc lookup: sudo has exited by then (pid 30 has no /proc entry).
+func TestHandlePermEventUsesEarlyCheck(t *testing.T) {
+	old := procPidPattern
+	procPidPattern = t.TempDir() + "/%d"
+	t.Cleanup(func() { procPidPattern = old })
+	var shadow *monitoredFile
+	for i := range sensitiveFiles {
+		if sensitiveFiles[i].rel == "etc/shadow" {
+			shadow = &sensitiveFiles[i]
+		}
+	}
+
+	var got []ThreatEvent
+	w := NewFileWatcher("test-container", func(e ThreatEvent) { got = append(got, e) }, nil)
+	for _, tc := range []struct {
+		ev   rawFanEvent
+		want bool
+	}{
+		{rawFanEvent{mask: unix.FAN_OPEN_PERM, pid: 30, authHelper: true}, false},
+		{rawFanEvent{mask: unix.FAN_OPEN_PERM, pid: 30}, true},
+		{rawFanEvent{mask: unix.FAN_OPEN, pid: 30}, true},
+	} {
+		got = nil
+		w.handle(inodeEntry{file: shadow}, tc.ev)
+		if (len(got) > 0) != tc.want {
+			t.Errorf("%+v: threats %v, want threat %v", tc.ev, got, tc.want)
 		}
 	}
 }

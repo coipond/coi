@@ -134,6 +134,9 @@ type rawFanEvent struct {
 	mask uint64
 	fd   int
 	pid  int
+	// authHelper is isAuthHelper(pid) for a FAN_OPEN_PERM event, checked
+	// while the opener still waits in open() for the reply.
+	authHelper bool
 }
 
 // FileWatcher monitors sensitive files inside a container via fanotify.
@@ -148,6 +151,7 @@ type FileWatcher struct {
 	containerName string
 	onThreat      func(ThreatEvent)
 	onError       func(error)
+	permEvents    bool // the group takes FAN_OPEN_PERM (FAN_CLASS_CONTENT)
 }
 
 // NewFileWatcher creates a new FileWatcher for containerName.
@@ -164,7 +168,14 @@ func NewFileWatcher(containerName string, onThreat func(ThreatEvent), onError fu
 // init limit reached) the method logs once via onError and returns immediately
 // so the rest of the security monitor continues unaffected.
 func (w *FileWatcher) Run(ctx context.Context) {
-	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK, unix.O_RDONLY|unix.O_LARGEFILE)
+	// A FAN_CLASS_CONTENT group takes permission events, which hold the
+	// opener of an authRead file in open() until it is checked; a kernel
+	// without CONFIG_FANOTIFY_ACCESS_PERMISSIONS gets a notification group.
+	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK|unix.FAN_CLASS_CONTENT, unix.O_RDONLY|unix.O_LARGEFILE)
+	w.permEvents = err == nil
+	if err != nil {
+		ifd, err = unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK, unix.O_RDONLY|unix.O_LARGEFILE)
+	}
 	if err != nil {
 		if w.onError != nil {
 			w.onError(fmt.Errorf("filewatcher: fanotify_init: %w (sensitive file monitoring disabled)", err))
@@ -231,7 +242,7 @@ func (w *FileWatcher) Run(ctx context.Context) {
 			}
 			key := inodeKey{dev: stat.Dev, ino: stat.Ino}
 			if entry, ok := st.inodes[key]; ok {
-				w.handle(entry, ev.mask, ev.pid)
+				w.handle(entry, ev)
 			}
 
 		case <-backstop.C:
@@ -276,8 +287,16 @@ func (w *FileWatcher) readEvents(ctx context.Context, ifd int, evCh chan<- rawFa
 			pid := int(binary.NativeEndian.Uint32(buf[pos+20:]))
 			pos += evLen
 
+			ev := rawFanEvent{mask: mask, fd: fd, pid: pid}
+			if mask&unix.FAN_OPEN_PERM != 0 && fd >= 0 {
+				// sudo is gone by the time a notification is read, and its
+				// /proc/<pid>/exe with it: check while it waits, then allow.
+				ev.authHelper = isAuthHelper(pid)
+				allow(ifd, fd)
+			}
+
 			select {
-			case evCh <- rawFanEvent{mask: mask, fd: fd, pid: pid}:
+			case evCh <- ev:
 			default:
 				// Channel full — close fd to avoid leaking it and drop the event.
 				if fd >= 0 {
@@ -286,6 +305,16 @@ func (w *FileWatcher) readEvents(ctx context.Context, ifd int, evCh chan<- rawFa
 			}
 		}
 	}
+}
+
+// allow answers the permission event for fd: the open goes ahead. Any
+// event left unanswered is allowed by the kernel when the group is closed.
+func allow(ifd, fd int) {
+	// struct fanotify_response: __s32 fd, __u32 response.
+	var resp [8]byte
+	binary.NativeEndian.PutUint32(resp[0:], uint32(fd)) //nolint:gosec // event fd fits in int32
+	binary.NativeEndian.PutUint32(resp[4:], unix.FAN_ALLOW)
+	_, _ = unix.Write(ifd, resp[:])
 }
 
 // watchState is what Run keeps between mark passes.
@@ -317,9 +346,16 @@ func (w *FileWatcher) mark(ifd, pid int, st *watchState) {
 
 // handle raises the threat for one event on a watched file. An
 // authentication helper (sudo, su, PAM's unix_chkpwd) reads /etc/shadow on
-// every use, so its reads of a file marked authRead do not count.
-func (w *FileWatcher) handle(entry inodeEntry, mask uint64, pid int) {
-	if mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" && (!entry.file.authRead || !isAuthHelper(pid)) {
+// every use, so its reads of a file marked authRead do not count. A
+// FAN_OPEN_PERM event was checked while the opener waited; a FAN_OPEN one
+// (no permission events) is checked now, if the process is still there.
+func (w *FileWatcher) handle(entry inodeEntry, ev rawFanEvent) {
+	mask, pid := ev.mask, ev.pid
+	authHelper := ev.authHelper
+	if mask&unix.FAN_OPEN_PERM == 0 && entry.file.authRead {
+		authHelper = isAuthHelper(pid)
+	}
+	if mask&(unix.FAN_OPEN|unix.FAN_OPEN_PERM) != 0 && entry.file.openLevel != "" && (!entry.file.authRead || !authHelper) {
 		w.fire(entry.file.openLevel, entry.file.category,
 			entry.file.openTitle, entry.file.openDesc,
 			entry.file.rel, "read", pid)
@@ -456,7 +492,7 @@ func (w *FileWatcher) markFiles(ifd, pid int) map[inodeKey]inodeEntry {
 		sf := &sensitiveFiles[i]
 		hostPath := fmt.Sprintf(procRootPattern+"/%s", pid, sf.rel)
 
-		if err := unix.FanotifyMark(ifd, unix.FAN_MARK_ADD, sf.markMask(), unix.AT_FDCWD, hostPath); err != nil {
+		if err := unix.FanotifyMark(ifd, unix.FAN_MARK_ADD, sf.markMask(w.permEvents), unix.AT_FDCWD, hostPath); err != nil {
 			// File does not exist (ENOENT) or not accessible — skip silently.
 			continue
 		}
@@ -472,10 +508,15 @@ func (w *FileWatcher) markFiles(ifd, pid int) map[inodeKey]inodeEntry {
 
 // markMask returns the fanotify events to mark sf with. Only events that
 // carry an fd: FAN_DELETE_SELF or FAN_MOVE_SELF needs a FAN_REPORT_FID group,
-// and fanotify_mark refuses the whole mask with EINVAL without one.
-func (sf *monitoredFile) markMask() uint64 {
+// and fanotify_mark refuses the whole mask with EINVAL without one. With
+// perm (a FAN_CLASS_CONTENT group) an authRead file's opens are
+// FAN_OPEN_PERM, so the opener is still alive when it is checked.
+func (sf *monitoredFile) markMask(perm bool) uint64 {
 	var mask uint64
-	if sf.openLevel != "" {
+	switch {
+	case sf.openLevel != "" && sf.authRead && perm:
+		mask |= unix.FAN_OPEN_PERM
+	case sf.openLevel != "":
 		mask |= unix.FAN_OPEN
 	}
 	if sf.writeLevel != "" {
