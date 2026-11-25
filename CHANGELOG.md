@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Bug Fixes
+
+- [Bug Fix] **IPv6 and boot-time egress are now dropped at the container's veth, so `restricted` and `allowlist` modes also hold on bridged networks** — IPv6 from the container is dropped to every destination, the host included, even when root inside re-enables it. Until the mode's rules are in place, a starting container can send only DHCP broadcasts. `coi clean --orphans` removes leftover drops, also those older versions left.
+
 ## 0.17.0 (2026-11-25)
 
 ### Features

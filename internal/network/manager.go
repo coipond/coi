@@ -397,9 +397,19 @@ func (m *Manager) teardownRulesAtomically(containerName string) bool {
 	}
 	cmds := deleteChainRuleCmds("forward", parseChainRules(string(v4), "coi-"+ip))
 	cmds = append(cmds, deleteChainRuleCmds("forward", parseChainRules(string(v4), bootBlockComment(containerName)))...)
+	// coi6-<name> rules older coi versions put in the ip6 forward chain.
 	if v6, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward"); err == nil {
 		for _, r := range parseChainRules(string(v6), ipv6BlockComment(containerName)) {
 			cmds = append(cmds, []string{"delete", "rule", "ip6", "coi", "forward", "handle", r.handle})
+		}
+	} else if !strings.Contains(err.Error(), "No such file or directory") {
+		return false
+	}
+	if nd, err := runNFTCommand("list", "table", "netdev", "coi"); err == nil {
+		for _, chain := range []string{ipv6BlockComment(containerName), bootBlockComment(containerName)} {
+			if strings.Contains(string(nd), "chain "+chain+" {") {
+				cmds = append(cmds, []string{"delete", "chain", "netdev", "coi", chain})
+			}
 		}
 	} else if !strings.Contains(err.Error(), "No such file or directory") {
 		return false
@@ -441,8 +451,8 @@ func (m *Manager) setupRestricted(ctx context.Context, containerName string) err
 	// and give back the resolver an allowlist session on this boot stopped.
 	m.prepareContainer(containerName)
 
-	// Enforce the IPv6 egress boundary on the host: drop all forwarded IPv6 from
-	// the container's veth. The Coi filter table is IPv4-only, so without this an
+	// Enforce the IPv6 boundary on the host: drop all IPv6 arriving from the
+	// container's veth. The Coi filter table is IPv4-only, so without this an
 	// agent that re-enables IPv6 escapes the firewall entirely. Fail closed — if
 	// the drop cannot be installed the boot block stays in place and setup aborts.
 	if err := ApplyIPv6BlockForContainer(containerName); err != nil {
@@ -554,8 +564,8 @@ func (m *Manager) setupAllowlist(ctx context.Context, containerName string) erro
 	// and stop its resolver, which has no reachable upstream (see stopResolverCmd).
 	m.prepareContainer(containerName)
 
-	// Enforce the IPv6 egress boundary on the host: drop all forwarded IPv6 from
-	// the container's veth. The Coi filter table is IPv4-only, so without this an
+	// Enforce the IPv6 boundary on the host: drop all IPv6 arriving from the
+	// container's veth. The Coi filter table is IPv4-only, so without this an
 	// agent that re-enables IPv6 escapes the allowlist entirely. Fail closed — if
 	// the drop cannot be installed the boot block stays in place and setup aborts.
 	if err := ApplyIPv6BlockForContainer(containerName); err != nil {
@@ -921,8 +931,8 @@ func (m *Manager) Teardown(ctx context.Context, containerName string) error {
 		}
 	}
 
-	// Fast path: every forward rule this container owns — its coi-<IP> policy,
-	// the IPv6 drop, any residual boot block — deleted in ONE nft transaction
+	// Fast path: every rule this container owns — its coi-<IP> policy, the
+	// IPv6 drop, any residual boot block — deleted in ONE nft transaction
 	// (two listings + one exec instead of ~15 sudo nft calls). Any problem
 	// falls through to the step-by-step removal below, which is idempotent.
 	if m.teardownRulesAtomically(containerName) {
