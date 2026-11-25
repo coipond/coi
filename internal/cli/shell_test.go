@@ -6,20 +6,24 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/network"
 )
 
 func TestResolveDomainsToHostCIDRs_EmptyInput(t *testing.T) {
-	if got := resolveDomainsToHostCIDRs(nil); got != nil {
+	if got, _, _ := resolveDomainsToHostCIDRs(nil); got != nil {
 		t.Errorf("expected nil for nil input, got %v", got)
 	}
-	if got := resolveDomainsToHostCIDRs([]string{}); got != nil {
+	if got, _, _ := resolveDomainsToHostCIDRs([]string{}); got != nil {
 		t.Errorf("expected nil for empty slice, got %v", got)
 	}
 }
 
 func TestResolveDomainsToHostCIDRs_IPv4Input(t *testing.T) {
 	// Raw IPv4 addresses resolve immediately without DNS and return /32 CIDRs.
-	got := resolveDomainsToHostCIDRs([]string{"1.2.3.4", "5.6.7.8"})
+	got, _, _ := resolveDomainsToHostCIDRs([]string{"1.2.3.4", "5.6.7.8"})
 	if len(got) == 0 {
 		t.Fatal("expected non-empty CIDRs for IPv4 inputs")
 	}
@@ -32,7 +36,7 @@ func TestResolveDomainsToHostCIDRs_IPv4Input(t *testing.T) {
 
 func TestResolveDomainsToHostCIDRs_CIDRPassthrough(t *testing.T) {
 	// CIDRs must come back unchanged — no /32 appended.
-	got := resolveDomainsToHostCIDRs([]string{"54.231.0.0/17", "10.0.0.0/8"})
+	got, _, _ := resolveDomainsToHostCIDRs([]string{"54.231.0.0/17", "10.0.0.0/8"})
 	if len(got) == 0 {
 		t.Fatal("expected non-empty result for CIDR inputs")
 	}
@@ -60,7 +64,7 @@ func TestResolveDomainsToHostCIDRs_CIDRPassthrough(t *testing.T) {
 
 func TestResolveDomainsToHostCIDRs_MixedInputs(t *testing.T) {
 	// Raw IPs get /32; CIDRs stay as-is.
-	got := resolveDomainsToHostCIDRs([]string{"1.2.3.4", "10.0.0.0/8"})
+	got, _, _ := resolveDomainsToHostCIDRs([]string{"1.2.3.4", "10.0.0.0/8"})
 	if len(got) == 0 {
 		t.Fatal("expected non-empty result")
 	}
@@ -223,5 +227,91 @@ func TestBuildTmuxPrepScript_Exec(t *testing.T) {
 	out, _, err = run("FAKE_ENV_FAILS=1")
 	if err != nil || !strings.Contains(out, tmuxPrepEnvFailed) || !strings.Contains(out, tmuxPrepCreated) {
 		t.Errorf("env failure is a warning, not fatal; out=%q err=%v", out, err)
+	}
+}
+
+// The allowlist policy returned for monitoring carries the :ports permits (the
+// proxy case) to network.NewExplicitPortPermits.
+func TestResolveDomainsToHostCIDRs_PolicyCarriesPortPermits(t *testing.T) {
+	_, policy, resolved := resolveDomainsToHostCIDRs([]string{"10.0.0.5:8080"})
+	if policy == nil {
+		t.Fatal("expected a policy")
+	}
+	p := network.NewExplicitPortPermits("c", nil, policy, resolved)
+	if !p.Permits("tcp", "10.0.0.5", 8080) {
+		t.Error("10.0.0.5:8080 should have an explicit permit")
+	}
+	if p.Permits("tcp", "10.0.0.5", 8081) {
+		t.Error("10.0.0.5:8081 must not have an explicit permit")
+	}
+}
+
+// The monitors' explicit permit check counts only port-explicit entries, not
+// a host entry without ports.
+func TestStartExplicitPortPermits(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no runtime host ports record
+	permits, stop := startExplicitPortPermits(t.Context(), "c", []config.HostEntry{
+		{IP: "192.168.1.50", Ports: []int{8080}},
+		{IP: "192.168.1.60"},
+	}, nil, nil)
+	defer stop()
+	if !permits("tcp", "192.168.1.50", 8080) {
+		t.Error("a host entry with ports should permit its port")
+	}
+	if permits("tcp", "192.168.1.60", 8080) {
+		t.Error("a host entry without ports must not count")
+	}
+}
+
+// The name refresh runs in production: a changed address the firewall
+// installed (the container's IP cache) gets the name's port permit.
+func TestStartExplicitPortPermits_FollowsNameAddresses(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	policy, err := network.NewAllowPolicy([]string{"proxy.example.com:8080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := `{"domains": {"proxy.example.com": ["203.0.113.31"]}}`
+	if err := os.MkdirAll(filepath.Join(home, ".coi", "network-cache"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".coi", "network-cache", "c.json"), []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	permits, stop := startExplicitPortPermits(t.Context(), "c", nil, policy, map[string][]string{"proxy.example.com": {"203.0.113.30"}})
+	defer stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for !permits("tcp", "203.0.113.31", 8080) {
+		if time.Now().After(deadline) {
+			t.Fatal("the address from the IP cache never got the name's permit")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !permits("tcp", "203.0.113.30", 8080) {
+		t.Error("the address resolved at start must stay permitted")
+	}
+}
+
+// `coi run` in open mode drops a runtime host ports record of an earlier
+// session, also without [[network.hosts]].
+func TestApplyNetworkIsolation_OpenClearsRuntimeHostPorts(t *testing.T) {
+	fakeIncusLog(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	record := filepath.Join(home, ".coi", "network-cache", "c.host-ports.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte(`[{"IP":"203.0.113.10","Ports":[8080]}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{cfg: &config.Config{Network: config.NetworkConfig{Mode: config.NetworkModeOpen}}}
+	if _, err := a.applyNetworkIsolation(t.Context(), "c"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Errorf("runtime host ports record not removed: %v", err)
 	}
 }
