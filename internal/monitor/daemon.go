@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/coipond/coi/internal/tool/credentials"
 )
 
 // Daemon runs the monitoring loop in the background
@@ -76,6 +78,12 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 		default: // drop if buffer full rather than blocking
 		}
 	}, cfg.OnError)
+	userFileWatcher := NewUserFileWatcher(cfg.ContainerName, cfg.CodeUser, credentials.CredentialPaths(), func(t ThreatEvent) {
+		select {
+		case fileThreatCh <- t:
+		default: // drop if buffer full rather than blocking
+		}
+	}, cfg.OnError)
 
 	daemon := &Daemon{
 		ctx:          daemonCtx,
@@ -94,6 +102,9 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 	go logWatcher.Run(daemonCtx)
 	go procWatcher.Run(daemonCtx)
 	go fileWatcher.Run(daemonCtx)
+	if cfg.CodeUser != "" {
+		go userFileWatcher.Run(daemonCtx)
+	}
 
 	// Start monitoring loop in background
 	go daemon.run()
@@ -107,6 +118,7 @@ func newDaemonCollector(cfg DaemonConfig) *Collector {
 	collector.SetNetworkMode(cfg.NetworkMode)
 	collector.SetAllowedCIDRsProvider(cfg.AllowedCIDRsProvider)
 	collector.SetPermittedDestination(cfg.PermittedDestination)
+	collector.SetExplicitPortPermit(cfg.ExplicitPortPermit)
 	collector.SetGateway(cfg.Gateway)
 	return collector
 }

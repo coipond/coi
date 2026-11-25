@@ -38,8 +38,10 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 	}
 
 	var allowedCIDRs []string
+	var policy *network.AllowPolicy
+	var resolved map[string][]string
 	if a.cfg.Network.Mode == config.NetworkModeAllowlist {
-		allowedCIDRs = resolveDomainsToHostCIDRs(a.cfg.Network.AllowedDomains)
+		allowedCIDRs, policy, resolved = resolveDomainsToHostCIDRs(a.cfg.Network.AllowedDomains)
 		if len(allowedCIDRs) == 0 {
 			// Both monitors read an empty list as "not allowlist mode" and switch
 			// their allowlist check off. Domains that failed to resolve at start
@@ -51,21 +53,23 @@ func (a *App) startSessionMonitoring(ctx context.Context, containerName, workspa
 
 	nftEnabled := config.BoolVal(a.cfg.Monitoring.NFT.Enabled) && a.cfg.Network.SudoAllowed()
 	permitted, stopPermits := a.startEgressPermits(ctx, containerName)
+	portPermitted, stopPortPermits := startExplicitPortPermits(ctx, containerName, a.cfg.Network.Hosts, policy, resolved)
 
-	if err := startMonitoringDaemon(ctx, containerName, workspacePath, a.cfg, allowedCIDRs, permitted, log, mon); err != nil {
+	if err := startMonitoringDaemon(ctx, containerName, workspacePath, a.cfg, allowedCIDRs, permitted, portPermitted, log, mon); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to start security monitor: %v\n", err)
 	}
 
 	if config.BoolVal(a.cfg.Monitoring.NFT.Enabled) {
 		if !nftEnabled {
 			fmt.Fprintf(os.Stderr, "NFT network monitoring skipped: [network] use_sudo = false\n")
-		} else if err := startNFTMonitoringDaemon(ctx, containerName, a.cfg, allowedCIDRs, permitted, log, nft); err != nil {
+		} else if err := startNFTMonitoringDaemon(ctx, containerName, a.cfg, allowedCIDRs, permitted, portPermitted, log, nft); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to start NFT monitoring: %v\n", err)
 		}
 	}
 
 	return func() {
 		stopPermits()
+		stopPortPermits()
 		var wg sync.WaitGroup
 		if *mon != nil {
 			wg.Add(1)
@@ -104,6 +108,16 @@ func (a *App) startEgressPermits(ctx context.Context, containerName string) (fun
 		return nil, func() {}
 	}
 	permits := network.NewEgressPermits(containerIP, a.cfg.Network.Hosts, a.cfg.Network.AllowedPorts)
+	pctx, cancel := context.WithCancel(ctx)
+	permits.Start(pctx, 5*time.Second)
+	return permits.Permits, cancel
+}
+
+// startExplicitPortPermits returns the check both monitors share for "did the
+// user permit this exact host:port?" (network.ExplicitPortPermits), refreshed
+// in the background until the returned stop is called.
+func startExplicitPortPermits(ctx context.Context, containerName string, hosts []config.HostEntry, policy *network.AllowPolicy, resolved map[string][]string) (func(proto, ip string, port int) bool, func()) {
+	permits := network.NewExplicitPortPermits(containerName, hosts, policy, resolved)
 	pctx, cancel := context.WithCancel(ctx)
 	permits.Start(pctx, 5*time.Second)
 	return permits.Permits, cancel

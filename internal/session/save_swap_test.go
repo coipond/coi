@@ -99,7 +99,7 @@ func TestSaveSessionData_KeepsCopyLeftByInterruptedSwap(t *testing.T) {
 	writeSavedCopy(t, live+completeSuffix, "new")
 	writeSavedCopy(t, live+previousSuffix, "old")
 
-	err := saveSessionData(failingPullFake{}, "coi-test", "abc", false, "", false, "/w", sessions, tool.NewClaude(), func(string) {})
+	err := saveSessionData(failingPullFake{}, "coi-test", "abc", false, "", false, "/w", sessions, tool.NewClaude(), func(string) {}, nil)
 	if err == nil {
 		t.Fatal("saveSessionData succeeded with a failing pull")
 	}
@@ -113,7 +113,7 @@ func TestSaveSessionData_ReplacesPreviousCopy(t *testing.T) {
 	writeSavedCopy(t, live+pullingSuffix, "partial")
 
 	mgr := &savePullFake{files: map[string]string{"history.jsonl": "new"}}
-	if err := saveSessionData(mgr, "coi-test", "abc", false, "", false, "/w", sessions, tool.NewClaude(), func(string) {}); err != nil {
+	if err := saveSessionData(mgr, "coi-test", "abc", false, "", false, "/w", sessions, tool.NewClaude(), func(string) {}, nil); err != nil {
 		t.Fatalf("saveSessionData: %v", err)
 	}
 	assertSavedCopy(t, live, "new")
@@ -166,7 +166,7 @@ func TestSaveSessionData_FailedSwapKeepsPreviousCopy(t *testing.T) {
 	failNewCopyRename(t, live)
 
 	mgr := &savePullFake{files: map[string]string{"history.jsonl": "new"}}
-	if err := saveSessionData(mgr, "coi-test", "abc", false, "", false, "/w", sessions, tool.NewClaude(), func(string) {}); err == nil {
+	if err := saveSessionData(mgr, "coi-test", "abc", false, "", false, "/w", sessions, tool.NewClaude(), func(string) {}, nil); err == nil {
 		t.Fatal("saveSessionData succeeded with a failing rename")
 	}
 	assertSavedContent(t, live, "old")

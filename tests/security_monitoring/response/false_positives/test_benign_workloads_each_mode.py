@@ -66,7 +66,7 @@ enabled = true
 [[network.hosts]]
 ip = "{lan_host}"
 hostnames = ["service.lan"]
-ports = [443, 4444]
+ports = [443]
 """
     if mode == "open":
         return '[network]\nmode = "open"\n' + monitoring
@@ -144,7 +144,11 @@ def _unpermitted_lan_host(other):
 
 # name -> (sockets to hold as (host index or address, port, proto), matcher).
 CONTROLS = {
-    "c2_port_same_host": lambda hosts: ([(hosts[0], 4444, "tcp")], is_c2_port_threat(hosts[0])),
+    # UDP too: allowlist and hardened reject 4444, so no TCP socket stays open.
+    "c2_port_same_host": lambda hosts: (
+        [(hosts[0], 4444, "tcp"), (hosts[0], 4444, "udp")],
+        is_c2_port_threat(hosts[0]),
+    ),
     "metadata": lambda hosts: ([("169.254.169.254", 80, "udp")], is_metadata_threat),
     "unpermitted_lan_host": lambda hosts: (
         [(hosts[1], 443, "udp"), (hosts[1], 443, "tcp")],

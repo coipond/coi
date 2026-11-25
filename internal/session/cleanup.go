@@ -338,7 +338,7 @@ func Cleanup(opts CleanupOptions) error {
 	// direct file-access path (no SFTP) so the save succeeds in every exit scenario.
 	var saveErr error
 	if opts.SaveSession && exists && opts.SessionID != "" && opts.SessionsDir != "" && opts.Tool != nil && opts.Tool.ConfigDirName() != "" {
-		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, persistent, opts.ProfileName, opts.ProfileFromDefault, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger); err != nil {
+		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, persistent, opts.ProfileName, opts.ProfileFromDefault, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger, sessionDebug(opts)); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: Failed to save session data: %v", err))
 			saveErr = err
 		}
@@ -469,6 +469,15 @@ func Cleanup(opts CleanupOptions) error {
 	return nil
 }
 
+// sessionDebug returns a debug sink that writes to the session log, if any
+func sessionDebug(opts CleanupOptions) func(string) {
+	return func(msg string) {
+		if opts.SessionLogger != nil {
+			opts.SessionLogger.Println("[cleanup] " + msg)
+		}
+	}
+}
+
 // closeSessionLogger closes the session log, if any, and logs a close error
 func closeSessionLogger(opts CleanupOptions) {
 	if opts.SessionLogger != nil {
@@ -479,7 +488,7 @@ func closeSessionLogger(opts CleanupOptions) {
 }
 
 // saveSessionData saves the tool config directory from the container
-func saveSessionData(mgr container.ContainerManager, containerName string, sessionID string, persistent bool, profileName string, profileFromDefault bool, workspace string, sessionsDir string, t tool.Tool, logger func(string)) error {
+func saveSessionData(mgr container.ContainerManager, containerName string, sessionID string, persistent bool, profileName string, profileFromDefault bool, workspace string, sessionsDir string, t tool.Tool, logger, debug func(string)) error {
 	// Determine home directory
 	// For coi images, we always use /home/code
 	// For other images, we use /root
@@ -542,18 +551,21 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 			waitForStopped(mgr, 5*time.Second)
 			_ = os.RemoveAll(stagingDir)
 		}
-		pullErr = mgr.PullDirectory(stateDir, stagingDir)
+		pullErr = pullConfigDir(mgr, stateDir, stagingDir, logger, debug)
 		if pullErr == nil {
 			pulled = true
 			break
 		}
-		msg := strings.ToLower(pullErr.Error())
-		if strings.Contains(msg, "does not exist") ||
-			strings.Contains(msg, "not found") ||
-			strings.Contains(msg, "no such file") {
+		if errors.Is(pullErr, container.ErrPullStopped) {
+			logger(fmt.Sprintf("Warning: session save stopped (%v); keeping what was pulled", pullErr))
+			pulled = pathExists(stagingDir)
+			break
+		}
+		if configDirMissing(mgr, pullErr) {
 			logger(fmt.Sprintf("No %s directory found in container", configDirName))
 			return nil
 		}
+		msg := strings.ToLower(pullErr.Error())
 		if !strings.Contains(msg, "sftp") &&
 			!strings.Contains(msg, "unexpected eof") &&
 			!strings.Contains(msg, "bad file descriptor") &&
@@ -604,6 +616,38 @@ func saveSessionData(mgr container.ContainerManager, containerName string, sessi
 
 	logger("Session data saved successfully")
 	return nil
+}
+
+// fallbackPullStallTimeout is how long the file pull fallback of a session
+// save may make no progress before it skips the entry it is stuck on, so a
+// container-planted FIFO cannot hang the host-side coi.
+var fallbackPullStallTimeout = 15 * time.Second
+
+// pullConfigDir is the file pull fallback of a session save. It prefers the
+// bounded pull that skips special files (see PullDirectoryBounded).
+func pullConfigDir(mgr container.ContainerManager, stateDir, stagingDir string, logger, debug func(string)) error {
+	if bp, ok := mgr.(boundedPuller); ok {
+		return bp.PullDirectoryBounded(stateDir, stagingDir, fallbackPullStallTimeout, debug, func(msg string) {
+			logger("Warning: " + msg)
+		})
+	}
+	return mgr.PullDirectory(stateDir, stagingDir)
+}
+
+// configDirMissing reports whether a failed config dir pull means the
+// container has no config dir. A bounded pull says so with a sentinel: its
+// errors can name a single entry that vanished mid-pull as "not found".
+func configDirMissing(mgr container.ContainerManager, err error) bool {
+	if _, ok := mgr.(boundedPuller); ok {
+		return errors.Is(err, container.ErrPullSourceMissing)
+	}
+	return container.IsNotFoundText(err.Error())
+}
+
+// boundedPuller is implemented by *container.Manager: a stall-bounded
+// directory pull that skips special files (see PullDirectoryBounded).
+type boundedPuller interface {
+	PullDirectoryBounded(containerPath, localPath string, stall time.Duration, debug, warn func(string)) error
 }
 
 // tarPuller is implemented by *container.Manager: a one-stream directory pull

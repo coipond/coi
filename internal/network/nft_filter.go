@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -465,12 +466,14 @@ func RemoveOpenModeRules(containerIP string) error {
 	return deleteNFTRulesByComment("coi-" + containerIP)
 }
 
-// ApplyBootBlockRule installs a temporary iifname-based DROP rule in the
-// ip coi forward chain immediately after a container starts, before any
-// startup scripts can run. This closes the network gap between container boot
-// and SetupForContainer installing proper IP-based isolation rules.
+// ApplyBootBlockRule installs a temporary drop of all IPv4 except DHCP, and of
+// all IPv6, at the ingress of the container's host veth (see
+// installVethIngressChain) immediately after a container starts, before any
+// startup scripts can run.
+// This closes the network gap between container boot and SetupForContainer
+// installing proper IP-based isolation rules.
 //
-// The rule is keyed by comment "coi-boot-<containerName>" and must be lifted
+// The chain is named "coi-boot-<containerName>" and must be lifted
 // by RemoveBootBlockRule once proper isolation rules are in place. It is
 // idempotent: calling it twice for the same container is safe.
 //
@@ -485,9 +488,6 @@ func ApplyBootBlockRule(containerName string) error {
 	}
 	if !NftInstalled() {
 		return fmt.Errorf("nft not installed, boot block skipped")
-	}
-	if err := ensureCOITableAndChain(); err != nil {
-		return fmt.Errorf("failed to ensure coi chain: %w", err)
 	}
 
 	// Poll for the host-side veth — it is created when Incus sets up the
@@ -509,7 +509,7 @@ func ApplyBootBlockRule(containerName string) error {
 		return fmt.Errorf("veth for container %s did not appear within 2s", containerName)
 	}
 
-	if err := installVethDropRule("ip", bootBlockComment(containerName), vethName); err != nil {
+	if err := installVethIngressChain(bootBlockComment(containerName), vethName, bootBlockRules); err != nil {
 		return fmt.Errorf("failed to add boot block rule for %s (veth %s): %w", containerName, vethName, err)
 	}
 	return nil
@@ -521,11 +521,24 @@ func RemoveBootBlockRule(containerName string) error {
 	if !SudoEnabled() {
 		return nil // nothing was applied without sudo
 	}
-	return deleteNFTRulesByComment(bootBlockComment(containerName))
+	return deleteVethIngressChain(bootBlockComment(containerName))
 }
 
 func bootBlockComment(containerName string) string {
 	return "coi-boot-" + containerName
+}
+
+// bootBlockRules let the DHCP broadcasts through, so the container gets its
+// address, and drop all other IPv4 and all IPv6. ARP passes.
+var bootBlockRules = [][]string{
+	{"meta", "protocol", "ip", "ip", "daddr", "255.255.255.255", "udp", "sport", "68", "udp", "dport", "67", "accept"},
+	{"meta", "protocol", "ip", "counter", "drop"},
+	{"meta", "protocol", "ip6", "counter", "drop"},
+}
+
+// ipv6BlockRules drop all IPv6, to any destination, the host included.
+var ipv6BlockRules = [][]string{
+	{"meta", "protocol", "ip6", "counter", "drop"},
 }
 
 // disableIPv6Cmd disables IPv6 in the container to prevent firewall bypass.
@@ -533,8 +546,8 @@ func bootBlockComment(containerName string) string {
 //
 // NOTE: this runs an in-container sysctl, which in-container root can simply set
 // back to 0 (it owns CAP_NET_ADMIN over its own netns). It is therefore
-// defence-in-depth only — the enforced IPv6 egress boundary is the host-side
-// drop installed by ApplyIPv6BlockForContainer, which the container cannot touch.
+// defence-in-depth only — the enforced IPv6 boundary is the host-side drop
+// installed by ApplyIPv6BlockForContainer, which the container cannot touch.
 const disableIPv6Cmd = "sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1"
 
 // allSteps joins shell steps into one script that runs every step and fails
@@ -555,36 +568,17 @@ func execInContainer(containerName, cmd string) error {
 	return err
 }
 
-// ensureCOIIP6TableAndChain creates the ip6 coi table and forward chain if absent,
-// mirroring ensureCOITableAndChain for IPv6. The chain hooks the forward path at
-// priority 10 with a default-accept policy; the only rules Coi adds are
-// per-container iifname drops, so unrelated IPv6 traffic on the host is unaffected.
-func ensureCOIIP6TableAndChain() error {
-	if _, err := runNFTCommand("add", "table", "ip6", "coi"); err != nil {
-		return fmt.Errorf("failed to create nft table ip6 coi: %w", err)
-	}
-	// nft add chain with hook spec fails if the chain already exists — check first.
-	if _, err := runNFTCommand("list", "chain", "ip6", "coi", "forward"); err == nil {
-		return nil
-	}
-	_, err := runNFTCommand(addForwardChainCmd("ip6")...)
-	if err != nil {
-		return fmt.Errorf("failed to create nft chain ip6 coi forward: %w", err)
-	}
-	return nil
-}
-
 func ipv6BlockComment(containerName string) string {
 	return "coi6-" + containerName
 }
 
-// ApplyIPv6BlockForContainer installs a host-side nft rule that drops ALL
-// forwarded IPv6 traffic originating from the container's host-side veth.
+// ApplyIPv6BlockForContainer installs a host-side nft chain that drops ALL
+// IPv6 traffic arriving from the container's host-side veth.
 //
-// This is the enforced IPv6 egress boundary. Because the rule lives in the
-// host's ip6 table keyed on the veth interface name (Coi never assigns the
-// container an IPv6 address, so address-based matching is impossible anyway),
-// in-container root cannot remove it or bypass it by re-enabling IPv6. It must
+// This is the enforced IPv6 boundary. Because the chain lives in the host's
+// netdev table bound to the veth (Coi never assigns the container an IPv6
+// address, so address-based matching is impossible anyway), in-container root
+// cannot remove it or bypass it by re-enabling IPv6. It must
 // be called after the container is running so its veth exists. Used in
 // restricted and allowlist modes; open mode skips it by design (the user opted
 // into unrestricted egress).
@@ -592,102 +586,120 @@ func ApplyIPv6BlockForContainer(containerName string) error {
 	if !NftInstalled() {
 		return fmt.Errorf("nft not installed, IPv6 block skipped")
 	}
-	if err := ensureCOIIP6TableAndChain(); err != nil {
-		return err
-	}
 	vethName, err := GetContainerVethName(containerName)
 	if err != nil || vethName == "" {
 		return fmt.Errorf("could not resolve veth for IPv6 block on %s: %w", containerName, err)
 	}
-	if err := installVethDropRule("ip6", ipv6BlockComment(containerName), vethName); err != nil {
+	if err := installVethIngressChain(ipv6BlockComment(containerName), vethName, ipv6BlockRules); err != nil {
 		return fmt.Errorf("failed to install IPv6 block rule for %s (veth %s): %w", containerName, vethName, err)
 	}
 	return nil
 }
 
-// installVethDropRule makes the `family coi forward` chain hold exactly one
-// rule with comment, and that rule drops traffic from vethName.
+// installVethIngressChain makes chain the netdev coi chain hooked on the
+// ingress of vethName, holding rules (each tagged with comment chain).
 //
-// These rules match the veth by name, and Incus gives the container a new veth
-// on every start. A rule left behind by a stop that skipped cleanup (`incus
-// stop`, a poweroff from inside, a host crash) names a veth that no longer
-// exists, so a bare "comment already present" check kept that dead rule and
-// left the new veth with no drop at all. Keep the rule only if it already names
-// this veth; otherwise delete the stale rules and add the new one in one
-// transaction.
-func installVethDropRule(family, comment, vethName string) error {
-	// A failed listing (a transient nft/sudo timeout) must not abort setup:
-	// fall back to adding the rule, as the old check did. Stale rules then wait
-	// for the next start or for container cleanup.
-	var current bool
-	var stale []string
-	if output, err := runNFTCommand("-a", "list", "chain", family, "coi", "forward"); err == nil {
-		current, stale = vethRulePlan(string(output), comment, vethName)
+// Ingress, not the forward hook: traffic routed out of a bridge reaches the
+// forward hook with iifname set to the bridge, never the bridge port, so an
+// iifname match on the veth there matches nothing. Ingress also catches
+// traffic to the host itself.
+//
+// Incus gives the container a new veth on every start, and a chain left
+// behind by a stop that skipped cleanup is bound to a veth that no longer
+// exists. Keep the chain only if it is already bound to this veth; otherwise
+// replace it in one transaction.
+func installVethIngressChain(chain, vethName string, rules [][]string) error {
+	var cmds [][]string
+	if output, err := runNFTCommand("list", "chain", "netdev", "coi", chain); err == nil {
+		if ingressChainDevice(string(output)) == vethName {
+			return nil
+		}
+		cmds = append(cmds, []string{"delete", "chain", "netdev", "coi", chain})
 	}
-	if current && len(stale) == 0 {
+	return runNFTScript(append(cmds, vethIngressChainCmds(chain, vethName, rules)...))
+}
+
+// vethIngressChainCmds builds the nft commands that create chain on the
+// ingress of vethName with rules. Pure, for testing.
+func vethIngressChainCmds(chain, vethName string, rules [][]string) [][]string {
+	cmds := [][]string{
+		{"add", "table", "netdev", "coi"},
+		{
+			"add", "chain", "netdev", "coi", chain,
+			"{", "type", "filter", "hook", "ingress", "device", fmt.Sprintf(`"%s"`, vethName),
+			"priority", "-500", ";", "policy", "accept", ";", "}",
+		},
+	}
+	for _, r := range rules {
+		cmd := append([]string{"add", "rule", "netdev", "coi", chain}, r...)
+		cmds = append(cmds, append(cmd, "comment", fmt.Sprintf(`"%s"`, chain)))
+	}
+	return cmds
+}
+
+// ingressChainDevice returns the device an `nft list chain netdev coi <chain>`
+// listing is bound to, or "" when it names none. Pure, for testing.
+func ingressChainDevice(output string) string {
+	const marker = `device "`
+	i := strings.Index(output, marker)
+	if i == -1 {
+		return ""
+	}
+	rest := output[i+len(marker):]
+	end := strings.Index(rest, `"`)
+	if end == -1 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// deleteVethIngressChain removes chain from the netdev coi table. A missing
+// chain (or table) is not an error.
+func deleteVethIngressChain(chain string) error {
+	_, err := runNFTCommand("delete", "chain", "netdev", "coi", chain)
+	if err != nil && strings.Contains(err.Error(), "No such file or directory") {
 		return nil
 	}
-	var cmds [][]string
-	for _, h := range stale {
-		cmds = append(cmds, []string{"delete", "rule", family, "coi", "forward", "handle", h})
-	}
-	if !current {
-		cmds = append(cmds, []string{
-			"add", "rule", family, "coi", "forward",
-			"iifname", fmt.Sprintf(`"%s"`, vethName),
-			"drop",
-			"comment", fmt.Sprintf(`"%s"`, comment),
-		})
-	}
-	return runNFTScript(cmds)
+	return err
 }
 
-// vethRulePlan reads `nft -a list chain <family> coi forward` output and
-// reports whether a rule with comment already drops vethName (current), and
-// the handles of every other rule with that comment (stale: they name a veth
-// from an earlier start, or duplicate the current rule). Pure, for testing.
-func vethRulePlan(output, comment, vethName string) (current bool, stale []string) {
-	marker := fmt.Sprintf(`comment "%s"`, comment)
-	wantIif := fmt.Sprintf(`iifname "%s" `, vethName)
-	for _, line := range strings.Split(output, "\n") {
-		if !strings.Contains(line, marker) {
-			continue
-		}
-		h := extractNFTHandle(line)
-		if h == "" {
-			continue
-		}
-		if !current && strings.Contains(line, wantIif) {
-			current = true
-			continue
-		}
-		stale = append(stale, h)
-	}
-	return current, stale
-}
-
-// RemoveIPv6BlockForContainer removes the host-side IPv6 egress drop rule installed
-// by ApplyIPv6BlockForContainer. Safe to call even if no rule was ever installed.
+// RemoveIPv6BlockForContainer removes the host-side IPv6 drop chain installed
+// by ApplyIPv6BlockForContainer, and the coi6-<name> rule older coi versions
+// put in the ip6 coi forward chain. Safe to call even if none was installed.
 func RemoveIPv6BlockForContainer(containerName string) error {
+	if !SudoEnabled() {
+		return nil
+	}
+	if err := deleteVethIngressChain(ipv6BlockComment(containerName)); err != nil {
+		return err
+	}
 	return deleteNFTRulesByCommentFamily("ip6", ipv6BlockComment(containerName))
 }
 
-// ListCOIIP6RuleContainers returns the container names referenced by
-// coi6-<name> comments in the ip6 coi forward chain. Used by orphan detection
-// to find IPv6 drop rules whose containers are no longer running.
-func ListCOIIP6RuleContainers() ([]string, error) {
-	output, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward")
-	if err != nil {
-		return nil, nil // chain doesn't exist yet — no rules
+// ListDropChainContainers returns the container names that own a coi6-<name>
+// or coi-boot-<name> chain in the netdev coi table, or a coi6-<name> rule
+// older coi versions put in the ip6 coi forward chain. Used by orphan
+// detection to find drop chains whose containers are no longer running.
+func ListDropChainContainers() ([]string, error) {
+	var names []string
+	if output, err := runNFTCommand("list", "table", "netdev", "coi"); err == nil {
+		names = parseDropChainContainers(string(output))
 	}
-	return parseCOIIP6RuleContainers(string(output)), nil
+	if output, err := runNFTCommand("list", "chain", "ip6", "coi", "forward"); err == nil {
+		for _, n := range parseLegacyIP6RuleContainers(string(output)) {
+			if !slices.Contains(names, n) {
+				names = append(names, n)
+			}
+		}
+	}
+	return names, nil
 }
 
-// parseCOIIP6RuleContainers extracts the unique container names from coi6-<name>
-// rule comments in `nft list chain ip6 coi forward` output. Pure, for testing.
-func parseCOIIP6RuleContainers(output string) []string {
+// parseLegacyIP6RuleContainers extracts the unique container names from the
+// coi6-<name> rule comments in `nft list chain ip6 coi forward` output (rules
+// of older coi versions). Pure, for testing.
+func parseLegacyIP6RuleContainers(output string) []string {
 	var names []string
-	seen := make(map[string]bool)
 	for _, line := range strings.Split(output, "\n") {
 		const prefix = `comment "coi6-`
 		idx := strings.Index(line, prefix)
@@ -699,7 +711,31 @@ func parseCOIIP6RuleContainers(output string) []string {
 		if end == -1 {
 			continue
 		}
-		name := rest[:end]
+		if name := rest[:end]; name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// parseDropChainContainers extracts the unique container names from the
+// coi6-<name> and coi-boot-<name> chains in `nft list table netdev coi`
+// output. Pure, for testing.
+func parseDropChainContainers(output string) []string {
+	var names []string
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "chain" {
+			continue
+		}
+		var name string
+		switch chain := strings.Trim(fields[1], `"`); {
+		case strings.HasPrefix(chain, "coi6-"):
+			name = strings.TrimPrefix(chain, "coi6-")
+		case strings.HasPrefix(chain, "coi-boot-"):
+			name = strings.TrimPrefix(chain, "coi-boot-")
+		}
 		if name != "" && !seen[name] {
 			seen[name] = true
 			names = append(names, name)

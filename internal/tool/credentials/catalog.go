@@ -8,6 +8,7 @@ package credentials
 import (
 	_ "embed"
 	"fmt"
+	"path"
 	"sort"
 
 	"github.com/BurntSushi/toml"
@@ -23,6 +24,7 @@ var catalogTOML string
 type Bundle struct {
 	ConfigDir           string   `toml:"config_dir"`
 	Files               []string `toml:"files"`
+	CredentialFiles     []string `toml:"credential_files"`
 	StateFile           string   `toml:"state_file"`
 	SandboxSettingsFile string   `toml:"sandbox_settings_file"`
 	AlwaysSetup         bool     `toml:"always_setup"`
@@ -60,4 +62,22 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// CredentialPaths returns the home-relative paths of every bundle's credential
+// files, sorted and without duplicates.
+func CredentialPaths() []string {
+	seen := make(map[string]bool)
+	var paths []string
+	for _, b := range catalog {
+		for _, f := range b.CredentialFiles {
+			p := path.Join(b.ConfigDir, f)
+			if !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	sort.Strings(paths)
+	return paths
 }

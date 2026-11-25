@@ -182,6 +182,9 @@ jobs:
           - name: monitoring-file-fanotify
             path: tests/integration/test_file_watcher_fanotify.py
             description: "fanotify sensitive file monitoring: shadow read, sudoers write, authorized_keys write"
+            # fanotify_init needs CAP_SYS_ADMIN; resolving /proc/<pid>/root and
+            # reading root-only files need CAP_SYS_PTRACE and CAP_DAC_READ_SEARCH.
+            file_caps: cap_sys_admin,cap_sys_ptrace,cap_dac_read_search
           - name: uid-mapping
             path: tests/container/uid_mapping_shift_true.py tests/container/uid_mapping_raw_idmap.py tests/limits
             description: "UID mapping and limits tests (limits sits here to shorten the slow misc-config lane)"
@@ -303,9 +306,13 @@ jobs:
       - name: Build Coi binary
         run: |
           go build -o coi ./cmd/coi
-          # Grant CAP_LINUX_IMMUTABLE for host-side immutable protection tests
-          sudo setcap cap_linux_immutable=ep ./coi
+          # Grant CAP_LINUX_IMMUTABLE for host-side immutable protection tests,
+          # plus any lane-specific capabilities (test_group.file_caps)
+          sudo setcap "cap_linux_immutable${FILE_CAPS:+,$FILE_CAPS}=ep" ./coi
+          getcap ./coi
           ./coi version
+        env:
+          FILE_CAPS: ${{ matrix.test_group.file_caps }}
 
       - name: Configure Coi for CI (use open network mode for builds)
         run: |
