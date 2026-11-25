@@ -107,6 +107,7 @@ func newDaemonCollector(cfg DaemonConfig) *Collector {
 	collector.SetNetworkMode(cfg.NetworkMode)
 	collector.SetAllowedCIDRsProvider(cfg.AllowedCIDRsProvider)
 	collector.SetPermittedDestination(cfg.PermittedDestination)
+	collector.SetExplicitPortPermit(cfg.ExplicitPortPermit)
 	collector.SetGateway(cfg.Gateway)
 	return collector
 }

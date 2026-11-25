@@ -23,7 +23,7 @@ import time
 
 import pytest
 
-from support.helpers import incus_status
+from support.helpers import dummy_netdev_chains, incus_status, netdev_coi
 
 
 def _skip_unless_ready():
@@ -34,16 +34,6 @@ def _skip_unless_ready():
     if subprocess.run(["sudo", "-n", "nft", "list", "tables"], capture_output=True).returncode != 0:
         return "nft sudo not available"
     return None
-
-
-def _ip6_chain():
-    r = subprocess.run(
-        ["sudo", "-n", "nft", "list", "chain", "ip6", "coi", "forward"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return r.stdout if r.returncode == 0 else ""
 
 
 def _poll_until(fn, timeout=20):
@@ -87,7 +77,7 @@ def test_default_clean_reclaims_stopped_container_ipv6_block(
         assert name, f"no container name: {result.stdout + result.stderr}"
 
         comment = f"coi6-{name}"
-        assert comment in _ip6_chain(), f"precondition: {comment} present while running"
+        assert comment in netdev_coi(), f"precondition: {comment} present while running"
 
         # Stop WITHOUT coi teardown, leaving the host-side block behind.
         subprocess.run(
@@ -99,22 +89,24 @@ def test_default_clean_reclaims_stopped_container_ipv6_block(
             pytest.skip(
                 f"container not in STOPPED state after stop (got {status!r}); cannot exercise reap path"
             )
-        assert comment in _ip6_chain(), (
-            f"precondition: {comment} should still be present (orphaned) after stop"
-        )
+        # A kernel that deletes the chain with the veth leaves nothing to reap:
+        # plant it as a kernel that keeps it would.
+        planted = [] if comment in netdev_coi() else [comment]
+        with dummy_netdev_chains(*planted):
+            assert comment in netdev_coi(), f"precondition: {comment} left after the stop"
 
-        # Default reap path (NOT --orphans) must now clean the block.
-        clean = subprocess.run(
-            [coi_binary, "clean", "--force"],
-            capture_output=True,
-            text=True,
-            timeout=90,
-            env=env,
-        )
-        assert clean.returncode == 0, f"coi clean failed: {clean.stderr}"
+            # Default reap path (NOT --orphans) must now clean the block.
+            clean = subprocess.run(
+                [coi_binary, "clean", "--force"],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                env=env,
+            )
+            assert clean.returncode == 0, f"coi clean failed: {clean.stderr}"
 
-        assert _poll_until(lambda: comment not in _ip6_chain()), (
-            f"default coi clean should remove {comment} when reaping the stopped container:\n{_ip6_chain()}"
-        )
+            assert _poll_until(lambda: comment not in netdev_coi()), (
+                f"default coi clean should remove {comment} when reaping the stopped container:\n{netdev_coi()}"
+            )
     finally:
         os.unlink(config_file)
