@@ -39,23 +39,13 @@ from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    child_output,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
     wait_for_specific_container_deletion,
     wait_for_text_on_screen,
 )
-
-
-def _collect_output(child):
-    lf = child.logfile_read
-    for attr in ("get_raw_output", "get_output", "get_display", "get_display_stripped"):
-        if hasattr(lf, attr):
-            return getattr(lf, attr)()
-    if child.before:
-        raw = child.before
-        return raw.decode(errors="replace") if isinstance(raw, bytes) else raw
-    return ""
 
 
 def test_session_save_no_sftp_error_on_poweroff(coi_binary, cleanup_containers, workspace_dir):
@@ -99,7 +89,7 @@ def test_session_save_no_sftp_error_on_poweroff(coi_binary, cleanup_containers, 
     except TIMEOUT:
         pass
 
-    output1 = _collect_output(child)
+    output1 = child_output(child)
 
     try:
         child.close(force=False)
