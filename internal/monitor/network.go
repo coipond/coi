@@ -244,6 +244,7 @@ func parseProcNetTCP(path, protocol string) ([]Connection, error) {
 
 		// Parse UID
 		uid, _ := strconv.Atoi(fields[7])
+		inode, _ := strconv.ParseUint(fields[9], 10, 64)
 
 		connections = append(connections, Connection{
 			Protocol:   protocol,
@@ -251,6 +252,7 @@ func parseProcNetTCP(path, protocol string) ([]Connection, error) {
 			RemoteAddr: remoteAddr,
 			State:      state,
 			UID:        uid,
+			Inode:      inode,
 		})
 	}
 

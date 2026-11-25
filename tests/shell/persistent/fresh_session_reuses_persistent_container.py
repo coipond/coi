@@ -13,11 +13,11 @@ spin up a second container. Existing tests cover stopped-container reuse via
 import subprocess
 import time
 
-from pexpect import EOF, TIMEOUT
-
 from support.helpers import (
     calculate_container_name,
+    exit_tool_to_bash,
     get_container_list,
+    poweroff_session,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
@@ -26,21 +26,8 @@ from support.helpers import (
 
 
 def _exit_and_poweroff(child):
-    child.send("exit")
-    time.sleep(0.3)
-    child.send("\x0d")
-    time.sleep(2)
-    child.send("sudo poweroff")
-    time.sleep(0.3)
-    child.send("\x0d")
-    try:
-        child.expect(EOF, timeout=60)
-    except TIMEOUT:
-        pass
-    try:
-        child.close(force=False)
-    except Exception:
-        child.close(force=True)
+    assert exit_tool_to_bash(child), "the tool should exit to bash"
+    poweroff_session(child)
 
 
 def test_fresh_session_reuses_stopped_persistent_container(

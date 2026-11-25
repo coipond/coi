@@ -322,13 +322,20 @@ func Cleanup(opts CleanupOptions) error {
 		return nil
 	}
 
+	// `coi persist` may have converted the session since launch: the
+	// container key decides whether it is kept and what the metadata records.
+	persistent := opts.Persistent
+	if exists && !persistent && ContainerMarkedPersistent(opts.ContainerName) {
+		persistent = true
+	}
+
 	// Save session data immediately — no pre-delay regardless of persistence mode.
 	// saveSessionData handles the mid-shutdown race internally: on a transient SFTP
 	// error it waits for the container to fully stop, then retries using incus's
 	// direct file-access path (no SFTP) so the save succeeds in every exit scenario.
 	saveFailed := false
 	if opts.SaveSession && exists && opts.SessionID != "" && opts.SessionsDir != "" && opts.Tool != nil && opts.Tool.ConfigDirName() != "" {
-		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, opts.Persistent, opts.ProfileName, opts.ProfileFromDefault, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger); err != nil {
+		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, persistent, opts.ProfileName, opts.ProfileFromDefault, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: Failed to save session data: %v", err))
 			saveFailed = true
 		}
@@ -383,7 +390,7 @@ func Cleanup(opts CleanupOptions) error {
 	}
 
 	// Handle container based on persistence mode
-	if opts.Persistent {
+	if persistent {
 		// Persistent mode: keep the container — and report its ACTUAL state,
 		// so a `close` doesn't get answered with "use 'coi attach'".
 		switch {

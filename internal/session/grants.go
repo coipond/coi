@@ -220,6 +220,12 @@ func dockerSource(mgr container.ContainerManager, applied *container.AppliedStat
 	return dockerSourceUnknown
 }
 
+// metadataEnforcer is the network manager's report of an open-mode
+// block_metadata_endpoint it could not enforce (network.Manager).
+type metadataEnforcer interface {
+	MetadataUnenforced() bool
+}
+
 // buildGrants collects the session's effective grants once setup has run.
 func buildGrants(st *setupState) *Grants {
 	opts := st.opts
@@ -242,6 +248,9 @@ func buildGrants(st *setupState) *Grants {
 		g.Network.HostAccess = config.BoolVal(nc.AllowHostAccess)
 		g.Network.LANBlocked = config.BoolVal(nc.BlockPrivateNetworks)
 		g.Network.MetadataBlock = config.BoolVal(nc.BlockMetadataEndpoint)
+		if m, ok := st.result.NetworkManager.(metadataEnforcer); ok && m.MetadataUnenforced() {
+			g.Network.MetadataBlock = false
+		}
 	}
 
 	// The container's applied config: disks (profile-inherited included), its
@@ -1012,16 +1021,23 @@ func (g *Grants) networkLines() []string {
 	var lines []string
 	switch config.NetworkMode(n.Mode) {
 	case config.NetworkModeOpen:
-		lines = append(lines, "open (no egress filtering)")
+		if n.MetadataEndpoint != nil && *n.MetadataEndpoint == netBlocked {
+			lines = append(lines, "open (only the metadata endpoint blocked)")
+		} else {
+			lines = append(lines, "open (no egress filtering)")
+		}
 	case config.NetworkModeAllowlist:
 		dests := "nothing"
 		if len(n.AllowedDomains) > 0 {
 			dests = strings.Join(n.AllowedDomains, ", ")
 		}
 		lines = append(lines, "allowlist: "+dests)
-		if *n.LAN == netAllowed {
+		switch {
+		case *n.LAN == netAllowed && *n.MetadataEndpoint == netBlocked:
+			lines = append(lines, "LAN allowed (metadata endpoint blocked)")
+		case *n.LAN == netAllowed:
 			lines = append(lines, "LAN allowed (metadata endpoint not blocked)")
-		} else {
+		default:
 			lines = append(lines, "LAN and metadata endpoint blocked")
 		}
 	case config.NetworkModeRestricted:

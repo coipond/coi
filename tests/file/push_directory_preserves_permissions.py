@@ -12,7 +12,7 @@ import os
 import subprocess
 import time
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, exec_in
 
 
 def test_push_directory_preserves_permissions(coi_binary, cleanup_containers, workspace_dir):
@@ -85,26 +85,12 @@ def test_push_directory_preserves_permissions(coi_binary, cleanup_containers, wo
     for target in ["/root/push-perm-dir", "/root/push-perm-renamed"]:
         for rel, want in expected.items():
             remote = f"{target}/{rel}" if rel else target
-            result = subprocess.run(
-                [
-                    coi_binary,
-                    "container",
-                    "exec",
-                    container_name,
-                    "--",
-                    "stat",
-                    "-c",
-                    "%a %u %g %Y",
-                    remote,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
+            code, output = exec_in(
+                coi_binary, container_name, f"stat -c '%a %u %g %Y' {remote}", timeout=30
             )
-            assert result.returncode == 0, f"stat {remote} should succeed. stderr: {result.stderr}"
-            combined_output = result.stdout + result.stderr
-            assert want in combined_output, (
-                f"{remote} should keep host mode/UID/GID/mtime '{want}', got:\n{combined_output}"
+            assert code == 0, f"stat {remote} should succeed. output: {output}"
+            assert want in output, (
+                f"{remote} should keep host mode/UID/GID/mtime '{want}', got:\n{output}"
             )
 
     # === Phase 5: Cleanup ===
