@@ -21,11 +21,11 @@ import subprocess
 import time
 from pathlib import Path
 
-from pexpect import EOF, TIMEOUT
-
 from support.helpers import (
     calculate_container_name,
+    exit_tool_to_bash,
     get_container_list,
+    poweroff_session,
     spawn_coi,
     wait_for_container_ready,
     wait_for_prompt,
@@ -37,22 +37,9 @@ def _exit_cli_poweroff_and_close(child):
     """Exit the dummy CLI to bash FIRST, then poweroff. Sending poweroff while the
     interactive CLI is focused would be eaten as CLI input, leaving the container
     running (so the next --resume attaches to a live tmux session instead of
-    restarting the stopped one). Mirrors the passing persistent-resume tests."""
-    child.send("exit")
-    time.sleep(0.3)
-    child.send("\x0d")
-    time.sleep(3)  # let the bash prompt appear
-    child.send("sudo poweroff")
-    time.sleep(0.3)
-    child.send("\x0d")
-    try:
-        child.expect(EOF, timeout=60)
-    except TIMEOUT:
-        pass
-    try:
-        child.close(force=False)
-    except Exception:
-        child.close(force=True)
+    restarting the stopped one)."""
+    assert exit_tool_to_bash(child), "the tool should exit to bash"
+    poweroff_session(child)
     time.sleep(3)
 
 

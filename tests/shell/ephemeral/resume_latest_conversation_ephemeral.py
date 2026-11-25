@@ -18,6 +18,7 @@ import time
 
 from support.helpers import (
     calculate_container_name,
+    exit_tool_to_bash,
     get_screen_display,
     poweroff_and_wait,
     send_prompt,
@@ -43,13 +44,6 @@ PLANT_DECOYS = (
 )
 
 
-def _exit_cli_to_bash(child):
-    child.send("exit")
-    time.sleep(0.3)
-    child.send("\x0d")
-    time.sleep(3)
-
-
 def test_ephemeral_resume_picks_latest_conversation(coi_binary, cleanup_containers, workspace_dir):
     env = {"COI_USE_DUMMY": "1"}
     container_name = calculate_container_name(workspace_dir, 1)
@@ -66,7 +60,7 @@ def test_ephemeral_resume_picks_latest_conversation(coi_binary, cleanup_containe
             "the tool should answer in session 1"
         )
 
-    _exit_cli_to_bash(child)
+    assert exit_tool_to_bash(child), "the tool should exit to bash in session 1"
 
     with with_live_screen(child) as monitor:
         time.sleep(1)
@@ -97,7 +91,7 @@ def test_ephemeral_resume_picks_latest_conversation(coi_binary, cleanup_containe
     screen = get_screen_display(child2)
 
     # Clean up before asserting so a failure never leaks the container.
-    _exit_cli_to_bash(child2)
+    exit_tool_to_bash(child2)
     poweroff_and_wait(child2, coi_binary, container_name)
 
     assert resumed, f"the tool should be started in resume mode. Screen:\n{screen}"
