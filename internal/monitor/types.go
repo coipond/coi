@@ -163,12 +163,18 @@ type Process struct {
 	Command   string `json:"command"`        // Full command line
 	Name      string `json:"name,omitempty"` // Kernel process name (/proc/<pid>/status Name, i.e. comm): set from the executable, unaffected by argv[0]
 	EnvAccess bool   `json:"env_access"`     // Has accessed /proc/*/environ
+	// StdioTCPSocket is set on a shell whose stdin or stdout is a TCP socket
+	// (see markSocketShells).
+	StdioTCPSocket bool `json:"stdio_tcp_socket,omitempty"`
 }
 
 // FilesystemStats holds workspace access statistics
 type FilesystemStats struct {
-	Available         bool    `json:"available"`
-	WorkspacePath     string  `json:"workspace_path,omitempty"`
+	Available     bool   `json:"available"`
+	WorkspacePath string `json:"workspace_path,omitempty"`
+	// WorkspaceDevice is the io.stat device the I/O counts cover; "" means
+	// the whole container.
+	WorkspaceDevice   string  `json:"workspace_device,omitempty"`
 	TotalReadMB       float64 `json:"total_read_mb"`
 	ReadRateMBPerSec  float64 `json:"read_rate_mb_per_sec"`
 	TotalWriteMB      float64 `json:"total_write_mb"`
@@ -197,6 +203,7 @@ type Connection struct {
 	RemoteAddr    string `json:"remote_addr"`
 	State         string `json:"state"`
 	UID           int    `json:"uid,omitempty"`
+	Inode         uint64 `json:"-"`                        // Socket inode (matches an fd link socket:[N])
 	Suspicious    bool   `json:"suspicious"`               // Flagged as suspicious
 	SuspectReason string `json:"suspect_reason,omitempty"` // Why flagged
 }
@@ -221,7 +228,7 @@ type DaemonConfig struct {
 	AllowedCIDRs   []string // CIDR ranges for allowed networks (static snapshot / fallback)
 	AllowedDomains []string // Domains from network allowlist
 	// NetworkMode is the container's [network] mode. Open mode allows LAN
-	// traffic, so RFC1918 destinations are not flagged there.
+	// traffic, so private destinations are not flagged there.
 	NetworkMode config.NetworkMode
 
 	// AllowedCIDRsProvider, when set, is consulted on every collection for the

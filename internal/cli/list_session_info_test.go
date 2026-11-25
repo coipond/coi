@@ -92,6 +92,40 @@ func TestContainerSessionInfo_FallbackPrefersConfiguredToolsSave(t *testing.T) {
 	}
 }
 
+func TestContainerSessionInfo_FallbackNewestSaveWins(t *testing.T) {
+	dir := t.TempDir()
+	// Session dirs are read in name order, so each older save comes first.
+	saves := []session.SessionMetadata{
+		{SessionID: "s1", ContainerName: "coi-aaaaaaaa-1", Workspace: "/home/u/old", SavedAt: "2026-10-01T10:00:00Z"},
+		{SessionID: "s2", ContainerName: "coi-aaaaaaaa-1", Workspace: "/home/u/new", Persistent: true, SavedAt: "2026-11-01T10:00:00Z"},
+		// 09:30-01:00 is 10:30 UTC: the newer save, though it sorts first as
+		// a string.
+		{SessionID: "s3", ContainerName: "coi-bbbbbbbb-1", Workspace: "/home/u/local", Persistent: true, SavedAt: "2026-11-01T09:30:00-01:00"},
+		{SessionID: "s4", ContainerName: "coi-bbbbbbbb-1", Workspace: "/home/u/utc", SavedAt: "2026-11-01T10:00:00Z"},
+		// A valid saved_at wins over an unparsable one in either order.
+		{SessionID: "s5", ContainerName: "coi-cccccccc-1", Workspace: "/home/u/valid", Persistent: true, SavedAt: "2026-10-01T10:00:00Z"},
+		{SessionID: "s6", ContainerName: "coi-cccccccc-1", Workspace: "/home/u/bad", SavedAt: "yesterday"},
+		{SessionID: "s7", ContainerName: "coi-dddddddd-1", Workspace: "/home/u/none"},
+		{SessionID: "s8", ContainerName: "coi-dddddddd-1", Workspace: "/home/u/dated", Persistent: true, SavedAt: "2026-10-01T10:00:00Z"},
+	}
+	for _, m := range saves {
+		writeSessionMetadata(t, dir, m)
+	}
+	ws, persistent := containerSessionInfo([]ContainerInfo{
+		{Name: "coi-aaaaaaaa-1"}, {Name: "coi-bbbbbbbb-1"}, {Name: "coi-cccccccc-1"}, {Name: "coi-dddddddd-1"},
+	}, []string{dir})
+
+	want := map[string]string{
+		"coi-aaaaaaaa-1": "/home/u/new", "coi-bbbbbbbb-1": "/home/u/local",
+		"coi-cccccccc-1": "/home/u/valid", "coi-dddddddd-1": "/home/u/dated",
+	}
+	for name, w := range want {
+		if ws[name] != w || !persistent[name] {
+			t.Errorf("%s: workspace=%q persistent=%v; want %q, true", name, ws[name], persistent[name], w)
+		}
+	}
+}
+
 func TestContainerSessionInfo_ManagedWithoutWorkspaceSkipsFallback(t *testing.T) {
 	dir := t.TempDir()
 	// Even a matching save is not read: the marker says coi set no workspace.

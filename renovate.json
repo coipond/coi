@@ -43,17 +43,9 @@
       "matchDepNames": [
         "aaif-goose/goose"
       ],
-      "automerge": false,
       "prBodyNotes": [
         "Update `GOOSE_SHA256_X86_64` and `GOOSE_SHA256_AARCH64` in `internal/image/build.sh` to the release assets' sha256 digests, and the goose version and hashes in `internal/image/build_sh_goose_test.go`, before merging."
       ]
-    },
-    {
-      "description": "Major updates stay manual",
-      "matchUpdateTypes": [
-        "major"
-      ],
-      "automerge": false
     }
   ],
   "minimumReleaseAge": "7 days",
@@ -72,6 +64,5 @@
       "security"
     ]
   },
-  "automerge": true,
-  "platformAutomerge": true
+  "automerge": false
 }

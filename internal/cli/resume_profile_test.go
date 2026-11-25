@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/coipond/coi/internal/alias"
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/session"
+	"github.com/coipond/coi/internal/tool"
 	"github.com/spf13/cobra"
 )
 
@@ -175,4 +178,33 @@ func TestResolveResumeAndProfile_AutoResumeUsesDefaultSessionName(t *testing.T) 
 		t.Errorf("resumeID = %q, want the session saved under session_name %q", resumeID, "team")
 	}
 	assertProfileApplied(t, a, "resumed", baseImage, "2", "")
+}
+
+// Resuming a session whose save was killed after moving the previous copy
+// aside puts the complete new copy back where the resume reads it.
+func TestResolveResumeAndProfile_RecoversInterruptedSave(t *testing.T) {
+	a, cmd, sessionsDir := newResumeTestApp(t, "")
+	if err := cmd.Flags().Set("resume", "sess1"); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(sessionsDir, "sess1", tool.NewClaude().ConfigDirName())
+	for dir, content := range map[string]string{live + ".coi-new": "new", live + ".coi-old": "old"} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "history.jsonl"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, _, err := a.resolveResumeAndProfile(cmd, sessionsDir, "/ws"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(live, "history.jsonl"))
+	if err != nil {
+		t.Fatalf("saved copy not recovered: %v", err)
+	}
+	if string(got) != "new" {
+		t.Errorf("recovered copy = %q, want %q", got, "new")
+	}
 }

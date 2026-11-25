@@ -19,6 +19,7 @@ import time
 
 from support.helpers import (
     calculate_container_name,
+    child_output,
     poweroff_and_wait,
     spawn_coi,
     wait_for_container_ready,
@@ -38,15 +39,6 @@ def _exit_cli_to_bash(child):
     time.sleep(0.3)
     child.send("\x0d")
     time.sleep(3)
-
-
-def _drain_output(child):
-    """Best-effort capture of everything the child emitted (screen or raw)."""
-    lf = child.logfile_read
-    for attr in ("get_raw_output", "get_output", "get_display_stripped"):
-        if hasattr(lf, attr):
-            return getattr(lf, attr)()
-    return ""
 
 
 def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_containers, workspace_dir):
@@ -72,7 +64,7 @@ def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_container
         )
 
     deleted = poweroff_and_wait(child, coi_binary, container_name)
-    out1 = _drain_output(child)
+    out1 = child_output(child)
     assert deleted, f"container {container_name} should be deleted after poweroff"
     # Localize a later round-trip failure to save-vs-restore: the SAVE must happen
     # in session 1 (this is exactly what the pre-existing tests already assert).

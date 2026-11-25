@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -594,7 +595,9 @@ func containerWorkspaces(running []incusTopEntry) map[string]string {
 }
 
 // loadContainerWorkspaces maps the wanted container names to their workspace
-// from the session metadata written at launch (see readContainerMetadata).
+// from the session metadata written at launch (see readContainerMetadata), in
+// every tool's sessions dir: the configured tool need not be the one that
+// launched it, and its own save wins (see allSessionsDirs).
 // Best-effort: a missing/unreadable sessions dir yields an empty map.
 func loadContainerWorkspaces(want map[string]bool) map[string]string {
 	out := make(map[string]string)
@@ -609,16 +612,23 @@ func loadContainerWorkspaces(want map[string]bool) map[string]string {
 	if err != nil {
 		return out
 	}
-	sessionsDir := session.GetSessionsDir(filepath.Join(homeDir, ".coi"), toolInstance)
-	for name, md := range readContainerMetadata(sessionsDir, want) {
-		out[name] = md.Workspace
+	missing := maps.Clone(want)
+	for _, dir := range allSessionsDirs(filepath.Join(homeDir, ".coi"), toolInstance) {
+		if len(missing) == 0 {
+			break
+		}
+		for name, md := range readContainerMetadata(dir, missing) {
+			out[name] = md.Workspace
+			delete(missing, name)
+		}
 	}
 	return out
 }
 
-// readContainerMetadata maps the wanted container names to the session
-// metadata written at launch. Session dirs are named by session ID, so each
-// one is read until every wanted container is found.
+// readContainerMetadata maps the wanted container names to the metadata of
+// their newest saved session (by saved_at). Session dirs are named by session
+// ID, so every one is read. A save with an unparsable saved_at loses to one
+// with a valid time; between two such saves the first read is kept.
 // Best-effort: a missing/unreadable sessions dir yields an empty map.
 func readContainerMetadata(sessionsDir string, want map[string]bool) map[string]session.SessionMetadata {
 	out := make(map[string]session.SessionMetadata)
@@ -630,9 +640,6 @@ func readContainerMetadata(sessionsDir string, want map[string]bool) map[string]
 		return out
 	}
 	for _, entry := range entries {
-		if len(out) == len(want) {
-			break
-		}
 		if !entry.IsDir() {
 			continue
 		}
@@ -642,12 +649,23 @@ func readContainerMetadata(sessionsDir string, want map[string]bool) map[string]
 		}
 		var md session.SessionMetadata
 		if err := json.Unmarshal(data, &md); err == nil && want[md.ContainerName] && md.Workspace != "" {
-			if _, seen := out[md.ContainerName]; !seen {
+			if prev, seen := out[md.ContainerName]; !seen || savedAfter(md.SavedAt, prev.SavedAt) {
 				out[md.ContainerName] = md
 			}
 		}
 	}
 	return out
+}
+
+// savedAfter reports whether saved_at a is later than b. A valid time is
+// later than an unparsable one.
+func savedAfter(a, b string) bool {
+	ta, errA := time.Parse(time.RFC3339, a)
+	if errA != nil {
+		return false
+	}
+	tb, errB := time.Parse(time.RFC3339, b)
+	return errB != nil || ta.After(tb)
 }
 
 // --- /proc sampling for per-process CPU% and RSS ----------------------------

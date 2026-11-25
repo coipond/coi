@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from pexpect import EOF, TIMEOUT
 
-from support.helpers import spawn_coi, write_workspace_container_config
+from support.helpers import child_output, spawn_coi, write_workspace_container_config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,15 +28,6 @@ from support.helpers import spawn_coi, write_workspace_container_config
 _FAKE_DEFAULT = "coi-prompt-test-default-missing"
 _FAKE_CUSTOM = "coi-prompt-test-custom-missing"
 _PROMPT_TEXT = "Build it now?"
-
-
-def _get_output(child):
-    """Return all captured output from a pexpect child."""
-    if hasattr(child.logfile_read, "get_raw_output"):
-        return child.logfile_read.get_raw_output()
-    if hasattr(child.logfile_read, "get_output"):
-        return child.logfile_read.get_output()
-    return ""
 
 
 def _close(child):
@@ -70,7 +61,7 @@ def test_prompt_shown_on_tty_for_missing_image(coi_binary, workspace_dir):
         child.sendline("n")
         child.expect(EOF, timeout=15)
     except TIMEOUT:
-        output = _get_output(child)
+        output = child_output(child)
         pytest.fail(f"Expected prompt '{_PROMPT_TEXT}' within 30s. Output:\n{output}")
     finally:
         _close(child)
@@ -94,12 +85,12 @@ def test_prompt_decline_exits_with_not_found_error(coi_binary, workspace_dir):
         child.sendline("n")
         child.expect(EOF, timeout=15)
     except TIMEOUT:
-        output = _get_output(child)
+        output = child_output(child)
         pytest.fail(f"Process did not exit cleanly after 'n'. Output:\n{output}")
     finally:
         _close(child)
 
-    output = _get_output(child)
+    output = child_output(child)
     assert child.exitstatus != 0 or child.signalstatus is not None, (
         f"Expected non-zero exit after declining build. Output:\n{output}"
     )
@@ -126,12 +117,12 @@ def test_prompt_empty_enter_treated_as_no(coi_binary, workspace_dir):
         child.sendline("")  # just press Enter
         child.expect(EOF, timeout=15)
     except TIMEOUT:
-        output = _get_output(child)
+        output = child_output(child)
         pytest.fail(f"Process did not exit after Enter. Output:\n{output}")
     finally:
         _close(child)
 
-    output = _get_output(child)
+    output = child_output(child)
     assert child.exitstatus != 0 or child.signalstatus is not None, (
         f"Expected non-zero exit after pressing Enter (default No). Output:\n{output}"
     )
@@ -161,12 +152,12 @@ def test_prompt_yes_triggers_build_attempt_for_custom_image(coi_binary, workspac
         child.sendline("y")
         child.expect(EOF, timeout=30)
     except TIMEOUT:
-        output = _get_output(child)
+        output = child_output(child)
         pytest.fail(f"Process did not exit after 'y'. Output:\n{output}")
     finally:
         _close(child)
 
-    output = _get_output(child)
+    output = child_output(child)
     assert child.exitstatus != 0 or child.signalstatus is not None, (
         f"Expected non-zero exit (no build config). Output:\n{output}"
     )

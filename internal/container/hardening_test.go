@@ -320,3 +320,40 @@ func TestKernelSurfaceStrictViolation(t *testing.T) {
 		t.Error("strict policy must flag a base-only deny list as missing perf_event_open")
 	}
 }
+
+// passwordless_sudo = false wins over Docker: the docker socket is root.
+func TestHardeningPolicy_NoSudoDisablesDocker(t *testing.T) {
+	if (HardeningPolicy{Docker: true, NoSudo: true}).DockerEnabled() {
+		t.Error("NoSudo must turn Docker off")
+	}
+	if !(HardeningPolicy{Docker: true}).DockerEnabled() {
+		t.Error("Docker stays on with sudo")
+	}
+}
+
+// Only Docker keys count: a container without Docker and without the
+// reduce_kernel_surface deny list has none.
+func TestDockerKeys(t *testing.T) {
+	if v := dockerKeys(map[string]string{"security.syscalls.deny": ""}); len(v) != 0 {
+		t.Errorf("no Docker: got %v, want none", v)
+	}
+	v := dockerKeys(map[string]string{"security.nesting": "true", "security.syscalls.intercept.mknod": "true"})
+	if len(v) != 2 || v[0] != "security.nesting=true" || v[1] != "security.syscalls.intercept.mknod=true" {
+		t.Errorf("Docker keys = %v", v)
+	}
+}
+
+// A container without Docker and without the deny list (created with
+// docker = false) has no Docker keys, so a no-sudo hardened session may use
+// it; a Docker container lists nesting.
+func TestEffectiveDockerKeys(t *testing.T) {
+	fakeIncusScript(t, `case "$*" in *"security.nesting"*) echo "$NESTING" ;; *) echo "" ;; esac`)
+	t.Setenv("NESTING", "")
+	if v, err := EffectiveDockerKeys("c1"); err != nil || len(v) != 0 {
+		t.Errorf("no Docker: got %v, %v; want none", v, err)
+	}
+	t.Setenv("NESTING", "true")
+	if v, err := EffectiveDockerKeys("c1"); err != nil || len(v) != 1 || v[0] != "security.nesting=true" {
+		t.Errorf("Docker: got %v, %v; want security.nesting=true", v, err)
+	}
+}

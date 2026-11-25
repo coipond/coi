@@ -212,6 +212,7 @@ func (st *setupState) phaseInjectContext(_ context.Context) (Teardown, error) {
 	st.pendingGuestOps = nil
 	reportTimezone(out, st.opts.Timezone, st.opts.Logger)
 	reportMiseTrust(out, st.opts.Logger)
+	reportSudoRestore(out, st.opts.Logger)
 	return nil, nil
 }
 

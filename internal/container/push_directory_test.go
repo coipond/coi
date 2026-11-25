@@ -283,3 +283,14 @@ func TestPathKind(t *testing.T) {
 		})
 	}
 }
+
+// TestPathKindOtherFailure checks that a failure whose stderr does not say
+// "not found" is returned with that stderr, not read as a missing path.
+func TestPathKindOtherFailure(t *testing.T) {
+	fakeIncusScript(t, `echo 'Error: Forbidden' >&2; exit 1`)
+	got, err := NewManager("c1").PathKind("/root/x")
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Stderr != "Error: Forbidden" {
+		t.Fatalf("PathKind() = %q, %v; want an *ExitError with the stderr", got, err)
+	}
+}

@@ -707,6 +707,7 @@ func mergeSecurityInto(dst *SecurityConfig, src *SecurityConfig) {
 	}
 	mergePtr(&dst.ReduceKernelSurface, src.ReduceKernelSurface)
 	mergePtr(&dst.ReduceKernelSurfaceStrict, src.ReduceKernelSurfaceStrict)
+	mergePtr(&dst.PasswordlessSudo, src.PasswordlessSudo)
 }
 
 func mergeTimezoneInto(dst *TimezoneConfig, src *TimezoneConfig) {

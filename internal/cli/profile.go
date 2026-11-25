@@ -793,6 +793,9 @@ func printProfileSecurity(p *config.ProfileConfig) {
 		if p.Security.ReduceKernelSurfaceStrict != nil {
 			fmt.Printf("reduce_kernel_surface_strict = %v\n", *p.Security.ReduceKernelSurfaceStrict)
 		}
+		if p.Security.PasswordlessSudo != nil {
+			fmt.Printf("passwordless_sudo = %v\n", *p.Security.PasswordlessSudo)
+		}
 	}
 }
 

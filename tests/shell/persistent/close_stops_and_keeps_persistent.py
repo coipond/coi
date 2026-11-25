@@ -17,6 +17,7 @@ from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    child_output,
     incus_status,
     send_prompt,
     spawn_coi,
@@ -86,12 +87,7 @@ def test_close_stops_and_keeps_persistent(coi_binary, cleanup_containers, worksp
     except TIMEOUT:
         pass
 
-    if hasattr(child.logfile_read, "get_raw_output"):
-        output = child.logfile_read.get_raw_output()
-    elif hasattr(child.logfile_read, "get_output"):
-        output = child.logfile_read.get_output()
-    else:
-        output = ""
+    output = child_output(child)
 
     try:
         child.close(force=False)

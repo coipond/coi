@@ -194,7 +194,7 @@ func isTrustedConfigPath(path string) bool {
 			return true
 		}
 	}
-	if env := os.Getenv("COI_CONFIG"); env != "" && clean == filepath.Clean(env) {
+	if env := envConfigPath(); env != "" && clean == env {
 		return true
 	}
 	return false
@@ -427,6 +427,13 @@ func sanitizeUntrustedSecurity(s *SecurityConfig, path string) {
 		warnUntrustedDowngrade(path, "security.reduce_kernel_surface_strict")
 	}
 	s.ReduceKernelSurfaceStrict = nil
+	if s.PasswordlessSudo != nil && *s.PasswordlessSudo {
+		// Only true is a downgrade. false is dropped too: it takes root and
+		// package installs away from the session, which a cloned repo must not
+		// impose either.
+		warnUntrustedDowngrade(path, "security.passwordless_sudo")
+	}
+	s.PasswordlessSudo = nil
 }
 
 // sanitizeUntrustedGit drops git settings that weaken protection or would let an
@@ -779,7 +786,7 @@ func isTrustedProfileDir(dir string) bool {
 			return true
 		}
 	}
-	if env := os.Getenv("COI_CONFIG"); env != "" && clean == filepath.Clean(filepath.Dir(env)) {
+	if env := envConfigPath(); env != "" && clean == filepath.Dir(env) {
 		return true
 	}
 	return false

@@ -70,7 +70,7 @@ class TestAliasStoredOnContainer:
 
         result = run_coi(
             coi_binary,
-            ["run", "sleep", "30"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
         assert result.returncode == 0, f"coi run failed: {result.stderr}"
@@ -119,7 +119,7 @@ class TestAliasShownInList:
         # Launch a persistent container so it stays running
         run_coi(
             coi_binary,
-            ["run", "sleep", "30"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -151,7 +151,7 @@ class TestAliasShownInList:
 
         run_coi(
             coi_binary,
-            ["run", "sleep", "30"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
         list_result = run_coi(coi_binary, ["list"])
@@ -179,7 +179,7 @@ class TestAttachByAlias:
         # Start a persistent container
         run_coi(
             coi_binary,
-            ["run", "sleep", "60"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -209,7 +209,7 @@ class TestKillByAlias:
 
         run_coi(
             coi_binary,
-            ["run", "sleep", "60"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -232,7 +232,7 @@ class TestShutdownByAlias:
 
         run_coi(
             coi_binary,
-            ["run", "sleep", "60"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -249,32 +249,23 @@ class TestUnfreezeByAlias:
 
     def test_unfreeze_by_alias(self, coi_binary, workspace_dir, cleanup_containers, dummy_image):
         """Launch container with alias, freeze it, unfreeze by alias."""
-        write_workspace_container_config(
-            workspace_dir, persistent=True, image=dummy_image, alias="unfreezealias"
-        )
-        container_name = calculate_container_name(workspace_dir, 1)
+        env = {**os.environ, "COI_USE_DUMMY": "1"}
+        write_workspace_container_config(workspace_dir, image=dummy_image, alias="unfreezealias")
+        container_name, _ = start_background_shell(coi_binary, workspace_dir, env, slot=1)
 
-        run_coi(
-            coi_binary,
-            ["run", "sleep", "60"],
-            workspace_dir=workspace_dir,
-        )
-
-        # Pause the container
-        subprocess.run(
+        result = subprocess.run(
             ["incus", "pause", container_name],
             capture_output=True,
-            timeout=10,
+            text=True,
+            timeout=30,
         )
+        assert result.returncode == 0, f"incus pause failed: {result.stderr}"
+        assert incus_status(container_name) == "FROZEN"
 
-        # Unfreeze by alias
-        result = run_coi(
-            coi_binary,
-            ["unfreeze", "unfreezealias"],
-        )
-        if result.returncode == 0:
-            # Verify container is running again
-            assert incus_status(container_name) == "RUNNING"
+        result = run_coi(coi_binary, ["unfreeze", "unfreezealias"], timeout=60)
+        assert result.returncode == 0, f"coi unfreeze unfreezealias failed: {result.stderr}"
+        assert f"Unfroze container: {container_name}" in result.stderr, result.stderr
+        assert incus_status(container_name) == "RUNNING"
 
 
 # ============================================================
@@ -296,13 +287,13 @@ class TestAliasSlotSuffix:
         # Launch slot 1
         run_coi(
             coi_binary,
-            ["run", "--slot", "1", "sleep", "60"],
+            ["run", "--slot", "1", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
         # Launch slot 2
         run_coi(
             coi_binary,
-            ["run", "--slot", "2", "sleep", "60"],
+            ["run", "--slot", "2", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 
@@ -587,7 +578,7 @@ class TestAliasEdgeCases:
         write_workspace_container_config(workspace_dir, persistent=True, image=dummy_image)
         run_coi(
             coi_binary,
-            ["run", "sleep", "30"],
+            ["run", "echo", "ok"],
             workspace_dir=workspace_dir,
         )
 

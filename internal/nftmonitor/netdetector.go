@@ -44,14 +44,14 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 		return nd.config.PermittedDestination != nil && nd.config.PermittedDestination(event.Protocol, event.DstIP, event.DstPort)
 	}
 
-	// 1. RFC1918 addresses (blocked by the firewall unless in open mode)
-	if nd.config.NetworkMode != config.NetworkModeOpen && isRFC1918(event.DstIP) && event.DstIP != nd.config.GatewayIP && !permitted() {
+	// 1. Private addresses (blocked by the firewall unless in open mode)
+	if nd.config.NetworkMode != config.NetworkModeOpen && config.IsPrivateNetworkIP(event.DstIP) && event.DstIP != nd.config.GatewayIP && !permitted() {
 		return &ThreatEvent{
 			Timestamp:   event.Timestamp,
 			Level:       ThreatLevelHigh,
 			Category:    "network",
 			Title:       "Connection to private network",
-			Description: fmt.Sprintf("RFC1918 address: %s:%d (should be blocked by firewall)", event.DstIP, event.DstPort),
+			Description: fmt.Sprintf("Private address: %s:%d (should be blocked by firewall)", event.DstIP, event.DstPort),
 			Evidence:    event,
 		}
 	}
@@ -138,33 +138,6 @@ func (nd *NetworkDetector) analyzeDNSQuery(event *NetworkEvent, permitted func()
 	}
 
 	return nil
-}
-
-// isRFC1918 checks if IP is in private address space
-func isRFC1918(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-
-	// Check private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-	privateRanges := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-	}
-
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if network.Contains(ip) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // inAllowlist checks if IP is in allowed CIDR ranges

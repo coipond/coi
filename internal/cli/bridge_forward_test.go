@@ -19,6 +19,13 @@ import (
 // sudo log.
 func fakeBridgeHost(t *testing.T, c, net string) string {
 	t.Helper()
+	return fakeBridgeHostNft(t, c, net, 0)
+}
+
+// fakeBridgeHostNft is fakeBridgeHost whose `nft -f -` records its script in
+// the sudo log and exits with scriptExit.
+func fakeBridgeHostNft(t *testing.T, c, net string, scriptExit int) string {
+	t.Helper()
 	dir := t.TempDir()
 	sudoLog := filepath.Join(dir, "sudo.log")
 	scripts := map[string]string{
@@ -32,13 +39,14 @@ exit 0
 `, c, net),
 		"sudo": fmt.Sprintf(`#!/bin/sh
 shift
-echo "$*" >> %q
+echo "$*" >> %[1]q
 case "$*" in
   "iptables -S FORWARD") echo "-P FORWARD DROP" ;;
   "iptables -C"*) exit 1 ;;
+  "nft -f -") cat >> %[1]q; exit %[2]d ;;
 esac
 exit 0
-`, sudoLog),
+`, sudoLog, scriptExit),
 		"iptables": "#!/bin/sh\necho 'iptables v1.8.10 (nf_tables)'\n",
 	}
 	for name, script := range scripts {
@@ -89,4 +97,59 @@ func TestIsolateStartedContainer_ContainerBridge(t *testing.T) {
 	cmd.SetContext(t.Context())
 	_ = restrictedApp().isolateStartedContainer(cmd, "coi-br-4")
 	assertBridgeRules(t, sudoLog, "coinetstart")
+}
+
+// coi run in open mode installs the metadata reject under
+// block_metadata_endpoint and returns it for teardown; without the setting
+// nothing is installed. When the reject cannot be installed, stderr says so.
+func TestApplyNetworkIsolation_OpenMetadataBlock(t *testing.T) {
+	off := false
+	for _, tc := range []struct {
+		name     string
+		block    bool
+		useSudo  *bool
+		nftFails bool
+		reject   bool
+		warning  string
+	}{
+		{name: "blocked", block: true, reject: true},
+		{name: "not blocked", block: false},
+		{name: "nft script fails", block: true, nftFails: true, warning: "block_metadata_endpoint is not enforced in open mode: nft failed"},
+		{name: "no usable nft", block: true, useSudo: &off, warning: "block_metadata_endpoint is not enforced in open mode: nft is not usable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scriptExit := 0
+			if tc.nftFails {
+				scriptExit = 1
+			}
+			sudoLog := fakeBridgeHostNft(t, "coi-open-run", "incusbr0", scriptExit)
+			if tc.useSudo != nil && !*tc.useSudo {
+				network.SetSudoAllowed(false)
+			}
+
+			cfg := config.GetDefaultConfig()
+			cfg.Network.Mode = config.NetworkModeOpen
+			cfg.Network.BlockMetadataEndpoint = &tc.block
+			cfg.Network.UseSudo = tc.useSudo
+			var nm networkTeardown
+			var err error
+			stderr := captureOutput(t, &os.Stderr, func() {
+				nm, err = (&App{cfg: cfg}).applyNetworkIsolation(t.Context(), "coi-open-run")
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, _ := os.ReadFile(sudoLog)
+			reject := strings.Contains(string(data), "ip saddr 10.99.0.5 ip daddr 169.254.0.0/16")
+			if (reject && !tc.nftFails) != tc.reject || (nm != nil) != tc.reject {
+				t.Errorf("metadata reject = %v, teardown = %v, want %v; sudo calls:\n%s", reject, nm != nil, tc.reject, data)
+			}
+			if tc.warning == "" && strings.Contains(stderr, "not enforced") {
+				t.Errorf("unexpected warning: %q", stderr)
+			}
+			if tc.warning != "" && !strings.Contains(stderr, tc.warning) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.warning)
+			}
+		})
+	}
 }
