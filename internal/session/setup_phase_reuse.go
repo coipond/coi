@@ -214,7 +214,7 @@ func (st *setupState) saveStoppedLeftover() error {
 		return nil
 	}
 	st.opts.Logger("Found stopped leftover container of the resumed session, saving its session data first...")
-	if err := saveSessionData(st.result.Manager, st.result.ContainerName, owner, metadata.Persistent, metadata.ProfileName, metadata.ProfileFromDefault, metadata.Workspace, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger); err != nil {
+	if err := saveSessionData(st.result.Manager, st.result.ContainerName, owner, metadata.Persistent, metadata.ProfileName, metadata.ProfileFromDefault, metadata.Workspace, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger, st.sessionDebug); err != nil {
 		return fmt.Errorf("failed to save session data from stopped container %s, leaving it in place (retry, or delete it with 'coi kill %s' to resume from the older saved copy): %w",
 			st.result.ContainerName, st.result.ContainerName, err)
 	}
@@ -248,4 +248,12 @@ func newestSessionForContainer(sessionsDirs []string, containerName string) (str
 		}
 	}
 	return newestDir, newest, newestMetadata
+}
+
+// sessionDebug writes msg to the session log only, as sessionDebug does for
+// cleanup's save.
+func (st *setupState) sessionDebug(msg string) {
+	if st.result.Logger != nil {
+		st.result.Logger.Println("[setup] " + msg)
+	}
 }
