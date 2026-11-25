@@ -18,6 +18,7 @@ type Collector struct {
 	allowedCIDRs      []string
 	allowedCIDRsFn    func() []string
 	permitted         PermittedDestinationFunc
+	portPermitted     PermittedDestinationFunc
 	gateway           func() string
 	filesystemMonitor *FilesystemMonitor
 	// permittedFlows holds the flows the previous poll did not flag, keyed by
@@ -49,6 +50,12 @@ func (c *Collector) SetNetworkMode(mode config.NetworkMode) {
 // DaemonConfig.PermittedDestination).
 func (c *Collector) SetPermittedDestination(fn PermittedDestinationFunc) {
 	c.permitted = fn
+}
+
+// SetExplicitPortPermit supplies the explicit port-permit check (see
+// DaemonConfig.ExplicitPortPermit).
+func (c *Collector) SetExplicitPortPermit(fn PermittedDestinationFunc) {
+	c.portPermitted = fn
 }
 
 // SetGateway supplies the container's bridge gateway (see
@@ -123,7 +130,7 @@ func (c *Collector) Collect(ctx context.Context) (MonitorSnapshot, error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		networkStats, err := CollectNetworkStats(ctx, c.containerName, c.containerIP, c.networkMode, c.currentAllowedCIDRs(), c.permitted, c.gateway)
+		networkStats, err := CollectNetworkStats(ctx, c.containerName, c.containerIP, c.networkMode, c.currentAllowedCIDRs(), c.permitted, c.portPermitted, c.gateway)
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
