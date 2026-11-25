@@ -20,6 +20,7 @@ import time
 from support.helpers import (
     calculate_container_name,
     child_output,
+    exit_tool_to_bash,
     poweroff_and_wait,
     spawn_coi,
     wait_for_container_ready,
@@ -34,13 +35,6 @@ SENTINEL = "COI_RESUME_ROUNDTRIP_SENTINEL_7a3f"
 SENTINEL_PATH = "$HOME/.claude/coi-resume-sentinel.txt"
 
 
-def _exit_cli_to_bash(child):
-    child.send("exit")
-    time.sleep(0.3)
-    child.send("\x0d")
-    time.sleep(3)
-
-
 def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_containers, workspace_dir):
     env = {"COI_USE_DUMMY": "1"}
     container_name = calculate_container_name(workspace_dir, 1)
@@ -50,7 +44,7 @@ def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_container
     wait_for_container_ready(child, timeout=60)
     wait_for_prompt(child, timeout=90)
 
-    _exit_cli_to_bash(child)
+    assert exit_tool_to_bash(child), "the tool should exit to bash in session 1"
 
     with with_live_screen(child) as monitor:
         time.sleep(1)
@@ -77,7 +71,7 @@ def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_container
     wait_for_container_ready(child2, timeout=60)
     wait_for_prompt(child2, timeout=90)
 
-    _exit_cli_to_bash(child2)
+    in_bash2 = exit_tool_to_bash(child2)
 
     got_sentinel = False
     got_owner = False
@@ -94,6 +88,7 @@ def test_ephemeral_resume_restores_session_content(coi_binary, cleanup_container
     container_name2 = calculate_container_name(workspace_dir, 1)
     poweroff_and_wait(child2, coi_binary, container_name2)
 
+    assert in_bash2, "the resumed tool should exit to bash"
     assert got_sentinel, (
         "the sentinel written in session 1 must be restored into the resumed "
         "container — ephemeral --resume did not round-trip the tool config content"

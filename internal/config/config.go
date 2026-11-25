@@ -29,6 +29,18 @@ const (
 	NetworkModeAllowlist NetworkMode = "allowlist"
 )
 
+// ToolMemory is the [tool] memory setting: whether a new session in a reused
+// persistent container keeps the tool's conversation history and memory files
+// from earlier sessions.
+type ToolMemory string
+
+const (
+	// ToolMemoryKeep keeps the tool's memory files (the default).
+	ToolMemoryKeep ToolMemory = "keep"
+	// ToolMemoryFresh removes them before a new (not resumed) session.
+	ToolMemoryFresh ToolMemory = "fresh"
+)
+
 // PrivateNetworkCIDRs returns the private ranges restricted and allowlist mode
 // block unless allow_local_network_access is set: RFC1918 and the RFC 6598
 // shared address space 100.64.0.0/10 (CGNAT; Tailscale, Headscale and NetBird

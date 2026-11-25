@@ -627,6 +627,9 @@ func printProfileTool(p *config.ProfileConfig) {
 		if p.Tool.PermissionMode != "" {
 			fmt.Printf("permission_mode = %q\n", p.Tool.PermissionMode)
 		}
+		if p.Tool.Memory != "" {
+			fmt.Printf("memory = %q\n", p.Tool.Memory)
+		}
 		if p.Tool.ContextFile != "" {
 			fmt.Printf("context_file = %q\n", p.Tool.ContextFile)
 		}

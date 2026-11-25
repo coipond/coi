@@ -307,6 +307,14 @@ func (c *ClaudeTool) SandboxSettingsFileName() string {
 // Claude uses ~/.claude.json as a sibling state file next to ~/.claude/.
 func (c *ClaudeTool) StateConfigFileName() string { return mustBundle("claude").StateFile }
 
+// MemoryPaths implements ToolWithMemoryPaths: transcripts and auto-memory
+// (projects/), subagent memory, prompt history, todos and tasks, plans, file
+// checkpoints and per-session shell state. Settings, credentials, plugins,
+// skills and the managed CLAUDE.md stay.
+func (c *ClaudeTool) MemoryPaths() []string {
+	return []string{"projects", "agent-memory", "history.jsonl", "todos", "tasks", "plans", "file-history", "shell-snapshots", "session-env", "paste-cache"}
+}
+
 // AlwaysSetupConfig implements ToolWithConfigDirFiles.
 // Claude needs credentials from ~/.claude, so skip setup when host dir is missing.
 func (c *ClaudeTool) AlwaysSetupConfig() bool { return mustBundle("claude").AlwaysSetup }
@@ -496,6 +504,18 @@ type DataDir struct {
 type ToolWithDataDirs interface {
 	Tool
 	DataDirs() []DataDir
+}
+
+// ToolWithMemoryPaths is an optional interface for tools that keep their
+// conversation history and memory inside the container. [tool] memory =
+// "fresh" removes these paths before a new session in a reused persistent
+// container; everything else in the config dir (settings, credentials,
+// plugins) stays.
+type ToolWithMemoryPaths interface {
+	Tool
+	// MemoryPaths returns paths, relative to the config dir, that hold the
+	// tool's memory of earlier sessions.
+	MemoryPaths() []string
 }
 
 // ToolWithSessionExcludes is an optional interface for tools whose config dir

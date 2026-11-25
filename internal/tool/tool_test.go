@@ -3,6 +3,7 @@ package tool
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1135,4 +1136,48 @@ func indexOf(slice []string, item string) int {
 		}
 	}
 	return -1
+}
+
+// Memory paths must name only history and memory: a path that is also a
+// config file coi copies in would drop the login or settings on a fresh
+// session.
+func TestMemoryPaths(t *testing.T) {
+	want := map[string][]string{
+		"claude": {"projects", "agent-memory", "history.jsonl", "todos", "tasks", "plans", "file-history", "shell-snapshots", "session-env", "paste-cache"},
+		"codex":  {"sessions", "archived_sessions", "history.jsonl", "memories"},
+		"goose":  {"memory"},
+	}
+	for name, paths := range want {
+		ti, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		tmp, ok := ti.(ToolWithMemoryPaths)
+		if !ok {
+			t.Fatalf("%s does not implement ToolWithMemoryPaths", name)
+		}
+		if got := tmp.MemoryPaths(); !reflect.DeepEqual(got, paths) {
+			t.Errorf("%s MemoryPaths() = %v, want %v", name, got, paths)
+		}
+		tcf := ti.(ToolWithConfigDirFiles)
+		keep := append([]string{tcf.SandboxSettingsFileName()}, tcf.EssentialConfigFiles()...)
+		for _, p := range tmp.MemoryPaths() {
+			for _, k := range keep {
+				if k != "" && (k == p || strings.HasPrefix(k, p+"/")) {
+					t.Errorf("%s memory path %q would remove config file %q", name, p, k)
+				}
+			}
+		}
+	}
+	// Their session stores live outside the container (workspace or host
+	// data mounts), so a reused container holds no memory of theirs.
+	for _, name := range []string{"pi", "omp", "opencode", "opencode2"} {
+		ti, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		if _, ok := ti.(ToolWithMemoryPaths); ok {
+			t.Errorf("%s should not implement ToolWithMemoryPaths", name)
+		}
+	}
 }

@@ -123,6 +123,8 @@
 # auto_context = true            # inject SANDBOX_CONTEXT.md into the tool
 # context_json = true            # also write ~/SANDBOX_CONTEXT.json (set false to disable)
 # context_json_file = "~/coi-context.json"  # inject a custom JSON instead of the generated one
+# memory = "keep"                # keep | fresh: fresh starts a new session in a reused persistent
+                                 #   container without the tool's history/memory (installs stay)
 
 # [tool.claude]
 # model = "opus"                 # Claude model (ANTHROPIC_MODEL): alias like "opus" or a full ID

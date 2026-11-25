@@ -319,6 +319,7 @@ func (a *App) configureSessionPhase(cmd *cobra.Command, s *shellState) session.P
 				Image:                 img,
 				StoragePool:           a.cfg.Container.StoragePool,
 				Persistent:            a.persistent,
+				FreshToolMemory:       a.cfg.Tool.Memory == config.ToolMemoryFresh,
 				ResumeFromID:          resumeID,
 				Slot:                  slotNum,
 				MountConfig:           mountConfig,

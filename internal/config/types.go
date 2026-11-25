@@ -696,6 +696,7 @@ type ToolConfig struct {
 	ContextJSON     *bool            `toml:"context_json"`      // Write ~/SANDBOX_CONTEXT.json for programmatic consumers (default: true)
 	ContextJSONFile string           `toml:"context_json_file"` // Path to custom context .json file (supports ~ expansion; overrides the generated JSON; trusted scope only)
 	PreLaunch       []string         `toml:"pre_launch"`        // Shell commands run in the container before the tool starts in coi shell (e.g. "claude update"); trusted scope only
+	Memory          ToolMemory       `toml:"memory"`            // Tool memory in a reused persistent container: "keep" (default) or "fresh"
 	Claude          ClaudeToolConfig `toml:"claude"`            // Claude-specific settings
 	Codex           CodexToolConfig  `toml:"codex"`             // Codex-specific settings
 }
