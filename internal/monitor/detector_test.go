@@ -477,7 +477,7 @@ func TestCheckSuspicious(t *testing.T) {
 			},
 			mode:         config.NetworkModeAllowlist,
 			allowedCIDRs: []string{"8.8.8.8/32"},
-			wantReason:   "RFC1918 private address",
+			wantReason:   "Private address",
 		},
 		{
 			name: "suspicious port on public IP",
@@ -666,5 +666,33 @@ func TestDetectorAnalyzeWriteThreats(t *testing.T) {
 
 	if !foundWriteThreat {
 		t.Error("Analyze() should detect large write threat")
+	}
+}
+
+func TestDetectorAnalyzeIOThreatScope(t *testing.T) {
+	detector := NewDetector(50.0, 0)
+	tests := []struct {
+		device string
+		want   []string
+	}{
+		{"252:1", []string{"Large workspace read detected", "Large workspace write detected"}},
+		{"", []string{"Large container I/O read detected", "Large container I/O write detected"}},
+	}
+	for _, tt := range tests {
+		threats := detector.Analyze(MonitorSnapshot{Filesystem: FilesystemStats{
+			Available:       true,
+			WorkspaceDevice: tt.device,
+			TotalReadMB:     100,
+			TotalWriteMB:    100,
+		}})
+		var got []string
+		for _, threat := range threats {
+			if threat.Category == "filesystem" {
+				got = append(got, threat.Title)
+			}
+		}
+		if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+			t.Errorf("device %q: titles = %q, want %q", tt.device, got, tt.want)
+		}
 	}
 }

@@ -62,6 +62,12 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 							st.result.ContainerName, src, st.result.ContainerName)
 					}
 				}
+				// Also for an explicit --container: without sudo, Docker on
+				// a running container would still hand out root.
+				if err := refuseDockerWithoutSudo(st.result.ContainerName, hardeningPolicyFrom(&st.opts),
+					fmt.Sprintf("stop it (coi shutdown %s) and launch again", st.result.ContainerName)); err != nil {
+					return nil, err
+				}
 				st.opts.Logger("Container already running, reusing...")
 				// A RUNNING container's kernel-surface settings cannot be
 				// changed (nesting is rejected, the deny list is racy), so
@@ -98,6 +104,14 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 			if st.opts.Persistent || st.opts.ContainerName != "" {
 				// Restart the stopped container
 				// This includes: persistent containers OR containers specified via --container flag
+				// An explicit --container skips the kernel-surface reconcile,
+				// so without sudo its Docker settings are checked here.
+				if st.opts.ContainerName != "" {
+					if err := refuseDockerWithoutSudo(st.result.ContainerName, hardeningPolicyFrom(&st.opts),
+						fmt.Sprintf("unset the listed keys (incus config unset %s <key>) or launch without --container", st.result.ContainerName)); err != nil {
+						return nil, err
+					}
+				}
 				if err := restartStoppedContainer(st.result, &st.opts, st.result.ContainerName); err != nil {
 					return nil, err
 				}

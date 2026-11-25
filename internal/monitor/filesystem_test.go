@@ -3,11 +3,14 @@ package monitor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // counterDelta must clamp a backwards-going cumulative counter to 0 instead of
@@ -146,7 +149,7 @@ func TestCollectDiskSpaceViaIncusExecTimesOut(t *testing.T) {
 }
 
 func TestDiskSpaceTransition(t *testing.T) {
-	fm := NewFilesystemMonitor()
+	fm := NewFilesystemMonitor("")
 	boom := errors.New("boom")
 
 	steps := []struct {
@@ -168,10 +171,10 @@ func TestDiskSpaceTransition(t *testing.T) {
 
 func TestCollectorReportsDiskSpaceFailureOnce(t *testing.T) {
 	fakeDfIncus(t, `exit 1`)
-	oldStats, oldDisk := filesystemResourceStats, collectDiskSpace
-	t.Cleanup(func() { filesystemResourceStats, collectDiskSpace = oldStats, oldDisk })
-	filesystemResourceStats = func(context.Context, string) (ResourceStats, error) {
-		return ResourceStats{}, nil
+	oldStats, oldDisk := filesystemIOStats, collectDiskSpace
+	t.Cleanup(func() { filesystemIOStats, collectDiskSpace = oldStats, oldDisk })
+	filesystemIOStats = func(context.Context, string, string) (ioStats, error) {
+		return ioStats{}, nil
 	}
 	diskErr := errors.New("df failed")
 	collectDiskSpace = func(context.Context, string) (float64, float64, float64, error) {
@@ -210,5 +213,262 @@ func TestCollectorReportsDiskSpaceFailureOnce(t *testing.T) {
 	diskErr = errors.New("df failed again")
 	if got := diskErrors(); len(got) != 1 {
 		t.Fatalf("failing again: got %q, want one disk space error", got)
+	}
+}
+
+func TestReadIOStatsDevice(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "io.stat")
+	stat := "252:1 rbytes=1000 wbytes=2000 rios=1 wios=1\n" +
+		"259:0 rbytes=10 wbytes=20 rios=1 wios=1\n"
+	if err := os.WriteFile(path, []byte(stat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		device      string
+		read, write float64
+	}{
+		{"", 1010, 2020},
+		{"252:1", 1000, 2000},
+		{"8:0", 0, 0},
+	}
+	for _, tt := range tests {
+		got, err := readIOStats(path, tt.device)
+		if err != nil {
+			t.Fatalf("readIOStats(%q): %v", tt.device, err)
+		}
+		if got.read != tt.read || got.write != tt.write {
+			t.Errorf("readIOStats(%q) = %+v, want read=%v write=%v", tt.device, got, tt.read, tt.write)
+		}
+	}
+}
+
+// fakeBlockDev is a block device in a fake sysfs.
+type fakeBlockDev struct {
+	partitionOf string   // the disk of a partition
+	slaves      []string // the devices below a dm or md device
+	backingFile string   // the backing file of a loop device
+}
+
+// fakeSysDevBlock points sysDevBlock at a fake sysfs with the given devices,
+// keyed by "major:minor".
+func fakeSysDevBlock(t *testing.T, devs map[string]fakeBlockDev) {
+	t.Helper()
+	root := t.TempDir()
+	byDev := filepath.Join(root, "dev", "block")
+	if err := os.MkdirAll(byDev, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dirOf := func(name string) string {
+		dir := filepath.Join(root, "devices")
+		if disk := devs[name].partitionOf; disk != "" {
+			dir = filepath.Join(dir, strings.ReplaceAll(disk, ":", "-"))
+		}
+		return filepath.Join(dir, strings.ReplaceAll(name, ":", "-"))
+	}
+	write := func(path, data string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, dev := range devs {
+		dir := dirOf(name)
+		write(filepath.Join(dir, "dev"), name)
+		if dev.partitionOf != "" {
+			write(filepath.Join(dir, "partition"), "1")
+		}
+		if dev.backingFile != "" {
+			write(filepath.Join(dir, "loop", "backing_file"), dev.backingFile)
+		}
+		if err := os.MkdirAll(filepath.Join(dir, "slaves"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, slave := range dev.slaves {
+			if err := os.Symlink(dirOf(slave), filepath.Join(dir, "slaves", strings.ReplaceAll(slave, ":", "-"))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink(dir, filepath.Join(byDev, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := sysDevBlock
+	t.Cleanup(func() { sysDevBlock = old })
+	sysDevBlock = byDev
+}
+
+func TestIODevice(t *testing.T) {
+	fakeSysDevBlock(t, map[string]fakeBlockDev{
+		"259:0": {},
+		"259:1": {partitionOf: "259:0"},
+		"259:3": {partitionOf: "259:0"},
+		"8:0":   {},
+		"8:1":   {partitionOf: "8:0"},
+		"252:0": {slaves: []string{"259:3"}},
+		"252:1": {slaves: []string{"252:0"}},
+		"252:2": {slaves: []string{"252:0"}},
+		"252:3": {slaves: []string{"8:1"}},
+	})
+	dev := unix.Mkdev
+	tests := []struct {
+		name          string
+		workspace, fs uint64
+		want          string
+	}{
+		{"own disk", dev(252, 1), dev(252, 3), "252:1"},
+		{"partition: its disk", dev(259, 3), dev(8, 1), "259:0"},
+		{"shares rootfs device", dev(252, 1), dev(252, 1), ""},
+		{"partitions of one disk", dev(259, 3), dev(259, 1), ""},
+		{"partition and its disk", dev(259, 3), dev(259, 0), ""},
+		{"dm rootfs on the workspace disk", dev(259, 1), dev(252, 2), ""},
+		{"dm volumes on one disk", dev(252, 1), dev(252, 2), ""},
+		{"workspace has no block device", dev(0, 70), dev(252, 1), ""},
+		{"rootfs has no block device (zfs, btrfs)", dev(252, 1), dev(0, 70), ""},
+		{"unknown workspace device", dev(7, 9), dev(252, 1), ""},
+		{"unknown rootfs device", dev(252, 1), dev(7, 9), ""},
+	}
+	for _, tt := range tests {
+		if got := ioDevice(tt.workspace, tt.fs); got != tt.want {
+			t.Errorf("%s: ioDevice = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestIODeviceStackLimit(t *testing.T) {
+	devs := map[string]fakeBlockDev{
+		"8:0":   {},
+		"252:0": {slaves: []string{"252:1"}},
+		"252:1": {slaves: []string{"252:0"}},
+	}
+	// A stack of maxDeviceDepth+2 dm devices over 8:0, from 253:0 down.
+	for i := range maxDeviceDepth + 2 {
+		below := fmt.Sprintf("253:%d", i+1)
+		if i == maxDeviceDepth+1 {
+			below = "8:0"
+		}
+		devs[fmt.Sprintf("253:%d", i)] = fakeBlockDev{slaves: []string{below}}
+	}
+	devs["259:0"] = fakeBlockDev{}
+	fakeSysDevBlock(t, devs)
+	if got := ioDevice(unix.Mkdev(259, 0), unix.Mkdev(253, 2)); got != "259:0" {
+		t.Errorf("stack within the limit: ioDevice = %q, want 259:0", got)
+	}
+	// Fatal before the cycle, which would recurse without the limit.
+	if got := ioDevice(unix.Mkdev(259, 0), unix.Mkdev(253, 0)); got != "" {
+		t.Fatalf("stack deeper than the limit: ioDevice = %q, want whole container", got)
+	}
+	if got := ioDevice(unix.Mkdev(259, 0), unix.Mkdev(252, 0)); got != "" {
+		t.Errorf("slaves cycle: ioDevice = %q, want whole container", got)
+	}
+}
+
+func TestIODeviceLoop(t *testing.T) {
+	image := filepath.Join(t.TempDir(), "pool.img")
+	if err := os.WriteFile(image, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var st unix.Stat_t
+	if err := unix.Stat(image, &st); err != nil {
+		t.Fatal(err)
+	}
+	// Fake devices around the real device holding image, so none collides.
+	major := unix.Major(st.Dev)
+	imageDisk, otherDisk := st.Dev, unix.Mkdev(major+1, 0)
+	loop, goneLoop := unix.Mkdev(major+2, 0), unix.Mkdev(major+2, 1)
+	fakeSysDevBlock(t, map[string]fakeBlockDev{
+		deviceName(imageDisk): {},
+		deviceName(otherDisk): {},
+		deviceName(loop):      {backingFile: image},
+		deviceName(goneLoop):  {backingFile: filepath.Join(t.TempDir(), "missing.img")},
+	})
+	tests := []struct {
+		name          string
+		workspace, fs uint64
+		want          string
+	}{
+		{"loop rootfs on the workspace disk", imageDisk, loop, ""},
+		{"loop rootfs on another disk", otherDisk, loop, deviceName(otherDisk)},
+		{"loop backing file gone", otherDisk, goneLoop, ""},
+	}
+	for _, tt := range tests {
+		if got := ioDevice(tt.workspace, tt.fs); got != tt.want {
+			t.Errorf("%s: ioDevice = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCollectContainerRootDevice(t *testing.T) {
+	fakeDfIncus(t, `case "$*" in *"exec c1 -- stat -c %d /"*) echo 64513 ;; *) exit 1 ;; esac`)
+
+	got, err := collectContainerRootDevice(t.Context(), "c1")
+	if err != nil {
+		t.Fatalf("collectContainerRootDevice: %v", err)
+	}
+	if got != unix.Mkdev(252, 1) {
+		t.Errorf("collectContainerRootDevice = %d, want %d", got, unix.Mkdev(252, 1))
+	}
+}
+
+func TestWorkspaceIODeviceFallsBackToContainer(t *testing.T) {
+	old := containerRootDevice
+	t.Cleanup(func() { containerRootDevice = old })
+	containerRootDevice = func(context.Context, string) (uint64, error) {
+		return 0, errors.New("exec failed")
+	}
+
+	for _, path := range []string{"", filepath.Join(t.TempDir(), "missing"), t.TempDir()} {
+		if got := workspaceIODevice(t.Context(), "c1", path); got != "" {
+			t.Errorf("workspaceIODevice(%q) = %q, want whole container", path, got)
+		}
+	}
+}
+
+func TestFilesystemMonitorCountsWorkspaceDevice(t *testing.T) {
+	oldStats, oldDisk, oldRoot := filesystemIOStats, collectDiskSpace, containerRootDevice
+	t.Cleanup(func() { filesystemIOStats, collectDiskSpace, containerRootDevice = oldStats, oldDisk, oldRoot })
+	collectDiskSpace = func(context.Context, string) (float64, float64, float64, error) {
+		return 0, 0, 0, nil
+	}
+	// The package dir, not t.TempDir(): /tmp is often tmpfs or zfs.
+	workspace, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st unix.Stat_t
+	if err := unix.Stat(workspace, &st); err != nil {
+		t.Fatal(err)
+	}
+	if unix.Major(st.Dev) == 0 {
+		t.Skip("package dir has no block device")
+	}
+	want := deviceName(st.Dev)
+	rootDev := unix.Mkdev(unix.Major(st.Dev)+1, 0)
+	fakeSysDevBlock(t, map[string]fakeBlockDev{want: {}, deviceName(rootDev): {}})
+	containerRootDevice = func(context.Context, string) (uint64, error) {
+		return rootDev, nil
+	}
+	var devices []string
+	written := 0.0
+	filesystemIOStats = func(_ context.Context, _ string, device string) (ioStats, error) {
+		devices = append(devices, device)
+		written += 100 * 1024 * 1024
+		return ioStats{write: written}, nil
+	}
+
+	fm := NewFilesystemMonitor(workspace)
+	if _, err := fm.Collect(t.Context(), "c1"); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := fm.Collect(t.Context(), "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 2 || devices[0] != want || devices[1] != want {
+		t.Errorf("io.stat devices read = %q, want %q twice", devices, want)
+	}
+	if stats.WorkspaceDevice != want || stats.TotalWriteMB != 100 {
+		t.Errorf("stats = %+v, want device %q and 100 MB written", stats, want)
 	}
 }

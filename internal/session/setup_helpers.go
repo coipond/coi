@@ -479,11 +479,15 @@ func reportMiseTrust(out string, logger func(string)) {
 // The [[credentials]] copies SetupCredentials returned are recorded in the
 // copy manifest in the same exec (best-effort), which is first marked
 // complete when the run created the container (newContainer), as the shell's
-// setup does.
-func ConfigureTimezoneAndMiseTrust(mgr container.ContainerManager, tz, containerWorkspacePath string, copiedCredentials []CredentialEntry, newContainer bool, logger func(string)) {
+// setup does. On a reused container with passwordlessSudo on, it also puts
+// back sudo an earlier session with [security] passwordless_sudo = false took
+// away.
+func ConfigureTimezoneAndMiseTrust(mgr container.ContainerManager, tz, containerWorkspacePath string, copiedCredentials []CredentialEntry, newContainer, passwordlessSudo bool, logger func(string)) {
 	ops := []guestOp{timezoneOp(tz), miseTrustOp(containerWorkspacePath)}
 	if newContainer {
 		ops = append(ops, markManifestCompleteOp())
+	} else if passwordlessSudo {
+		ops = append(ops, restoreSudoOp())
 	}
 	if op, ok := recordCopiesOp(copyRecords(copyKindCredential, copiedCredentials)); ok {
 		ops = append(ops, op)
@@ -495,6 +499,7 @@ func ConfigureTimezoneAndMiseTrust(mgr container.ContainerManager, tz, container
 	}
 	reportTimezone(out, tz, logger)
 	reportMiseTrust(out, logger)
+	reportSudoRestore(out, logger)
 }
 
 // gitIdentityGuardCmd is SetupGitIdentityGuard's in-container command.

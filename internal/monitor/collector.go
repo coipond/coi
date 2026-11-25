@@ -102,7 +102,7 @@ func NewCollector(containerName, containerIP, workspacePath string, allowedCIDRs
 		workspacePath:     workspacePath,
 		networkMode:       config.NetworkModeOpen,
 		allowedCIDRs:      allowedCIDRs,
-		filesystemMonitor: NewFilesystemMonitor(),
+		filesystemMonitor: NewFilesystemMonitor(workspacePath),
 	}
 }
 

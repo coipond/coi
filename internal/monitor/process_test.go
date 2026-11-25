@@ -98,7 +98,7 @@ func TestParseStatusFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotName, gotPPID, gotUID := parseStatusFields(tt.input)
+			gotName, gotPPID, gotUID, _ := parseStatusFields(tt.input)
 			if gotName != tt.wantName {
 				t.Errorf("name: got %q want %q", gotName, tt.wantName)
 			}
@@ -153,7 +153,7 @@ func TestParseCmdline(t *testing.T) {
 func TestParseStatusFields_TabAndSpaceDelimited(t *testing.T) {
 	// /proc/<pid>/status uses a tab between key and value, but be robust.
 	input := "Name:   nginx\nPPid:   7\nUid:    33  33  33  33\n"
-	name, ppid, uid := parseStatusFields(input)
+	name, ppid, uid, _ := parseStatusFields(input)
 	if name != "nginx" {
 		t.Errorf("name: got %q want %q", name, "nginx")
 	}
@@ -350,5 +350,19 @@ func TestReadProcessFromProc_RecordsName(t *testing.T) {
 	}
 	if p.Name == "" {
 		t.Error("Name should be filled from /proc/<pid>/status")
+	}
+}
+
+func TestParseStatusFields_NSpid(t *testing.T) {
+	cases := map[string]int{
+		"Name:\tsh\nNSpid:\t4321\t7\n":     7,
+		"Name:\tsh\nNSpid:\t4321\t7\t1\n":  7, // nested PID namespace below the container
+		"Name:\tsh\nNSpid:\t4321\n":        0, // host process
+		"Name:\tsh\nPPid:\t1\nUid:\t0 0\n": 0,
+	}
+	for status, want := range cases {
+		if _, _, _, got := parseStatusFields(status); got != want {
+			t.Errorf("parseStatusFields(%q) nsPID = %d, want %d", status, got, want)
+		}
 	}
 }

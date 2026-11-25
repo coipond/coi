@@ -630,6 +630,9 @@ func printProfileTool(p *config.ProfileConfig) {
 		if p.Tool.PermissionMode != "" {
 			fmt.Printf("permission_mode = %q\n", p.Tool.PermissionMode)
 		}
+		if p.Tool.Memory != "" {
+			fmt.Printf("memory = %q\n", p.Tool.Memory)
+		}
 		if p.Tool.ContextFile != "" {
 			fmt.Printf("context_file = %q\n", p.Tool.ContextFile)
 		}
@@ -792,6 +795,9 @@ func printProfileSecurity(p *config.ProfileConfig) {
 		}
 		if p.Security.ReduceKernelSurfaceStrict != nil {
 			fmt.Printf("reduce_kernel_surface_strict = %v\n", *p.Security.ReduceKernelSurfaceStrict)
+		}
+		if p.Security.PasswordlessSudo != nil {
+			fmt.Printf("passwordless_sudo = %v\n", *p.Security.PasswordlessSudo)
 		}
 	}
 }

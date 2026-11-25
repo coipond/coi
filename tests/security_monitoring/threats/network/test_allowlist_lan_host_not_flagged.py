@@ -67,8 +67,8 @@ file_read_rate_mb_per_sec = 1000
             holders.append(hold_connect(container_name, "redmine.lan", 4444))
             threats = wait_for_threats(container_name, is_c2_port_threat(redmine))
             assert threats, "a C2-port connection to the LAN host must still be flagged"
-            assert all("RFC1918" not in t.get("description", "") for t in threats), (
-                f"the LAN host must not be reported as an RFC1918 threat: {threats}"
+            assert all("Private address" not in t.get("description", "") for t in threats), (
+                f"the LAN host must not be reported as a private address threat: {threats}"
             )
         finally:
             for h in holders:

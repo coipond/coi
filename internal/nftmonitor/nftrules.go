@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/coipond/coi/internal/config"
 )
 
 // RuleManager manages nftables LOG rules for container monitoring
@@ -60,7 +62,7 @@ func (rm *RuleManager) AddRules() error {
 	}
 
 	// Rule 1: High priority - Always log suspicious traffic (no rate limit)
-	// Metadata endpoint, RFC1918, suspicious ports
+	// Metadata endpoint, private addresses, suspicious ports
 	if err := rm.addSuspiciousTrafficRule(); err != nil {
 		return fmt.Errorf("failed to add suspicious traffic rule: %w", err)
 	}
@@ -153,18 +155,23 @@ func (rm *RuleManager) ensureChainExists() error {
 
 // addSuspiciousTrafficRule adds high-priority rule for suspicious destinations
 func (rm *RuleManager) addSuspiciousTrafficRule() error {
-	// Metadata endpoint + RFC1918 addresses + suspicious ports
+	// Metadata endpoint + private addresses + suspicious ports
 	// Note: log prefix must be quoted because [] are special nft syntax characters
 	// Use "insert" instead of "add" to place rules at the BEGINNING of the chain
 	// This ensures our LOG rules run BEFORE any ACCEPT rules from firewalld
 	ruleArgs := []string{
 		"insert", "rule", "ip", "filter", "FORWARD",
 		"ip", "saddr", rm.config.ContainerIP,
-		"ip", "daddr", "{", "169.254.169.254", ",", "10.0.0.0/8", ",", "172.16.0.0/12", ",", "192.168.0.0/16", "}",
+		"ip", "daddr", "{", "169.254.169.254",
+	}
+	for _, cidr := range config.PrivateNetworkCIDRs() {
+		ruleArgs = append(ruleArgs, ",", cidr)
+	}
+	ruleArgs = append(ruleArgs, "}",
 		"log", "prefix", fmt.Sprintf(`"NFT_SUSPICIOUS[%s]: "`, rm.config.ContainerIP),
 		"level", "info",
 		"counter",
-	}
+	)
 
 	_, err := rm.runNFTCommand(ruleArgs...)
 	if err != nil {
