@@ -17,6 +17,7 @@ Tests that:
 """
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -171,7 +172,8 @@ def test_session_save_file_pull_fallback_skips_special_files(
         assert "Session data saved successfully" in output, (
             f"the save should finish. Output:\n{output}"
         )
-        assert "stalled" not in output, (
+        # Whole word: setup output has "Installed ..." lines.
+        assert not re.search(r"\bstalled\b", output), (
             f"special files should be skipped, not waited out. Output:\n{output}"
         )
         _assert_only_regular_saved(saved, output, SPECIAL_FILES)
