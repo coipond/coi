@@ -274,12 +274,36 @@ func AddUserHost(containerName string, mode config.NetworkMode, allowLocalNetwor
 			return err
 		}
 	}
+	if len(entry.Ports) > 0 {
+		if err := recordRuntimeHostPorts(containerName, entry); err != nil {
+			return err
+		}
+	}
 	// Merge into the existing block (union hostnames for a repeated IP).
 	existing, err := ReadUserHosts(containerName)
 	if err != nil {
 		return err
 	}
 	return WriteUserHosts(containerName, mergeHostEntry(existing, entry))
+}
+
+// ClearRuntimeHostPorts drops the container's `coi hosts add --ports` record.
+// Session setup calls it in every mode: restricted and allowlist setup purge the
+// container's rules (purgeStaleRulesForIP), runtime host accepts included, and
+// open mode refuses per-host ports, so no runtime port permit survives setup.
+func ClearRuntimeHostPorts(containerName string) error {
+	return defaultCacheManager().DeleteHostPorts(containerName)
+}
+
+// recordRuntimeHostPorts adds entry to the container's runtime host ports
+// record, for the security monitors (ExplicitPortPermits).
+func recordRuntimeHostPorts(containerName string, entry config.HostEntry) error {
+	cache := defaultCacheManager()
+	entries, err := cache.LoadHostPorts(containerName)
+	if err != nil {
+		return err
+	}
+	return cache.SaveHostPorts(containerName, append(entries, entry))
 }
 
 // effectiveContainerMode returns the mode the container is ACTUALLY enforcing,

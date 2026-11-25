@@ -12,7 +12,7 @@ import (
 )
 
 // TestApplyIPv6BlockRule_Integration verifies that ApplyIPv6BlockForContainer adds
-// an iifname-based DROP rule to the ip6 coi forward chain and that
+// a netdev coi chain on the veth's ingress that drops IPv6 and that
 // RemoveIPv6BlockForContainer removes it cleanly. This is the IPv6 analogue of
 // the boot-block lifecycle test.
 func TestApplyIPv6BlockRule_Integration(t *testing.T) {
@@ -40,38 +40,32 @@ func TestApplyIPv6BlockRule_Integration(t *testing.T) {
 
 	comment := ipv6BlockComment(containerName)
 
-	output, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward")
-	if err != nil {
-		t.Fatalf("list ip6 nft chain: %v", err)
+	chainStr := netdevChain(comment)
+	if chainStr == "" {
+		t.Fatalf("IPv6 block chain %q not found in netdev coi", comment)
 	}
-	chainStr := string(output)
-
-	if !strings.Contains(chainStr, comment) {
-		t.Errorf("IPv6 block comment %q not found in ip6 chain:\n%s", comment, chainStr)
+	veth, _ := GetContainerVethName(containerName)
+	if !strings.Contains(chainStr, "hook ingress device \""+veth+"\"") {
+		t.Errorf("expected ingress hook on veth %q; chain:\n%s", veth, chainStr)
 	}
-	if !strings.Contains(chainStr, "iifname") {
-		t.Errorf("expected iifname-based rule; ip6 chain:\n%s", chainStr)
-	}
-	if !strings.Contains(chainStr, "drop") {
-		t.Errorf("expected drop action; ip6 chain:\n%s", chainStr)
+	if !strings.Contains(chainStr, "meta protocol ip6") || !strings.Contains(chainStr, "drop") {
+		t.Errorf("expected an IPv6 drop; chain:\n%s", chainStr)
 	}
 
 	// Idempotent: a second Apply must not create a duplicate rule.
 	if err := ApplyIPv6BlockForContainer(containerName); err != nil {
 		t.Errorf("second ApplyIPv6BlockForContainer: %v", err)
 	}
-	output2, _ := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward")
-	if count := strings.Count(string(output2), comment); count != 1 {
-		t.Errorf("expected exactly 1 IPv6 block rule, found %d", count)
+	if got := netdevChain(comment); strings.Count(got, " drop ") != 1 {
+		t.Errorf("expected exactly 1 IPv6 block rule:\n%s", got)
 	}
 
 	// Remove and verify it is gone.
 	if err := RemoveIPv6BlockForContainer(containerName); err != nil {
 		t.Errorf("RemoveIPv6BlockForContainer: %v", err)
 	}
-	output3, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward")
-	if err == nil && strings.Contains(string(output3), comment) {
-		t.Errorf("IPv6 block rule still present after removal:\n%s", output3)
+	if got := netdevChain(comment); got != "" {
+		t.Errorf("IPv6 block chain still present after removal:\n%s", got)
 	}
 }
 
@@ -112,21 +106,16 @@ func TestSetupRestrictedInstallsIPv6Block_Integration(t *testing.T) {
 	}
 
 	comment := ipv6BlockComment(containerName)
-	output, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward")
-	if err != nil {
-		t.Fatalf("list ip6 nft chain after setup: %v", err)
-	}
-	if !strings.Contains(string(output), comment) {
-		t.Errorf("restricted-mode setup did not install IPv6 block rule %q:\n%s", comment, string(output))
+	if netdevChain(comment) == "" {
+		t.Errorf("restricted-mode setup did not install IPv6 block chain %q", comment)
 	}
 
 	// Teardown must remove the IPv6 block.
 	if err := networkMgr.Teardown(t.Context(), containerName); err != nil { //nolint:contextcheck
 		t.Logf("Teardown: %v", err)
 	}
-	output2, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward")
-	if err == nil && strings.Contains(string(output2), comment) {
-		t.Errorf("IPv6 block rule still present after Teardown:\n%s", output2)
+	if got := netdevChain(comment); got != "" {
+		t.Errorf("IPv6 block chain still present after Teardown:\n%s", got)
 	}
 }
 

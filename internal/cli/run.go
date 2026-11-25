@@ -831,6 +831,9 @@ type networkTeardown interface {
 func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (networkTeardown, error) {
 	networkConfig := a.cfg.Network
 	if networkConfig.Mode == "" || networkConfig.Mode == config.NetworkModeOpen {
+		if err := network.ClearRuntimeHostPorts(containerName); err != nil {
+			return nil, err
+		}
 		// Open mode installs no isolation rules, but static [[network.hosts]]
 		// entries still apply — resolution only, since nothing is blocked. (The
 		// coi shell path calls SetupForContainer for every mode, so it already

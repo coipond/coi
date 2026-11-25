@@ -32,18 +32,22 @@ type Config struct {
 	// service, including one added at runtime). Such connections are not flagged
 	// as private-network, allowlist or DNS-server violations; other checks apply.
 	PermittedDestination func(proto, ip string, port int) bool
-	GatewayIP            string
-	AuditLogPath         string
-	RateLimitPerSecond   int
-	DNSQueryThreshold    int
-	LogDNSQueries        bool
-	LimaHost             string
-	ForensicsOnKill      bool // preserve a forensic copy before the responder's auto-kill deletes the container
-	AutoPauseOnHigh      bool // pause the container on a HIGH threat ([monitoring] auto_pause_on_high)
-	AutoKillOnCritical   bool // kill the container on a CRITICAL threat ([monitoring] auto_kill_on_critical)
-	OnThreat             func(ThreatEvent)
-	OnAction             func(action, message string) // Called when container is paused/killed
-	OnError              func(error)                  // Called on non-fatal errors (avoids stdout corruption)
+	// ExplicitPortPermit, when set, reports whether the user permitted proto
+	// traffic to that exact ip:port ([[network.hosts]] ports, an allowed_domains
+	// :ports entry). Only such a connection skips the suspicious-port check.
+	ExplicitPortPermit func(proto, ip string, port int) bool
+	GatewayIP          string
+	AuditLogPath       string
+	RateLimitPerSecond int
+	DNSQueryThreshold  int
+	LogDNSQueries      bool
+	LimaHost           string
+	ForensicsOnKill    bool // preserve a forensic copy before the responder's auto-kill deletes the container
+	AutoPauseOnHigh    bool // pause the container on a HIGH threat ([monitoring] auto_pause_on_high)
+	AutoKillOnCritical bool // kill the container on a CRITICAL threat ([monitoring] auto_kill_on_critical)
+	OnThreat           func(ThreatEvent)
+	OnAction           func(action, message string) // Called when container is paused/killed
+	OnError            func(error)                  // Called on non-fatal errors (avoids stdout corruption)
 }
 
 // ThreatEvent represents a detected network threat

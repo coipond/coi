@@ -1,5 +1,5 @@
 """
-Test that `coi update patterns --dry-run` shows pull commands when both
+Test that `coi update patterns --dry-run` shows fetch and reset commands when both
 clone directories already exist with a .git folder.
 """
 
@@ -10,7 +10,7 @@ import subprocess
 def test_update_patterns_dry_run_existing_clones(coi_binary, tmp_path):
     """
     Dry-run on a HOME where both databases already have a .git folder shows
-    pull commands (not clone commands) for both, and exits 0.
+    fetch and reset commands (not clone commands) for both, and exits 0.
     """
     # Create fake existing git repos at the default locations
     gtfobins_dir = tmp_path / ".coi" / "gtfobins"
@@ -35,5 +35,7 @@ def test_update_patterns_dry_run_existing_clones(coi_binary, tmp_path):
     )
     output = result.stdout
     assert "[dry-run]" in output, f"Expected '[dry-run]' marker. Got:\n{output}"
-    assert "pull" in output, f"Existing clones should trigger pull commands. Got:\n{output}"
+    assert "fetch" in output and "reset" in output, (
+        f"Existing clones should trigger fetch and reset commands. Got:\n{output}"
+    )
     assert "clone" not in output, f"Existing clones should not re-clone. Got:\n{output}"
