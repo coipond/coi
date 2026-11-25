@@ -219,3 +219,38 @@ func TestGooseBundle_MatchesHardcodedValues(t *testing.T) {
 		t.Errorf("AutoContextFile = %q, want %q", b.AutoContextFile, ".config/goose/.goosehints")
 	}
 }
+
+// TestCredentialFiles_AreCopiedFiles checks every credential file is one the bundle
+// copies: the monitor watches the copies.
+func TestCredentialFiles_AreCopiedFiles(t *testing.T) {
+	for _, name := range Names() {
+		b, _ := Lookup(name)
+		files := make(map[string]bool)
+		for _, f := range b.Files {
+			files[f] = true
+		}
+		for _, f := range b.CredentialFiles {
+			if !files[f] {
+				t.Errorf("bundle %q: credential file %q is not in files", name, f)
+			}
+		}
+	}
+}
+
+func TestCredentialPaths(t *testing.T) {
+	want := []string{
+		".claude/.credentials.json",
+		".codex/auth.json",
+		".config/goose/chatgpt_codex/tokens.json",
+		".config/goose/gemini_oauth/tokens.json",
+		".config/goose/githubcopilot/info.json",
+		".config/goose/kimicode/token.json",
+		".config/goose/secrets.yaml",
+		".config/goose/xai_oauth/tokens.json",
+		".ollama/id_ed25519",
+		".pi/agent/auth.json",
+	}
+	if got := CredentialPaths(); !reflect.DeepEqual(got, want) {
+		t.Errorf("CredentialPaths() = %v, want %v", got, want)
+	}
+}

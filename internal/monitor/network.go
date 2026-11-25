@@ -20,7 +20,7 @@ import (
 // namespaced reads fail, it falls back to host /proc/net/tcp[6] filtered by
 // containerIP (best-effort; requires a non-empty containerIP to avoid returning
 // all host connections).
-func CollectNetworkStats(ctx context.Context, containerName, containerIP string, mode config.NetworkMode, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) (NetworkStats, error) {
+func CollectNetworkStats(ctx context.Context, containerName, containerIP string, mode config.NetworkMode, allowedCIDRs []string, permitted, portPermitted PermittedDestinationFunc, gateway func() string) (NetworkStats, error) {
 	connections, pid, err := parseConnections(ctx, containerName, containerIP)
 	if err != nil {
 		return NetworkStats{}, err
@@ -31,7 +31,7 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 	var local []*net.IPNet
 	localRead := false
 	for i := range connections {
-		reason := checkSuspicious(connections[i], mode, allowedCIDRs, permitted, gateway)
+		reason := checkSuspicious(connections[i], mode, allowedCIDRs, permitted, portPermitted, gateway)
 		if reason != "" && pid > 0 {
 			if !localRead {
 				local = containerLocalNets(fmt.Sprintf("/proc/%d/net/route", pid))
@@ -366,9 +366,11 @@ const reasonNotInAllowlist = "IP not in network allowlist"
 // checkSuspicious determines if a connection is suspicious. permitted (may be
 // nil) reports destinations the firewall deliberately accepts; those are exempt
 // from the private-network and allowlist checks, but not from the others.
+// portPermitted (may be nil) reports an explicit permit for that exact port
+// (see network.ExplicitPortPermits); only it exempts a suspicious port.
 // gateway (may be nil) returns the container's bridge gateway, asked only for a
 // DNS or DHCP port outside open mode.
-func checkSuspicious(conn Connection, mode config.NetworkMode, allowedCIDRs []string, permitted PermittedDestinationFunc, gateway func() string) string {
+func checkSuspicious(conn Connection, mode config.NetworkMode, allowedCIDRs []string, permitted, portPermitted PermittedDestinationFunc, gateway func() string) string {
 	// Skip local connections (LISTEN state or localhost)
 	if conn.State == "LISTEN" {
 		return ""
@@ -414,7 +416,7 @@ func checkSuspicious(conn Connection, mode config.NetworkMode, allowedCIDRs []st
 	}
 
 	// Check suspicious ports
-	if isSuspiciousPort(port) {
+	if isSuspiciousPort(port) && (portPermitted == nil || !portPermitted(conn.Protocol, remoteIP, port)) {
 		return fmt.Sprintf("Suspicious port: %d (common C2/backdoor port)", port)
 	}
 

@@ -102,7 +102,7 @@ func persistCommand(cmd *cobra.Command, args []string) error {
 	baseDir := filepath.Join(homeDir, ".coi")
 	// Every tool's sessions directory: the container may have been started
 	// with another tool's profile.
-	sessionsDirs := allSessionsDirs(baseDir, toolInstance)
+	sessionsDirs := session.AllSessionsDirs(baseDir, toolInstance)
 
 	// Persist each container
 	persisted := 0

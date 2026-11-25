@@ -9,11 +9,15 @@ Tests that:
 1. tar path (container still running on exit): symlinks and a FIFO in
    ~/.claude are not recreated in the saved session; regular files and dirs are.
 2. `incus file pull` fallback (tar hidden in the container): symlinks are not
-   recreated; regular files and dirs are. No FIFO here: the fallback opens a
-   FIFO as a regular file, which blocks with no writer.
+   recreated; regular files and dirs are.
+3. `incus file pull` fallback with FIFOs and a unix socket in ~/.claude (one
+   nested): the save skips them before the pull (which opens every non-dir
+   entry; a FIFO with no writer blocks it) and logs each skip to the session
+   log; regular files and dirs are saved.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -134,6 +138,51 @@ def test_session_save_file_pull_fallback_drops_symlinks(
             f"the save should fall back to file pull. Output:\n{output}"
         )
         _assert_only_regular_saved(saved, output, SYMLINKS)
+    finally:
+        if session_dir is not None:
+            shutil.rmtree(session_dir, ignore_errors=True)
+
+
+# A unix socket file stays after its process exits; argv avoids the
+# process monitor's python socket patterns.
+SPECIAL_FILES_SETUP = (
+    "mkfifo ~/.claude/coi-fifo ~/.claude/coi-sub/coi-fifo && "
+    "python3 - <<'PY' &&\n"
+    "import os\n"
+    "from socket import AF_UNIX, socket\n"
+    "socket(AF_UNIX).bind(os.path.expanduser('~/.claude/coi-sock'))\n"
+    "PY\n"
+    "test -S ~/.claude/coi-sock"
+)
+SPECIAL_FILES = ["coi-fifo", os.path.join("coi-sub", "coi-fifo"), "coi-sock"]
+
+
+def test_session_save_file_pull_fallback_skips_special_files(
+    coi_binary, cleanup_containers, workspace_dir
+):
+    setup = (
+        f"{FILES_SETUP} && {SPECIAL_FILES_SETUP} && "
+        'sudo mv "$(command -v tar)" /usr/local/coi-tar-hidden'
+    )
+    output, saved, session_dir = _save_session(coi_binary, workspace_dir, setup)
+    try:
+        assert "Fast session save unavailable" in output, (
+            f"the save should fall back to file pull. Output:\n{output}"
+        )
+        assert "Session data saved successfully" in output, (
+            f"the save should finish. Output:\n{output}"
+        )
+        # Whole word: setup output has "Installed ..." lines.
+        assert not re.search(r"\bstalled\b", output), (
+            f"special files should be skipped, not waited out. Output:\n{output}"
+        )
+        _assert_only_regular_saved(saved, output, SPECIAL_FILES)
+        container_name = calculate_container_name(workspace_dir, 1)
+        log = (Path.home() / ".coi" / "logs" / f"{container_name}.stdout.log").read_text()
+        for name in SPECIAL_FILES:
+            assert f"Skipping special file /home/code/.claude/{name} " in log, (
+                f"{name} skip should be in the session log:\n{log}"
+            )
     finally:
         if session_dir is not None:
             shutil.rmtree(session_dir, ignore_errors=True)

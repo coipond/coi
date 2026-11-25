@@ -597,7 +597,7 @@ func containerWorkspaces(running []incusTopEntry) map[string]string {
 // loadContainerWorkspaces maps the wanted container names to their workspace
 // from the session metadata written at launch (see readContainerMetadata), in
 // every tool's sessions dir: the configured tool need not be the one that
-// launched it, and its own save wins (see allSessionsDirs).
+// launched it, and its own save wins (see session.AllSessionsDirs).
 // Best-effort: a missing/unreadable sessions dir yields an empty map.
 func loadContainerWorkspaces(want map[string]bool) map[string]string {
 	out := make(map[string]string)
@@ -613,7 +613,7 @@ func loadContainerWorkspaces(want map[string]bool) map[string]string {
 		return out
 	}
 	missing := maps.Clone(want)
-	for _, dir := range allSessionsDirs(filepath.Join(homeDir, ".coi"), toolInstance) {
+	for _, dir := range session.AllSessionsDirs(filepath.Join(homeDir, ".coi"), toolInstance) {
 		if len(missing) == 0 {
 			break
 		}

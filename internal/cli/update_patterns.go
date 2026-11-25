@@ -30,8 +30,8 @@ the [detection] section:
   sigma_dir       = "~/.coi/sigma"
 
 On first run each repository is cloned from the configured source URL. On
-subsequent runs git pull (GTFOBins) or git pull (Sigma) updates the existing
-clone. The Sigma clone uses a sparse, blobless checkout that fetches only the
+subsequent runs the existing clone is moved to the source's latest commit,
+also when upstream rewrote its history; local changes in it are discarded. The Sigma clone uses a sparse, blobless checkout that fetches only the
 rules/linux/process_creation/ subtree (~300 KB).
 
 Examples:
@@ -81,18 +81,9 @@ func updatePatternsCommand(cmd *cobra.Command, _ []string) error {
 
 func updateGTFOBins(cloneDir, sourceURL string, dryRun bool) error {
 	if _, err := os.Stat(filepath.Join(cloneDir, ".git")); err == nil {
-		gitArgs := []string{"-C", cloneDir, "pull", "--ff-only", "--depth=1"}
 		fmt.Printf("Updating GTFOBins database at %s...\n", cloneDir)
-		if dryRun {
-			fmt.Printf("[dry-run] git %v\n", gitArgs)
-			return nil
-		}
-		out, err := runGit(gitArgs...)
-		if out != "" {
-			fmt.Print(out)
-		}
-		if err != nil {
-			return fmt.Errorf("git failed: %w", err)
+		if err := refreshClone(cloneDir, dryRun); err != nil {
+			return err
 		}
 	} else if _, err := os.Stat(cloneDir); err == nil {
 		return fmt.Errorf(
@@ -119,18 +110,9 @@ func updateGTFOBins(cloneDir, sourceURL string, dryRun bool) error {
 
 func updateSigma(cloneDir, sourceURL string, dryRun bool) error {
 	if _, err := os.Stat(filepath.Join(cloneDir, ".git")); err == nil {
-		gitArgs := []string{"-C", cloneDir, "pull", "--ff-only", "--depth=1"}
 		fmt.Printf("Updating Sigma database at %s...\n", cloneDir)
-		if dryRun {
-			fmt.Printf("[dry-run] git %v\n", gitArgs)
-			return nil
-		}
-		out, err := runGit(gitArgs...)
-		if out != "" {
-			fmt.Print(out)
-		}
-		if err != nil {
-			return fmt.Errorf("git failed: %w", err)
+		if err := refreshClone(cloneDir, dryRun); err != nil {
+			return err
 		}
 	} else if _, err := os.Stat(cloneDir); err == nil {
 		return fmt.Errorf(
@@ -159,6 +141,32 @@ func updateSigma(cloneDir, sourceURL string, dryRun bool) error {
 		}
 		if err != nil {
 			return fmt.Errorf("git sparse-checkout failed: %w", err)
+		}
+	}
+	return nil
+}
+
+// refreshClone moves an existing shallow clone to the upstream default
+// branch's latest commit. A shallow clone can't fast-forward (the fetched
+// commit's history is cut off) and upstream may rewrite its history, so the
+// clone is reset to what was fetched: coi owns these clones, they hold no
+// local changes. reset --hard keeps a sparse checkout's pattern.
+func refreshClone(cloneDir string, dryRun bool) error {
+	steps := [][]string{
+		{"-C", cloneDir, "fetch", "--depth=1", "origin", "HEAD"},
+		{"-C", cloneDir, "reset", "--hard", "FETCH_HEAD"},
+	}
+	for _, gitArgs := range steps {
+		if dryRun {
+			fmt.Printf("[dry-run] git %v\n", gitArgs)
+			continue
+		}
+		out, err := runGit(gitArgs...)
+		if out != "" {
+			fmt.Print(out)
+		}
+		if err != nil {
+			return fmt.Errorf("git %s failed: %w", gitArgs[2], err)
 		}
 	}
 	return nil

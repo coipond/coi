@@ -21,7 +21,7 @@ import time
 
 import pytest
 
-from support.helpers import calculate_container_name
+from support.helpers import calculate_container_name, netdev_coi
 
 
 def _skip_unless_ready():
@@ -78,16 +78,6 @@ def _count_monitor_rules_for_ip(ip):
         return 0
     tokens = (f"NFT_COI[{ip}]", f"NFT_DNS[{ip}]", f"NFT_SUSPICIOUS[{ip}]")
     return sum(1 for line in r.stdout.splitlines() if any(t in line for t in tokens))
-
-
-def _ip6_chain():
-    r = subprocess.run(
-        ["sudo", "-n", "nft", "list", "chain", "ip6", "coi", "forward"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return r.stdout if r.returncode == 0 else ""
 
 
 def _wait_for_rules_for_ip(coi_binary, name, timeout=20):
@@ -149,7 +139,7 @@ def test_container_delete_removes_all_firewall_artifacts(
         assert count > 0, f"precondition: expected coi-{ip} rules while running"
 
         comment = f"coi6-{name}"
-        assert comment in _ip6_chain(), f"precondition: {comment} present while running"
+        assert comment in netdev_coi(), f"precondition: {comment} present while running"
 
         # Delete the container — must reclaim the IPv4 bundle and IPv6 block.
         # (The monitoring LOG-rule path is covered by the dedicated,
@@ -165,8 +155,8 @@ def test_container_delete_removes_all_firewall_artifacts(
         assert _poll_until(lambda: _count_rules_for_ip(ip) == 0), (
             f"coi-{ip} IPv4 rules still present after delete"
         )
-        assert _poll_until(lambda: comment not in _ip6_chain()), (
-            f"{comment} IPv6 block still present after delete:\n{_ip6_chain()}"
+        assert _poll_until(lambda: comment not in netdev_coi()), (
+            f"{comment} IPv6 block still present after delete:\n{netdev_coi()}"
         )
     finally:
         os.unlink(config_file)

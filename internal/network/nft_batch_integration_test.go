@@ -3,6 +3,7 @@
 package network
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -221,22 +222,32 @@ func TestOpenMetadataBlock_Integration(t *testing.T) {
 }
 
 // Teardown removes everything the container owns — its policy rules, the
-// IPv6 drop and a residual boot block — in one transaction.
+// IPv6 drop, a residual boot block and the coi6-<name> rule older coi versions
+// put in the ip6 forward chain — in one transaction.
 func TestTeardownRulesAtomically_Integration(t *testing.T) {
 	requireNft(t)
 	const name = "coi-batch-teardown-test"
 	if err := NewNftManager(batchTestIP, "10.253.7.1").ApplyRestricted(restrictedTestConfig()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runNFTCommand("add", "rule", "ip", "coi", "forward", "iifname", "vethbatchtest", "drop",
-		"comment", `"`+bootBlockComment(name)+`"`); err != nil {
+	// The netdev chains need a real device to hook: a dummy stands in for the
+	// veth.
+	const dev = "coibatchtest0"
+	if out, err := exec.Command("sudo", "-n", "ip", "link", "add", dev, "type", "dummy").CombinedOutput(); err != nil {
+		t.Fatalf("cannot create dummy device: %v (%s)", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("sudo", "-n", "ip", "link", "del", dev).Run() })
+	if err := installVethIngressChain(bootBlockComment(name), dev, bootBlockRules); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureCOIIP6TableAndChain(); err != nil {
+	if err := installVethIngressChain(ipv6BlockComment(name), dev, ipv6BlockRules); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runNFTCommand("add", "rule", "ip6", "coi", "forward", "iifname", "vethbatchtest", "drop",
-		"comment", `"`+ipv6BlockComment(name)+`"`); err != nil {
+	if err := runNFTScript([][]string{
+		{"add", "table", "ip6", "coi"},
+		{"add", "chain", "ip6", "coi", "forward", "{", "type", "filter", "hook", "forward", "priority", "10", ";", "policy", "accept", ";", "}"},
+		{"add", "rule", "ip6", "coi", "forward", "iifname", `"` + dev + `"`, "drop", "comment", `"` + ipv6BlockComment(name) + `"`},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,10 +259,43 @@ func TestTeardownRulesAtomically_Integration(t *testing.T) {
 	if got := ruleTexts(t); len(got) != 0 {
 		t.Errorf("policy rules left: %v", got)
 	}
-	if boot, _ := forwardRulesWithComment(bootBlockComment(name)); len(boot) != 0 {
-		t.Errorf("boot block left: %v", boot)
+	if got := netdevChain(bootBlockComment(name)); got != "" {
+		t.Errorf("boot block left:\n%s", got)
 	}
-	if v6, err := runNFTCommand("-a", "list", "chain", "ip6", "coi", "forward"); err == nil && strings.Contains(string(v6), ipv6BlockComment(name)) {
-		t.Errorf("IPv6 drop left:\n%s", v6)
+	if got := netdevChain(ipv6BlockComment(name)); got != "" {
+		t.Errorf("IPv6 drop left:\n%s", got)
+	}
+	if v6, _ := runNFTCommand("list", "chain", "ip6", "coi", "forward"); strings.Contains(string(v6), ipv6BlockComment(name)) {
+		t.Errorf("legacy IPv6 rule left:\n%s", v6)
+	}
+}
+
+// A chain left on an earlier veth is rebound to the new one; one already on
+// the current veth is kept.
+func TestInstallVethIngressChain_RebindsStaleDevice_Integration(t *testing.T) {
+	requireNft(t)
+	const chain = "coi6-coi-rebind-test"
+	for _, dev := range []string{"coirebind0", "coirebind1"} {
+		if out, err := exec.Command("sudo", "-n", "ip", "link", "add", dev, "type", "dummy").CombinedOutput(); err != nil {
+			t.Fatalf("cannot create dummy device: %v (%s)", err, out)
+		}
+		t.Cleanup(func() { _ = exec.Command("sudo", "-n", "ip", "link", "del", dev).Run() })
+	}
+	t.Cleanup(func() { _ = deleteVethIngressChain(chain) })
+
+	for _, dev := range []string{"coirebind0", "coirebind0", "coirebind1"} {
+		if err := installVethIngressChain(chain, dev, ipv6BlockRules); err != nil {
+			t.Fatal(err)
+		}
+		got := netdevChain(chain)
+		if ingressChainDevice(got) != dev || strings.Count(got, " drop ") != 1 {
+			t.Errorf("after install on %s:\n%s", dev, got)
+		}
+	}
+	if err := deleteVethIngressChain(chain); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteVethIngressChain(chain); err != nil {
+		t.Errorf("deleting a missing chain: %v", err)
 	}
 }
