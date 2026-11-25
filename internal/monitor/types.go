@@ -221,8 +221,11 @@ type ResourceStats struct {
 
 // DaemonConfig configures the security monitor
 type DaemonConfig struct {
-	ContainerName  string
-	WorkspacePath  string
+	ContainerName string
+	WorkspacePath string
+	// CodeUser is the in-container user whose persistence and credential
+	// files are watched. Empty: they are not watched.
+	CodeUser       string
 	PollInterval   time.Duration
 	AuditLogPath   string
 	AllowedCIDRs   []string // CIDR ranges for allowed networks (static snapshot / fallback)
@@ -241,6 +244,10 @@ type DaemonConfig struct {
 	// service, including one added at runtime). Such connections are not flagged
 	// as private-network or allowlist violations; other checks still apply.
 	PermittedDestination PermittedDestinationFunc
+	// ExplicitPortPermit, when set, reports whether the user permitted proto
+	// traffic to that exact ip:port ([[network.hosts]] ports, an allowed_domains
+	// :ports entry). Only such a connection skips the suspicious-port check.
+	ExplicitPortPermit PermittedDestinationFunc
 	// Gateway, when set, returns the container's bridge gateway IP. A socket
 	// to its DNS or DHCP port is not flagged. Asked only for such a socket.
 	Gateway func() string

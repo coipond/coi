@@ -489,7 +489,13 @@ func (w *FileWatcher) fire(level ThreatLevel, category, title, desc, relPath, ac
 	if w.onThreat == nil {
 		return
 	}
-	w.onThreat(ThreatEvent{
+	w.onThreat(sensitiveFileThreat(level, category, title, desc, relPath, access, pid))
+}
+
+// sensitiveFileThreat builds the ThreatEvent for an access to the
+// container-relative file relPath by host process pid.
+func sensitiveFileThreat(level ThreatLevel, category, title, desc, relPath, access string, pid int) ThreatEvent {
+	return ThreatEvent{
 		ID:          uuid.New().String(),
 		Timestamp:   time.Now(),
 		Level:       level,
@@ -503,5 +509,5 @@ func (w *FileWatcher) fire(level ThreatLevel, category, title, desc, relPath, ac
 				Pid:    pid,
 			},
 		},
-	})
+	}
 }

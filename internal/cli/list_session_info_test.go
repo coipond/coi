@@ -59,11 +59,11 @@ func TestContainerSessionInfo_FallbackWithoutKeys(t *testing.T) {
 
 func TestContainerSessionInfo_FallbackReadsEveryToolsSessions(t *testing.T) {
 	base := t.TempDir()
-	dirs := allSessionsDirs(base, tool.NewClaude())
+	dirs := session.AllSessionsDirs(base, tool.NewClaude())
 	// Launched by opencode while the configured tool is claude.
 	opencodeDir := filepath.Join(base, "sessions-opencode")
 	if !slices.Contains(dirs, opencodeDir) || !slices.Contains(dirs, filepath.Join(base, "sessions-claude")) {
-		t.Fatalf("allSessionsDirs = %v; want the claude and opencode dirs", dirs)
+		t.Fatalf("AllSessionsDirs = %v; want the claude and opencode dirs", dirs)
 	}
 	writeSavedSession(t, opencodeDir, "s1", "coi-aaaaaaaa-1", "/home/u/proj", true)
 	ws, persistent := containerSessionInfo([]ContainerInfo{{Name: "coi-aaaaaaaa-1"}}, dirs)
@@ -80,9 +80,9 @@ func TestContainerSessionInfo_FallbackPrefersConfiguredToolsSave(t *testing.T) {
 	// slot, then a persistent opencode one, the configured tool.
 	writeSavedSession(t, filepath.Join(base, "sessions-claude"), "s1", "coi-aaaaaaaa-1", "/home/u/old", false)
 	writeSavedSession(t, filepath.Join(base, "sessions-opencode"), "s2", "coi-aaaaaaaa-1", "/home/u/proj", true)
-	dirs := allSessionsDirs(base, tool.NewOpencode())
+	dirs := session.AllSessionsDirs(base, tool.NewOpencode())
 	if dirs[0] != filepath.Join(base, "sessions-opencode") || len(dirs) != len(tool.ListSupported()) {
-		t.Fatalf("allSessionsDirs = %v; want sessions-opencode first, each tool once", dirs)
+		t.Fatalf("AllSessionsDirs = %v; want sessions-opencode first, each tool once", dirs)
 	}
 	ws, persistent := containerSessionInfo([]ContainerInfo{{Name: "coi-aaaaaaaa-1"}}, dirs)
 

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/coipond/coi/internal/container"
@@ -117,6 +118,9 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 				st.skipLaunch = true
 				st.restarted = st.opts.ContainerName == ""
 			} else {
+				if err := st.saveStoppedLeftover(); err != nil {
+					return nil, err
+				}
 				// Delete the stopped leftover container
 				st.opts.Logger("Found stopped leftover container from previous session, deleting...")
 				if err := st.result.Manager.Delete(true); err != nil {
@@ -190,4 +194,66 @@ func (st *setupState) phasePreflightPorts(_ context.Context) (Teardown, error) {
 	}
 	st.resolvedPorts = resolvedPorts
 	return nil, nil
+}
+
+// saveStoppedLeftover saves the session data of a stopped ephemeral leftover
+// into the resumed session before the container is deleted: after a host
+// reboot or a killed coi the container holds the only copy of the session's
+// last turns. Container names have no tool part, so the leftover is saved
+// only when the newest session metadata naming it, across every tool's
+// sessions dir, is the resumed session's: another session's leftover on the
+// same slot never lands in it. A failed save keeps the container and the
+// previous saved copy.
+func (st *setupState) saveStoppedLeftover() error {
+	if st.opts.ResumeFromID == "" || st.opts.SessionsDir == "" || st.opts.Tool == nil || st.opts.Tool.ConfigDirName() == "" {
+		return nil
+	}
+	dirs := AllSessionsDirs(filepath.Dir(st.opts.SessionsDir), st.opts.Tool)
+	ownerDir, owner, metadata := newestSessionForContainer(dirs, st.result.ContainerName)
+	if ownerDir != st.opts.SessionsDir || owner != st.opts.ResumeFromID {
+		return nil
+	}
+	st.opts.Logger("Found stopped leftover container of the resumed session, saving its session data first...")
+	if err := saveSessionData(st.result.Manager, st.result.ContainerName, owner, metadata.Persistent, metadata.ProfileName, metadata.ProfileFromDefault, metadata.Workspace, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger, st.sessionDebug); err != nil {
+		return fmt.Errorf("failed to save session data from stopped container %s, leaving it in place (retry, or delete it with 'coi kill %s' to resume from the older saved copy): %w",
+			st.result.ContainerName, st.result.ContainerName, err)
+	}
+	return nil
+}
+
+// newestSessionForContainer returns the sessions dir and id of the saved
+// session in sessionsDirs whose metadata names containerName with the newest
+// saved_at, or "" when none does.
+func newestSessionForContainer(sessionsDirs []string, containerName string) (string, string, *SessionMetadata) {
+	var newestDir, newest string
+	var newestMetadata *SessionMetadata
+	var newestTime time.Time
+	for _, dir := range sessionsDirs {
+		sessions, err := ListSavedSessions(dir)
+		if err != nil {
+			continue
+		}
+		for _, sessionID := range sessions {
+			metadata, err := LoadSessionMetadata(filepath.Join(dir, sessionID, "metadata.json"))
+			if err != nil || metadata.ContainerName != containerName {
+				continue
+			}
+			savedTime, err := time.Parse(time.RFC3339, metadata.SavedAt)
+			if err != nil {
+				continue
+			}
+			if newest == "" || savedTime.After(newestTime) {
+				newestDir, newest, newestMetadata, newestTime = dir, sessionID, metadata, savedTime
+			}
+		}
+	}
+	return newestDir, newest, newestMetadata
+}
+
+// sessionDebug writes msg to the session log only, as sessionDebug does for
+// cleanup's save.
+func (st *setupState) sessionDebug(msg string) {
+	if st.result.Logger != nil {
+		st.result.Logger.Println("[setup] " + msg)
+	}
 }

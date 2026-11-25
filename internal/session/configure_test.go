@@ -3,7 +3,12 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/network"
 )
 
 func TestConfigureOptions_ContainerNameRequired(t *testing.T) {
@@ -91,5 +96,41 @@ func TestConfigureOptions_DefaultLogger(t *testing.T) {
 	_, err := ConfigureContainer(context.Background(), opts)
 	if err == nil {
 		t.Fatal("expected error for nonexistent container")
+	}
+}
+
+// Open mode also goes through SetupForContainer, before any exec into the
+// container, and the caller gets the network manager to tear it down.
+func TestConfigureContainer_NetworkFirstInEveryMode(t *testing.T) {
+	network.SetSudoAllowed(false)
+	t.Cleanup(func() { network.SetSudoAllowed(true) })
+	const name = "cfg-net-first"
+	logPath := fakeLimitsIncusStatus(t, name, "config: {}\ndevices: {}\n", "RUNNING")
+
+	result, err := ConfigureContainer(context.Background(), ConfigureOptions{
+		ContainerName: name,
+		NetworkConfig: &config.NetworkConfig{Mode: config.NetworkModeOpen},
+		Logger:        func(string) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NetworkApplied != string(config.NetworkModeOpen) || result.NetworkManager == nil {
+		t.Errorf("NetworkApplied = %q, NetworkManager = %v; want open and a manager", result.NetworkApplied, result.NetworkManager)
+	}
+
+	b, _ := os.ReadFile(logPath)
+	calls := strings.Split(strings.TrimSpace(string(b)), "\n")
+	firstNet, firstExec := -1, -1
+	for i, c := range calls {
+		if firstNet == -1 && strings.Contains(c, "query /1.0/instances/"+name) {
+			firstNet = i
+		}
+		if firstExec == -1 && strings.Contains(c, "exec ") {
+			firstExec = i
+		}
+	}
+	if firstNet == -1 || firstExec == -1 || firstNet > firstExec {
+		t.Errorf("network lookup (call %d) must come before the first exec (call %d):\n%s", firstNet, firstExec, b)
 	}
 }

@@ -198,7 +198,7 @@ func (pullDirManager) PullDirectory(_, localPath string) error {
 func TestSaveSessionData_SavesProfileFromDefault(t *testing.T) {
 	for _, fromDefault := range []bool{true, false} {
 		sessionsDir := t.TempDir()
-		err := saveSessionData(pullDirManager{}, "c-1", "s1", false, "work", fromDefault, "/ws", sessionsDir, tool.GetDefault(), func(string) {})
+		err := saveSessionData(pullDirManager{}, "c-1", "s1", false, "work", fromDefault, "/ws", sessionsDir, tool.GetDefault(), func(string) {}, nil)
 		if err != nil {
 			t.Fatalf("saveSessionData: %v", err)
 		}

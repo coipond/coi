@@ -68,8 +68,10 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 		}
 	}
 
-	// 3. Suspicious ports (4444, 5555, 31337, etc.)
-	if isSuspiciousPort(event.DstPort) {
+	// 3. Suspicious ports (4444, 5555, 31337, etc.), unless the user permitted
+	// this exact host:port. A firewall permit that is not port-explicit (a host
+	// entry without ports, allowed_ports, the open LAN) does not count.
+	if isSuspiciousPort(event.DstPort) && (nd.config.ExplicitPortPermit == nil || !nd.config.ExplicitPortPermit(event.Protocol, event.DstIP, event.DstPort)) {
 		return &ThreatEvent{
 			Timestamp:   event.Timestamp,
 			Level:       ThreatLevelCritical,

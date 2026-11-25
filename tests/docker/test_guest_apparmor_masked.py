@@ -162,9 +162,18 @@ DOWNLOAD_ERROR = re.compile(
 )
 
 
+# `coi container exec` reports the step timeout's exit code as rc 1 with this
+# text.
+STEP_TIMED_OUT = re.compile(r"\bexit status (?:124|137)\b")
+
+
 def download_failed(rc, output):
     """Whether a failed setup ran out of time or hit a network error."""
-    return rc in (124, 137) or bool(DOWNLOAD_ERROR.search(output))
+    return (
+        rc in (124, 137)
+        or bool(STEP_TIMED_OUT.search(output))
+        or bool(DOWNLOAD_ERROR.search(output))
+    )
 
 
 PLAYWRIGHT_CHECK_SCRIPT = r"""

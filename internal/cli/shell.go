@@ -786,7 +786,7 @@ func monitorGateway(containerName string) func() string {
 }
 
 // startMonitoringDaemon starts the background security monitor
-func startMonitoringDaemon(ctx context.Context, containerName, workspacePath string, cfg *config.Config, allowedCIDRs []string, permitted func(proto, ip string, port int) bool, log *logger.SessionLogger, daemon *monitor.MonitorDaemon) error {
+func startMonitoringDaemon(ctx context.Context, containerName, workspacePath string, cfg *config.Config, allowedCIDRs []string, permitted, portPermitted func(proto, ip string, port int) bool, log *logger.SessionLogger, daemon *monitor.MonitorDaemon) error {
 	// Get home directory for audit log
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -819,12 +819,14 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 	daemonCfg := monitor.DaemonConfig{
 		ContainerName:              containerName,
 		WorkspacePath:              workspacePath,
+		CodeUser:                   container.CodeUser,
 		PollInterval:               time.Duration(cfg.Monitoring.PollIntervalSec) * time.Second,
 		AuditLogPath:               auditLogPath,
 		AllowedCIDRs:               allowedCIDRs,
 		NetworkMode:                cfg.Network.Mode,
 		AllowedCIDRsProvider:       allowedCIDRsProvider,
 		PermittedDestination:       permitted,
+		ExplicitPortPermit:         portPermitted,
 		Gateway:                    monitorGateway(containerName),
 		AllowedDomains:             cfg.Network.AllowedDomains,
 		GTFOBinsDir:                cfg.Detection.GTFOBinsDir,
@@ -870,7 +872,7 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 }
 
 // startNFTMonitoringDaemon starts the nftables network monitor
-func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *config.Config, allowedCIDRs []string, permitted func(proto, ip string, port int) bool, log *logger.SessionLogger, daemon *nftmonitor.NFTMonitorDaemon) error {
+func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *config.Config, allowedCIDRs []string, permitted, portPermitted func(proto, ip string, port int) bool, log *logger.SessionLogger, daemon *nftmonitor.NFTMonitorDaemon) error {
 	// Route the nft monitor's COI_NFT_DEBUG diagnostics to the session log
 	// instead of the user's attached terminal (issue #372 class).
 	nftmonitor.SetLogger(log)
@@ -907,6 +909,7 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 		AllowedCIDRs:         allowedCIDRs,
 		NetworkMode:          cfg.Network.Mode,
 		PermittedDestination: permitted,
+		ExplicitPortPermit:   portPermitted,
 		GatewayIP:            gatewayIP,
 		AuditLogPath:         auditLogPath,
 		RateLimitPerSecond:   cfg.Monitoring.NFT.RateLimitPerSecond,
@@ -957,9 +960,12 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 // like an "Unauthorized connection attempt" at ThreatLevelHigh — which, with
 // auto_pause_on_high, pauses the container mid-task. Wildcards are now rejected
 // outright, and going through the policy is what keeps it that way.
-func resolveDomainsToHostCIDRs(domains []string) []string {
+//
+// The compiled policy and the per-name answers are returned too, for the
+// explicit port permits (network.NewExplicitPortPermits).
+func resolveDomainsToHostCIDRs(domains []string) (cidrs []string, policy *network.AllowPolicy, resolved map[string][]string) {
 	if len(domains) == 0 {
-		return nil
+		return nil, nil, nil
 	}
 
 	policy, err := network.NewAllowPolicy(domains)
@@ -967,15 +973,15 @@ func resolveDomainsToHostCIDRs(domains []string) []string {
 		// Setup would have failed on this already; the monitor must not silently
 		// carry on with a half-understood allowlist.
 		network.Warnf("Warning: allowed_domains could not be compiled for monitoring: %v", err)
-		return nil
+		return nil, nil, nil
 	}
 
 	// Literal IP/CIDR entries need no resolution at all.
-	cidrs := append([]string(nil), policy.StaticCIDRs()...)
+	cidrs = append([]string(nil), policy.StaticCIDRs()...)
 
 	if names := policy.Names(); len(names) > 0 {
 		resolver := network.NewResolver(&network.IPCache{})
-		resolved, err := resolver.ResolveAll(names)
+		resolved, err = resolver.ResolveAll(names)
 		if err != nil {
 			// Route through the network session logger, not os.Stderr — in a coi
 			// shell os.Stderr is the user's tmux terminal (issue #372). The resolver
@@ -994,5 +1000,5 @@ func resolveDomainsToHostCIDRs(domains []string) []string {
 		}
 	}
 
-	return cidrs
+	return cidrs, policy, resolved
 }
