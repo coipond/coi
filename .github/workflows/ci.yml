@@ -307,12 +307,12 @@ jobs:
         run: |
           go build -o coi ./cmd/coi
           # Grant CAP_LINUX_IMMUTABLE for host-side immutable protection tests,
-          # plus any lane-specific capabilities (matrix.file_caps)
+          # plus any lane-specific capabilities (test_group.file_caps)
           sudo setcap "cap_linux_immutable${FILE_CAPS:+,$FILE_CAPS}=ep" ./coi
           getcap ./coi
           ./coi version
         env:
-          FILE_CAPS: ${{ matrix.file_caps }}
+          FILE_CAPS: ${{ matrix.test_group.file_caps }}
 
       - name: Configure Coi for CI (use open network mode for builds)
         run: |
