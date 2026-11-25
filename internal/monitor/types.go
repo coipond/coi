@@ -163,6 +163,9 @@ type Process struct {
 	Command   string `json:"command"`        // Full command line
 	Name      string `json:"name,omitempty"` // Kernel process name (/proc/<pid>/status Name, i.e. comm): set from the executable, unaffected by argv[0]
 	EnvAccess bool   `json:"env_access"`     // Has accessed /proc/*/environ
+	// StdioTCPSocket is set on a shell whose stdin or stdout is a TCP socket
+	// (see markSocketShells).
+	StdioTCPSocket bool `json:"stdio_tcp_socket,omitempty"`
 }
 
 // FilesystemStats holds workspace access statistics
@@ -200,6 +203,7 @@ type Connection struct {
 	RemoteAddr    string `json:"remote_addr"`
 	State         string `json:"state"`
 	UID           int    `json:"uid,omitempty"`
+	Inode         uint64 `json:"-"`                        // Socket inode (matches an fd link socket:[N])
 	Suspicious    bool   `json:"suspicious"`               // Flagged as suspicious
 	SuspectReason string `json:"suspect_reason,omitempty"` // Why flagged
 }

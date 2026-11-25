@@ -24,6 +24,7 @@ func CollectProcessStats(ctx context.Context, containerName string) (ProcessStat
 	for i := range processes {
 		processes[i].EnvAccess = checkEnvAccess(processes[i].Command)
 	}
+	markSocketShells(ctx, containerName, processes)
 	return ProcessStats{
 		Available:  true,
 		TotalCount: len(processes),
@@ -125,7 +126,7 @@ func readProcessFromProc(pid int) (Process, error) {
 		return Process{}, err
 	}
 
-	name, ppid, uid := parseStatusFields(string(statusData))
+	name, ppid, uid, _ := parseStatusFields(string(statusData))
 
 	command := name
 	if cmdlineData, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil && len(cmdlineData) > 0 {
@@ -143,9 +144,10 @@ func readProcessFromProc(pid int) (Process, error) {
 	}, nil
 }
 
-// parseStatusFields extracts Name, PPid, and real Uid from /proc/<pid>/status
+// parseStatusFields extracts Name, PPid, real Uid and the PID one namespace
+// below the host's (the second NSpid entry, 0 if none) from /proc/<pid>/status
 // content. Kept separate so it can be unit-tested without a live /proc.
-func parseStatusFields(status string) (name string, ppid, uid int) {
+func parseStatusFields(status string) (name string, ppid, uid, nsPID int) {
 	for _, line := range strings.Split(status, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
@@ -158,6 +160,10 @@ func parseStatusFields(status string) (name string, ppid, uid int) {
 			ppid, _ = strconv.Atoi(fields[1])
 		case "Uid:":
 			uid, _ = strconv.Atoi(fields[1]) // real UID is the first field
+		case "NSpid:":
+			if len(fields) > 2 {
+				nsPID, _ = strconv.Atoi(fields[2])
+			}
 		}
 	}
 	return
@@ -261,6 +267,10 @@ const (
 	// the reverse_shell_one_liners knob can downgrade them to "warn" or "off".
 	ReverseShellClassOneLiner = "oneliner"
 )
+
+// stdioTCPSocketPattern is the Pattern of a shell flagged by its file
+// descriptors rather than its command line (see markSocketShells).
+const stdioTCPSocketPattern = "shell stdio on tcp socket"
 
 // DetectReverseShells checks processes for reverse shell indicators
 func DetectReverseShells(processes []Process) []ProcessThreat {
@@ -388,6 +398,19 @@ func DetectReverseShells(processes []Process) []ProcessThreat {
 				matched = i
 				break // strong wins outright — stop looking
 			}
+		}
+		// A shell on a TCP socket is always strong evidence: it replaces a
+		// one-liner match so the one-liner knob cannot downgrade it.
+		if proc.StdioTCPSocket && (matched < 0 || reverseShellPatterns[matched].class != ReverseShellClassStrong) {
+			threats = append(threats, ProcessThreat{
+				PID:        proc.PID,
+				Command:    proc.Command,
+				User:       proc.User,
+				Pattern:    stdioTCPSocketPattern,
+				Indicators: []string{"shell stdin/stdout on a TCP socket"},
+				Class:      ReverseShellClassStrong,
+			})
+			continue
 		}
 		if matched >= 0 {
 			p := reverseShellPatterns[matched]

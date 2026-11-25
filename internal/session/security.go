@@ -1136,9 +1136,9 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 	return nil
 }
 
-// deviceNameRe matches the device names coi passes to Incus: at most 63
-// characters (coi's cap, one under the 64 Incus accepts), starting and ending
-// with a letter or digit, only [A-Za-z0-9._-] (7.6+).
+// deviceNameRe matches the device names every supported Incus version
+// accepts: at most 63 characters (6.x), starting and ending with a letter or
+// digit (7.0+), only [A-Za-z0-9._-] (7.6+).
 var deviceNameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$`)
 
 // pathToDeviceName converts a path to a valid Incus device name
