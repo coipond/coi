@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -2216,9 +2217,10 @@ def outside_host(bridge):
         ("ip6tables", "FORWARD", "-i", bridge, "-o", OUT_HOST_IF, "-j", "ACCEPT"),
         ("ip6tables", "FORWARD", "-i", OUT_HOST_IF, "-o", bridge, "-j", "ACCEPT"),
     ]
-    fd, log = tempfile.mkstemp(prefix="coi-e2e-out-")
-    os.close(fd)
-    os.chmod(log, 0o666)
+    # The root server creates the log in a private dir: with fs.protected_regular,
+    # root may not open a file in sticky /tmp that another user owns.
+    logdir = tempfile.mkdtemp(prefix="coi-e2e-out-")
+    log = os.path.join(logdir, "peers")
     port = OUT_PORT
     server = None
     try:
@@ -2267,7 +2269,7 @@ def outside_host(bridge):
         sudo_run("sysctl", "-w", f"{fwd}={old_fwd}", check=False)
         sudo_run("ip", "link", "del", OUT_HOST_IF, check=False)
         sudo_run("ip", "netns", "del", OUT_NS, check=False)
-        os.unlink(log)
+        shutil.rmtree(logdir, ignore_errors=True)
 
 
 def launch_with_network(coi_binary, workspace_dir, network_toml, persistent=False):
