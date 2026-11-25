@@ -193,6 +193,13 @@ type ContainerConfig struct {
 	// trusted profile narrowed); an untrusted `docker = false` is honored
 	// because it only tightens.
 	Docker *bool `toml:"docker"`
+
+	// KeepOnFailedSave keeps a stopped non-persistent container whose session
+	// save failed (e.g. host disk full) instead of deleting it, so the
+	// conversation since the last saved copy can still be saved with
+	// `coi shell --resume=<session id>` (the id coi prints). Off by default:
+	// kept containers use disk and memory until removed.
+	KeepOnFailedSave *bool `toml:"keep_on_failed_save"`
 }
 
 // IsDockerEnabled reports whether Docker/nested-container support should be
@@ -215,7 +222,14 @@ func (c *ContainerConfig) HasContainerConfig() bool {
 		c.StaleBaseCheck != "" ||
 		c.SessionName != "" ||
 		c.Docker != nil ||
+		c.KeepOnFailedSave != nil ||
 		c.Build.HasBuildConfig()
+}
+
+// IsKeepOnFailedSaveEnabled reports whether [container] keep_on_failed_save
+// is on. Defaults to false when unset.
+func (c *ContainerConfig) IsKeepOnFailedSaveEnabled() bool {
+	return c != nil && c.KeepOnFailedSave != nil && *c.KeepOnFailedSave
 }
 
 // ShutdownTimeoutSeconds returns the graceful-shutdown window in seconds,

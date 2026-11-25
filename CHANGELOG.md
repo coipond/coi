@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- [Feature] **`[container] keep_on_failed_save` keeps a non-persistent container when its session save fails** — after `close` or a poweroff, coi deletes a non-persistent container even when saving its session data failed (for example the host disk is full), so the conversation since the last saved copy is lost. With `keep_on_failed_save = true` (also in profiles), coi keeps the stopped container and says how to save it later (fix the cause, then `coi shell --resume=<session-id>`, with the session id it prints) or remove it (`coi kill <container>` or `coi clean`). Off by default, because kept containers use disk until removed. Without the setting, the message after the delete now names why the save failed and says that the conversation since the last saved copy is lost.
+
 ### Breaking
 
 - [Breaking] **The security monitor flags writes to the code user's persistence and credential files** — with monitoring on, creating, writing or replacing (renaming over) `~/.ssh/authorized_keys`, `~/.bashrc`, `~/.profile`, the user crontab or a tool credential file coi copies in (e.g. `~/.claude/.credentials.json`) raises a HIGH threat, which pauses the session under `auto_pause_on_high`. These writes used to raise no threat. coi's own copy at session start is not flagged; reads are not flagged. A tool refreshing its token in its credential file, or an installer adding a line to `~/.bashrc`, now pauses the session: run `coi unfreeze` to continue.

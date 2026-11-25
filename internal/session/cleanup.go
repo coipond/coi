@@ -40,6 +40,9 @@ type CleanupOptions struct {
 	// ProfileFromDefault is set when ProfileName came only from [defaults]
 	// profile; it is saved in metadata for --resume.
 	ProfileFromDefault bool
+	// KeepOnFailedSave keeps a stopped non-persistent container whose session
+	// save failed instead of deleting it ([container] keep_on_failed_save).
+	KeepOnFailedSave bool
 }
 
 // guestProber is the manager slice the shutdown-detection helpers need;
@@ -333,11 +336,11 @@ func Cleanup(opts CleanupOptions) error {
 	// saveSessionData handles the mid-shutdown race internally: on a transient SFTP
 	// error it waits for the container to fully stop, then retries using incus's
 	// direct file-access path (no SFTP) so the save succeeds in every exit scenario.
-	saveFailed := false
+	var saveErr error
 	if opts.SaveSession && exists && opts.SessionID != "" && opts.SessionsDir != "" && opts.Tool != nil && opts.Tool.ConfigDirName() != "" {
 		if err := saveSessionData(mgr, opts.ContainerName, opts.SessionID, persistent, opts.ProfileName, opts.ProfileFromDefault, opts.Workspace, opts.SessionsDir, opts.Tool, opts.Logger, sessionDebug(opts)); err != nil {
 			opts.Logger(fmt.Sprintf("Warning: Failed to save session data: %v", err))
-			saveFailed = true
+			saveErr = err
 		}
 	}
 
@@ -409,6 +412,17 @@ func Cleanup(opts CleanupOptions) error {
 			if running {
 				// Container still running - user exited normally, keep it for potential re-attach.
 				opts.Logger("Container kept running - use 'coi attach' to reconnect, 'coi shutdown' to stop, or 'coi kill' to force stop")
+			} else if saveErr != nil && opts.KeepOnFailedSave {
+				// The stopped container holds the only copy of the
+				// conversation since the last save. Its firewall rules are
+				// not needed while it is stopped; a later launch sets them
+				// up again.
+				if opts.NetworkManager != nil {
+					if err := opts.NetworkManager.Teardown(context.Background(), opts.ContainerName); err != nil {
+						opts.Logger(fmt.Sprintf("Warning: Failed to cleanup network: %v", err))
+					}
+				}
+				opts.Logger(fmt.Sprintf("Container kept (stopped) - session data could NOT be saved (%v). Fix the cause (e.g. free disk space), then run 'coi shell --resume=%s' to save it and continue, or remove it with 'coi kill %s' or 'coi clean'", saveErr, opts.SessionID, opts.ContainerName))
 			} else {
 				// Container stopped (user ran 'sudo poweroff') - delete it.
 				opts.Logger("Container was stopped, removing...")
@@ -424,10 +438,10 @@ func Cleanup(opts CleanupOptions) error {
 				// Now delete container
 				if err := mgr.Delete(true); err != nil {
 					opts.Logger(fmt.Sprintf("Warning: Failed to delete container: %v", err))
-				} else if saveFailed {
+				} else if saveErr != nil {
 					// Don't claim the data is safe when the save above failed —
 					// with the container gone it is unrecoverable.
-					opts.Logger("Container removed (session data could NOT be saved - see the warning above)")
+					opts.Logger(fmt.Sprintf("Container removed - session data could NOT be saved (%v): the conversation since the last saved copy is lost. Set [container] keep_on_failed_save = true to keep the container when a save fails", saveErr))
 				} else {
 					opts.Logger("Container removed (session data saved for --resume)")
 				}
