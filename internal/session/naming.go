@@ -73,9 +73,10 @@ func ContainerName(workspacePath, sessionName string, slot int) string {
 // name and status columns only (CSV), so the daemon skips the per-instance
 // state fetch (network counters, processes, disk usage) that `--format=json`
 // always pays for — that fetch grows with every container on the host and
-// dominated launch latency. A variable so tests can stub Incus.
+// dominated launch latency. Each entry's KeyValue is its
+// PersistentConfigKey. A variable so tests can stub Incus.
 var listSlotInstances = func() ([]container.ContainerStatus, error) {
-	return container.ListContainerStatuses("")
+	return container.ListContainerStatusesKey("", PersistentConfigKey)
 }
 
 // slotOf returns the slot number of an instance name for the given identity

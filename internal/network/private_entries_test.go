@@ -17,14 +17,17 @@ func TestBlockedPrivateEntries(t *testing.T) {
 		{CIDR: "169.254.169.254/32"}, // link-local only
 		{CIDR: "1.2.3.4/32"},         // public
 		{CIDR: "11.0.0.0/8"},         // public, next to 10/8
+		{CIDR: "100.101.1.2/32"},     // shared address space (Tailscale)
+		{CIDR: "100.128.0.0/16"},     // public, next to 100.64.0.0/10
 		{CIDR: "192.168.1.10/32", Ports: []portRange{{Lo: 8080, Hi: 8080}}}, // skipped
 	}
 	want := []blockedEntry{
-		{Entry: "192.168.1.50", RFC1918: true},
-		{Entry: "172.16.0.0/16", RFC1918: true},
-		{Entry: "10.0.0.0/7", RFC1918: true},
-		{Entry: "172.0.0.0/8", RFC1918: true},
-		{Entry: "169.254.169.254"},
+		{Entry: "192.168.1.50", Private: true},
+		{Entry: "172.16.0.0/16", Private: true},
+		{Entry: "10.0.0.0/7", Private: true},
+		{Entry: "172.0.0.0/8", Private: true},
+		{Entry: "169.254.169.254", Metadata: true},
+		{Entry: "100.101.1.2", Private: true},
 	}
 	if got := blockedPrivateEntries(tuples, map[string]bool{"192.168.1.10": true}); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v want %+v", got, want)
@@ -70,6 +73,7 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 	// [[network.hosts]] refuses 169.254.0.0/16 in allowlist mode.
 	if !strings.Contains(got[2], "entry 169.254.169.254 ") ||
 		!strings.Contains(got[2], "allow_local_network_access = true") ||
+		!strings.Contains(got[2], "block_metadata_endpoint = false") ||
 		strings.Contains(got[2], "network.hosts") {
 		t.Errorf("link-local warning: %q", got[2])
 	}
@@ -78,6 +82,19 @@ func TestAllowlistPrivateWarnings(t *testing.T) {
 	c.AllowLocalNetworkAccess = &on
 	if got := AllowlistPrivateWarnings(c); len(got) != 0 {
 		t.Errorf("allow_local_network_access: want no warning, got %q", got)
+	}
+	// block_metadata_endpoint keeps link-local blocked under local access,
+	// also in an entry that overlaps a private range too.
+	c.BlockMetadataEndpoint = &on
+	c.AllowedDomains = append(c.AllowedDomains, "160.0.0.0/3")
+	got = AllowlistPrivateWarnings(c)
+	if len(got) != 2 {
+		t.Fatalf("allow_local_network_access + block_metadata_endpoint: want 2 link-local warnings, got %q", got)
+	}
+	for i, entry := range []string{"169.254.169.254", "160.0.0.0/3"} {
+		if !strings.Contains(got[i], "entry "+entry+" is in the link-local range") {
+			t.Errorf("warning %d: %q", i, got[i])
+		}
 	}
 	// allowed_ports is what both sides inherit when they name no ports.
 	c = cfg()

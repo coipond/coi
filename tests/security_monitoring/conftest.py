@@ -126,6 +126,43 @@ file_read_rate_mb_per_sec = 10000
 
 
 @pytest.fixture
+def enable_monitoring_metadata_open():
+    """Enable monitoring as enable_monitoring does, with
+    block_metadata_endpoint = false.
+
+    Open mode rejects 169.254.0.0/16 by default: the reject answers curl with a
+    TCP reset at once, so no socket is left for the process monitor to see. A
+    test that needs a live connection to the metadata endpoint uses this.
+    """
+    config_path = Path.home() / ".coi" / "config.toml"
+    backup = config_path.read_text() if config_path.exists() else None
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        """
+[network]
+mode = "open"
+block_metadata_endpoint = false
+
+[monitoring]
+enabled = true
+auto_pause_on_high = true
+auto_kill_on_critical = true
+poll_interval_sec = 1
+file_read_threshold_mb = 500
+file_read_rate_mb_per_sec = 1000
+"""
+    )
+
+    yield config_path
+
+    if backup:
+        config_path.write_text(backup)
+    elif config_path.exists():
+        config_path.unlink()
+
+
+@pytest.fixture
 def enable_monitoring_oneliner_warn():
     """Enable monitoring with reverse_shell_one_liners = "warn" (#842).
 

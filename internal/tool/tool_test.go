@@ -3,6 +3,7 @@ package tool
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -733,6 +734,44 @@ func TestRenderContextFileContent_DockerUnavailable(t *testing.T) {
 	}
 }
 
+// With [security] passwordless_sudo = false the context must not promise
+// sudo, root or apt installs the agent cannot use.
+func TestRenderContextFileContent_SudoUnavailable(t *testing.T) {
+	info := ContextInfo{WorkspacePath: "/workspace", HomeDir: "/home/code", NetworkMode: "restricted", SudoUnavailable: true}
+	content := RenderContextFileContent(info)
+	for _, banned := range []string{"passwordless sudo", "sudo apt-get", "sudo chown", "sudo systemctl"} {
+		if strings.Contains(content, banned) {
+			t.Errorf("no-sudo context must not mention %q", banned)
+		}
+	}
+	for _, want := range []string{"**Sudo**: Not available", "no sudo", "Act, don't ask", "**Only the workspace"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("no-sudo context missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "autonomy:- ") || strings.Contains(content, "config.- ") {
+		t.Errorf("sudo bullet must keep its own line:\n%s", content)
+	}
+	jsonStr, err := RenderContextFileJSON(info)
+	if err != nil {
+		t.Fatalf("RenderContextFileJSON: %v", err)
+	}
+	if !strings.Contains(jsonStr, "\"sudo_available\": false") {
+		t.Errorf("JSON should report sudo_available:false, got:\n%s", jsonStr)
+	}
+
+	// Default (zero value) still promises sudo.
+	def := RenderContextFileContent(ContextInfo{WorkspacePath: "/w", HomeDir: "/h", NetworkMode: "open"})
+	for _, want := range []string{"passwordless sudo / full root", "Available via passwordless sudo", "sudo chown"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("default context missing %q", want)
+		}
+	}
+	if !strings.Contains(def, "autonomy:\n\n- **Act") {
+		t.Errorf("default sudo bullet layout changed:\n%s", def)
+	}
+}
+
 func TestRenderContextFileContent_Persistent(t *testing.T) {
 	info := ContextInfo{
 		WorkspacePath: "/workspace",
@@ -1097,4 +1136,48 @@ func indexOf(slice []string, item string) int {
 		}
 	}
 	return -1
+}
+
+// Memory paths must name only history and memory: a path that is also a
+// config file coi copies in would drop the login or settings on a fresh
+// session.
+func TestMemoryPaths(t *testing.T) {
+	want := map[string][]string{
+		"claude": {"projects", "agent-memory", "history.jsonl", "todos", "tasks", "plans", "file-history", "shell-snapshots", "session-env", "paste-cache"},
+		"codex":  {"sessions", "archived_sessions", "history.jsonl", "memories"},
+		"goose":  {"memory"},
+	}
+	for name, paths := range want {
+		ti, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		tmp, ok := ti.(ToolWithMemoryPaths)
+		if !ok {
+			t.Fatalf("%s does not implement ToolWithMemoryPaths", name)
+		}
+		if got := tmp.MemoryPaths(); !reflect.DeepEqual(got, paths) {
+			t.Errorf("%s MemoryPaths() = %v, want %v", name, got, paths)
+		}
+		tcf := ti.(ToolWithConfigDirFiles)
+		keep := append([]string{tcf.SandboxSettingsFileName()}, tcf.EssentialConfigFiles()...)
+		for _, p := range tmp.MemoryPaths() {
+			for _, k := range keep {
+				if k != "" && (k == p || strings.HasPrefix(k, p+"/")) {
+					t.Errorf("%s memory path %q would remove config file %q", name, p, k)
+				}
+			}
+		}
+	}
+	// Their session stores live outside the container (workspace or host
+	// data mounts), so a reused container holds no memory of theirs.
+	for _, name := range []string{"pi", "omp", "opencode", "opencode2"} {
+		ti, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		if _, ok := ti.(ToolWithMemoryPaths); ok {
+			t.Errorf("%s should not implement ToolWithMemoryPaths", name)
+		}
+	}
 }

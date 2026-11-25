@@ -25,7 +25,7 @@ type Config struct {
 	ContainerIP   string
 	AllowedCIDRs  []string
 	// NetworkMode is the container's [network] mode. Open mode allows LAN
-	// traffic, so RFC1918 destinations are not flagged there.
+	// traffic, so private destinations are not flagged there.
 	NetworkMode config.NetworkMode
 	// PermittedDestination, when set, reports whether the container's firewall
 	// deliberately accepts proto ("tcp"/"udp") traffic to ip:port (e.g. a [[network.hosts]] LAN

@@ -80,6 +80,31 @@ type runState struct {
 	nftDaemon     nftmonitor.NFTMonitorDaemon
 }
 
+// chooseRunSlot picks the run's slot: --slot, or an auto-allocated one. A
+// chosen container marked persistent makes the run persistent when config
+// does not set [container] persistent (see inheritPersistedContainer).
+func (a *App) chooseRunSlot(workspace string) (int, error) {
+	if a.slot != 0 {
+		a.inheritPersistedContainer(session.ContainerName(workspace, a.sessionName(), a.slot))
+		return a.slot, nil
+	}
+	return a.autoAllocateSlot(workspace, "Reusing persistent container on slot %d\n")
+}
+
+// endRunContainer deletes the run's container, or stops it when the run is
+// persistent or `coi persist` marked it since launch.
+func (a *App) endRunContainer(mgr container.ContainerManager, containerName string) {
+	if !a.persistent && !session.ContainerMarkedPersistent(containerName) {
+		fmt.Fprintf(os.Stderr, "Cleaning up container %s...\n", containerName)
+		_ = mgr.Delete(true)
+		return
+	}
+	if running, _ := mgr.Running(); running {
+		fmt.Fprintf(os.Stderr, "Stopping persistent container %s...\n", containerName)
+		_ = mgr.Stop(false)
+	}
+}
+
 // validateEnvRunPhase checks Incus availability, allocates a slot, resolves
 // the image name, and validates the storage pool and alias.
 func (a *App) validateEnvRunPhase(s *runState) session.Phase {
@@ -114,26 +139,9 @@ func (a *App) validateEnvRunPhase(s *runState) session.Phase {
 				}
 			}()
 
-			slotNum := a.slot
-			if slotNum == 0 {
-				// Persistent mode: prefer the stopped container from a
-				// previous run — plain AllocateSlot treats it as occupying
-				// its slot and would silently launch a FRESH container on
-				// the next slot (state never persists, slots exhaust).
-				if a.persistent {
-					if reuse, ok := session.FindReusablePersistentSlot(s.absWorkspace, a.sessionName(), session.MaxSlots); ok {
-						slotNum = reuse
-						fmt.Fprintf(os.Stderr, "Reusing persistent container on slot %d\n", slotNum)
-					}
-				}
-				if slotNum == 0 {
-					slotNum, err = session.AllocateSlot(s.absWorkspace, a.sessionName(), session.MaxSlots)
-					if err != nil {
-						return nil, fmt.Errorf("failed to allocate slot: %w", err)
-					}
-					fmt.Fprintf(os.Stderr, "Auto-allocated slot %d\n", slotNum)
-					warnNamedSessionFork(s.absWorkspace, a.sessionName(), slotNum)
-				}
+			slotNum, err := a.chooseRunSlot(s.absWorkspace)
+			if err != nil {
+				return nil, err
 			}
 			s.containerName = session.ContainerName(s.absWorkspace, a.sessionName(), slotNum)
 			s.slot = slotNum
@@ -413,15 +421,7 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			teardown := func() {
 				logFn := stderrLogFn
 				session.RemoveImmutable(s.containerName, logFn)
-				if !a.persistent {
-					fmt.Fprintf(os.Stderr, "Cleaning up container %s...\n", s.containerName)
-					_ = s.mgr.Delete(true)
-				} else {
-					if running, _ := s.mgr.Running(); running {
-						fmt.Fprintf(os.Stderr, "Stopping persistent container %s...\n", s.containerName)
-						_ = s.mgr.Stop(false)
-					}
-				}
+				a.endRunContainer(s.mgr, s.containerName)
 			}
 
 			stopLaunch := timing.Start(timing.CatStep, "launch-or-reuse")
@@ -452,9 +452,10 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			// init can phone home, until the real isolation rules land in
 			// apply-network (which removes this temporary rule). Shell parity
 			// (#726 follow-up). Only for non-open modes: open opts into
-			// unrestricted egress, and its network path never removes a boot
-			// block (applyNetworkIsolation short-circuits), so installing one
-			// there would strand the container with no network. Fail closed.
+			// unrestricted egress, and no open-mode path removes a boot block
+			// (applyNetworkIsolation's open path, also ApplyOpenMetadataBlock),
+			// so installing one there would strand the container with no
+			// network. Fail closed.
 			if m := a.cfg.Network.Mode; m != "" && m != config.NetworkModeOpen {
 				if err := network.ApplyBootBlockRule(s.containerName); err != nil {
 					return teardown, fmt.Errorf("boot network block failed in %s mode; refusing to run with an unprotected boot window: %w", m, err)
@@ -501,6 +502,13 @@ func (a *App) configureContainerRunPhase(s *runState) session.Phase {
 			}
 			if err := sizeTmpfsAndRemapUser(s.mgr, &a.cfg.Limits, s.wasRestarted, logFn); err != nil {
 				return nil, err
+			}
+			// Before anything runs as the code user. Turning sudo back on rides
+			// along with the timezone exec in apply-network.
+			if !a.cfg.Security.IsPasswordlessSudoEnabled() {
+				if err := session.DisableSudo(s.mgr, logFn); err != nil {
+					return nil, err
+				}
 			}
 
 			// Git commit identity + [[credentials]], applied the same way the
@@ -590,7 +598,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 	return session.PhaseFunc{
 		PhaseName: "apply-network",
 		RunFn: func(ctx context.Context) (session.Teardown, error) {
-			s.socketEnv = a.applyForwardSockets(s.mgr, s.socketConfig)
+			s.socketEnv = a.applyForwardSockets(s.mgr, s.socketConfig, s.wasRestarted)
 
 			// Publish [ports] on the host (localhost:<port> -> container)
 			// and expose the mapping to the command env (COI_PORTS /
@@ -612,7 +620,7 @@ func (a *App) applyNetworkRunPhase(s *runState) session.Phase {
 			// Timezone ("" = UTC, resetting a reused container) and workspace
 			// mise trust in one exec.
 			s.tz = resolveTimezone(a.cfg)
-			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, !s.wasRestarted, logFn)
+			session.ConfigureTimezoneAndMiseTrust(s.mgr, s.tz, s.containerWorkspace, s.copiedCredentials, !s.wasRestarted, a.cfg.Security.IsPasswordlessSudoEnabled(), logFn)
 
 			if nm == nil {
 				return nil, nil
@@ -794,19 +802,7 @@ func (a *App) runPromptPhase(s *runState) session.Phase {
 				Git: session.GitOptions{
 					ProtectedBranches: a.cfg.Git.EffectiveProtectedBranches(),
 				},
-				Security: session.SecurityOptions{
-					// The kernel-surface flags feed injectSandboxContext's Docker
-					// availability line; omitting them here (zero value = docker
-					// off) would make every headless run's context claim Docker is
-					// unavailable while the container actually has it (the launch
-					// phase applies the real policy). Mirrors phases_shell.go.
-					// The strict tier is intentionally not threaded here: this seed
-					// path only drives the Docker-availability line, which depends
-					// solely on DockerEnabled() — and ReduceKernelSurface already
-					// reflects the strict tier (it implies the base flag).
-					Docker:              a.cfg.Container.IsDockerEnabled(),
-					ReduceKernelSurface: a.cfg.Security.IsReduceKernelSurfaceEnabled(),
-				},
+				Security: a.seedSecurityOptions(),
 			}
 			if err := session.SeedToolConfigForRun(ctx, seedResult, seedOpts); err != nil {
 				return nil, err
@@ -900,4 +896,24 @@ func buildPromptRunScript(t tool.Tool, sessionID, promptPath string) (string, er
 			"tool %q cannot run a prompt headlessly via coi run", t.Name())}
 	}
 	return guardToolInstalled(t.Name(), strings.Join(argv, " ")), nil
+}
+
+// seedSecurityOptions are the security facts SeedToolConfigForRun writes into
+// the headless run's sandbox context.
+func (a *App) seedSecurityOptions() session.SecurityOptions {
+	return session.SecurityOptions{
+		// The kernel-surface flags feed injectSandboxContext's Docker
+		// availability line; omitting them here (zero value = docker
+		// off) would make every headless run's context claim Docker is
+		// unavailable while the container actually has it (the launch
+		// phase applies the real policy). Mirrors phases_shell.go.
+		// The strict tier is intentionally not threaded here: this seed
+		// path only drives the Docker-availability line, which depends
+		// solely on DockerEnabled() — and ReduceKernelSurface already
+		// reflects the strict tier (it implies the base flag). NoSudo
+		// drives the sudo lines (and also turns Docker off).
+		Docker:              a.cfg.Container.IsDockerEnabled(),
+		ReduceKernelSurface: a.cfg.Security.IsReduceKernelSurfaceEnabled(),
+		NoSudo:              !a.cfg.Security.IsPasswordlessSudoEnabled(),
+	}
 }

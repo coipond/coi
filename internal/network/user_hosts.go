@@ -14,7 +14,7 @@ type hostIPClass int
 
 const (
 	hostPublic   hostIPClass = iota // routable internet address
-	hostPrivate                     // RFC1918 (10/8, 172.16/12, 192.168/16) or ULA
+	hostPrivate                     // config.PrivateNetworkCIDRs or ULA
 	hostMetadata                    // 169.254.0.0/16 link-local, incl. the cloud metadata endpoint
 )
 
@@ -27,7 +27,7 @@ func classifyHostIP(ipStr string) hostIPClass {
 		return hostPublic // unreachable in practice — validation rejects non-IPs
 	case ip.IsLinkLocalUnicast():
 		return hostMetadata
-	case ip.IsPrivate():
+	case ip.IsPrivate(), config.IsPrivateNetworkIP(ipStr):
 		return hostPrivate
 	default:
 		return hostPublic
@@ -37,15 +37,16 @@ func classifyHostIP(ipStr string) hostIPClass {
 // checkHostReachable reports whether a host entry's address CAN be made reachable
 // under the given mode. It refuses addresses the mode hard-blocks, so we never
 // write a /etc/hosts name that resolves to a permanently-unreachable address.
-// Private (RFC1918) addresses are reachable in every mode — restricted and
-// allowlist via a targeted accept, or allowlist's allow_local_network_access LAN
-// accept — so whether one is acceptable is a port-scope question, answered by
-// checkHostPortsEnforceable.
+// Private (config.PrivateNetworkCIDRs) addresses are reachable in every mode —
+// restricted and allowlist via a targeted accept, or allowlist's
+// allow_local_network_access LAN accept — so whether one is acceptable is a
+// port-scope question, answered by checkHostPortsEnforceable.
 func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 	// Refused in every enforcing mode regardless of allow_local_network_access:
 	// pointing a name at 169.254.0.0/16 (cloud metadata) is a credential-theft
-	// SSRF vector. Even with local access on, allowlist mode installs an RFC1918
-	// accept but NOT a metadata one, so the address stays unreachable anyway.
+	// SSRF vector. Even with local access on, allowlist mode installs a
+	// private network accept but NOT a metadata one, so the address stays
+	// unreachable anyway.
 	if classifyHostIP(ipStr) == hostMetadata &&
 		(mode == config.NetworkModeRestricted || mode == config.NetworkModeAllowlist) {
 		return fmt.Errorf(
@@ -69,11 +70,12 @@ func checkHostReachable(mode config.NetworkMode, ipStr string) error {
 // chain opens it only on its port scope (see checkHostAddressPorts).
 //
 // A private host in allowlist mode without allow_local_network_access gets a
-// targeted accept ahead of the RFC1918 block, which must be port-scoped (the
-// entry's ports, else the global allowed_ports) and must not include the DNS
-// ports 53 or 853 (DNS-over-TLS): allowlist mode blocks all DNS so /etc/hosts
-// stays the container's only resolver, and an all-ports or DNS-port hole to a LAN
-// resolver would reopen DNS — and with it DNS tunnelling out past the allowlist.
+// targeted accept ahead of the private network block, which must be
+// port-scoped (the entry's ports, else the global allowed_ports) and must not
+// include the DNS ports 53 or 853 (DNS-over-TLS): allowlist mode blocks all
+// DNS so /etc/hosts stays the container's only resolver, and an all-ports or
+// DNS-port hole to a LAN resolver would reopen DNS — and with it DNS
+// tunnelling out past the allowlist.
 // A host that also serves DNS-over-HTTPS on a port the entry opens (typically
 // 443) cannot be told apart from its web service by the firewall, so point
 // entries only at hosts you trust not to resolve for the container.
@@ -241,12 +243,12 @@ func AddUserHost(containerName string, mode config.NetworkMode, allowLocalNetwor
 	if err != nil {
 		return fmt.Errorf("failed to get container IP: %w", err)
 	}
-	// The runtime CLI is invoked with whatever config the caller happens to have,
-	// which may not be the one the container was launched with. Trusting it would
-	// let `coi hosts add` punch a restricted-style targeted allow — unscoped, or on
-	// :53 — through an allowlist container's RFC1918 and DNS blocks, skipping the
-	// port-scope checks allowlist mode requires. Detect the container's ACTUAL mode
-	// and honor that instead.
+	// The runtime CLI is invoked with whatever config the caller happens to
+	// have, which may not be the one the container was launched with. Trusting
+	// it would let `coi hosts add` punch a restricted-style targeted allow —
+	// unscoped, or on :53 — through an allowlist container's private network
+	// and DNS blocks, skipping the port-scope checks allowlist mode requires.
+	// Detect the container's ACTUAL mode and honor that instead.
 	mode = effectiveContainerMode(containerIP, mode)
 	// Same for allow_local_network_access: it decides whether an allowlist
 	// container already reaches the LAN host (no rule needed, no per-host ports
@@ -407,10 +409,11 @@ func applyHostFirewall(mode config.NetworkMode, allowLocalNetworkAccess bool, co
 			return fmt.Errorf("failed to port-scope host %s in allowlist mode: %w", entry.IP, err)
 		}
 	case class == hostPrivate && (mode == config.NetworkModeRestricted || !allowLocalNetworkAccess):
-		// A targeted accept ahead of the mode's RFC1918 reject. In allowlist mode it
-		// also precedes the DNS block, which is why checkHostPortsEnforceable insists
-		// on a port scope without 53. (With allow_local_network_access on, allowlist's
-		// LAN accept already covers the host, so no rule is added.)
+		// A targeted accept ahead of the mode's private network reject. In
+		// allowlist mode it also precedes the DNS block, which is why
+		// checkHostPortsEnforceable insists on a port scope without 53. (With
+		// allow_local_network_access on, allowlist's LAN accept already covers
+		// the host, so no rule is added.)
 		if err := insertContainerAcceptRule(containerIP, entry.IP, hostPorts); err != nil {
 			return fmt.Errorf("failed to allow private host %s in %s mode: %w", entry.IP, mode, err)
 		}
@@ -418,10 +421,11 @@ func applyHostFirewall(mode config.NetworkMode, allowLocalNetworkAccess bool, co
 	return nil
 }
 
-// insertContainerAcceptRule PREPENDS an accept rule to the coi forward chain for
-// traffic from containerIP to a specific destination, so it is evaluated before
-// the mode's RFC1918 reject. Tagged with the same `coi-<ip>` comment the other
-// per-container rules use, so it is torn down by the existing cleanup path.
+// insertContainerAcceptRule PREPENDS an accept rule to the coi forward chain
+// for traffic from containerIP to a specific destination, so it is evaluated
+// before the mode's private network reject. Tagged with the same `coi-<ip>`
+// comment the other per-container rules use, so it is torn down by the existing
+// cleanup path.
 //
 // When an egress port cap (allowed_ports) is in force the accept is scoped to
 // those TCP/UDP dports, so a [[network.hosts]] entry cannot silently reopen the

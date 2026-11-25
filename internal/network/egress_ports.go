@@ -12,10 +12,12 @@ import (
 // egress.go) caps every destination with one global port set, allowed_domains
 // entries may each carry their own ports — "github.com:443",
 // "198.51.100.0/24:22", "svc:8000-8100" — which allowlist mode enforces via nft
-// concatenated sets (ipv4_addr . inet_service). Private (RFC1918, link-local)
-// entries are rejected unless allow_local_network_access, which opens the whole
-// RFC1918 LAN, so an RFC1918 entry's ports limit nothing; link-local entries
-// and an address of the host itself (allowlistHostAccepts) keep their ports.
+// concatenated sets (ipv4_addr . inet_service). Private
+// (config.PrivateNetworkCIDRs, link-local) entries are rejected unless
+// allow_local_network_access (link-local: and not block_metadata_endpoint),
+// which opens the whole private LAN, so a private entry's ports limit
+// nothing; link-local entries and an address of the host itself
+// (allowlistHostAccepts) keep their ports.
 // These helpers parse the `dest:ports` syntax and render the address·port
 // tuples that go into those sets.
 

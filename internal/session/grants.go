@@ -20,8 +20,8 @@ import (
 // actually applied, not from config: mounts and protections are read back from
 // the container's disk devices, profile-inherited ones included (so a reused
 // container's leftover mounts show, and a protection mount that failed
-// doesn't), sockets and copied files are the ones forwarded and pushed. Printed
-// once at `coi shell` start.
+// doesn't), sockets from its socket proxy devices, and copied files are the
+// ones pushed. Printed once at `coi shell` start.
 type Grants struct {
 	Workspace MountGrant
 	Mounts    []MountGrant // every other host disk device: [[mounts]], the worktree common dir, Incus profile disks, ...
@@ -35,7 +35,7 @@ type Grants struct {
 	// ToolFiles list only this launch's copies.
 	LeftoversUnchecked bool
 
-	Sockets     []SocketEntry     // sockets actually forwarded (incl. the SSH agent)
+	Sockets     []SocketEntry     // host sockets the container's proxy devices forward (incl. the SSH agent)
 	Credentials []CredentialGrant // [[credentials]] entries
 	ToolFiles   []CredentialGrant // the tool's own config and login files (e.g. ~/.claude/.credentials.json)
 
@@ -220,12 +220,17 @@ func dockerSource(mgr container.ContainerManager, applied *container.AppliedStat
 	return dockerSourceUnknown
 }
 
+// metadataEnforcer is the network manager's report of an open-mode
+// block_metadata_endpoint it could not enforce (network.Manager).
+type metadataEnforcer interface {
+	MetadataUnenforced() bool
+}
+
 // buildGrants collects the session's effective grants once setup has run.
 func buildGrants(st *setupState) *Grants {
 	opts := st.opts
 	info := st.contextInfo
 	g := &Grants{
-		Sockets:           st.forwardedSockets,
 		Ports:             info.PublishedPorts,
 		RunAsRoot:         info.RunAsRoot,
 		DockerUnavailable: info.DockerUnavailable,
@@ -243,6 +248,9 @@ func buildGrants(st *setupState) *Grants {
 		g.Network.HostAccess = config.BoolVal(nc.AllowHostAccess)
 		g.Network.LANBlocked = config.BoolVal(nc.BlockPrivateNetworks)
 		g.Network.MetadataBlock = config.BoolVal(nc.BlockMetadataEndpoint)
+		if m, ok := st.result.NetworkManager.(metadataEnforcer); ok && m.MetadataUnenforced() {
+			g.Network.MetadataBlock = false
+		}
 	}
 
 	// The container's applied config: disks (profile-inherited included), its
@@ -252,6 +260,7 @@ func buildGrants(st *setupState) *Grants {
 	containerWorkspace := ContainerWorkspace(st.result)
 	if applied := st.awaitApplied(); applied != nil {
 		g.Workspace, g.Mounts, g.Protected, g.Masked = classifyDisks(applied.Disks, containerWorkspace)
+		g.Sockets = attachedSockets(applied.Sockets, st.forwardedSockets)
 		// DockerUnavailable stays info's, which already follows the applied
 		// nesting (dockerUnavailable), so the context file can't disagree.
 		g.DockerConfigDiffers = g.DockerUnavailable != !hardeningPolicyFrom(&opts).DockerEnabled()
@@ -267,6 +276,7 @@ func buildGrants(st *setupState) *Grants {
 	} else {
 		g.DevicesUnread = true
 		configuredDisks(g, opts, containerWorkspace, st.result.worktreeWritableHooks)
+		g.Sockets = st.forwardedSockets
 		if info.CPULimit != "" {
 			g.Limits = append(g.Limits, "cpu "+info.CPULimit)
 		}
@@ -287,6 +297,34 @@ func buildGrants(st *setupState) *Grants {
 		g.ToolFiles = append(g.ToolFiles, lc.tools...)
 	}
 	return g
+}
+
+// attachedSockets lists the container's socket devices: this session's
+// forwards first, in config order and with their env var, then any other
+// (a profile's, or one setup could not remove) by device name.
+func attachedSockets(devices map[string]container.SocketDevice, forwarded []SocketEntry) []SocketEntry {
+	var out []SocketEntry
+	listed := make(map[string]bool, len(forwarded))
+	for _, e := range forwarded {
+		d, ok := devices[e.DeviceName]
+		if !ok {
+			continue
+		}
+		listed[e.DeviceName] = true
+		out = append(out, SocketEntry{HostPath: d.HostPath, ContainerPath: d.ContainerPath, EnvVar: e.EnvVar, DeviceName: e.DeviceName})
+	}
+	var others []string
+	for name := range devices {
+		if !listed[name] {
+			others = append(others, name)
+		}
+	}
+	sort.Strings(others)
+	for _, name := range others {
+		d := devices[name]
+		out = append(out, SocketEntry{HostPath: d.HostPath, ContainerPath: d.ContainerPath, DeviceName: name})
+	}
+	return out
 }
 
 // limitNames labels the container.LimitKeys for the report.
@@ -983,16 +1021,23 @@ func (g *Grants) networkLines() []string {
 	var lines []string
 	switch config.NetworkMode(n.Mode) {
 	case config.NetworkModeOpen:
-		lines = append(lines, "open (no egress filtering)")
+		if n.MetadataEndpoint != nil && *n.MetadataEndpoint == netBlocked {
+			lines = append(lines, "open (only the metadata endpoint blocked)")
+		} else {
+			lines = append(lines, "open (no egress filtering)")
+		}
 	case config.NetworkModeAllowlist:
 		dests := "nothing"
 		if len(n.AllowedDomains) > 0 {
 			dests = strings.Join(n.AllowedDomains, ", ")
 		}
 		lines = append(lines, "allowlist: "+dests)
-		if *n.LAN == netAllowed {
+		switch {
+		case *n.LAN == netAllowed && *n.MetadataEndpoint == netBlocked:
+			lines = append(lines, "LAN allowed (metadata endpoint blocked)")
+		case *n.LAN == netAllowed:
 			lines = append(lines, "LAN allowed (metadata endpoint not blocked)")
-		} else {
+		default:
 			lines = append(lines, "LAN and metadata endpoint blocked")
 		}
 	case config.NetworkModeRestricted:
