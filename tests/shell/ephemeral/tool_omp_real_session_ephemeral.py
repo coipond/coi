@@ -44,8 +44,13 @@ WRAPPER = f"""#!/bin/sh
 log=/workspace/{LOG}
 omp="$(command -v omp || echo "$HOME/.local/bin/omp")"
 if [ ! -x "$omp" ]; then
-    curl -fsSL https://omp.sh/install | sh >> "$log" 2>&1
+    # The installer's download can stall or break off: retry, each capped.
     omp="$HOME/.local/bin/omp"
+    for _ in 1 2 3; do
+        timeout 120 sh -c 'curl -fsSL --max-time 30 https://omp.sh/install | sh' >> "$log" 2>&1
+        [ -x "$omp" ] && break
+        echo "omp install failed, retrying" >> "$log"
+    done
 fi
 python3 /workspace/.fake-openai.py 18080 > ~/fake-openai.log 2>&1 < /dev/null &
 i=0
