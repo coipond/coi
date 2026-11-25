@@ -101,9 +101,9 @@ func (st *setupState) seedToolConfig(tcf tool.ToolWithConfigDirFiles) {
 
 // freshMemory reports whether this launch reuses a persistent container with
 // [tool] memory = "fresh", so the tool's earlier memory must not carry over:
-// a restarted container, or a running one (left by a plain exit) with no
-// tool session live in it. A live session is attached to, not reset. An
-// explicit --container attach uses the container as it is.
+// a restarted container, or a running one (left by a plain exit, reached by
+// --resume) with no tool session live in it. A live session is attached to,
+// not reset. An explicit --container attach uses the container as it is.
 func (st *setupState) freshMemory() bool {
 	if !st.freshMemoryChecked {
 		st.freshMemoryChecked = true
