@@ -17,6 +17,24 @@ import (
 // listing is a missing chain. Every other call prints nothing.
 func fakeNftSudo(t *testing.T, forward, input string) string {
 	t.Helper()
+	return writeFakeNftSudo(t, forward, input, nftFakeFailures{})
+}
+
+// nftFakeFailures selects the calls a fake nft fails.
+type nftFakeFailures struct {
+	list   bool // listing a coi chain fails (not "No such file")
+	script bool // `nft -f -` fails
+}
+
+// fakeNftSudoFailing is fakeNftSudo with the calls in fail failing.
+func fakeNftSudoFailing(t *testing.T, fail nftFakeFailures) string {
+	t.Helper()
+	return writeFakeNftSudo(t, "", "", fail)
+}
+
+// writeFakeNftSudo writes the fake `sudo` of fakeNftSudo.
+func writeFakeNftSudo(t *testing.T, forward, input string, fail nftFakeFailures) string {
+	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls.log")
 	listings := map[string]string{"forward": forward, "input": input}
@@ -32,14 +50,21 @@ func fakeNftSudo(t *testing.T, forward, input string) string {
 		}
 		answers += fmt.Sprintf("\"-a list chain ip coi %s\") %s ;;\n", chain, answer)
 	}
+	scriptExit := 0
+	if fail.script {
+		scriptExit = 1
+	}
+	if fail.list {
+		answers = "*\"list chain ip coi\"*) echo \"Error: permission denied\" >&2; exit 1 ;;\n"
+	}
 	script := fmt.Sprintf(`#!/bin/sh
 shift 2
 echo "$*" >> %q
 case "$*" in
-"-f -") cat >> %q ;;
+"-f -") cat >> %q; exit %d ;;
 %sesac
 exit 0
-`, logPath, logPath, answers)
+`, logPath, logPath, scriptExit, answers)
 	if err := os.WriteFile(filepath.Join(dir, "sudo"), []byte(script), 0o700); err != nil { //nolint:gosec // test fake must be executable
 		t.Fatal(err)
 	}

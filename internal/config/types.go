@@ -571,7 +571,8 @@ type NetworkConfig struct {
 	// "svc:8000-8100". An entry with no port inherits the global allowed_ports
 	// (else all ports), so a per-entry scope tightens just that destination.
 	// Private (PrivateNetworkCIDRs, link-local) entries are rejected unless
-	// allow_local_network_access, which opens the whole private LAN, so a
+	// allow_local_network_access (link-local: and not
+	// block_metadata_endpoint), which opens the whole private LAN, so a
 	// private entry's ports limit nothing; one LAN service is a
 	// [[network.hosts]] entry with ports. Exception: an address of the coi host
 	// itself is reachable on the entry's ports only (host input rules), else
@@ -695,6 +696,7 @@ type ToolConfig struct {
 	ContextJSON     *bool            `toml:"context_json"`      // Write ~/SANDBOX_CONTEXT.json for programmatic consumers (default: true)
 	ContextJSONFile string           `toml:"context_json_file"` // Path to custom context .json file (supports ~ expansion; overrides the generated JSON; trusted scope only)
 	PreLaunch       []string         `toml:"pre_launch"`        // Shell commands run in the container before the tool starts in coi shell (e.g. "claude update"); trusted scope only
+	Memory          ToolMemory       `toml:"memory"`            // Tool memory in a reused persistent container: "keep" (default) or "fresh"
 	Claude          ClaudeToolConfig `toml:"claude"`            // Claude-specific settings
 	Codex           CodexToolConfig  `toml:"codex"`             // Codex-specific settings
 }

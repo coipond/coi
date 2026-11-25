@@ -161,6 +161,65 @@ func TestApplyOpenRules_ReuseIsNoop_Integration(t *testing.T) {
 	}
 }
 
+// Under block_metadata_endpoint open mode's reuse check still holds, which
+// pins openModeRuleTexts to how nft really lists the rules.
+func TestApplyOpenRules_MetadataBlock_Integration(t *testing.T) {
+	requireNft(t)
+	on := true
+	m := NewManager(&config.NetworkConfig{Mode: config.NetworkModeOpen, BlockMetadataEndpoint: &on}, logger.NewDiscard())
+	_ = DeleteCOIFilterRulesForIP(batchTestIP)
+
+	m.applyOpenRules(batchTestIP)
+	first, err := forwardRulesWithComment("coi-" + batchTestIP)
+	if err != nil || !ruleTextsEqual(first, openModeRuleTexts(batchTestIP, true)) {
+		t.Fatalf("open rules = %+v (err %v), want texts %q", first, err, openModeRuleTexts(batchTestIP, true))
+	}
+	m.applyOpenRules(batchTestIP)
+	second, _ := forwardRulesWithComment("coi-" + batchTestIP)
+	if len(second) != len(first) || second[0].handle != first[0].handle {
+		t.Errorf("reuse must keep the existing rules, got %+v", second)
+	}
+}
+
+// coi run's lean open-mode path: its script applies on real nft, a second
+// listing finds the rules in place, a stale rule of another mode is replaced,
+// and Teardown removes the container's rules.
+func TestOpenMetadataBlock_Integration(t *testing.T) {
+	requireNft(t)
+	_ = DeleteCOIFilterRulesForIP(batchTestIP)
+	_, _ = runNFTCommand("delete", "table", "ip", "coi") // first container on the host
+	listing := func() string {
+		out, _ := runNFTCommand("-a", "list", "table", "ip", "coi")
+		return string(out)
+	}
+	if err := applyOpenMetadataRules(batchTestIP); err != nil {
+		t.Fatal(err)
+	}
+	first := listing()
+	if err := applyOpenMetadataRules(batchTestIP); err != nil {
+		t.Fatal(err)
+	}
+	if second := listing(); second != first {
+		t.Fatalf("second apply must find the rules in place:\n%s\nthen:\n%s", first, second)
+	}
+	if err := NewNftManager(batchTestIP, "").ApplyRestricted(restrictedTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyOpenMetadataRules(batchTestIP); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := forwardRulesWithComment("coi-" + batchTestIP)
+	if !ruleTextsEqual(got, openModeRuleTexts(batchTestIP, true)) {
+		t.Fatalf("rules = %+v, want %q", got, openModeRuleTexts(batchTestIP, true))
+	}
+	if err := (&OpenMetadataBlock{ip: batchTestIP}).Teardown(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := forwardRulesWithComment("coi-" + batchTestIP); len(got) != 0 {
+		t.Errorf("teardown left %+v", got)
+	}
+}
+
 // Teardown removes everything the container owns — its policy rules, the
 // IPv6 drop and a residual boot block — in one transaction.
 func TestTeardownRulesAtomically_Integration(t *testing.T) {

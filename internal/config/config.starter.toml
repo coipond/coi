@@ -56,7 +56,7 @@
 [network]
 # mode = "restricted"            # restricted | open | allowlist
 # block_private_networks = true  # block RFC1918 / 100.64.0.0/10 from the container
-# block_metadata_endpoint = true # block 169.254.169.254 (cloud metadata/IAM)
+# block_metadata_endpoint = true # block 169.254.0.0/16 (cloud metadata/IAM), every mode
 # allow_local_network_access = false
 # allow_host_access = false     # let the container reach services on the host itself
 # refresh_interval_minutes = 30  # re-resolve allowlist domains (allowlist mode)
@@ -67,7 +67,8 @@
 # (else all ports). So a public name/IP is reachable ONLY on the ports you name:
 # allowed_domains = ["github.com:443", "203.0.113.10:8080", "198.51.100.0/24:22", "svc:8000-8100"]
 # Private (RFC1918, 100.64.0.0/10, 169.254.0.0/16) entries are blocked unless
-# allow_local_network_access = true. That opens the whole private LAN on every
+# allow_local_network_access = true; 169.254.0.0/16 also needs
+# block_metadata_endpoint = false. That opens the whole private LAN on every
 # port (or on allowed_ports), so a LAN entry's ":ports" do not limit it. To
 # reach ONE LAN service, use a [[network.hosts]] entry with ports (below).
 # Exception: an address of the coi host itself is reachable on the entry's
@@ -122,6 +123,8 @@
 # auto_context = true            # inject SANDBOX_CONTEXT.md into the tool
 # context_json = true            # also write ~/SANDBOX_CONTEXT.json (set false to disable)
 # context_json_file = "~/coi-context.json"  # inject a custom JSON instead of the generated one
+# memory = "keep"                # keep | fresh: fresh starts a new session in a reused persistent
+                                 #   container without the tool's history/memory (installs stay)
 
 # [tool.claude]
 # model = "opus"                 # Claude model (ANTHROPIC_MODEL): alias like "opus" or a full ID

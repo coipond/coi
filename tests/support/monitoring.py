@@ -621,12 +621,20 @@ def assert_established(container_name, holder, ip, port, timeout=15):
     """Fail unless holder is alive and its TCP connection to ip:port is
     ESTABLISHED in the container, so a "no threat" assertion has real traffic
     behind it."""
+    assert_tcp_state(container_name, ip, port, "established", holder, timeout)
+
+
+def assert_tcp_state(container_name, ip, port, state, holder=None, timeout=15):
+    """Poll `ss` in the container until a TCP socket on ip:port is in state
+    (an `ss` state filter: "established", "listening", ...); fail on timeout
+    or when holder exits first."""
     out = ""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        assert holder.poll() is None, f"the connection to {ip}:{port} exited ({holder.returncode})"
+        if holder is not None:
+            assert holder.poll() is None, f"the socket on {ip}:{port} exited ({holder.returncode})"
         out = subprocess.run(
-            ["incus", "exec", container_name, "--", "ss", "-tnH", "state", "established"],
+            ["incus", "exec", container_name, "--", "ss", "-tnH", "state", state],
             capture_output=True,
             text=True,
             timeout=10,
@@ -634,7 +642,7 @@ def assert_established(container_name, holder, ip, port, timeout=15):
         if f"{ip}:{port}" in out.split():
             return
         time.sleep(1)
-    raise AssertionError(f"no ESTABLISHED connection to {ip}:{port}; sockets:\n{out}")
+    raise AssertionError(f"no {state} socket on {ip}:{port}; sockets:\n{out}")
 
 
 def is_c2_port_threat(host, port=4444):

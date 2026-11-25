@@ -48,8 +48,9 @@ type staticTuple struct {
 // A per-entry port set scopes that destination (Phase 3); an entry with no port
 // inherits the global allowed_ports, else all ports. The firewall rejects
 // private (config.PrivateNetworkCIDRs, link-local) entries unless
-// allow_local_network_access, which opens the whole private LAN, so a private
-// entry's ports limit nothing.
+// allow_local_network_access (link-local: and not block_metadata_endpoint),
+// which opens the whole private LAN, so a private entry's ports limit
+// nothing.
 // An entry naming an address of the host itself is the exception: the host
 // input rules accept it on its own ports only, else on allowed_ports, else
 // not at all (allowlistHostAccepts).

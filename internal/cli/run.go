@@ -819,10 +819,16 @@ func (a *App) applyForwardSockets(mgr container.ContainerManager, socketConfig *
 	return session.ForwardConfiguredSockets(mgr, socketConfig, config.BoolVal(a.cfg.SSH.ForwardAgent), reused, logger)
 }
 
+// networkTeardown removes what applyNetworkIsolation installed.
+type networkTeardown interface {
+	Teardown(ctx context.Context, containerName string) error
+}
+
 // applyNetworkIsolation installs firewall rules for the container when
-// network.mode is set to something other than "open" in config.
-// Returns the Manager so the caller can Teardown before container deletion.
-func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (*network.Manager, error) {
+// network.mode is set to something other than "open" in config, or in open
+// mode the metadata reject under block_metadata_endpoint.
+// Returns what the caller must Teardown before container deletion, or nil.
+func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (networkTeardown, error) {
 	networkConfig := a.cfg.Network
 	if networkConfig.Mode == "" || networkConfig.Mode == config.NetworkModeOpen {
 		// Open mode installs no isolation rules, but static [[network.hosts]]
@@ -834,7 +840,17 @@ func (a *App) applyNetworkIsolation(ctx context.Context, containerName string) (
 				return nil, fmt.Errorf("failed to apply [[network.hosts]]: %w", err)
 			}
 		}
-		return nil, nil
+		if !config.BoolVal(networkConfig.BlockMetadataEndpoint) {
+			return nil, nil
+		}
+		block, warnings := network.ApplyOpenMetadataBlock(&networkConfig, containerName)
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, w)
+		}
+		if block == nil {
+			return nil, nil
+		}
+		return block, nil
 	}
 	if changed, bridgeName, err := network.EnsureContainerBridgeInTrustedZone(containerName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not ensure bridge forwarding rules: %v\n", err)

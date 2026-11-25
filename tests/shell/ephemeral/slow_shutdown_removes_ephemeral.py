@@ -23,6 +23,7 @@ from pexpect import EOF, TIMEOUT
 
 from support.helpers import (
     calculate_container_name,
+    child_output,
     get_container_list,
     spawn_coi,
     wait_for_container_ready,
@@ -111,12 +112,7 @@ def test_slow_shutdown_removes_ephemeral(coi_binary, cleanup_containers, workspa
     except TIMEOUT:
         pass
 
-    if hasattr(child.logfile_read, "get_raw_output"):
-        output = child.logfile_read.get_raw_output()
-    elif hasattr(child.logfile_read, "get_output"):
-        output = child.logfile_read.get_output()
-    else:
-        output = ""
+    output = child_output(child)
 
     try:
         child.close(force=False)
