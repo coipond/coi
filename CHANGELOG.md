@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Bug Fixes
+
+- [Bug Fix] **`coi update patterns` updates existing databases** — it failed with `Not possible to fast-forward` whenever GTFOBins or Sigma had new commits or rewrote their history, so the databases never updated after the first clone. coi now moves its clones to the latest upstream commit.
+
 ## 0.17.0 (2026-11-25)
 
 ### Features
