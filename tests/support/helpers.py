@@ -734,23 +734,51 @@ def child_output(child):
     return ""
 
 
-def poweroff_session(child, timeout=60):
-    """Run `sudo poweroff` in the coi shell's bash pane (which saves the
-    session), wait for coi to exit and close the child. Return what the
-    child printed (child_output)."""
-    child.send("sudo poweroff")
+def exit_tool_to_bash(child, timeout=30):
+    """Send `exit` to the tool, then poll until the pane's bash runs a command:
+    the echoed input holds "4100+23", only bash prints 4123 (the dummy echoes
+    input back). Return whether bash answered before the deadline."""
+    child.send("exit")
+    time.sleep(0.3)
+    child.send("\x0d")
+    deadline = time.monotonic() + timeout
+    with with_live_screen(child) as monitor:
+        while time.monotonic() < deadline:
+            child.send("echo $((4100+23))")
+            time.sleep(0.3)
+            child.send("\x0d")
+            if wait_for_text_in_monitor(monitor, "4123", timeout=3):
+                return True
+    return False
+
+
+def leave_session(child, command, timeout=60, require_exit=False):
+    """Run command (`sudo poweroff`, or `exit` to leave the container running)
+    in the coi shell's bash pane, wait for coi to exit and close the child.
+    With require_exit, fail when coi has not exited by the timeout. Return
+    what the child printed (child_output)."""
+    child.send(command)
     time.sleep(0.3)
     child.send("\x0d")
     try:
         child.expect(EOF, timeout=timeout)
+        exited = True
     except TIMEOUT:
-        pass
+        exited = False
     output = child_output(child)
     try:
         child.close(force=False)
     except Exception:
         child.close(force=True)
+    assert exited or not require_exit, f"coi shell did not exit after {command!r}"
     return output
+
+
+def poweroff_session(child, timeout=60):
+    """Run `sudo poweroff` in the coi shell's bash pane (which saves the
+    session), wait for coi to exit and close the child. Return what the
+    child printed (child_output)."""
+    return leave_session(child, "sudo poweroff", timeout=timeout)
 
 
 def poweroff_and_wait(child, coi_binary, container_name, timeout=60):
@@ -1502,6 +1530,18 @@ def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
     argv += ["--", "bash", "-c", cmd]
     result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     return result.returncode, result.stdout + result.stderr
+
+
+def container_cat(coi_binary, container_name, path, user=None):
+    """Return (ok, content) of a file in the container; ok is False when cat fails."""
+    rc, out = exec_in(coi_binary, container_name, f"cat {path}", user=user)
+    return rc == 0, out
+
+
+def container_path_exists(coi_binary, container_name, path, user=None):
+    """Return whether path exists in the container."""
+    rc, _ = exec_in(coi_binary, container_name, f"test -e {path}", user=user)
+    return rc == 0
 
 
 def wait_for_firewall_rules(container_name, timeout=30, poll_interval=0.5, match=None):
