@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +24,7 @@ type monitoredFile struct {
 	openDesc   string
 	writeTitle string
 	writeDesc  string
+	authRead   bool // reads by an authentication helper are not flagged
 }
 
 // sensitiveFiles is the list of files watched inside every monitored container.
@@ -30,6 +33,7 @@ var sensitiveFiles = []monitoredFile{
 	{
 		rel: "etc/shadow", openLevel: ThreatLevelHigh, writeLevel: ThreatLevelCritical,
 		category:   "credential_access",
+		authRead:   true,
 		openTitle:  "Shadow password file read",
 		openDesc:   "A process opened /etc/shadow which contains hashed passwords",
 		writeTitle: "Shadow password file modified",
@@ -130,6 +134,9 @@ type rawFanEvent struct {
 	mask uint64
 	fd   int
 	pid  int
+	// authHelper is isAuthHelper(pid) for a FAN_OPEN_PERM event, checked
+	// while the opener still waits in open() for the reply.
+	authHelper bool
 }
 
 // FileWatcher monitors sensitive files inside a container via fanotify.
@@ -144,6 +151,7 @@ type FileWatcher struct {
 	containerName string
 	onThreat      func(ThreatEvent)
 	onError       func(error)
+	permEvents    bool // the group takes FAN_OPEN_PERM (FAN_CLASS_CONTENT)
 }
 
 // NewFileWatcher creates a new FileWatcher for containerName.
@@ -160,7 +168,14 @@ func NewFileWatcher(containerName string, onThreat func(ThreatEvent), onError fu
 // init limit reached) the method logs once via onError and returns immediately
 // so the rest of the security monitor continues unaffected.
 func (w *FileWatcher) Run(ctx context.Context) {
-	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK, unix.O_RDONLY|unix.O_LARGEFILE)
+	// A FAN_CLASS_CONTENT group takes permission events, which hold the
+	// opener of an authRead file in open() until it is checked; a kernel
+	// without CONFIG_FANOTIFY_ACCESS_PERMISSIONS gets a notification group.
+	ifd, err := unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK|unix.FAN_CLASS_CONTENT, unix.O_RDONLY|unix.O_LARGEFILE)
+	w.permEvents = err == nil
+	if err != nil {
+		ifd, err = unix.FanotifyInit(unix.FAN_CLOEXEC|unix.FAN_NONBLOCK, unix.O_RDONLY|unix.O_LARGEFILE)
+	}
 	if err != nil {
 		if w.onError != nil {
 			w.onError(fmt.Errorf("filewatcher: fanotify_init: %w (sensitive file monitoring disabled)", err))
@@ -169,23 +184,11 @@ func (w *FileWatcher) Run(ctx context.Context) {
 	}
 	defer unix.Close(ifd)
 
-	var (
-		lastPID    int
-		inodes     map[inodeKey]inodeEntry
-		graceUntil time.Time // suppress threats until container boot settles
-	)
+	st := watchState{inodes: make(map[inodeKey]inodeEntry)}
 
 	// Initial mark pass.
 	if pid, _ := GetContainerInitPID(ctx, w.containerName); pid > 0 {
-		inodes = w.markFiles(ifd, pid)
-		lastPID = pid
-		// System daemons (PAM, sshd, cron) open /etc/shadow and other sensitive
-		// files during container boot. Suppress threats for 30 s so these normal
-		// init reads don't trigger false-positive auto-pause events.
-		graceUntil = time.Now().Add(30 * time.Second)
-	}
-	if inodes == nil {
-		inodes = make(map[inodeKey]inodeEntry)
+		w.mark(ifd, pid, &st)
 	}
 
 	// Background goroutine: poll the fanotify fd and decode events into evCh.
@@ -227,7 +230,7 @@ func (w *FileWatcher) Run(ctx context.Context) {
 			// Suppress events during the post-boot grace period to avoid
 			// false positives from system daemons accessing sensitive files
 			// as part of normal container initialisation.
-			if time.Now().Before(graceUntil) {
+			if time.Now().Before(st.graceUntil) {
 				unix.Close(ev.fd)
 				continue
 			}
@@ -238,43 +241,13 @@ func (w *FileWatcher) Run(ctx context.Context) {
 				continue
 			}
 			key := inodeKey{dev: stat.Dev, ino: stat.Ino}
-			entry, ok := inodes[key]
-			if !ok {
-				continue
-			}
-			// File deleted or moved — drop the inode entry; the backstop will
-			// re-mark the path if/when a new file appears there.
-			if ev.mask&(unix.FAN_DELETE_SELF|unix.FAN_MOVE_SELF) != 0 {
-				delete(inodes, key)
-				continue
-			}
-			if ev.mask&unix.FAN_OPEN != 0 && entry.file.openLevel != "" {
-				w.fire(entry.file.openLevel, entry.file.category,
-					entry.file.openTitle, entry.file.openDesc,
-					entry.file.rel, "read", ev.pid)
-			}
-			if ev.mask&unix.FAN_CLOSE_WRITE != 0 && entry.file.writeLevel != "" {
-				w.fire(entry.file.writeLevel, entry.file.category,
-					entry.file.writeTitle, entry.file.writeDesc,
-					entry.file.rel, "write", ev.pid)
+			if entry, ok := st.inodes[key]; ok {
+				w.handle(entry, ev)
 			}
 
 		case <-backstop.C:
-			pid, _ := GetContainerInitPID(ctx, w.containerName)
-			if pid <= 0 {
-				continue
-			}
-			newInodes := w.markFiles(ifd, pid)
-			if pid != lastPID {
-				// Container restarted — replace the map and reset the grace period.
-				inodes = newInodes
-				lastPID = pid
-				graceUntil = time.Now().Add(30 * time.Second)
-			} else {
-				// Same container — merge to pick up new inodes from copy-up.
-				for k, v := range newInodes {
-					inodes[k] = v
-				}
+			if pid, _ := GetContainerInitPID(ctx, w.containerName); pid > 0 {
+				w.mark(ifd, pid, &st)
 			}
 		}
 	}
@@ -314,8 +287,16 @@ func (w *FileWatcher) readEvents(ctx context.Context, ifd int, evCh chan<- rawFa
 			pid := int(binary.NativeEndian.Uint32(buf[pos+20:]))
 			pos += evLen
 
+			ev := rawFanEvent{mask: mask, fd: fd, pid: pid}
+			if mask&unix.FAN_OPEN_PERM != 0 && fd >= 0 {
+				// sudo is gone by the time a notification is read, and its
+				// /proc/<pid>/exe with it: check while it waits, then allow.
+				ev.authHelper = isAuthHelper(pid)
+				allow(ifd, fd)
+			}
+
 			select {
-			case evCh <- rawFanEvent{mask: mask, fd: fd, pid: pid}:
+			case evCh <- ev:
 			default:
 				// Channel full — close fd to avoid leaking it and drop the event.
 				if fd >= 0 {
@@ -326,6 +307,182 @@ func (w *FileWatcher) readEvents(ctx context.Context, ifd int, evCh chan<- rawFa
 	}
 }
 
+// allow answers the permission event for fd: the open goes ahead. Any
+// event left unanswered is allowed by the kernel when the group is closed.
+func allow(ifd, fd int) {
+	// struct fanotify_response: __s32 fd, __u32 response.
+	var resp [8]byte
+	binary.NativeEndian.PutUint32(resp[0:], uint32(fd)) //nolint:gosec // event fd fits in int32
+	binary.NativeEndian.PutUint32(resp[4:], unix.FAN_ALLOW)
+	_, _ = unix.Write(ifd, resp[:])
+}
+
+// watchState is what Run keeps between mark passes.
+type watchState struct {
+	lastPID    int
+	inodes     map[inodeKey]inodeEntry
+	graceUntil time.Time // suppress threats until container boot settles
+	warned     bool      // the "no file marked" error was reported
+}
+
+// mark re-marks the sensitive files of the container whose init PID is pid.
+// The inode map is replaced, not merged: that picks up new inodes from
+// copy-up and drops deleted or moved files, which a group without
+// FAN_REPORT_FID is not told about. A new PID (first pass, container restart)
+// starts the grace period: system daemons (PAM, sshd, cron) open /etc/shadow
+// and other sensitive files during boot.
+func (w *FileWatcher) mark(ifd, pid int, st *watchState) {
+	st.inodes = w.markFiles(ifd, pid)
+	if pid != st.lastPID {
+		st.lastPID = pid
+		st.graceUntil = time.Now().Add(30 * time.Second)
+	}
+	if len(st.inodes) == 0 && !st.warned && w.onError != nil {
+		st.warned = true
+		w.onError(fmt.Errorf("filewatcher: no sensitive file could be marked under "+procRootPattern+
+			" (needs CAP_SYS_PTRACE and CAP_DAC_READ_SEARCH besides CAP_SYS_ADMIN; sensitive file monitoring disabled)", pid))
+	}
+}
+
+// handle raises the threat for one event on a watched file. An
+// authentication helper (sudo, su, PAM's unix_chkpwd) reads /etc/shadow on
+// every use, so its reads of a file marked authRead do not count. A
+// FAN_OPEN_PERM event was checked while the opener waited; a FAN_OPEN one
+// (no permission events) is checked now, if the process is still there.
+func (w *FileWatcher) handle(entry inodeEntry, ev rawFanEvent) {
+	mask, pid := ev.mask, ev.pid
+	authHelper := ev.authHelper
+	if mask&unix.FAN_OPEN_PERM == 0 && entry.file.authRead {
+		authHelper = isAuthHelper(pid)
+	}
+	if mask&(unix.FAN_OPEN|unix.FAN_OPEN_PERM) != 0 && entry.file.openLevel != "" && (!entry.file.authRead || !authHelper) {
+		w.fire(entry.file.openLevel, entry.file.category,
+			entry.file.openTitle, entry.file.openDesc,
+			entry.file.rel, "read", pid)
+	}
+	if mask&unix.FAN_CLOSE_WRITE != 0 && entry.file.writeLevel != "" {
+		w.fire(entry.file.writeLevel, entry.file.category,
+			entry.file.writeTitle, entry.file.writeDesc,
+			entry.file.rel, "write", pid)
+	}
+}
+
+// procRootPattern and procPidPattern are the host paths of a process's root
+// and of its /proc directory; tests point them at a temp dir.
+var (
+	procRootPattern = "/proc/%d/root"
+	procPidPattern  = "/proc/%d"
+)
+
+// authHelpers are the container paths of the programs that read /etc/shadow
+// to authenticate: sudo (also sudo-rs), su and PAM's unix_chkpwd.
+var authHelpers = map[string]bool{
+	"/usr/bin/sudo":           true,
+	"/usr/lib/cargo/bin/sudo": true,
+	"/usr/bin/su":             true,
+	"/usr/lib/cargo/bin/su":   true,
+	"/usr/sbin/unix_chkpwd":   true,
+}
+
+// isAuthHelper reports whether host process pid runs an authentication
+// helper that is not editing a file: sudoedit (sudo -e) opens the file it
+// edits itself, as root. An unreadable executable or command line (the
+// process is gone) counts as not one.
+func isAuthHelper(pid int) bool {
+	dir := fmt.Sprintf(procPidPattern, pid)
+	exe, err := os.Readlink(dir + "/exe")
+	if err != nil || !authHelpers[exe] {
+		return false
+	}
+	cmdline, err := os.ReadFile(dir + "/cmdline")
+	if err != nil {
+		return false
+	}
+	return !sudoEdits(strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"))
+}
+
+// sudo's option tables (sudo_short_opts and sudo_long_opts in sudo 1.9's
+// src/parse_args.c). sudoValueOpts are the short options that take a value;
+// -h takes one only when attached ("h::"). sudoLongOpts are the long options,
+// true for those that take a value (preserve-env only as --preserve-env=).
+var (
+	sudoValueOpts = "aCcDgpRrTtUu"
+	sudoLongOpts  = map[string]bool{
+		"askpass": false, "auth-type": true, "background": false, "bell": false,
+		"chdir": true, "chroot": true, "close-from": true, "command-timeout": true,
+		"edit": false, "group": true, "help": false, "host": true, "list": false,
+		"login": false, "login-class": true, "no-update": false,
+		"non-interactive": false, "other-user": true, "preserve-env": false,
+		"preserve-groups": false, "prompt": true, "remove-timestamp": false,
+		"reset-timestamp": false, "role": true, "set-home": false, "shell": false,
+		"stdin": false, "type": true, "user": true, "validate": false,
+		"version": false,
+	}
+)
+
+// sudoLongOpt resolves a long option name as getopt_long does: an exact
+// name, or a prefix of exactly one name. ok is false for an unknown or
+// ambiguous name.
+func sudoLongOpt(name string) (resolved string, ok bool) {
+	if _, exact := sudoLongOpts[name]; exact {
+		return name, true
+	}
+	for opt := range sudoLongOpts {
+		if strings.HasPrefix(opt, name) {
+			if resolved != "" {
+				return "", false
+			}
+			resolved = opt
+		}
+	}
+	return resolved, resolved != ""
+}
+
+// sudoEdits reports whether argv runs sudo in edit mode: argv[0] sudoedit,
+// or -e/--edit (or a prefix of it) among sudo's own options (before the
+// command). An unknown or ambiguous long option counts as edit mode: sudo
+// rejects it, so nothing is exempted that sudo would accept.
+func sudoEdits(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	if filepath.Base(argv[0]) == "sudoedit" {
+		return true
+	}
+	for i := 1; i < len(argv); i++ {
+		arg := argv[i]
+		switch {
+		case arg == "--" || !strings.HasPrefix(arg, "-") || arg == "-":
+			return false
+		case strings.HasPrefix(arg, "--"):
+			name, _, inline := strings.Cut(arg[2:], "=")
+			opt, ok := sudoLongOpt(name)
+			if !ok || opt == "edit" {
+				return true
+			}
+			if sudoLongOpts[opt] && !inline {
+				i++
+			}
+		default:
+			for j := 1; j < len(arg); j++ {
+				if arg[j] == 'e' {
+					return true
+				}
+				if arg[j] == 'h' {
+					break
+				}
+				if strings.IndexByte(sudoValueOpts, arg[j]) >= 0 {
+					if j == len(arg)-1 {
+						i++
+					}
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
 // markFiles registers FAN_MARK_INODE watches for all sensitive files inside
 // the container rooted at /proc/<pid>/root and returns the resulting inode map.
 // Files that don't exist yet are silently skipped; the backstop retries them.
@@ -333,17 +490,9 @@ func (w *FileWatcher) markFiles(ifd, pid int) map[inodeKey]inodeEntry {
 	inodes := make(map[inodeKey]inodeEntry)
 	for i := range sensitiveFiles {
 		sf := &sensitiveFiles[i]
-		hostPath := fmt.Sprintf("/proc/%d/root/%s", pid, sf.rel)
+		hostPath := fmt.Sprintf(procRootPattern+"/%s", pid, sf.rel)
 
-		mask := uint64(unix.FAN_DELETE_SELF | unix.FAN_MOVE_SELF)
-		if sf.openLevel != "" {
-			mask |= unix.FAN_OPEN
-		}
-		if sf.writeLevel != "" {
-			mask |= unix.FAN_CLOSE_WRITE
-		}
-
-		if err := unix.FanotifyMark(ifd, unix.FAN_MARK_ADD, mask, unix.AT_FDCWD, hostPath); err != nil {
+		if err := unix.FanotifyMark(ifd, unix.FAN_MARK_ADD, sf.markMask(w.permEvents), unix.AT_FDCWD, hostPath); err != nil {
 			// File does not exist (ENOENT) or not accessible — skip silently.
 			continue
 		}
@@ -355,6 +504,25 @@ func (w *FileWatcher) markFiles(ifd, pid int) map[inodeKey]inodeEntry {
 		inodes[inodeKey{dev: stat.Dev, ino: stat.Ino}] = inodeEntry{file: sf}
 	}
 	return inodes
+}
+
+// markMask returns the fanotify events to mark sf with. Only events that
+// carry an fd: FAN_DELETE_SELF or FAN_MOVE_SELF needs a FAN_REPORT_FID group,
+// and fanotify_mark refuses the whole mask with EINVAL without one. With
+// perm (a FAN_CLASS_CONTENT group) an authRead file's opens are
+// FAN_OPEN_PERM, so the opener is still alive when it is checked.
+func (sf *monitoredFile) markMask(perm bool) uint64 {
+	var mask uint64
+	switch {
+	case sf.openLevel != "" && sf.authRead && perm:
+		mask |= unix.FAN_OPEN_PERM
+	case sf.openLevel != "":
+		mask |= unix.FAN_OPEN
+	}
+	if sf.writeLevel != "" {
+		mask |= unix.FAN_CLOSE_WRITE
+	}
+	return mask
 }
 
 // fire emits a ThreatEvent via the onThreat callback.

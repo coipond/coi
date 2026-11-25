@@ -1,6 +1,5 @@
 """Test large write detection for data exfiltration prevention."""
 
-import os
 import subprocess
 import time
 
@@ -8,6 +7,7 @@ import pytest
 
 from support.monitoring import (
     cleanup_container,
+    container_io_stat,
     get_container_name_from_workspace,
     get_container_state,
     get_threat_events,
@@ -15,12 +15,6 @@ from support.monitoring import (
 )
 
 
-@pytest.mark.skipif(
-    os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="cgroup io.stat does not track bind-mount I/O on GitHub Actions runners; "
-    "writes to /workspace go through the host page cache and are not attributed "
-    "to the container's cgroup, so the security monitor sees 0 bytes written.",
-)
 def test_large_write_triggers_high_threat(
     test_workspace, enable_monitoring_low_thresholds, coi_binary
 ):
@@ -124,6 +118,7 @@ def test_large_write_triggers_high_threat(
     assert write_threat_found, (
         f"Expected HIGH threat for 200MB write, got {len(write_threats)} write threats. "
         "Large writes should be detected as potential data exfiltration."
+        + container_io_stat(container_name)
     )
 
     cleanup_container(container_name, coi_binary)
