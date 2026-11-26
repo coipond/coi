@@ -166,8 +166,8 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 func synthesizeHardenedProfile() ProfileConfig {
 	t, f := true, false
 	return ProfileConfig{
-		Source:         "(built-in)",
-		toolAPIDomains: true,
+		Source:             "(built-in)",
+		addsToolAPIDomains: true,
 		// Ephemeral: nothing from a risky session persists. Docker/nesting is
 		// left off by reduce_kernel_surface below (the single hardening switch),
 		// so no explicit docker flag is needed here — and omitting it lets an

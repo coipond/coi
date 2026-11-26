@@ -329,8 +329,8 @@ func (c *Config) ApplyProfile(name string) error {
 	if profile.Network != nil {
 		mergeNetworkInto(&c.Network, profile.Network)
 	}
-	if profile.toolAPIDomains {
-		c.toolAPIDomains = true
+	if profile.addsToolAPIDomains {
+		c.addsToolAPIDomains = true
 	}
 	c.syncToolAPIDomains()
 	if profile.Paths != nil {
@@ -360,7 +360,7 @@ func (c *Config) ApplyProfile(name string) error {
 // once a profile asking for them is applied, and drops those it added for a
 // previous tool. It runs after every merge that can change the tool.
 func (c *Config) syncToolAPIDomains() {
-	if !c.toolAPIDomains {
+	if !c.addsToolAPIDomains {
 		return
 	}
 	domains := make([]string, 0, len(c.Network.AllowedDomains))
@@ -387,7 +387,7 @@ func (p *ProfileConfig) AllowedDomainsFor(toolName string) []string {
 	if p.Network != nil {
 		domains = cloneSlice(p.Network.AllowedDomains)
 	}
-	if p.toolAPIDomains {
+	if p.addsToolAPIDomains {
 		domains = MergeStringSliceUnique(domains, ToolAPIDomains(toolName))
 	}
 	return domains
@@ -593,8 +593,8 @@ func mergeProfiles(parent, child ProfileConfig) ProfileConfig {
 		result.Mounts = parent.Mounts
 		result.mountsFromConfig = parent.mountsFromConfig
 	}
-	if parent.toolAPIDomains {
-		result.toolAPIDomains = true
+	if parent.addsToolAPIDomains {
+		result.addsToolAPIDomains = true
 	}
 	if result.Sockets == nil {
 		result.Sockets = parent.Sockets
