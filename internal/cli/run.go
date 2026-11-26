@@ -598,11 +598,15 @@ func (a *App) overlayWorkspaceConfig(absWorkspace string) error {
 	}
 	container.Configure(a.cfg.Incus.Project, a.cfg.Incus.CodeUser, a.cfg.Incus.CodeUID)
 	// An explicitly requested --profile must keep winning over the workspace
-	// overlay for [container] settings — otherwise a project config could
-	// silently override the profile the user asked for (and precedence would
-	// depend on whether the command ran from inside the workspace or not).
+	// overlay for [container] and [network] settings — otherwise a project
+	// config could silently override the profile the user asked for (and
+	// precedence would depend on whether the command ran from inside the
+	// workspace or not).
 	if a.profile != "" {
 		if err := a.cfg.ReapplyProfileContainer(a.profile); err != nil {
+			return err
+		}
+		if err := a.cfg.ReapplyProfileNetwork(a.profile); err != nil {
 			return err
 		}
 	}

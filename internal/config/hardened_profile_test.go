@@ -85,8 +85,8 @@ func TestHardenedProfile_InjectedAsBuiltin(t *testing.T) {
 }
 
 // The hardened allowlist is the package/code hosts plus the configured tool's
-// api_domains; it replaces the user's own allowed_domains, so an entry from an
-// untrusted project config cannot widen it.
+// api_domains; it replaces the allowed_domains set before the profile is
+// applied. A later workspace overlay is undone by ReapplyProfileNetwork.
 func TestHardenedProfile_AllowedDomains(t *testing.T) {
 	tests := []struct {
 		tool  string
@@ -178,5 +178,38 @@ func TestHardenedProfile_AllowedDomainsFollowOverlayTool(t *testing.T) {
 	want = []string{"example.com", "api.openai.com", "auth.openai.com", "chatgpt.com"}
 	if !slices.Equal(cfg.Network.AllowedDomains, want) {
 		t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+	}
+}
+
+// ReapplyProfileNetwork undoes a workspace overlay that turns hardened back to
+// restricted mode with its own allowlist, and keeps the tool API hosts.
+func TestReapplyProfileNetwork_UndoesWeakeningOverlay(t *testing.T) {
+	cfg := loadWithConfigs(t, "", "", nil)
+	if err := cfg.ApplyProfile("hardened"); err != nil {
+		t.Fatalf("ApplyProfile(hardened): %v", err)
+	}
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := []byte("[network]\nmode = \"restricted\"\nallowed_domains = [\"attacker.example\"]\n")
+	if err := os.WriteFile(filepath.Join(workspace, ".coi", "config.toml"), project, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.OverlayProjectConfig(workspace); err != nil {
+		t.Fatalf("OverlayProjectConfig: %v", err)
+	}
+	if err := cfg.ReapplyProfileNetwork("hardened"); err != nil {
+		t.Fatalf("ReapplyProfileNetwork: %v", err)
+	}
+	if cfg.Network.Mode != NetworkModeAllowlist {
+		t.Errorf("network mode = %q, want %q", cfg.Network.Mode, NetworkModeAllowlist)
+	}
+	want := append(cloneSlice(HardenedProfileAllowedDomains), ToolAPIDomains(cfg.Tool.Name)...)
+	if !slices.Equal(cfg.Network.AllowedDomains, want) {
+		t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+	}
+	if err := cfg.ReapplyProfileNetwork("missing"); err == nil {
+		t.Error("ReapplyProfileNetwork(missing): want an error")
 	}
 }
