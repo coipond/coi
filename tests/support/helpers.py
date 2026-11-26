@@ -1540,6 +1540,24 @@ def exec_in(coi_binary, container_name, cmd, user=None, timeout=60):
     return result.returncode, result.stdout + result.stderr
 
 
+def import_nested_docker_image(coi_binary, container_name):
+    """Wait for Docker in the container and import the image `coi-usr` offline
+    (symlinks to /usr, no registry pull); run it with `-v /usr:/usr:ro`.
+    Returns (returncode, combined output)."""
+    return exec_in(
+        coi_binary,
+        container_name,
+        """
+set -e
+timeout 90 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
+mkdir -p ~/rootfs && cd ~/rootfs
+ln -sfn usr/bin bin && ln -sfn usr/lib lib && ln -sfn usr/lib64 lib64
+tar -c bin lib lib64 | docker import - coi-usr >/dev/null
+""",
+        timeout=180,
+    )
+
+
 def container_cat(coi_binary, container_name, path, user=None):
     """Return (ok, content) of a file in the container; ok is False when cat fails."""
     rc, out = exec_in(coi_binary, container_name, f"cat {path}", user=user)
