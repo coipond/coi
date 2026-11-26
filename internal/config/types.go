@@ -695,8 +695,11 @@ type ProfileConfig struct {
 	mountsFromConfig bool
 	// networkFromConfig marks Network as a copy of the config's own network
 	// (the synthesized "default" profile, or a profile inheriting it), so
-	// ReapplyProfileNetwork does not undo a workspace overlay with it.
+	// ReapplyProfileNetwork does not undo a workspace overlay with it;
+	// ownNetwork is the network the inheriting profiles set themselves, which
+	// it re-merges.
 	networkFromConfig bool
+	ownNetwork        *NetworkConfig
 	// toolAPIDomains makes ApplyProfile add the configured tool's api_domains
 	// to allowed_domains (the built-in "hardened" profile and the profiles
 	// inheriting it).

@@ -249,3 +249,41 @@ func TestReapplyProfileNetwork_KeepsOverlayForDefaultProfile(t *testing.T) {
 		})
 	}
 }
+
+// A profile inheriting "default" keeps the network it sets itself (also in a
+// grandchild) over a workspace overlay, as when coi starts inside the
+// workspace.
+func TestReapplyProfileNetwork_DefaultChildKeepsOwnNetwork(t *testing.T) {
+	for _, name := range []string{"own-net", "own-net-child"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := loadWithConfigs(t, "", "", map[string]string{
+				"own-net": "inherits = \"default\"\n\n[network]\nmode = \"allowlist\"\n" +
+					"allowed_domains = [\"example.com\"]\n",
+				"own-net-child": "inherits = \"own-net\"\n",
+			})
+			if err := cfg.ApplyProfile(name); err != nil {
+				t.Fatalf("ApplyProfile(%s): %v", name, err)
+			}
+			workspace := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(workspace, ".coi"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			project := []byte("[network]\nmode = \"restricted\"\nallowed_domains = [\"attacker.example\"]\n")
+			if err := os.WriteFile(filepath.Join(workspace, ".coi", "config.toml"), project, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.OverlayProjectConfig(workspace); err != nil {
+				t.Fatalf("OverlayProjectConfig: %v", err)
+			}
+			if err := cfg.ReapplyProfileNetwork(name); err != nil {
+				t.Fatalf("ReapplyProfileNetwork: %v", err)
+			}
+			if cfg.Network.Mode != NetworkModeAllowlist {
+				t.Errorf("network mode = %q, want %q", cfg.Network.Mode, NetworkModeAllowlist)
+			}
+			if want := []string{"example.com"}; !slices.Equal(cfg.Network.AllowedDomains, want) {
+				t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+			}
+		})
+	}
+}

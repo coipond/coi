@@ -23,8 +23,8 @@ import "testing"
 // Pinned consequences, so any future change to the merge order is a deliberate
 // decision rather than a silent behavior shift:
 //   - [container] and [network] fields: the profile wins in BOTH paths
-//     ([network]: not for a profile copying the config's, see
-//     ReapplyProfileNetwork).
+//     ([network]: for a profile copying the config's, only what the profile
+//     sets itself, see ReapplyProfileNetwork).
 //   - other sections (here: tool.claude.model): the workspace overlay wins for
 //     an explicit --profile, but the profile wins for [defaults] profile.
 //
