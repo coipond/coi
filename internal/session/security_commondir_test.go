@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -845,5 +846,39 @@ func TestExpandNestedGit_WorktreeSubmoduleGitDirs(t *testing.T) {
 		if !isBatchedGitPath(rel) {
 			t.Errorf("%s must be mounted in the batch", rel)
 		}
+	}
+}
+
+// A common-dir sink that cannot be mounted fails closed with an error naming
+// it; the other sinks are still mounted.
+func TestSetupCommonDirProtection_MountFailureFailsClosed(t *testing.T) {
+	common := t.TempDir()
+	mkGitDir(t, common, ".")
+	bad := filepath.Join(common, "hooks")
+
+	for _, batch := range []bool{true, false} {
+		dev, f := newFailingDevices(batch, bad)
+		_, err := SetupCommonDirProtection(dev, common, false, false, nil)
+		if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), bad+": Failed to add device") {
+			t.Errorf("batch=%v: want ErrProtectFailed naming %s, got %v", batch, bad, err)
+		}
+		if p := filepath.Join(common, "config"); !slices.Contains(f.mounted, p) {
+			t.Errorf("batch=%v: %s skipped after the hooks failure, mounted %v", batch, p, f.mounted)
+		}
+	}
+}
+
+// coi shell aborts the start when a worktree's common-dir sink cannot be
+// mounted.
+func TestApplySessionSecurity_CommonDirMountFailureAbortsStart(t *testing.T) {
+	common := t.TempDir()
+	mkGitDir(t, common, ".")
+	opts := SetupOptions{WorkspacePath: t.TempDir(), Logger: func(string) {}}
+	opts.Security.ProtectedPaths = []string{".git/hooks", ".vscode"}
+	dev, _ := newFailingDevices(true, filepath.Join(common, "hooks"))
+
+	_, _, err := applySessionSecurity(dev.(container.ContainerManager), opts, "/workspace", false, &GitWorktreeLayout{CommonDir: common}, false, "c1", NestedGitScan{})
+	if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), filepath.Join(common, "hooks")) {
+		t.Fatalf("want ErrProtectFailed naming the common-dir hooks, got %v", err)
 	}
 }

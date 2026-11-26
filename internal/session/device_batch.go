@@ -102,7 +102,9 @@ func (b *deviceBatch) dropFromOrder(name string) {
 // device exists), then every added or replaced device in one PATCH. When the
 // PATCH fails it retries device by device so one bad device does not cost the
 // others: a parent pin that fails is a warning (as in mountNestedAndPins),
-// anything else is an error. Must run before the container starts.
+// anything else is an error that names the container path of every device
+// that failed, wrapping ErrProtectFailed when a protect device is among them.
+// Must run before the container starts.
 func (b *deviceBatch) Flush() error {
 	if b.mounter == nil {
 		return nil
@@ -118,16 +120,25 @@ func (b *deviceBatch) Flush() error {
 	if len(mounts) == 0 || b.mounter.MountDisks(mounts) == nil {
 		return nil
 	}
+	var failed []string
+	protectFailed := false
 	for _, d := range mounts {
 		if err := b.mounter.MountDisks([]container.DiskMount{d}); err != nil {
 			if strings.HasPrefix(d.Name, pinDevicePrefix) {
 				b.logger(fmt.Sprintf("Warning: parent dir %s not pinned: %v", d.Path, err))
 				continue
 			}
-			return fmt.Errorf("failed to mount device %s: %w", d.Name, err)
+			failed = append(failed, fmt.Sprintf("%s: %v", d.Path, err))
+			protectFailed = protectFailed || strings.HasPrefix(d.Name, protectDevicePrefix) || strings.HasPrefix(d.Name, gitcDevicePrefix)
 		}
 	}
-	return nil
+	if len(failed) == 0 {
+		return nil
+	}
+	if protectFailed {
+		return fmt.Errorf("%w: %s", ErrProtectFailed, strings.Join(failed, "; "))
+	}
+	return fmt.Errorf("failed to mount devices: %s", strings.Join(failed, "; "))
 }
 
 // flushRemovals removes the queued devices that are not re-added.

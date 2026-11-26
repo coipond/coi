@@ -1301,3 +1301,75 @@ func TestApplySessionSecurity_MountFailureAbortsStart(t *testing.T) {
 		t.Errorf(".git/config skipped after the .git/hooks failure, mounted %v", f.mounted)
 	}
 }
+
+// Entries that clean to the same path are mounted once: Incus refuses a
+// second device with the same name, which must not abort the start.
+func TestSetupSecurityMounts_DuplicateEntriesMountOnce(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".vscode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dev := &uniqueNameDevices{names: map[string]bool{}}
+	eff, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".vscode", "./.vscode", ".vscode/"}, false, nil, NestedGitScan{}, false)
+	if err != nil {
+		t.Fatalf("want no error for duplicate entries, got %v", err)
+	}
+	if len(eff) != 1 || len(dev.names) != 1 {
+		t.Errorf("want one .vscode entry and mount, got paths=%v devices=%v", eff, dev.names)
+	}
+}
+
+// uniqueNameDevices refuses, like Incus, a second device with the same name.
+type uniqueNameDevices struct {
+	container.ContainerManager
+	names map[string]bool
+}
+
+func (d *uniqueNameDevices) MountDisk(name, _, _ string, _, _ bool) error {
+	if d.names[name] {
+		return errors.New("The device already exists")
+	}
+	d.names[name] = true
+	return nil
+}
+
+// Entries that name no workspace path are warnings, not failures: there is
+// nothing to protect. The valid entries after them are still mounted.
+func TestSetupSecurityMounts_InvalidEntriesWarn(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".vscode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dev, f := newFailingDevices(true)
+	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{"../x", "/etc/passwd", "", ".vscode"}, false, nil, NestedGitScan{}, false)
+	if err == nil || errors.Is(err, ErrProtectFailed) {
+		t.Fatalf("want a warning, not ErrProtectFailed, got %v", err)
+	}
+	for _, want := range []string{`"../x"`, `"/etc/passwd"`, "protected path is empty"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("warning %q does not name %s", err, want)
+		}
+	}
+	if !slices.Contains(f.mounted, "/workspace/.vscode") {
+		t.Errorf(".vscode skipped after the invalid entries, mounted %v", f.mounted)
+	}
+}
+
+// A protected path below a parent that is a file cannot exist: it is
+// skipped like a missing path, not a failure.
+func TestSetupSecurityMounts_ParentIsFileIsNotAFailure(t *testing.T) {
+	tmp := t.TempDir()
+	for _, f := range []string{".claude", ".idea"} {
+		if err := os.WriteFile(filepath.Join(tmp, f), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dev, f := newFailingDevices(true)
+	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".claude/settings.json", ".claude/settings.local.json", ".idea/x/y"}, false, nil, NestedGitScan{}, false)
+	if err != nil {
+		t.Fatalf("want no error, got %v", err)
+	}
+	if len(f.attempts) != 0 {
+		t.Errorf("want no mounts, got %v", f.attempts)
+	}
+}

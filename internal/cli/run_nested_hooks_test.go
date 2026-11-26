@@ -44,6 +44,15 @@ func (m *failingMountRecorder) MountDisk(name, source, path string, shift, reado
 	return m.mountRecorder.MountDisk(name, source, path, shift, readonly)
 }
 
+func (m *failingMountRecorder) MountDisks(mounts []container.DiskMount) error {
+	for _, d := range mounts {
+		if d.Path == m.fail {
+			return errors.New("Failed to add device")
+		}
+	}
+	return m.mountRecorder.MountDisks(mounts)
+}
+
 // coi run aborts when a protected path cannot be mounted read-only, after
 // trying the later paths.
 func TestApplySecurityMounts_MountFailureAborts(t *testing.T) {
@@ -65,6 +74,24 @@ func TestApplySecurityMounts_MountFailureAborts(t *testing.T) {
 	}
 	if !slices.Contains(mgr.paths, "/workspace/.vscode") {
 		t.Errorf(".vscode skipped after the .git/hooks failure, mounted %v", mgr.paths)
+	}
+}
+
+// coi run aborts when a worktree's common-dir sink cannot be mounted.
+func TestApplySecurityMounts_CommonDirMountFailureAborts(t *testing.T) {
+	common := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(common, "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.GetDefaultConfig()
+	off := false
+	cfg.Security.HostImmutable = &off
+	bad := filepath.Join(common, "hooks")
+	mgr := &failingMountRecorder{fail: bad}
+
+	err := (&App{cfg: cfg}).applySecurityMounts(mgr, t.TempDir(), "/workspace", "c1", false, &session.GitWorktreeLayout{CommonDir: common}, session.NestedGitScan{})
+	if !errors.Is(err, session.ErrProtectFailed) || !strings.Contains(err.Error(), bad) {
+		t.Fatalf("want ErrProtectFailed naming %s, got %v", bad, err)
 	}
 }
 

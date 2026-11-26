@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -103,6 +104,22 @@ func IncusExecContext(ctx context.Context, args ...string) error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return runIncus(cmd)
+}
+
+// incusExecWithCause is IncusExec that also puts Incus's message in the
+// error, so a caller that reports the error says why the command failed.
+func incusExecWithCause(args ...string) error {
+	cmd := execIncusCommand(buildIncusCommand(args...))
+	var stderr bytes.Buffer
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	if err := runIncus(cmd); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // IncusExec executes an Incus command

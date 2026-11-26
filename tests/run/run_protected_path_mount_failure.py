@@ -6,7 +6,7 @@ Tests that:
    .husky): trusted [[mounts]] already use their container paths
 2. coi run fails before the command runs
 3. The error names both paths, so the failure at the first did not skip
-   the second
+   the second, and gives Incus's cause
 """
 
 import subprocess
@@ -25,7 +25,7 @@ def test_run_protected_path_mount_failure(coi_binary, cleanup_containers, worksp
        /workspace/.husky
     2. coi run a command that prints a marker
     3. Verify the run fails, the marker is absent and the error names both
-       paths
+       paths and the cause
     """
     mounts = ""
     for name in ("vscode", "husky"):
@@ -50,3 +50,10 @@ def test_run_protected_path_mount_failure(coi_binary, cleanup_containers, worksp
     )
     for path in (".vscode:", ".husky:"):
         assert path in result.stderr, f"error must name {path}. stderr:\n{result.stderr}"
+    # Incus prints its own message too: check it is in coi's error line.
+    errors = [
+        line for line in result.stderr.splitlines() if "cannot protect protected paths" in line
+    ]
+    assert any("uses the same path" in line for line in errors), (
+        f"error must give the Incus cause. stderr:\n{result.stderr}"
+    )

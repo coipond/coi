@@ -762,6 +762,9 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 		writableHooks := config.BoolVal(a.cfg.Git.WritableHooks)
 		var cErr error
 		cProtected, cErr = session.SetupCommonDirProtection(mgr, commonDir, useShift, writableHooks, &a.cfg.Security)
+		if errors.Is(cErr, session.ErrProtectFailed) {
+			return cErr
+		}
 		if cErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: some git common-dir protections not applied: %v\n", cErr)
 		}
