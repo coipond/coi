@@ -1310,12 +1310,47 @@ func TestSetupSecurityMounts_DuplicateEntriesMountOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	dev := &uniqueNameDevices{names: map[string]bool{}}
-	eff, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".vscode", "./.vscode", ".vscode/"}, false, nil, NestedGitScan{}, false)
-	if err != nil {
-		t.Fatalf("want no error for duplicate entries, got %v", err)
+	if err := os.MkdirAll(filepath.Join(tmp, ".husky"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if len(eff) != 1 || len(dev.names) != 1 {
-		t.Errorf("want one .vscode entry and mount, got paths=%v devices=%v", eff, dev.names)
+	eff, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".vscode", "./.vscode", ".vscode/", ".husky", "../x"}, false, nil, NestedGitScan{}, false)
+	if errors.Is(err, ErrProtectFailed) {
+		t.Fatalf("want no ErrProtectFailed for duplicate entries, got %v", err)
+	}
+	if want := []string{".vscode", ".husky", "../x"}; !slices.Equal(eff, want) {
+		t.Errorf("want paths %v, got %v", want, eff)
+	}
+	if len(dev.names) != 2 {
+		t.Errorf("want one .vscode and one .husky mount, got %v", dev.names)
+	}
+}
+
+// A missing default path whose placeholder cannot be created (an unwritable
+// workspace) has nothing to protect: a warning, not ErrProtectFailed.
+func TestSetupSecurityMounts_UnwritableWorkspaceWarns(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tmp, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(tmp, 0o755) })
+	dev, f := newFailingDevices(true)
+	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".vscode", ".husky", ".claude/settings.json", ".git"}, false, nil, NestedGitScan{}, false)
+	if err == nil || errors.Is(err, ErrProtectFailed) {
+		t.Fatalf("want a warning, not ErrProtectFailed, got %v", err)
+	}
+	for _, want := range []string{".vscode", ".husky", ".claude"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("warning %q does not name %s", err, want)
+		}
+	}
+	if !slices.Contains(f.mounted, "/workspace/.git") {
+		t.Errorf(".git skipped after the placeholder failures, mounted %v", f.mounted)
 	}
 }
 

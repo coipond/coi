@@ -25,6 +25,10 @@ var errSymlinkedPath = errors.New("refusing to mount through a symlink")
 // absolute or leaves the workspace: it names no workspace path to protect.
 var errInvalidProtectedPath = errors.New("invalid protected path")
 
+// errPlaceholderFailed reports an absent protected path whose read-only
+// placeholder could not be created (read-only or unwritable workspace).
+var errPlaceholderFailed = errors.New("cannot create protected path placeholder")
+
 // ErrProtectFailed reports existing protected paths that could not be mounted
 // read-only. The session must not start without them.
 var ErrProtectFailed = errors.New("cannot protect protected paths")
@@ -104,7 +108,7 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 			deduped = append(deduped, relPath)
 		}
 		if err != nil {
-			if errors.Is(err, errGitDirIndirection) || errors.Is(err, errSymlinkedPath) || errors.Is(err, errInvalidProtectedPath) {
+			if errors.Is(err, errGitDirIndirection) || errors.Is(err, errSymlinkedPath) || errors.Is(err, errInvalidProtectedPath) || errors.Is(err, errPlaceholderFailed) {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", relPath, err))
 				continue
 			}
@@ -1140,7 +1144,7 @@ func createProtectedFilePlaceholder(hostPath, relPath string) error {
 		if os.IsExist(err) {
 			return nil // lost a harmless race
 		}
-		return fmt.Errorf("failed to create protected file placeholder %s: %w", relPath, err)
+		return fmt.Errorf("%w: failed to create protected file placeholder %s: %w", errPlaceholderFailed, relPath, err)
 	}
 	if filepath.Base(relPath) == "commondir" {
 		if _, err := f.WriteString(commonDirPlaceholder); err != nil {
@@ -1174,7 +1178,7 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 				return fmt.Errorf("%w: refusing to create %s: parent component %s is a symlink", errSymlinkedPath, relPath, current)
 			}
 			if !info.IsDir() {
-				return fmt.Errorf("%w: refusing to create %s: parent component %s is not a directory", os.ErrNotExist, relPath, current)
+				return fmt.Errorf("refusing to create %s: parent component %s is not a directory", relPath, current)
 			}
 			continue
 		}
@@ -1182,7 +1186,7 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 			return fmt.Errorf("failed to stat %s: %w", current, err)
 		}
 		if err := os.Mkdir(current, 0o755); err != nil {
-			return fmt.Errorf("failed to create protected directory %s: %w", relPath, err)
+			return fmt.Errorf("%w: failed to create protected directory %s: %w", errPlaceholderFailed, relPath, err)
 		}
 	}
 	return nil
