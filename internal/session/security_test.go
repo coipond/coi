@@ -1335,16 +1335,20 @@ func TestSetupSecurityMounts_UnwritableWorkspaceWarns(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	claude := filepath.Join(tmp, ".claude")
+	if err := os.Mkdir(claude, 0o555); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(tmp, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(tmp, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(tmp, 0o755); _ = os.Chmod(claude, 0o755) })
 	dev, f := newFailingDevices(true)
 	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".vscode", ".husky", ".claude/settings.json", ".git"}, false, nil, NestedGitScan{}, false)
 	if err == nil || errors.Is(err, ErrProtectFailed) {
 		t.Fatalf("want a warning, not ErrProtectFailed, got %v", err)
 	}
-	for _, want := range []string{".vscode", ".husky", ".claude"} {
+	for _, want := range []string{".vscode", ".husky", "placeholder .claude/settings.json"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("warning %q does not name %s", err, want)
 		}
@@ -1406,5 +1410,27 @@ func TestSetupSecurityMounts_ParentIsFileIsNotAFailure(t *testing.T) {
 	}
 	if len(f.attempts) != 0 {
 		t.Errorf("want no mounts, got %v", f.attempts)
+	}
+}
+
+// A dir created by another start between the Lstat and the Mkdir exists:
+// it is mounted read-only, not skipped with a warning.
+func TestSetupSecurityMounts_MkdirRaceStillMounts(t *testing.T) {
+	tmp := t.TempDir()
+	orig := mkdir
+	t.Cleanup(func() { mkdir = orig })
+	mkdir = func(path string, perm os.FileMode) error {
+		if err := orig(path, perm); err != nil {
+			return err
+		}
+		return orig(path, perm)
+	}
+	dev, f := newFailingDevices(false)
+	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".husky"}, false, nil, NestedGitScan{}, false)
+	if err != nil {
+		t.Fatalf("want no error after a lost mkdir race, got %v", err)
+	}
+	if !slices.Contains(f.mounted, "/workspace/.husky") {
+		t.Errorf(".husky not mounted after a lost mkdir race, mounted %v", f.mounted)
 	}
 }

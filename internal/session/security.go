@@ -29,6 +29,9 @@ var errInvalidProtectedPath = errors.New("invalid protected path")
 // placeholder could not be created (read-only or unwritable workspace).
 var errPlaceholderFailed = errors.New("cannot create protected path placeholder")
 
+// mkdir is os.Mkdir; tests replace it to lose the creation race.
+var mkdir = os.Mkdir
+
 // ErrProtectFailed reports existing protected paths that could not be mounted
 // read-only. The session must not start without them.
 var ErrProtectFailed = errors.New("cannot protect protected paths")
@@ -1185,7 +1188,15 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to stat %s: %w", current, err)
 		}
-		if err := os.Mkdir(current, 0o755); err != nil {
+		if err := mkdir(current, 0o755); err != nil {
+			if os.IsExist(err) {
+				// Lost a race: a real dir is fine; anything else exists
+				// unprotected, so it must not become a warning.
+				if info, lerr := os.Lstat(current); lerr == nil && info.Mode()&os.ModeSymlink == 0 && info.IsDir() {
+					continue
+				}
+				return fmt.Errorf("failed to create protected directory %s: %w", relPath, err)
+			}
 			return fmt.Errorf("%w: failed to create protected directory %s: %w", errPlaceholderFailed, relPath, err)
 		}
 	}
