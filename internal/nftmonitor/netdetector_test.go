@@ -552,7 +552,7 @@ func TestNetworkDetector_RejectedAttempts(t *testing.T) {
 	event := func(dst string, port int, ts time.Time) *NetworkEvent {
 		return &NetworkEvent{
 			Timestamp: ts, ContainerIP: "10.47.62.50", SrcIP: "10.47.62.50",
-			DstIP: dst, DstPort: port, Protocol: "TCP",
+			DstIP: dst, DstPort: port, Protocol: "TCP", Flags: "SYN",
 		}
 	}
 	newDetector := func(permitted func(proto, ip string, port int) bool) *NetworkDetector {
@@ -590,5 +590,27 @@ func TestNetworkDetector_RejectedAttempts(t *testing.T) {
 
 	if threat := newDetector(nil).Analyze(event("93.184.215.14", 443, ts)); threat == nil || threat.Level != ThreatLevelHigh {
 		t.Fatalf("no verdict: want HIGH, got %+v", threat)
+	}
+
+	// Only a SYN without ACK opens a flow; any other TCP packet belongs to a
+	// flow the firewall let through. UDP has no flags: an attempt.
+	for _, tc := range []struct {
+		proto, flags string
+		want         ThreatLevel
+	}{
+		{"TCP", "SYN", ThreatLevelWarning},
+		{"UDP", "", ThreatLevelWarning},
+		{"TCP", "", ThreatLevelHigh},
+		{"TCP", "ACK", ThreatLevelHigh},
+		{"TCP", "ACK,PSH", ThreatLevelHigh},
+		{"TCP", "ACK,FIN", ThreatLevelHigh},
+		{"TCP", "SYN,ACK", ThreatLevelHigh},
+		{"TCP", "RST", ThreatLevelHigh},
+	} {
+		ev := event("93.184.215.14", 443, ts)
+		ev.Protocol, ev.Flags = tc.proto, tc.flags
+		if threat := newDetector(rejects).Analyze(ev); threat == nil || threat.Level != tc.want {
+			t.Errorf("%s %q: want %s, got %+v", tc.proto, tc.flags, tc.want, threat)
+		}
 	}
 }

@@ -426,9 +426,9 @@ func checkSuspicious(conn Connection, mode config.NetworkMode, allowedCIDRs []st
 
 // firewallRejects reports whether the firewall rejects conn's destination
 // (permitted's verdict). No verdict (permitted nil) is not a rejection, nor is
-// an ESTABLISHED TCP connection: its handshake got through the firewall.
+// a TCP socket past SYN_SENT: its handshake got through the firewall.
 func firewallRejects(conn Connection, permitted PermittedDestinationFunc) bool {
-	if permitted == nil || (strings.HasPrefix(conn.Protocol, "tcp") && conn.State == "ESTABLISHED") {
+	if permitted == nil || (strings.HasPrefix(conn.Protocol, "tcp") && conn.State != "SYN_SENT") {
 		return false
 	}
 	return !permitted(conn.Protocol, extractIP(conn.RemoteAddr), extractPort(conn.RemoteAddr))

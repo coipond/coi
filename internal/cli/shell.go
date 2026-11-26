@@ -905,7 +905,40 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 	auditLogPath := filepath.Join(homeDir, ".coi", "audit", containerName+"-nft.jsonl")
 
 	// Create NFT daemon config
-	nftCfg := nftmonitor.Config{
+	nftCfg := nftMonitorConfig(cfg, containerName, containerIP, gatewayIP, auditLogPath, allowedCIDRs, permitted, portPermitted)
+	nftCfg.OnThreat = func(threat nftmonitor.ThreatEvent) {
+		log.Printf("[nft] threat detected: %s severity=%s", threat.Title, threat.Level)
+	}
+	nftCfg.OnAction = func(action, message string) {
+		// Record the security action durably in the session log, and surface
+		// it on the terminal. OnAction fires ONLY on auto-pause/kill — both of
+		// which freeze or end the session — so unlike the recurring background
+		// diagnostics that motivated issue #372 this one-shot banner does not
+		// corrupt a live TUI, and for the pause path it carries the only
+		// on-screen "coi unfreeze" recovery hint (the session would otherwise
+		// just appear to hang).
+		log.Errorf("[security] %s", message)
+		fmt.Fprintf(os.Stderr, "\n\n*** SECURITY: %s ***\n\n", message)
+	}
+	nftCfg.OnError = func(err error) {
+		log.Errorf("[nft] error: %v", err)
+	}
+
+	// Start daemon
+	d, err := nftmonitor.StartDaemon(ctx, nftCfg)
+	if err != nil {
+		return err
+	}
+
+	*daemon = d
+	fmt.Fprintf(os.Stderr, "[security] NFT network monitoring started (audit log: %s)\n", auditLogPath)
+	return nil
+}
+
+// nftMonitorConfig builds the nft monitor's config from cfg, without its
+// callbacks.
+func nftMonitorConfig(cfg *config.Config, containerName, containerIP, gatewayIP, auditLogPath string, allowedCIDRs []string, permitted, portPermitted func(proto, ip string, port int) bool) nftmonitor.Config {
+	return nftmonitor.Config{
 		ContainerName:             containerName,
 		ContainerIP:               containerIP,
 		AllowedCIDRs:              allowedCIDRs,
@@ -923,34 +956,7 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 		ForensicsOnKill:           cfg.Monitoring.IsForensicsOnKillEnabled(),
 		AutoPauseOnHigh:           config.BoolVal(cfg.Monitoring.AutoPauseOnHigh),
 		AutoKillOnCritical:        config.BoolVal(cfg.Monitoring.AutoKillOnCritical),
-		OnThreat: func(threat nftmonitor.ThreatEvent) {
-			log.Printf("[nft] threat detected: %s severity=%s", threat.Title, threat.Level)
-		},
-		OnAction: func(action, message string) {
-			// Record the security action durably in the session log, and surface
-			// it on the terminal. OnAction fires ONLY on auto-pause/kill — both of
-			// which freeze or end the session — so unlike the recurring background
-			// diagnostics that motivated issue #372 this one-shot banner does not
-			// corrupt a live TUI, and for the pause path it carries the only
-			// on-screen "coi unfreeze" recovery hint (the session would otherwise
-			// just appear to hang).
-			log.Errorf("[security] %s", message)
-			fmt.Fprintf(os.Stderr, "\n\n*** SECURITY: %s ***\n\n", message)
-		},
-		OnError: func(err error) {
-			log.Errorf("[nft] error: %v", err)
-		},
 	}
-
-	// Start daemon
-	d, err := nftmonitor.StartDaemon(ctx, nftCfg)
-	if err != nil {
-		return err
-	}
-
-	*daemon = d
-	fmt.Fprintf(os.Stderr, "[security] NFT network monitoring started (audit log: %s)\n", auditLogPath)
-	return nil
 }
 
 // resolveDomainsToHostCIDRs builds the CIDR list the monitor uses to decide

@@ -3,7 +3,9 @@ package nftmonitor
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,9 +35,10 @@ func NewNetworkDetector(cfg *Config) *NetworkDetector {
 // rejectedLevel returns the severity of a HIGH check that fired for event,
 // with a description suffix. The rule logs packets before the filter runs, so
 // one the firewall rejects (PermittedDestination's verdict) is an attempt it
-// stopped: rated by the rejected-burst tracker. No verdict: HIGH.
+// stopped: rated by the rejected-burst tracker. No verdict, or a TCP packet
+// other than a SYN without ACK (its flow got through): HIGH.
 func (nd *NetworkDetector) rejectedLevel(event *NetworkEvent) (ThreatLevel, string) {
-	if nd.config.PermittedDestination == nil {
+	if nd.config.PermittedDestination == nil || !isConnectionAttempt(event) {
 		return ThreatLevelHigh, ""
 	}
 	dst := net.JoinHostPort(event.DstIP, strconv.Itoa(event.DstPort))
@@ -119,6 +122,16 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 	}
 
 	return nil
+}
+
+// isConnectionAttempt reports whether event opens a flow: any non-TCP packet,
+// or a TCP SYN without ACK.
+func isConnectionAttempt(event *NetworkEvent) bool {
+	if !strings.EqualFold(event.Protocol, "TCP") {
+		return true
+	}
+	flags := strings.Split(event.Flags, ",")
+	return slices.Contains(flags, "SYN") && !slices.Contains(flags, "ACK")
 }
 
 // analyzeDNSQuery checks DNS queries for anomalies

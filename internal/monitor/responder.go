@@ -86,8 +86,10 @@ func (r *Responder) Handle(ctx context.Context, threat ThreatEvent) error {
 		return nil
 	}
 
-	// Deduplicate recent threats - create a key from threat category and title
-	threatKey := threat.Category + ":" + threat.Title
+	// Deduplicate recent threats - create a key from threat level, category
+	// and title. With the level in it, a HIGH after a WARNING for the same
+	// evidence (a rejected-attempt burst) is not deduplicated.
+	threatKey := string(threat.Level) + ":" + threat.Category + ":" + threat.Title
 	if s := threat.Evidence.String(); s != "" {
 		// Include evidence summary in key for more precise deduplication
 		threatKey += ":" + s

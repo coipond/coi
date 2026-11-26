@@ -75,20 +75,24 @@ func TestRejectedConnection_BurstEscalates(t *testing.T) {
 }
 
 // A connection the firewall lets through but the monitor does not expect stays
-// HIGH: no verdict, an ESTABLISHED TCP connection, or a suspicious port on a
-// destination the firewall permits.
+// HIGH: no verdict, a TCP socket past SYN_SENT (its handshake got through), or
+// a suspicious port on a destination the firewall permits.
 func TestRejectedConnection_PermittedUnexpectedStaysHigh(t *testing.T) {
-	established := synSent("93.184.215.14:443")
-	established.State = "ESTABLISHED"
-	for _, tc := range []struct {
+	type testCase struct {
 		name      string
 		conn      Connection
 		permitted PermittedDestinationFunc
-	}{
+	}
+	cases := []testCase{
 		{"no verdict", synSent("93.184.215.14:443"), nil},
-		{"established", established, rejectNotListed},
 		{"suspicious port", synSent("140.82.112.3:1234"), rejectNotListed},
-	} {
+	}
+	for _, state := range []string{"ESTABLISHED", "TIME_WAIT", "FIN_WAIT1", "FIN_WAIT2", "CLOSE_WAIT", "LAST_ACK", "CLOSING"} {
+		conn := synSent("93.184.215.14:443")
+		conn.State = state
+		cases = append(cases, testCase{state, conn, rejectNotListed})
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			threats := analyzeConns(NewDetector(0, 0), time.Now(), flagConn(tc.conn, tc.permitted))
 			if len(threats) != 1 || threats[0].Level != ThreatLevelHigh {
@@ -109,6 +113,36 @@ func TestRejectedConnection_UDPAndCritical(t *testing.T) {
 	threats = analyzeConns(NewDetector(0, 0), time.Now(), flagConn(synSent("93.184.215.14:4444"), rejectNotListed))
 	if len(threats) != 1 || threats[0].Level != ThreatLevelCritical {
 		t.Fatalf("C2 port 4444: want CRITICAL, got %+v", threats)
+	}
+}
+
+// A burst HIGH for a destination first seen as a WARNING within the
+// responder's dedupe window still gets its response.
+func TestRejectedConnection_BurstHighNotDeduplicated(t *testing.T) {
+	d := NewDetector(0, 0).WithRejectedBurst(3, 10*time.Second)
+	var alerted []ThreatLevel
+	r := NewResponder("test-container", false, false, nil, func(t ThreatEvent) { alerted = append(alerted, t.Level) })
+	ts := time.Now()
+	for _, step := range []struct {
+		remote string
+		at     int
+		want   ThreatLevel
+	}{
+		{"93.184.215.1:443", 0, ThreatLevelWarning},
+		{"93.184.215.2:443", 11, ThreatLevelWarning},
+		{"93.184.215.3:443", 12, ThreatLevelWarning},
+		{"93.184.215.1:443", 13, ThreatLevelHigh},
+	} {
+		threats := analyzeConns(d, ts.Add(time.Duration(step.at)*time.Second), flagConn(synSent(step.remote), rejectNotListed))
+		if len(threats) != 1 || threats[0].Level != step.want {
+			t.Fatalf("%s at %ds: want %s, got %+v", step.remote, step.at, step.want, threats)
+		}
+		if err := r.Handle(context.Background(), threats[0]); err != nil {
+			t.Fatalf("Handle: %v", err)
+		}
+	}
+	if len(alerted) != 4 || alerted[3] != ThreatLevelHigh {
+		t.Errorf("the HIGH must be alerted, not deduplicated; alerts: %v", alerted)
 	}
 }
 
