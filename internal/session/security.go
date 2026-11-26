@@ -55,33 +55,53 @@ var ErrProtectFailed = errors.New("cannot protect protected paths")
 // (parentPinMounts), except at or below a sec.SecretPaths mask.
 //
 // Entries that clean to the same path are mounted once. Every path is tried
-// even after one fails. Returns the effective (expanded)
-// protected-path list, so the caller can drive its logging and host-immutable
-// passes over the same set that was mounted, and an error. An error wrapping
-// ErrProtectFailed names each existing path that could not be mounted and its
-// cause: the caller must abort the session start. Any other error carries
-// warnings (refused or invalid entries, unpinned parent dirs); the list is returned with it
-// so the immutable attribute still covers the full set.
+// even after one fails. Returns the effective (expanded) protected-path list,
+// so the caller can drive its logging and host-immutable passes over the same
+// set that was mounted, and an error. An error wrapping ErrProtectFailed
+// names each existing path that could not be mounted and its cause: the
+// caller must abort the session start. Any other error carries warnings
+// (refused or invalid entries, unpinned parent dirs); the list is returned
+// with it so the immutable attribute still covers the full set.
 func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) ([]string, error) {
 	dirs := realDirs{}
 	protectedPaths = expandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec, dirs)
 	protectedPaths = expandNestedGit(workspacePath, protectedPaths, sec, scan, writableHooks, dirs)
-	protectedPaths = dedupeProtectedPaths(protectedPaths)
 	if len(protectedPaths) == 0 {
 		return protectedPaths, nil
 	}
 
 	var warnings, failed, prepared []string
 	var batch []container.DiskMount
-	for _, relPath := range protectedPaths {
+	// Entries that clean to an earlier one (".vscode", "./.vscode", ".vscode/")
+	// are skipped: Incus refuses a second device with the same name. deduped
+	// is built only once a duplicate turns up.
+	var seen map[string]bool
+	var deduped []string
+	for i, relPath := range protectedPaths {
 		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift, dirs)
 		if err == nil {
-			prepared = append(prepared, filepath.Clean(relPath))
+			cleaned := filepath.Clean(relPath)
+			if seen[cleaned] {
+				if deduped == nil {
+					deduped = append(make([]string, 0, len(protectedPaths)-1), protectedPaths[:i]...)
+				}
+				continue
+			}
+			if seen == nil {
+				seen = make(map[string]bool, len(protectedPaths))
+			}
+			seen[cleaned] = true
+			if deduped != nil {
+				deduped = append(deduped, relPath)
+			}
+			prepared = append(prepared, cleaned)
 			if isBatchedGitPath(relPath) {
 				batch = append(batch, d)
 				continue
 			}
 			err = mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly)
+		} else if deduped != nil {
+			deduped = append(deduped, relPath)
 		}
 		if err != nil {
 			if errors.Is(err, errGitDirIndirection) || errors.Is(err, errSymlinkedPath) || errors.Is(err, errInvalidProtectedPath) {
@@ -98,6 +118,9 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 				failed = append(failed, fmt.Sprintf("%s: %v", relPath, err))
 			}
 		}
+	}
+	if deduped != nil {
+		protectedPaths = deduped
 	}
 	var masked []string
 	if sec != nil && len(sec.SecretPaths) > 0 {
@@ -121,26 +144,6 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 	}
 
 	return protectedPaths, nil
-}
-
-// dedupeProtectedPaths drops entries that clean to an earlier entry's path
-// (".vscode", "./.vscode", ".vscode/"): Incus refuses a second device with
-// the same name. Entries that do not clean to a valid path stay, so they
-// still surface as warnings.
-func dedupeProtectedPaths(paths []string) []string {
-	seen := make(map[string]bool, len(paths))
-	out := paths[:0:0]
-	for _, p := range paths {
-		if validateRelPath(p) == nil {
-			c := filepath.Clean(p)
-			if seen[c] {
-				continue
-			}
-			seen[c] = true
-		}
-		out = append(out, p)
-	}
-	return out
 }
 
 // diskBatchMounter is the optional Manager method that adds many disk devices
