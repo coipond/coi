@@ -62,7 +62,7 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 // the namespaced paths cannot be read. The returned PID is the one whose
 // namespaced paths were read, or 0 for the host fallback.
 func parseConnections(ctx context.Context, containerName, containerIP string) ([]Connection, int, error) {
-	pid, pidErr := GetContainerInitPID(ctx, containerName)
+	pid, pids, pidErr := containerPIDs(ctx, containerName)
 	if pidErr != nil && ctx.Err() != nil {
 		return nil, 0, ctx.Err()
 	}
@@ -70,7 +70,7 @@ func parseConnections(ctx context.Context, containerName, containerIP string) ([
 	if pid > 0 {
 		// Prefer namespaced paths scoped to the container's network namespace.
 		if connections, ok := netnsConnections(pid); ok {
-			nested := nestedNetnsConnections(pid, containerPIDs(containerName))
+			nested := nestedNetnsConnections(pid, pids)
 			return append(connections, nested...), pid, nil
 		}
 		// Namespaced paths unreadable — fall through to host fallback below.

@@ -533,3 +533,29 @@ func TestNetnsConnectionsReadsAllTables(t *testing.T) {
 		}
 	}
 }
+
+func TestParseConnectionsReadsNestedNetnsFromCgroupWalk(t *testing.T) {
+	procDir := fakeSocketProc(t)
+	cgroupDir := fakeCgroupRoot(t)
+	fakeDfIncus(t, "exit 1")
+	nested := "   0: 0500000A:9C40 04030201:115C 01 00000000:00000000 00:00000000 00000000     0        0 777 1 0000000000000000 20 4 30 10 -1\n"
+	fakeNetTables(t, procDir, 40)
+	fakeNetTables(t, procDir, 42, nested)
+	if err := os.MkdirAll(filepath.Join(cgroupDir, "lxc.payload.c1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cgroupDir, "lxc.payload.c1", "cgroup.procs"), []byte("42\n40\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conns, pid, err := parseConnections(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pid != 40 {
+		t.Errorf("got pid %d, want the lowest cgroup PID 40", pid)
+	}
+	if len(conns) != 1 || conns[0].Inode != 777 {
+		t.Errorf("got %+v, want only the nested connection", conns)
+	}
+}

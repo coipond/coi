@@ -250,3 +250,56 @@ func TestCgroupPIDs_WalksNestedCgroups(t *testing.T) {
 		t.Errorf("got %v, want [100 300 301]", pids)
 	}
 }
+
+// fakeCgroupRoot points the well-known cgroup paths at an empty temp dir.
+func fakeCgroupRoot(t *testing.T) string {
+	t.Helper()
+	old := cgroupRoot
+	t.Cleanup(func() { cgroupRoot = old })
+	cgroupRoot = t.TempDir()
+	return cgroupRoot
+}
+
+func TestContainerPIDs_InitPIDFromWalk(t *testing.T) {
+	root := fakeCgroupRoot(t)
+	called := filepath.Join(t.TempDir(), "called")
+	fakeDfIncus(t, "touch "+called+"; exit 1")
+	initScope := filepath.Join(root, "lxc.payload.c1", "init.scope")
+	if err := os.MkdirAll(initScope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "lxc.payload.c1", "cgroup.procs"), []byte("300\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(initScope, "cgroup.procs"), []byte("120\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	initPID, pids, err := containerPIDs(t.Context(), "c1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	slices.Sort(pids)
+	if initPID != 120 || !slices.Equal(pids, []int{120, 300}) {
+		t.Errorf("got init %d, pids %v, want 120 and [120 300]", initPID, pids)
+	}
+	if _, err := os.Stat(called); err == nil {
+		t.Error("incus called although the cgroup walk found PIDs")
+	}
+}
+
+func TestContainerPIDs_IncusFallbackWhenWalkFindsNone(t *testing.T) {
+	root := fakeCgroupRoot(t)
+	if err := os.MkdirAll(filepath.Join(root, "lxc.payload.c1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeDfIncus(t, `echo "PID: 4242"`)
+
+	initPID, pids, err := containerPIDs(t.Context(), "c1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if initPID != 4242 || pids != nil {
+		t.Errorf("got init %d, pids %v, want 4242 from incus info and no pids", initPID, pids)
+	}
+}
