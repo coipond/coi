@@ -904,7 +904,7 @@ var nicSecurityKeys = []string{
 // error when the keys cannot be set or are still not effective after the
 // write.
 func ReconcileNICSecurity(containerName string) (changed bool, err error) {
-	missing, err := missingNICSecurityKeys(containerName)
+	missing, err := MissingNICSecurityKeys(containerName)
 	if err != nil {
 		return false, err
 	}
@@ -914,7 +914,7 @@ func ReconcileNICSecurity(containerName string) (changed bool, err error) {
 	if err := EnableNICSecurity(containerName); err != nil {
 		return false, err
 	}
-	if missing, err = missingNICSecurityKeys(containerName); err != nil {
+	if missing, err = MissingNICSecurityKeys(containerName); err != nil {
 		return true, err
 	}
 	if len(missing) > 0 {
@@ -923,10 +923,10 @@ func ReconcileNICSecurity(containerName string) (changed bool, err error) {
 	return true, nil
 }
 
-// missingNICSecurityKeys lists the nicSecurityKeys that are not true on the
+// MissingNICSecurityKeys lists the anti-spoofing keys that are not true on the
 // container's expanded eth0. A container without eth0 is an error: the
 // anti-spoofing cannot be checked.
-func missingNICSecurityKeys(containerName string) ([]string, error) {
+func MissingNICSecurityKeys(containerName string) ([]string, error) {
 	devices, err := instanceDevices(containerName, true)
 	if err != nil {
 		return nil, fmt.Errorf("read devices of %s: %w", containerName, err)

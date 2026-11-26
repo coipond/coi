@@ -68,6 +68,12 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 					fmt.Sprintf("stop it (coi shutdown %s) and launch again", st.result.ContainerName)); err != nil {
 					return nil, err
 				}
+				// Also for an explicit --container: the keys cannot be set on
+				// a running NIC, and the egress rules rely on them.
+				if err := refuseMissingNICSecurity(st.result.ContainerName, networkMode(st.opts.Network.Config),
+					nicSecurityRemedy(st.result.ContainerName, st.opts.ContainerName != "")); err != nil {
+					return nil, err
+				}
 				st.opts.Logger("Container already running, reusing...")
 				// A RUNNING container's kernel-surface settings cannot be
 				// changed (nesting is rejected, the deny list is racy), so
@@ -109,6 +115,10 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 				if st.opts.ContainerName != "" {
 					if err := refuseDockerWithoutSudo(st.result.ContainerName, hardeningPolicyFrom(&st.opts),
 						fmt.Sprintf("unset the listed keys (incus config unset %s <key>) or launch without --container", st.result.ContainerName)); err != nil {
+						return nil, err
+					}
+					if err := refuseMissingNICSecurity(st.result.ContainerName, networkMode(st.opts.Network.Config),
+						nicSecurityRemedy(st.result.ContainerName, true)); err != nil {
 						return nil, err
 					}
 				}
@@ -256,4 +266,13 @@ func (st *setupState) sessionDebug(msg string) {
 	if st.result.Logger != nil {
 		st.result.Logger.Println("[setup] " + msg)
 	}
+}
+
+// nicSecurityRemedy is the refuseMissingNICSecurity remedy. A normal launch
+// sets the keys on the next restart; an explicit --container never does.
+func nicSecurityRemedy(containerName string, explicit bool) string {
+	if explicit {
+		return fmt.Sprintf("stop it and set them on its eth0 (incus config device override or set %s eth0 <key>=true), or launch without --container", containerName)
+	}
+	return fmt.Sprintf("stop it (coi container stop %s) and launch again so coi sets them", containerName)
 }

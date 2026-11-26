@@ -136,3 +136,42 @@ func TestLaunchContainerRunPhase_RestartNICSecurityFailsClosed(t *testing.T) {
 		t.Errorf("want no start; calls:\n%s", b)
 	}
 }
+
+// A fresh container whose eth0 anti-spoofing keys cannot be set does not
+// start in restricted/allowlist mode; open mode warns and starts it.
+func TestLaunchContainerRunPhase_CreateNICSecurity(t *testing.T) {
+	for _, mode := range []config.NetworkMode{config.NetworkModeRestricted, config.NetworkModeAllowlist, config.NetworkModeOpen} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			dir := t.TempDir()
+			logPath := filepath.Join(dir, "calls")
+			script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n  *\"eth0 security\"*) echo \"Error: refused\" >&2; exit 1 ;;\nesac\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			a := runWorkspaceKeyApp(false)
+			a.cfg.Network.Mode = mode
+			s := &runState{absWorkspace: t.TempDir(), containerName: "run-nic-create", img: "coi-default", slot: 1}
+
+			var err error
+			stderr := captureOutput(t, &os.Stderr, func() {
+				_, err = a.launchContainerRunPhase(s).Run(context.Background())
+			})
+			b, _ := os.ReadFile(logPath)
+			started := strings.Contains(string(b), "start run-nic-create")
+			if mode == config.NetworkModeOpen {
+				if err != nil || !started || !strings.Contains(stderr, "Warning: NIC security hardening not applied") {
+					t.Errorf("want a warning and a start, got err %v, stderr %q, calls:\n%s", err, stderr, b)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), string(mode)+" mode") {
+				t.Fatalf("want a fail-closed error, got %v", err)
+			}
+			if started {
+				t.Errorf("want no start, calls:\n%s", b)
+			}
+		})
+	}
+}

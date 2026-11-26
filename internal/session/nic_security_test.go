@@ -1,7 +1,9 @@
 package session
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,5 +144,105 @@ exit 0
 	}
 	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), " start ") {
 		t.Errorf("want no start, calls:\n%s", b)
+	}
+}
+
+// nicReuseYAML is a container config with eth0 (keys are its extra lines) and
+// the workspace mounted from ws.
+func nicReuseYAML(ws, keys string) string {
+	return "config: {}\ndevices:\n  eth0:\n    type: nic\n" + keys +
+		"  workspace:\n    path: /workspace\n    source: " + ws + "\n    type: disk\n"
+}
+
+// A container coi does not reconcile (running, or named with --container) is
+// refused in restricted/allowlist mode while eth0 lacks the keys; with the keys,
+// or in open mode, it is reused.
+func TestPhaseReconcileExisting_NICSecurityRefusal(t *testing.T) {
+	tests := []struct {
+		name, status, explicit string
+		mode                   config.NetworkMode
+		keys                   string
+		wantErr                string
+	}{
+		{"running persistent", "RUNNING", "", config.NetworkModeRestricted, "", "coi container stop"},
+		{"running persistent allowlist", "RUNNING", "", config.NetworkModeAllowlist, "", "coi container stop"},
+		{"running --container", "RUNNING", "x", config.NetworkModeRestricted, "", "without --container"},
+		{"stopped --container", "STOPPED", "x", config.NetworkModeRestricted, "", "without --container"},
+		{"running with keys", "RUNNING", "", config.NetworkModeRestricted, nicKeysYAML, ""},
+		{"stopped --container with keys", "STOPPED", "x", config.NetworkModeAllowlist, nicKeysYAML, ""},
+		{"running open mode", "RUNNING", "", config.NetworkModeOpen, "", ""},
+		{"stopped --container open mode", "STOPPED", "x", config.NetworkModeOpen, "", ""},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			name := fmt.Sprintf("nic-refuse-%d", i)
+			logPath := fakeLimitsIncusStatus(t, name, nicReuseYAML(ws, tc.keys), tc.status)
+			opts := SetupOptions{Persistent: true, WorkspacePath: ws, Logger: func(string) {}}
+			if tc.explicit != "" {
+				opts.ContainerName = name
+			}
+			opts.Network.Config = &config.NetworkConfig{Mode: tc.mode}
+			st := &setupState{opts: opts, result: &SetupResult{Manager: container.NewManager(name), ContainerName: name}}
+			_, err := st.phaseReconcileExisting(context.Background())
+			b, _ := os.ReadFile(logPath)
+			if tc.wantErr == "" {
+				// A stopped container then fails later, at the fake's boot
+				// network block; it got past the check if it was started.
+				if err != nil && (tc.status == "RUNNING" || !strings.Contains(string(b), "start "+name)) {
+					t.Fatalf("want reuse, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "security.ipv4_filtering") || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want a refusal naming the keys and %q, got %v", tc.wantErr, err)
+			}
+			if strings.Contains(string(b), "start "+name) || strings.Contains(string(b), "config device") {
+				t.Errorf("want no start and no device write, calls:\n%s", b)
+			}
+		})
+	}
+}
+
+// failNICIncus is an incus that logs its calls and refuses the eth0 security
+// keys; every other call succeeds.
+func failNICIncus(t *testing.T) (logPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath = filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n  *\"eth0 security\"*) echo \"Error: refused\" >&2; exit 1 ;;\nesac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+// A fresh container whose eth0 keys cannot be set is not started in
+// restricted/allowlist mode; open mode warns and starts it.
+func TestCreateAndStartContainer_NICSecurity(t *testing.T) {
+	for _, mode := range []config.NetworkMode{config.NetworkModeRestricted, config.NetworkModeAllowlist, config.NetworkModeOpen} {
+		t.Run(string(mode), func(t *testing.T) {
+			logPath := failNICIncus(t)
+			var logs []string
+			result := &SetupResult{ContainerName: "nic-create", Manager: container.NewManager("nic-create")}
+			opts := &SetupOptions{WorkspacePath: t.TempDir(), Logger: func(s string) { logs = append(logs, s) }}
+			opts.Network.Config = &config.NetworkConfig{Mode: mode}
+			err := createAndStartContainer(result, opts, "img", "nic-create")
+			b, _ := os.ReadFile(logPath)
+			started := strings.Contains(string(b), "start nic-create")
+			if mode == config.NetworkModeOpen {
+				if !started || !strings.Contains(strings.Join(logs, "\n"), "Warning: NIC security hardening not applied") {
+					t.Errorf("want a warning and a start (err %v), logs %q, calls:\n%s", err, logs, b)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), string(mode)+" mode") {
+				t.Fatalf("want a fail-closed error, got %v", err)
+			}
+			if started {
+				t.Errorf("want no start, calls:\n%s", b)
+			}
+		})
 	}
 }

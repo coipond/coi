@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
@@ -46,6 +47,26 @@ func ReconcileNICSecurity(containerName string, mode config.NetworkMode, logger 
 	}
 	if changed {
 		logger("Applied NIC anti-spoofing and port isolation to eth0 (missing on this container)")
+	}
+	return nil
+}
+
+// refuseMissingNICSecurity fails a restricted/allowlist session that would use
+// a container coi does not reconcile (a running one, or a stopped one named
+// with --container) while its eth0 lacks the anti-spoofing keys: a read-only
+// check, since a running NIC cannot take them. remedy tells the user what to
+// do instead.
+func refuseMissingNICSecurity(containerName string, mode config.NetworkMode, remedy string) error {
+	if !nicSecurityRequired(mode) {
+		return nil
+	}
+	missing, err := container.MissingNICSecurityKeys(containerName)
+	if err != nil {
+		return fmt.Errorf("network mode %s: could not check the NIC anti-spoofing of container %s: %w", mode, containerName, err)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("network mode %s: container %s has no NIC anti-spoofing on eth0 (%s not set), so a second source IP bypasses the egress rules; %s",
+			mode, containerName, strings.Join(missing, ", "), remedy)
 	}
 	return nil
 }
