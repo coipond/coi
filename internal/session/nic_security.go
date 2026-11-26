@@ -71,3 +71,12 @@ func refuseMissingNICSecurity(containerName string, mode config.NetworkMode, rem
 	}
 	return nil
 }
+
+// nicSecurityRemedy is the refuseMissingNICSecurity remedy. A normal launch
+// sets the keys on the next restart; an explicit --container never does.
+func nicSecurityRemedy(containerName string, explicit bool) string {
+	if explicit {
+		return fmt.Sprintf("stop it and set them on its eth0 (incus config device override or set %s eth0 <key>=true), or launch without --container", containerName)
+	}
+	return fmt.Sprintf("stop it (coi container stop %s) and launch again so coi sets them", containerName)
+}

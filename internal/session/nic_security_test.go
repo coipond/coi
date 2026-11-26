@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,25 +16,17 @@ const nicMissingYAML = "config: {}\ndevices:\n  eth0:\n    type: nic\n"
 
 const nicKeysYAML = "    security.ipv4_filtering: \"true\"\n    security.mac_filtering: \"true\"\n    security.port_isolation: \"true\"\n"
 
-// fakeNICIncus answers `config show` with eth0 without the anti-spoofing keys
-// until a `config device override` writes them.
-func fakeNICIncus(t *testing.T, name string) (logPath string) {
-	t.Helper()
-	logPath = fakeLimitsIncus(t, name, nicMissingYAML)
-	dir := filepath.Dir(logPath)
-	script := `#!/bin/sh
-echo "$*" >> ` + logPath + `
-case "$*" in
-  *"config device override "*) printf '` + strings.ReplaceAll(nicMissingYAML+nicKeysYAML, "\n", "\\n") + `' > ` + filepath.Join(dir, "config.yaml") + ` ;;
-  *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
-esac
-exit 0
+// Extra fake incus cases (fakeLimitsIncusCases): refuse the eth0 security
+// keys, write them on `config device override`, fail `config show`.
+const (
+	refuseNICCase = `  *"eth0 security"*) echo "Error: refused" >&2; exit 1 ;;
 `
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return logPath
-}
+	failShowCase = `  *"config show "*) echo "Error: refused" >&2; exit 1 ;;
+`
+)
+
+var overrideNICCase = `  *"config device override "*) printf '` + strings.ReplaceAll(nicMissingYAML+nicKeysYAML, "\n", "\\n") + `' > "$d/config.yaml" ;;
+`
 
 // Restricted/allowlist reuse of a container without the keys sets them and
 // says so.
@@ -43,7 +34,7 @@ func TestReconcileNICSecurity_SetsMissingKeys(t *testing.T) {
 	for _, mode := range []config.NetworkMode{config.NetworkModeRestricted, config.NetworkModeAllowlist} {
 		t.Run(string(mode), func(t *testing.T) {
 			name := "nic-reuse-" + string(mode)
-			logPath := fakeNICIncus(t, name)
+			logPath := fakeLimitsIncusCases(t, name, nicMissingYAML, "", overrideNICCase)
 			var logs []string
 			if err := ReconcileNICSecurity(name, mode, func(s string) { logs = append(logs, s) }); err != nil {
 				t.Fatal(err)
@@ -62,18 +53,7 @@ func TestReconcileNICSecurity_SetsMissingKeys(t *testing.T) {
 // Keys that cannot be set fail the restricted reuse.
 func TestReconcileNICSecurity_FailsClosed(t *testing.T) {
 	name := "nic-refused"
-	logPath := fakeLimitsIncus(t, name, nicMissingYAML)
-	script := `#!/bin/sh
-echo "$*" >> ` + logPath + `
-case "$*" in
-  *"eth0 security"*) echo "Error: refused" >&2; exit 1 ;;
-  *"config show "*` + name + `) cat ` + filepath.Join(filepath.Dir(logPath), "config.yaml") + ` ;;
-esac
-exit 0
-`
-	if err := os.WriteFile(filepath.Join(filepath.Dir(logPath), "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	fakeLimitsIncusCases(t, name, nicMissingYAML, "", refuseNICCase)
 	err := ReconcileNICSecurity(name, config.NetworkModeRestricted, func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "restricted mode") {
 		t.Fatalf("want a fail-closed error naming the mode, got %v", err)
@@ -123,18 +103,7 @@ func TestNICSecurityError(t *testing.T) {
 // The shell reuse path runs the reconcile before the start and aborts on it.
 func TestRestartStoppedContainer_NICSecurityFailsClosed(t *testing.T) {
 	name := "nic-restart"
-	logPath := fakeLimitsIncus(t, name, nicMissingYAML)
-	script := `#!/bin/sh
-echo "$*" >> ` + logPath + `
-case "$*" in
-  *"eth0 security"*) echo "Error: refused" >&2; exit 1 ;;
-  *"config show "*` + name + `) cat ` + filepath.Join(filepath.Dir(logPath), "config.yaml") + ` ;;
-esac
-exit 0
-`
-	if err := os.WriteFile(filepath.Join(filepath.Dir(logPath), "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	logPath := fakeLimitsIncusCases(t, name, nicMissingYAML, "", refuseNICCase)
 	result := &SetupResult{ContainerName: name, Manager: container.NewManager(name)}
 	opts := &SetupOptions{Logger: func(string) {}}
 	opts.Network.Config = &config.NetworkConfig{Mode: config.NetworkModeAllowlist}
@@ -159,19 +128,20 @@ func nicReuseYAML(ws, keys string) string {
 // or in open mode, it is reused.
 func TestPhaseReconcileExisting_NICSecurityRefusal(t *testing.T) {
 	tests := []struct {
-		name, status, explicit string
-		mode                   config.NetworkMode
-		keys                   string
-		wantErr                string
+		name, status string
+		explicit     bool
+		mode         config.NetworkMode
+		keys         string
+		wantErr      string
 	}{
-		{"running persistent", "RUNNING", "", config.NetworkModeRestricted, "", "coi container stop"},
-		{"running persistent allowlist", "RUNNING", "", config.NetworkModeAllowlist, "", "coi container stop"},
-		{"running --container", "RUNNING", "x", config.NetworkModeRestricted, "", "without --container"},
-		{"stopped --container", "STOPPED", "x", config.NetworkModeRestricted, "", "without --container"},
-		{"running with keys", "RUNNING", "", config.NetworkModeRestricted, nicKeysYAML, ""},
-		{"stopped --container with keys", "STOPPED", "x", config.NetworkModeAllowlist, nicKeysYAML, ""},
-		{"running open mode", "RUNNING", "", config.NetworkModeOpen, "", ""},
-		{"stopped --container open mode", "STOPPED", "x", config.NetworkModeOpen, "", ""},
+		{"running persistent", "RUNNING", false, config.NetworkModeRestricted, "", "coi container stop"},
+		{"running persistent allowlist", "RUNNING", false, config.NetworkModeAllowlist, "", "coi container stop"},
+		{"running --container", "RUNNING", true, config.NetworkModeRestricted, "", "without --container"},
+		{"stopped --container", "STOPPED", true, config.NetworkModeRestricted, "", "without --container"},
+		{"running with keys", "RUNNING", false, config.NetworkModeRestricted, nicKeysYAML, ""},
+		{"stopped --container with keys", "STOPPED", true, config.NetworkModeAllowlist, nicKeysYAML, ""},
+		{"running open mode", "RUNNING", false, config.NetworkModeOpen, "", ""},
+		{"stopped --container open mode", "STOPPED", true, config.NetworkModeOpen, "", ""},
 	}
 	for i, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,7 +149,7 @@ func TestPhaseReconcileExisting_NICSecurityRefusal(t *testing.T) {
 			name := fmt.Sprintf("nic-refuse-%d", i)
 			logPath := fakeLimitsIncusStatus(t, name, nicReuseYAML(ws, tc.keys), tc.status)
 			opts := SetupOptions{Persistent: true, WorkspacePath: ws, Logger: func(string) {}}
-			if tc.explicit != "" {
+			if tc.explicit {
 				opts.ContainerName = name
 			}
 			opts.Network.Config = &config.NetworkConfig{Mode: tc.mode}
@@ -210,17 +180,7 @@ func TestPhaseReconcileExisting_NICSecurityReadError(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
 			name := fmt.Sprintf("nic-read-%v", explicit)
-			dir := t.TempDir()
-			logPath := filepath.Join(dir, "calls")
-			script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n" +
-				"  *\"config show \"*) echo \"Error: refused\" >&2; exit 1 ;;\n" +
-				"  *\"list \"*\"--columns=ns\"*) echo \"" + name + ",RUNNING\" ;;\n" +
-				"  *\"list \"*\"--columns=n\"*) echo \"" + name + "\" ;;\n" +
-				"esac\nexit 0\n"
-			if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			logPath := fakeLimitsIncusCases(t, name, "", "RUNNING", failShowCase)
 			opts := SetupOptions{Persistent: true, WorkspacePath: t.TempDir(), Logger: func(string) {}}
 			if explicit {
 				opts.ContainerName = name
@@ -240,26 +200,12 @@ func TestPhaseReconcileExisting_NICSecurityReadError(t *testing.T) {
 	}
 }
 
-// failNICIncus is an incus that logs its calls and refuses the eth0 security
-// keys; every other call succeeds.
-func failNICIncus(t *testing.T) (logPath string) {
-	t.Helper()
-	dir := t.TempDir()
-	logPath = filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n  *\"eth0 security\"*) echo \"Error: refused\" >&2; exit 1 ;;\nesac\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return logPath
-}
-
 // A fresh container whose eth0 keys cannot be set is not started in
 // restricted/allowlist mode; open mode warns and starts it.
 func TestCreateAndStartContainer_NICSecurity(t *testing.T) {
 	for _, mode := range []config.NetworkMode{config.NetworkModeRestricted, config.NetworkModeAllowlist, config.NetworkModeOpen} {
 		t.Run(string(mode), func(t *testing.T) {
-			logPath := failNICIncus(t)
+			logPath := fakeLimitsIncusCases(t, "nic-create", "", "", refuseNICCase)
 			var logs []string
 			result := &SetupResult{ContainerName: "nic-create", Manager: container.NewManager("nic-create")}
 			opts := &SetupOptions{WorkspacePath: t.TempDir(), Logger: func(s string) { logs = append(logs, s) }}

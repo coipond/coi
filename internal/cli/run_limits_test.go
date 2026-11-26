@@ -15,6 +15,17 @@ import (
 // name as an existing, stopped container whose own config is configYAML.
 func fakeStoppedIncus(t *testing.T, name, configYAML string) (logPath string) {
 	t.Helper()
+	return fakeIncusCases(t, name, configYAML, "STOPPED", "")
+}
+
+// refuseNICCase is a fakeIncusCases line that refuses the eth0 security keys.
+const refuseNICCase = `  *"eth0 security"*) echo "Error: refused" >&2; exit 1 ;;
+`
+
+// fakeIncusCases is fakeStoppedIncus with the container's status (none when
+// empty) and extra shell `case` lines tried first.
+func fakeIncusCases(t *testing.T, name, configYAML, status, cases string) (logPath string) {
+	t.Helper()
 	dir := t.TempDir()
 	logPath = filepath.Join(dir, "calls")
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
@@ -23,9 +34,9 @@ func fakeStoppedIncus(t *testing.T, name, configYAML string) (logPath string) {
 	script := `#!/bin/sh
 echo "$*" >> ` + logPath + `
 case "$*" in
-  *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
-  *"list "*"--columns=ns"*) echo "` + name + `,STOPPED" ;;
-  *"list "*"--columns=n"*) echo "` + name + `" ;;
+` + cases + `  *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
+  *"list "*"--columns=ns"*) [ -n "` + status + `" ] && echo "` + name + `,` + status + `" ;;
+  *"list "*"--columns=n"*) [ -n "` + status + `" ] && echo "` + name + `" ;;
 esac
 exit 0
 `
@@ -114,14 +125,8 @@ func TestSizeTmpfsAndRemapUser(t *testing.T) {
 func TestLaunchContainerRunPhase_RestartNICSecurityFailsClosed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ws := t.TempDir()
-	logPath := fakeStoppedIncus(t, "run-nic",
-		"config: {}\ndevices:\n  eth0:\n    type: nic\n  workspace:\n    path: /workspace\n    source: "+ws+"\n    type: disk\n")
-	script := filepath.Join(filepath.Dir(logPath), "incus")
-	b, _ := os.ReadFile(script)
-	refuse := strings.Replace(string(b), "case \"$*\" in\n", "case \"$*\" in\n  *\"eth0 security\"*) echo \"Error: refused\" >&2; exit 1 ;;\n", 1)
-	if err := os.WriteFile(script, []byte(refuse), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	logPath := fakeIncusCases(t, "run-nic",
+		"config: {}\ndevices:\n  eth0:\n    type: nic\n  workspace:\n    path: /workspace\n    source: "+ws+"\n    type: disk\n", "STOPPED", refuseNICCase)
 	cfg := config.GetDefaultConfig()
 	cfg.Network.Mode = config.NetworkModeRestricted
 	cfg.Security.DisableProtection = true
@@ -143,13 +148,7 @@ func TestLaunchContainerRunPhase_CreateNICSecurity(t *testing.T) {
 	for _, mode := range []config.NetworkMode{config.NetworkModeRestricted, config.NetworkModeAllowlist, config.NetworkModeOpen} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			dir := t.TempDir()
-			logPath := filepath.Join(dir, "calls")
-			script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n  *\"eth0 security\"*) echo \"Error: refused\" >&2; exit 1 ;;\nesac\nexit 0\n"
-			if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			logPath := fakeIncusCases(t, "run-nic-create", "", "", refuseNICCase)
 			a := runWorkspaceKeyApp(false)
 			a.cfg.Network.Mode = mode
 			s := &runState{absWorkspace: t.TempDir(), containerName: "run-nic-create", img: "coi-default", slot: 1}
