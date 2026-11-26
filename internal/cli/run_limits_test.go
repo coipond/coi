@@ -108,3 +108,31 @@ func TestSizeTmpfsAndRemapUser(t *testing.T) {
 		})
 	}
 }
+
+// A reused container whose eth0 anti-spoofing keys cannot be set does not
+// start in restricted mode.
+func TestLaunchContainerRunPhase_RestartNICSecurityFailsClosed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ws := t.TempDir()
+	logPath := fakeStoppedIncus(t, "run-nic",
+		"config: {}\ndevices:\n  eth0:\n    type: nic\n  workspace:\n    path: /workspace\n    source: "+ws+"\n    type: disk\n")
+	script := filepath.Join(filepath.Dir(logPath), "incus")
+	b, _ := os.ReadFile(script)
+	refuse := strings.Replace(string(b), "case \"$*\" in\n", "case \"$*\" in\n  *\"eth0 security\"*) echo \"Error: refused\" >&2; exit 1 ;;\n", 1)
+	if err := os.WriteFile(script, []byte(refuse), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.GetDefaultConfig()
+	cfg.Network.Mode = config.NetworkModeRestricted
+	cfg.Security.DisableProtection = true
+	a := &App{cfg: cfg, persistent: true}
+	s := &runState{absWorkspace: ws, containerName: "run-nic", img: "coi-default", slot: 1}
+
+	_, err := a.launchContainerRunPhase(s).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "restricted mode") {
+		t.Fatalf("want a fail-closed error, got %v", err)
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "start run-nic") {
+		t.Errorf("want no start; calls:\n%s", b)
+	}
+}
