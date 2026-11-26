@@ -1434,3 +1434,34 @@ func TestSetupSecurityMounts_MkdirRaceStillMounts(t *testing.T) {
 		t.Errorf(".husky not mounted after a lost mkdir race, mounted %v", f.mounted)
 	}
 }
+
+// A symlink or file that wins the mkdir race is not a dir coi can protect:
+// the start fails closed and nothing is mounted at that path.
+func TestSetupSecurityMounts_MkdirRaceNonDirFailsClosed(t *testing.T) {
+	target := t.TempDir()
+	plants := map[string]func(path string) error{
+		"symlink": func(path string) error { return os.Symlink(target, path) },
+		"file":    func(path string) error { return os.WriteFile(path, nil, 0o644) },
+	}
+	for name, plant := range plants {
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+			orig := mkdir
+			t.Cleanup(func() { mkdir = orig })
+			mkdir = func(path string, _ os.FileMode) error {
+				if err := plant(path); err != nil {
+					return err
+				}
+				return os.ErrExist
+			}
+			dev, f := newFailingDevices(false)
+			_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".husky"}, false, nil, NestedGitScan{}, false)
+			if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), ".husky") {
+				t.Fatalf("want ErrProtectFailed naming .husky, got %v", err)
+			}
+			if slices.Contains(f.mounted, "/workspace/.husky") {
+				t.Errorf(".husky mounted after a %s won the race", name)
+			}
+		})
+	}
+}
