@@ -315,9 +315,8 @@ func TestPhaseSetupCLIConfig_FreshClearsOnNewSession(t *testing.T) {
 			if rm != c.wantRm {
 				t.Errorf("memory removed = %v, want %v; execs: %q", rm, c.wantRm, m.execs)
 			}
-			// The sandbox context tells the agent its memory was reset.
-			if got := contextInfoFor(st.result, st.opts).FreshMemory; got != c.wantRm {
-				t.Errorf("context FreshMemory = %v, want %v", got, c.wantRm)
+			if got := contextInfoFor(st.result, st.opts).MemoryCleared; got != c.wantRm {
+				t.Errorf("context MemoryCleared = %v, want %v", got, c.wantRm)
 			}
 		})
 	}

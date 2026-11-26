@@ -772,13 +772,13 @@ func TestRenderContextFileContent_SudoUnavailable(t *testing.T) {
 	}
 }
 
-func TestRenderContextFileContent_FreshMemory(t *testing.T) {
+func TestRenderContextFileContent_MemoryCleared(t *testing.T) {
 	const reset = "started without your history and memory of earlier sessions"
 	cases := []struct {
-		name        string
-		persistent  bool
-		freshMemory bool
-		want        bool
+		name          string
+		persistent    bool
+		memoryCleared bool
+		want          bool
 	}{
 		{"reused with fresh memory", true, true, true},
 		{"persistent, memory kept", true, false, false},
@@ -786,7 +786,7 @@ func TestRenderContextFileContent_FreshMemory(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			content := RenderContextFileContent(ContextInfo{Persistent: c.persistent, FreshMemory: c.freshMemory})
+			content := RenderContextFileContent(ContextInfo{Persistent: c.persistent, MemoryCleared: c.memoryCleared})
 			if got := strings.Contains(content, reset); got != c.want {
 				t.Errorf("memory reset note = %v, want %v:\n%s", got, c.want, content)
 			}

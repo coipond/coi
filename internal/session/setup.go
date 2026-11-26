@@ -137,9 +137,9 @@ type SetupResult struct {
 	// list is replaced by the effective one (which drops .git/* for a
 	// worktree); the grants report's fallback lists the same protections.
 	worktreeWritableHooks bool
-	// freshMemory is set when [tool] memory = "fresh" removed the tool's
+	// memoryCleared is set when [tool] memory = "fresh" removed the tool's
 	// memory for a new session in a reused container; the context says so.
-	freshMemory bool
+	memoryCleared bool
 	// nestedGitScan is the nested git walk Setup started early, consumed by
 	// the security mounts.
 	nestedGitScan NestedGitScan
@@ -912,7 +912,7 @@ func contextInfoFor(result *SetupResult, opts SetupOptions) tool.ContextInfo {
 		WorkspacePath:      result.ContainerWorkspacePath,
 		HomeDir:            result.HomeDir,
 		Persistent:         opts.Persistent,
-		FreshMemory:        result.freshMemory,
+		MemoryCleared:      result.memoryCleared,
 		NetworkMode:        networkMode,
 		AllowedPorts:       allowedPorts,
 		DNSServers:         dnsServers,

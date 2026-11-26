@@ -121,7 +121,7 @@ func (st *setupState) phaseSetupCLIConfig(_ context.Context) (Teardown, error) {
 		if err != nil {
 			return nil, err
 		}
-		st.result.freshMemory = cleared
+		st.result.memoryCleared = cleared
 	}
 	if st.opts.Tool != nil {
 		if tcf, ok := st.opts.Tool.(tool.ToolWithConfigDirFiles); ok {
