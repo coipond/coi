@@ -1,6 +1,7 @@
 """Test network-based threat detection."""
 
 from support.monitoring import (
+    get_container_state,
     get_threat_events,
     hold_connect,
     monitored_shell,
@@ -29,6 +30,7 @@ def test_allowlist_mode_rfc1918_flagged(test_workspace, coi_binary):
     configured allow-list and should be flagged as network threats. Before
     the fix, security monitors always received an empty allowedCIDRs list,
     so RFC1918 addresses were silently allowed regardless of network mode.
+    The firewall rejects the attempt, so it is a WARNING and does not pause.
     """
     with monitored_shell(test_workspace, coi_binary, 37, _CONFIG) as (container_name, holders):
         # A blocked TCP connect is refused at once, before a 1 s poll can see
@@ -41,7 +43,12 @@ def test_allowlist_mode_rfc1918_flagged(test_workspace, coi_binary):
             "no threat for a connection to 10.0.0.1:80 in allowlist mode; "
             f"threat events: {get_threat_events(container_name)}"
         )
+        # The firewall rejects it: a WARNING, so auto_pause_on_high leaves the
+        # container running.
         for threat in threats:
-            assert threat.get("level") in ["high", "critical"], (
-                f"Expected HIGH/CRITICAL for RFC1918 in allowlist mode, got {threat.get('level')}"
+            assert threat.get("level") == "warning", (
+                f"Expected WARNING for a rejected RFC1918 attempt, got {threat.get('level')}"
             )
+            assert "rejected by the firewall" in threat.get("description", ""), threat
+        state = get_container_state(container_name)
+        assert state == "Running", f"a WARNING must not pause the container, state is {state}"

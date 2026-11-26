@@ -164,6 +164,12 @@ func mergeMonitoring(base *MonitoringConfig, other *MonitoringConfig) {
 	if other.AuditLogRetentionDays != 0 {
 		base.AuditLogRetentionDays = other.AuditLogRetentionDays
 	}
+	if other.RejectedBurstDestinations != 0 {
+		base.RejectedBurstDestinations = other.RejectedBurstDestinations
+	}
+	if other.RejectedBurstWindowSec != 0 {
+		base.RejectedBurstWindowSec = other.RejectedBurstWindowSec
+	}
 
 	// Merge NFT monitoring
 	if other.NFT.Enabled != nil {

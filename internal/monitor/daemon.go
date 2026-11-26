@@ -42,7 +42,8 @@ func StartDaemon(ctx context.Context, cfg DaemonConfig) (*Daemon, error) {
 	detector := NewDetector(cfg.FileReadThresholdMB, cfg.FileReadRateMBPerSec).
 		WithProcessCountThreshold(cfg.ProcessCountThreshold).
 		WithProcessSpawnRateThreshold(cfg.ProcessSpawnRateThreshold).
-		WithReverseShellOneLinerPolicy(cfg.ReverseShellOneLinerPolicy)
+		WithReverseShellOneLinerPolicy(cfg.ReverseShellOneLinerPolicy).
+		WithRejectedBurst(cfg.RejectedBurstDestinations, time.Duration(cfg.RejectedBurstWindowSec)*time.Second)
 	responder := NewResponder(cfg.ContainerName, cfg.AutoPauseOnHigh, cfg.AutoKillOnCritical,
 		auditLog, cfg.OnThreat)
 	responder.SetForensicsOnKill(cfg.ForensicsOnKill)

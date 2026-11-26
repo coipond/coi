@@ -1053,6 +1053,8 @@ type MonitoringConfig struct {
 	AuditLogRetentionDays     int                 `toml:"audit_log_retention_days"`     // How long to keep audit logs
 	ForensicsOnKill           *bool               `toml:"forensics_on_kill"`            // Copy the container for forensics before an auto-kill deletes it (opt-in; default: false)
 	ReverseShellOneLiners     *string             `toml:"reverse_shell_one_liners"`     // Severity for interpreter one-liner reverse-shell matches (python -c, perl -e, ...): "critical" (default, auto-kill), "warn" (audit only), or "off" (do not flag). #842
+	RejectedBurstDestinations int                 `toml:"rejected_burst_destinations"`  // Firewall-rejected attempts are WARNING; to this many distinct destinations within rejected_burst_window_sec, HIGH (default 10)
+	RejectedBurstWindowSec    int                 `toml:"rejected_burst_window_sec"`    // Window for rejected_burst_destinations (default 60)
 	NFT                       NFTMonitoringConfig `toml:"nft"`                          // nftables network monitoring
 }
 

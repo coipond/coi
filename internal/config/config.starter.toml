@@ -227,6 +227,8 @@
 # file_read_threshold_mb = 50.0
 # file_read_rate_mb_per_sec = 10.0
 # audit_log_retention_days = 30
+# rejected_burst_destinations = 10  # firewall-rejected attempts: WARNING; this many distinct destinations...
+# rejected_burst_window_sec = 60    # ...within this window: HIGH
 
 [monitoring.nft]
 # enabled = false                # nftables-based network monitoring

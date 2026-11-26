@@ -4,6 +4,7 @@
 package nftmonitor
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -540,5 +541,54 @@ func TestInAllowlist(t *testing.T) {
 				t.Errorf("inAllowlist(%q) = %v, expected %v", tt.ip, result, tt.expected)
 			}
 		})
+	}
+}
+
+// With the firewall's verdict, a packet it rejects is an attempt it stopped: a
+// single `curl --noproxy '*'` to an unlisted host is a WARNING; attempts to
+// RejectedBurstDestinations distinct destinations within the window are HIGH.
+// Without a verdict the check stays HIGH.
+func TestNetworkDetector_RejectedAttempts(t *testing.T) {
+	event := func(dst string, port int, ts time.Time) *NetworkEvent {
+		return &NetworkEvent{
+			Timestamp: ts, ContainerIP: "10.47.62.50", SrcIP: "10.47.62.50",
+			DstIP: dst, DstPort: port, Protocol: "TCP",
+		}
+	}
+	newDetector := func(permitted func(proto, ip string, port int) bool) *NetworkDetector {
+		return NewNetworkDetector(&Config{
+			ContainerIP:               "10.47.62.50",
+			GatewayIP:                 "10.47.62.1",
+			NetworkMode:               config.NetworkModeAllowlist,
+			AllowedCIDRs:              []string{"140.82.112.3/32"},
+			PermittedDestination:      permitted,
+			RejectedBurstDestinations: 3,
+			RejectedBurstWindowSec:    60,
+		})
+	}
+	rejects := func(_, ip string, _ int) bool { return ip == "140.82.112.3" }
+	ts := time.Now()
+
+	nd := newDetector(rejects)
+	threat := nd.Analyze(event("93.184.215.14", 443, ts))
+	if threat == nil || threat.Level != ThreatLevelWarning || threat.Title != "Unauthorized connection attempt" {
+		t.Fatalf("single rejected attempt: want WARNING, got %+v", threat)
+	}
+	if threat := nd.Analyze(event("93.184.215.14", 443, ts.Add(time.Second))); threat == nil || threat.Level != ThreatLevelWarning {
+		t.Fatalf("repeat to the same destination: want WARNING, got %+v", threat)
+	}
+	if threat := nd.Analyze(event("10.0.0.1", 80, ts.Add(2*time.Second))); threat == nil || threat.Level != ThreatLevelWarning || threat.Title != "Connection to private network" {
+		t.Fatalf("second destination (private): want WARNING, got %+v", threat)
+	}
+	threat = nd.Analyze(event("93.184.215.15", 443, ts.Add(3*time.Second)))
+	if threat == nil || threat.Level != ThreatLevelHigh || !strings.Contains(threat.Description, "3 distinct rejected destinations") {
+		t.Fatalf("third distinct destination: want HIGH burst, got %+v", threat)
+	}
+	if threat := nd.Analyze(event("93.184.215.16", 4444, ts.Add(4*time.Second))); threat == nil || threat.Level != ThreatLevelCritical {
+		t.Fatalf("C2 port: want CRITICAL, got %+v", threat)
+	}
+
+	if threat := newDetector(nil).Analyze(event("93.184.215.14", 443, ts)); threat == nil || threat.Level != ThreatLevelHigh {
+		t.Fatalf("no verdict: want HIGH, got %+v", threat)
 	}
 }
