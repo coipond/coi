@@ -1,6 +1,5 @@
 """Test detector behavior at threshold boundaries."""
 
-import os
 import subprocess
 import time
 from pathlib import Path
@@ -9,19 +8,14 @@ import pytest
 
 from support.monitoring import (
     cleanup_container,
+    container_io_stat,
     get_container_name_from_workspace,
-    get_container_state,
     get_threat_events,
     wait_for_container_running,
+    wait_for_frozen,
 )
 
 
-@pytest.mark.skipif(
-    os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="cgroup io.stat does not track bind-mount I/O on GitHub Actions runners; "
-    "reads from /workspace are served from the host page cache and not attributed "
-    "to the container's cgroup, so the security monitor sees 0 bytes read.",
-)
 def test_file_read_at_threshold_triggers(
     test_workspace, enable_monitoring_low_thresholds, coi_binary
 ):
@@ -85,18 +79,7 @@ def test_file_read_at_threshold_triggers(
         stderr=subprocess.DEVNULL,
     )
 
-    # Wait for detection and pause with extended polling budget.
-    # On slow CI runners, monitoring detection can take longer due to
-    # disk I/O contention and polling interval alignment.
-    time.sleep(10)
-
-    paused = False
-    for _ in range(30):
-        time.sleep(1)
-        state = get_container_state(container_name)
-        if state == "Frozen":
-            paused = True
-            break
+    paused = wait_for_frozen(container_name)
 
     # Close stderr and print debug log BEFORE assertions
     proc.terminate()
@@ -107,7 +90,9 @@ def test_file_read_at_threshold_triggers(
         print(stderr_file.read_text())
     print("=== End Debug Log ===\n")
 
-    assert paused, "Container should be paused on 75MB read (above threshold)"
+    assert paused, "Container should be paused on 75MB read (above threshold)" + container_io_stat(
+        container_name
+    )
 
     # Verify HIGH threat logged
     events = get_threat_events(container_name)

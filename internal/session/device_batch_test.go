@@ -12,8 +12,8 @@ import (
 type batchFake struct {
 	fakeDiskDevices
 	patches   [][]container.DiskMount
-	failBatch bool   // fail any MountDisks call with more than one device
-	failName  string // fail MountDisks for this device
+	failBatch bool            // fail any MountDisks call with more than one device
+	failNames map[string]bool // fail MountDisks for these devices
 }
 
 func (f *batchFake) MountDisks(mounts []container.DiskMount) error {
@@ -21,7 +21,7 @@ func (f *batchFake) MountDisks(mounts []container.DiskMount) error {
 		return errors.New("batch rejected")
 	}
 	for _, d := range mounts {
-		if d.Name == f.failName {
+		if f.failNames[d.Name] {
 			return errors.New("device rejected")
 		}
 	}
@@ -90,7 +90,7 @@ func TestDeviceBatch_RemovalOfMissingDeviceIsSkipped(t *testing.T) {
 // warning, the rest still lands.
 func TestDeviceBatch_FailedBatchRetriesPerDevice(t *testing.T) {
 	f := newBatchFake()
-	f.failBatch, f.failName = true, "pin-bad"
+	f.failBatch, f.failNames = true, map[string]bool{"pin-bad": true}
 	var warnings []string
 	b := newDeviceBatch(f, func(s string) { warnings = append(warnings, s) })
 	_ = b.MountDisk("workspace", "/new", "/workspace", true, false)
@@ -108,15 +108,31 @@ func TestDeviceBatch_FailedBatchRetriesPerDevice(t *testing.T) {
 }
 
 // A non-pin device that fails alone fails the flush (fail closed: the start is
-// aborted rather than booting without a protect device).
+// aborted rather than booting without a protect device). The error names the
+// container path of every failed device, not the hashed device name, and the
+// devices after a failed one are still mounted.
 func TestDeviceBatch_FailedSecurityDeviceFailsFlush(t *testing.T) {
 	f := newBatchFake()
-	f.failBatch, f.failName = true, "protect-husky"
+	f.failBatch, f.failNames = true, map[string]bool{"protect-husky": true, "protect-vscode": true}
 	b := newDeviceBatch(f, func(string) {})
 	_ = b.MountDisk("workspace", "/new", "/workspace", true, false)
 	_ = b.MountDisk("protect-husky", "/new/.husky", "/workspace/.husky", false, true)
-	if err := b.Flush(); err == nil || !strings.Contains(err.Error(), "protect-husky") {
-		t.Fatalf("want an error naming protect-husky, got %v", err)
+	_ = b.MountDisk("protect-vscode", "/new/.vscode", "/workspace/.vscode", false, true)
+	_ = b.MountDisk("protect-idea", "/new/.idea", "/workspace/.idea", false, true)
+	err := b.Flush()
+	if !errors.Is(err, ErrProtectFailed) {
+		t.Fatalf("want ErrProtectFailed, got %v", err)
+	}
+	for _, want := range []string{"/workspace/.husky: device rejected", "/workspace/.vscode: device rejected"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "protect-") {
+		t.Errorf("error %q names a device, want the path", err)
+	}
+	if f.devices["protect-idea"].Source != "/new/.idea" {
+		t.Error("the device after the failed ones was not mounted")
 	}
 }
 

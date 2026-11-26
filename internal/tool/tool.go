@@ -96,6 +96,15 @@ type ToolWithConfigDirFiles interface {
 	AlwaysSetupConfig() bool
 }
 
+// ToolWithSQLiteWALFiles is implemented by a tool whose config files include
+// SQLite DBs in WAL mode (omp's agent.db).
+type ToolWithSQLiteWALFiles interface {
+	// SQLiteWALFiles returns those DBs, as paths inside the config directory.
+	// On resume, coi removes the container's "<db>-wal" and "<db>-shm" before
+	// pushing a DB the host has.
+	SQLiteWALFiles() []string
+}
+
 // ClaudeTool implements Tool for Claude Code
 type ClaudeTool struct {
 	effortLevel    string // "low", "medium", "high", "xhigh", "max", "auto" — empty means unset (user controls interactively)

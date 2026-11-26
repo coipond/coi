@@ -153,6 +153,53 @@ func (d *takenDevices) MountDisks(mounts []container.DiskMount) error {
 	return d.batchDevices.MountDisks(mounts)
 }
 
+// mounted returns the container paths mounted alone or in a batch.
+func (d *takenDevices) mounted() []string {
+	var out []string
+	for _, m := range d.mounts {
+		out = append(out, m.path)
+	}
+	for _, b := range d.batches {
+		for _, m := range b {
+			out = append(out, m.Path)
+		}
+	}
+	return out
+}
+
+// takenManager is takenDevices as the ContainerManager applySessionSecurity
+// takes.
+type takenManager struct {
+	container.ContainerManager
+	d *takenDevices
+}
+
+func (m takenManager) MountDisk(name, source, path string, shift, readonly bool) error {
+	return m.d.MountDisk(name, source, path, shift, readonly)
+}
+
+func (m takenManager) MountDisks(mounts []container.DiskMount) error {
+	return m.d.MountDisks(mounts)
+}
+
+// unbatchedDevices hides the MountDisks batch method of the devices it wraps.
+type unbatchedDevices struct {
+	container.ContainerDevices
+}
+
+// newTakenDevices returns takenDevices failing every path in taken, without
+// the MountDisks batch method unless batch is set, and their record.
+func newTakenDevices(batch bool, taken ...string) (container.ContainerDevices, *takenDevices) {
+	d := &takenDevices{taken: map[string]bool{}}
+	for _, p := range taken {
+		d.taken[p] = true
+	}
+	if !batch {
+		return unbatchedDevices{d}, d
+	}
+	return d, d
+}
+
 // A pin whose path another device already uses loses only that pin: the
 // nested git entries and the other pins are still mounted.
 func TestSetupSecurityMounts_PinCollisionKeepsNestedGit(t *testing.T) {

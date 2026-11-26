@@ -1816,14 +1816,14 @@ def start_background_shell(
     return name, result
 
 
-def launch_recorded_tool(coi_binary, workspace_dir, env, marker, *extra_args):
+def launch_recorded_tool(coi_binary, workspace_dir, env, marker, *extra_args, marker_timeout=60):
     """Start `coi shell --background` in slot 1 and return what a recorder
     `[tool] binary` wrote at launch.
 
     The recorder writes `key=value` lines to marker (a Path in the workspace);
-    a stale marker is removed first. Waits up to 60 s for it, as the tool starts
-    inside tmux after the container is ready. extra_args are appended to the
-    argv (e.g. "--resume"). Returns the lines as a dict.
+    a stale marker is removed first. Waits up to marker_timeout seconds for it,
+    as the tool starts inside tmux after the container is ready. extra_args are
+    appended to the argv (e.g. "--resume"). Returns the lines as a dict.
     """
     if marker.exists():
         marker.unlink()
@@ -1831,7 +1831,7 @@ def launch_recorded_tool(coi_binary, workspace_dir, env, marker, *extra_args):
         coi_binary, workspace_dir, env, slot=1, debug=False, timeout=180, extra_args=extra_args
     )
 
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + marker_timeout
     while time.monotonic() < deadline and not marker.exists():
         time.sleep(1)
     assert marker.exists(), f"the tool was not launched (no marker). coi stderr:\n{result.stderr}"

@@ -594,6 +594,9 @@ func printProfileContainer(p *config.ProfileConfig) {
 		if p.Container.StoragePool != "" {
 			fmt.Printf("storage_pool = %q\n", p.Container.StoragePool)
 		}
+		if p.Container.KeepOnFailedSave != nil {
+			fmt.Printf("keep_on_failed_save = %v\n", *p.Container.KeepOnFailedSave)
+		}
 	}
 }
 

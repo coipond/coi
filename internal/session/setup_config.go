@@ -82,6 +82,18 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 	stateDir := filepath.Join(homeDir, configDirName)
 	essentialFiles, stateFile := toolHostFiles(hostCLIConfigPath, homeDir, tcf)
 
+	// A saved session's WAL would be replayed over the fresh DB.
+	stale := map[string][]string{}
+	if sw, ok := tcf.(tool.ToolWithSQLiteWALFiles); ok && hostCLIConfigPath != "" {
+		for _, db := range sw.SQLiteWALFiles() {
+			if _, err := os.Stat(filepath.Join(hostCLIConfigPath, db)); err == nil {
+				containerDB := filepath.Join(stateDir, db)
+				dir := filepath.Dir(containerDB)
+				stale[dir] = append(stale[dir], containerDB+"-wal", containerDB+"-shm")
+			}
+		}
+	}
+	madeDirs := map[string]bool{stateDir: len(stale[stateDir]) == 0}
 	// Copy essential config files from host — only those that exist on host
 	for _, f := range essentialFiles {
 		if hostCLIConfigPath == "" {
@@ -91,11 +103,16 @@ func injectCredentials(mgr container.ContainerManager, hostCLIConfigPath, homeDi
 			logger(fmt.Sprintf("  - Refreshing %s", filepath.Base(f.ContainerPath)))
 			// A file in a subdir (goose's chatgpt_codex/tokens.json) may be new
 			// to the saved session, and PushFile does not create its parent.
-			if dir := filepath.Dir(f.ContainerPath); dir != stateDir {
-				if err := mgr.ExecArgs([]string{"mkdir", "-p", dir}, container.ExecCommandOptions{}); err != nil {
-					logger(fmt.Sprintf("  - Warning: Failed to create %s: %v", dir, err))
+			if dir := filepath.Dir(f.ContainerPath); !madeDirs[dir] {
+				args := []string{"mkdir", "-p", dir}
+				if rm := stale[dir]; len(rm) > 0 {
+					args = append([]string{"sh", "-c", `mkdir -p "$1" && shift && rm -f "$@"`, "sh", dir}, rm...)
+				}
+				if err := mgr.ExecArgs(args, container.ExecCommandOptions{}); err != nil {
+					logger(fmt.Sprintf("  - Warning: Failed to prepare %s: %v", dir, err))
 					continue
 				}
+				madeDirs[dir] = true
 			}
 			if err := mgr.PushFile(f.HostPath, f.ContainerPath); err != nil {
 				logger(fmt.Sprintf("  - Warning: Failed to copy %s: %v", filepath.Base(f.ContainerPath), err))
