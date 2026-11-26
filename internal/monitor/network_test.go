@@ -502,7 +502,8 @@ func TestNestedNetnsConnectionsReadsEachOtherNetnsOnce(t *testing.T) {
 
 func TestNestedNetnsConnectionsWithoutInitNetns(t *testing.T) {
 	root := fakeSocketProc(t)
-	fakeNetTables(t, root, 42)
+	nested := "   0: 0500000A:9C40 04030201:115C 01 00000000:00000000 00:00000000 00000000     0        0 777 1 0000000000000000 20 4 30 10 -1\n"
+	fakeNetTables(t, root, 42, nested)
 	if conns := nestedNetnsConnections(40, []int{42}); conns != nil {
 		t.Errorf("got %+v, want nil when the init netns is unknown", conns)
 	}
