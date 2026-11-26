@@ -103,8 +103,8 @@ func wellKnownCgroupPaths(containerName string) []string {
 // any. In cgroup v2 the container init process is started first and therefore
 // has the lowest host PID in the tree. Systemd-based containers move PID 1
 // into init.scope, so the walk covers the full tree rather than only the root
-// cgroup.procs. With no PIDs there, the init PID comes from incus info and
-// the PIDs from a walk of its cgroup (nil when that cannot be read).
+// cgroup.procs. With no PIDs there, pids is nil and the init PID comes from
+// incus info.
 func containerPIDs(ctx context.Context, containerName string) (initPID int, pids []int, err error) {
 	for _, cgroupPath := range wellKnownCgroupPaths(containerName) {
 		if found, err := cgroupPIDs(cgroupPath); err == nil && len(found) > 0 {
@@ -112,13 +112,19 @@ func containerPIDs(ctx context.Context, containerName string) (initPID int, pids
 		}
 	}
 	initPID, err = getInitPIDViaIncus(ctx, containerName)
+	return initPID, nil, err
+}
+
+// pidCgroupPIDs returns the PIDs in the cgroup tree of host pid (its
+// systemd scope stripped), for a container outside the well-known cgroup
+// paths. nil when the cgroup cannot be read.
+func pidCgroupPIDs(pid int) []int {
+	path, err := cgroupPathOfPID(pid)
 	if err != nil {
-		return 0, nil, err
+		return nil
 	}
-	if path, err := cgroupPathOfPID(initPID); err == nil {
-		pids, _ = cgroupPIDs(stripSystemdScopeSuffix(path))
-	}
-	return initPID, pids, nil
+	pids, _ := cgroupPIDs(stripSystemdScopeSuffix(path))
+	return pids
 }
 
 // cgroupPIDs returns the PIDs in every cgroup.procs file under cgroupPath.

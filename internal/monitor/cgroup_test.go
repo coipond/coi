@@ -300,35 +300,3 @@ func TestContainerPIDs_IncusFallbackWhenWalkFindsNone(t *testing.T) {
 		t.Errorf("got init %d, pids %v, want 4242 from incus info and no pids", initPID, pids)
 	}
 }
-
-func TestContainerPIDs_IncusFallbackWalksInitCgroup(t *testing.T) {
-	procDir := fakeSocketProc(t)
-	root := fakeCgroupRoot(t)
-	fakeDfIncus(t, `echo "PID: 40"`)
-	// A layout outside the well-known paths.
-	initScope := filepath.Join(root, "machine.slice", "c1", "init.scope")
-	if err := os.MkdirAll(initScope, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(initScope, "cgroup.procs"), []byte("40\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "machine.slice", "c1", "cgroup.procs"), []byte("42\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(procDir, "40"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(procDir, "40", "cgroup"), []byte("0::/machine.slice/c1/init.scope\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	initPID, pids, err := containerPIDs(t.Context(), "c1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	slices.Sort(pids)
-	if initPID != 40 || !slices.Equal(pids, []int{40, 42}) {
-		t.Errorf("got init %d, pids %v, want 40 from incus info and [40 42] from its cgroup", initPID, pids)
-	}
-}

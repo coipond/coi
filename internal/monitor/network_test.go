@@ -559,3 +559,36 @@ func TestParseConnectionsReadsNestedNetnsFromCgroupWalk(t *testing.T) {
 		t.Errorf("got %+v, want only the nested connection", conns)
 	}
 }
+
+func TestParseConnectionsReadsNestedNetnsOnIncusFallback(t *testing.T) {
+	procDir := fakeSocketProc(t)
+	cgroupDir := fakeCgroupRoot(t)
+	fakeDfIncus(t, `echo "PID: 40"`)
+	fakeNetTables(t, procDir, 40)
+	fakeNetTables(t, procDir, 42, nestedC2Line)
+	// A layout outside the well-known paths.
+	initScope := filepath.Join(cgroupDir, "machine.slice", "c1", "init.scope")
+	if err := os.MkdirAll(initScope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(initScope, "cgroup.procs"), []byte("40\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cgroupDir, "machine.slice", "c1", "cgroup.procs"), []byte("42\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(procDir, "40", "cgroup"), []byte("0::/machine.slice/c1/init.scope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conns, pid, err := parseConnections(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pid != 40 {
+		t.Errorf("got pid %d, want 40 from incus info", pid)
+	}
+	if len(conns) != 1 || conns[0].Inode != 777 {
+		t.Errorf("got %+v, want only the nested connection from the init PID's cgroup", conns)
+	}
+}

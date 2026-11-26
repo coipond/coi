@@ -71,6 +71,9 @@ func parseConnections(ctx context.Context, containerName, containerIP string) ([
 	if pid > 0 {
 		// Prefer namespaced paths scoped to the container's network namespace.
 		if connections, ok := netnsConnections(pid); ok {
+			if pids == nil {
+				pids = pidCgroupPIDs(pid)
+			}
 			nested := nestedNetnsConnections(pid, pids)
 			return append(connections, nested...), pid, nil
 		}
