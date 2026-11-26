@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/coipond/coi/internal/config"
 	"github.com/coipond/coi/internal/container"
@@ -19,6 +20,21 @@ var errGitDirIndirection = errors.New("workspace .git uses gitdir indirection")
 
 // errSymlinkedPath refuses a protected path that is, or lies below, a symlink.
 var errSymlinkedPath = errors.New("refusing to mount through a symlink")
+
+// errInvalidProtectedPath refuses a protected_paths entry that is empty,
+// absolute or leaves the workspace: it names no workspace path to protect.
+var errInvalidProtectedPath = errors.New("invalid protected path")
+
+// errPlaceholderFailed reports an absent protected path whose read-only
+// placeholder could not be created (read-only or unwritable workspace).
+var errPlaceholderFailed = errors.New("cannot create protected path placeholder")
+
+// mkdir is os.Mkdir; tests replace it to lose the creation race.
+var mkdir = os.Mkdir
+
+// ErrProtectFailed reports existing protected paths that could not be mounted
+// read-only. The session must not start without them.
+var ErrProtectFailed = errors.New("cannot protect protected paths")
 
 // SetupSecurityMounts mounts protected paths as read-only for security.
 // This prevents containers from modifying files that could execute automatically
@@ -45,10 +61,14 @@ var errSymlinkedPath = errors.New("refusing to mount through a symlink")
 // The dirs between the workspace root and each protected path are pinned
 // (parentPinMounts), except at or below a sec.SecretPaths mask.
 //
-// Returns the effective (expanded) protected-path list, so the caller can drive
-// its logging and host-immutable passes over the same set that was mounted, and an
-// error if a mount failed. The list is returned even on error so a partial failure
-// still applies the immutable attribute to the full set.
+// Entries that clean to the same path are mounted once. Every path is tried
+// even after one fails. Returns the effective (expanded) protected-path list,
+// so the caller can drive its logging and host-immutable passes over the same
+// set that was mounted, and an error. An error wrapping ErrProtectFailed
+// names each existing path that could not be mounted and its cause: the
+// caller must abort the session start. Any other error carries warnings
+// (refused or invalid entries, unpinned parent dirs); the list is returned
+// with it so the immutable attribute still covers the full set.
 func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containerWorkspacePath string, protectedPaths []string, useShift bool, sec *config.SecurityConfig, scan NestedGitScan, writableHooks bool) ([]string, error) {
 	dirs := realDirs{}
 	protectedPaths = expandGitWorktreeProtectedPaths(workspacePath, protectedPaths, sec, dirs)
@@ -57,33 +77,56 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 		return protectedPaths, nil
 	}
 
-	var warnings, prepared []string
+	var warnings, failed, prepared []string
 	var batch []container.DiskMount
-	for _, relPath := range protectedPaths {
+	// Entries that clean to an earlier one (".vscode", "./.vscode", ".vscode/")
+	// are skipped: Incus refuses a second device with the same name.
+	var seen map[string]bool
+	var deduped []string
+	for i, relPath := range protectedPaths {
 		d, err := prepareProtectedPath(workspacePath, containerWorkspacePath, relPath, useShift, dirs)
 		if err == nil {
-			prepared = append(prepared, filepath.Clean(relPath))
+			cleaned := filepath.Clean(relPath)
+			if seen[cleaned] {
+				if deduped == nil {
+					deduped = append(make([]string, 0, len(protectedPaths)-1), protectedPaths[:i]...)
+				}
+				continue
+			}
+			if seen == nil {
+				seen = make(map[string]bool, len(protectedPaths))
+			}
+			seen[cleaned] = true
+			if deduped != nil {
+				deduped = append(deduped, relPath)
+			}
+			prepared = append(prepared, cleaned)
 			if isBatchedGitPath(relPath) {
 				batch = append(batch, d)
 				continue
 			}
 			err = mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly)
+		} else if deduped != nil {
+			deduped = append(deduped, relPath)
 		}
 		if err != nil {
-			if errors.Is(err, errGitDirIndirection) || errors.Is(err, errSymlinkedPath) {
+			if errors.Is(err, errGitDirIndirection) || errors.Is(err, errSymlinkedPath) || errors.Is(err, errInvalidProtectedPath) || errors.Is(err, errPlaceholderFailed) {
 				warnings = append(warnings, fmt.Sprintf("%s: %v", relPath, err))
 				continue
 			}
 			// Paths that legitimately cannot be protected (non-git workspace,
-			// a file-type default whose parent directory is missing, or a
-			// user-added path that does not exist in the workspace) surface
-			// as os.ErrNotExist and are skipped silently. Any other failure
-			// (validation / stat / mount errors) is propagated and surfaces
-			// as a warning at the caller in setup.go.
+			// a file-type default whose parent directory is missing or not a
+			// directory, or a user-added path that does not exist in the
+			// workspace) surface as os.ErrNotExist and are skipped silently.
+			// Any other failure (stat / mount errors) fails the setup once
+			// every later path was tried.
 			if !errors.Is(err, os.ErrNotExist) {
-				return protectedPaths, fmt.Errorf("failed to protect %s: %w", relPath, err)
+				failed = append(failed, fmt.Sprintf("%s: %v", relPath, err))
 			}
 		}
+	}
+	if deduped != nil {
+		protectedPaths = deduped
 	}
 	var masked []string
 	if sec != nil && len(sec.SecretPaths) > 0 {
@@ -95,7 +138,10 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 	pins := parentPinMounts(workspacePath, containerWorkspacePath, prepared, masked, useShift)
 	pinWarnings, err := mountNestedAndPins(mgr, batch, pins)
 	if err != nil {
-		return protectedPaths, fmt.Errorf("failed to protect nested git paths: %w", err)
+		failed = append(failed, err.Error())
+	}
+	if len(failed) > 0 {
+		return protectedPaths, fmt.Errorf("%w: %s", ErrProtectFailed, strings.Join(failed, "; "))
 	}
 	warnings = append(warnings, pinWarnings...)
 
@@ -187,10 +233,11 @@ func StripSecurityDevices(mgr securityDeviceStripper, logger func(string)) {
 //
 // Returns the effective (expanded) protected-path list — which the caller adopts
 // as canonical for downstream logging/context — and whether the host-immutable
-// attribute was applied. The error is non-nil only for a FAIL-CLOSED secret-mask
-// failure (a configured secret could not be masked); the caller must abort start
-// rather than launch with the secret exposed. Read-only protected-mount failures
-// are logged and non-fatal, matching prior behavior.
+// attribute was applied. The error is non-nil only for a FAIL-CLOSED failure: an
+// existing protected path could not be mounted read-only (ErrProtectFailed), or
+// a configured secret could not be masked. The caller must abort start rather
+// than launch with the path writable or the secret exposed. Refused protected
+// paths and unpinned parent dirs are logged and non-fatal.
 func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, containerWorkspacePath string, useShift bool, worktreeLayout *GitWorktreeLayout, worktreeWritableHooks bool, containerName string, nestedScan NestedGitScan) (effectivePaths []string, hasImmutable bool, err error) {
 	securityPaths := opts.Security.ProtectedPaths
 	if worktreeLayout != nil {
@@ -200,9 +247,11 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 		securityPaths = StripGitProtectedPaths(securityPaths)
 	}
 	effectivePaths, mErr := SetupSecurityMounts(mgr, opts.WorkspacePath, containerWorkspacePath, securityPaths, useShift, opts.Security.Config, nestedScan, worktreeWritableHooks)
+	if errors.Is(mErr, ErrProtectFailed) {
+		return effectivePaths, false, mErr
+	}
 	if mErr != nil {
 		opts.Logger(fmt.Sprintf("Warning: Failed to setup security mounts: %v", mErr))
-		// Non-fatal: continue even if a read-only protection mount fails.
 	} else if len(effectivePaths) > 0 {
 		if actual := GetProtectedPathsForLogging(opts.WorkspacePath, effectivePaths); len(actual) > 0 {
 			opts.Logger(fmt.Sprintf("Protected paths (mounted read-only): %s", strings.Join(actual, ", ")))
@@ -218,6 +267,9 @@ func applySessionSecurity(mgr container.ContainerManager, opts SetupOptions, con
 		commonDir = worktreeLayout.CommonDir
 		var cErr error
 		cProtected, cErr = SetupCommonDirProtection(mgr, commonDir, useShift, worktreeWritableHooks, opts.Security.Config)
+		if errors.Is(cErr, ErrProtectFailed) {
+			return effectivePaths, false, cErr
+		}
 		if cErr != nil {
 			opts.Logger(fmt.Sprintf("Warning: some git common-dir protections not applied: %v", cErr))
 		}
@@ -312,34 +364,38 @@ func pinDeviceName(containerPath string) string {
 // A pin can share its path with a device added elsewhere (a user mount), so
 // a failed pin is a warning and never costs the nested git entries or the
 // other pins. A batch is retried as separate PATCHes, which merge the devices
-// map, so re-sending a device that an earlier chunk added is a no-op.
+// map, so re-sending a device that an earlier chunk added is a no-op. When
+// the nested entries fail as a batch, each is tried alone, so the error names
+// every entry that failed and no other entry is skipped.
 func mountNestedAndPins(mgr container.ContainerDevices, nested, pins []container.DiskMount) (pinWarnings []string, err error) {
 	bm, ok := mgr.(diskBatchMounter)
-	if !ok {
-		for _, d := range nested {
-			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
-				return nil, err
-			}
+	mount := func(d container.DiskMount) error {
+		if ok {
+			return bm.MountDisks([]container.DiskMount{d})
 		}
-		for _, d := range pins {
-			if err := mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly); err != nil {
-				pinWarnings = append(pinWarnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
-			}
+		return mgr.MountDisk(d.Name, d.Source, d.Path, d.Shift, d.Readonly)
+	}
+	if ok {
+		if len(nested)+len(pins) == 0 || bm.MountDisks(append(nested, pins...)) == nil {
+			return nil, nil
 		}
-		return pinWarnings, nil
+		if len(nested) > 0 && bm.MountDisks(nested) == nil {
+			nested = nil
+		}
 	}
-	if len(nested)+len(pins) == 0 || bm.MountDisks(append(nested, pins...)) == nil {
-		return nil, nil
-	}
-	if len(nested) > 0 {
-		if err := bm.MountDisks(nested); err != nil {
-			return nil, err
+	var failed []string
+	for _, d := range nested {
+		if err := mount(d); err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", d.Path, err))
 		}
 	}
 	for _, d := range pins {
-		if err := bm.MountDisks([]container.DiskMount{d}); err != nil {
+		if err := mount(d); err != nil {
 			pinWarnings = append(pinWarnings, fmt.Sprintf("parent dir %s not pinned: %v", d.Path, err))
 		}
+	}
+	if len(failed) > 0 {
+		return pinWarnings, errors.New(strings.Join(failed, "; "))
 	}
 	return pinWarnings, nil
 }
@@ -403,31 +459,31 @@ func prepareProtectedPath(workspacePath, containerWorkspacePath, relPath string,
 }
 
 // validateRelPath rejects protected_paths entries that are empty,
-// absolute, or attempt to traverse outside the workspace. Returning
-// a non-os.ErrNotExist error causes the caller to surface a warning
-// rather than silently skipping the entry.
+// absolute, or attempt to traverse outside the workspace. The error wraps
+// errInvalidProtectedPath, which the caller surfaces as a warning rather
+// than silently skipping the entry.
 func validateRelPath(relPath string) error {
 	if relPath == "" {
-		return fmt.Errorf("protected path is empty")
+		return fmt.Errorf("%w: protected path is empty", errInvalidProtectedPath)
 	}
 	if filepath.IsAbs(relPath) {
-		return fmt.Errorf("protected path %q must be relative to workspace", relPath)
+		return fmt.Errorf("%w: protected path %q must be relative to workspace", errInvalidProtectedPath, relPath)
 	}
 	cleaned := filepath.Clean(relPath)
 	if cleaned == "." || cleaned == ".." {
-		return fmt.Errorf("protected path %q resolves outside workspace", relPath)
+		return fmt.Errorf("%w: protected path %q resolves outside workspace", errInvalidProtectedPath, relPath)
 	}
 	// Reject any ".." segment anywhere in either the original or cleaned
 	// form. filepath.Clean collapses inner traversals (e.g. "foo/../bar"
 	// becomes "bar"), hiding the attacker's intent — check both.
 	for _, seg := range strings.Split(relPath, "/") {
 		if seg == ".." {
-			return fmt.Errorf("protected path %q must not contain .. segments", relPath)
+			return fmt.Errorf("%w: protected path %q must not contain .. segments", errInvalidProtectedPath, relPath)
 		}
 	}
 	for _, seg := range strings.Split(cleaned, string(filepath.Separator)) {
 		if seg == ".." {
-			return fmt.Errorf("protected path %q must not contain .. segments", relPath)
+			return fmt.Errorf("%w: protected path %q must not contain .. segments", errInvalidProtectedPath, relPath)
 		}
 	}
 	return nil
@@ -1038,6 +1094,8 @@ func isNestedGitPath(rel string) bool {
 func ensureProtectedExists(workspacePath, hostPath, relPath string) error {
 	if _, err := os.Lstat(hostPath); err == nil {
 		return nil // already exists, don't clobber
+	} else if errors.Is(err, syscall.ENOTDIR) {
+		return os.ErrNotExist // a parent is a file: the path cannot exist
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("failed to stat %s: %w", relPath, err)
 	}
@@ -1071,13 +1129,13 @@ func createProtectedFilePlaceholder(hostPath, relPath string) error {
 	parent := filepath.Dir(hostPath)
 	parentInfo, err := os.Lstat(parent)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR) {
 			return os.ErrNotExist
 		}
 		return fmt.Errorf("failed to stat parent of %s: %w", relPath, err)
 	}
 	if parentInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("parent of %s is a symlink; refusing to create placeholder", relPath)
+		return fmt.Errorf("%w: parent of %s is a symlink; refusing to create placeholder", errSymlinkedPath, relPath)
 	}
 	if !parentInfo.IsDir() {
 		return os.ErrNotExist
@@ -1088,7 +1146,7 @@ func createProtectedFilePlaceholder(hostPath, relPath string) error {
 		if os.IsExist(err) {
 			return nil // lost a harmless race
 		}
-		return fmt.Errorf("failed to create protected file placeholder %s: %w", relPath, err)
+		return fmt.Errorf("%w: failed to create protected file placeholder %s: %w", errPlaceholderFailed, relPath, err)
 	}
 	if filepath.Base(relPath) == "commondir" {
 		if _, err := f.WriteString(commonDirPlaceholder); err != nil {
@@ -1119,7 +1177,7 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 		info, err := os.Lstat(current)
 		if err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("refusing to create %s: parent component %s is a symlink", relPath, current)
+				return fmt.Errorf("%w: refusing to create %s: parent component %s is a symlink", errSymlinkedPath, relPath, current)
 			}
 			if !info.IsDir() {
 				return fmt.Errorf("refusing to create %s: parent component %s is not a directory", relPath, current)
@@ -1129,8 +1187,16 @@ func safeMkdirAll(workspacePath, hostPath, relPath string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to stat %s: %w", current, err)
 		}
-		if err := os.Mkdir(current, 0o755); err != nil {
-			return fmt.Errorf("failed to create protected directory %s: %w", relPath, err)
+		if err := mkdir(current, 0o755); err != nil {
+			if os.IsExist(err) {
+				// Lost a race: a real dir is fine; anything else exists
+				// unprotected, so it must not become a warning.
+				if info, lerr := os.Lstat(current); lerr == nil && info.Mode()&os.ModeSymlink == 0 && info.IsDir() {
+					continue
+				}
+				return fmt.Errorf("failed to create protected directory %s: %w", relPath, err)
+			}
+			return fmt.Errorf("%w: failed to create protected directory %s: %w", errPlaceholderFailed, relPath, err)
 		}
 	}
 	return nil

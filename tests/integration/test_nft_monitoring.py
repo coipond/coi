@@ -794,8 +794,8 @@ enabled = true
     def test_lan_access_flagged_in_restricted_mode(
         self, test_workspace, coi_binary, coi_monitoring_env
     ):
-        """Restricted mode blocks LAN traffic: an RFC1918 connection is a HIGH threat.
-        With auto_pause_on_high = false it is only alerted and the container keeps
+        """Restricted mode blocks LAN traffic: an RFC1918 connection the firewall
+        rejects is a WARNING threat. It is only alerted and the container keeps
         running.
         """
         # The LOG rules run before the restricted-mode firewall drops the SYN.
@@ -821,20 +821,20 @@ enabled = true
                 timeout=10,
             )
 
-            # The HIGH event must be logged first, so a running container proves
+            # The event must be logged first, so a running container proves
             # the response was skipped, not that detection never happened.
-            events = _wait_for_events(name, lambda e: e.get("level") == "high")
-            high_events = [e for e in events if e.get("level") == "high"]
-            assert high_events, (
-                f"Expected HIGH threat logged for private network access. Events: {events}"
+            def is_lan(e):
+                return e.get("title") == "Connection to private network"
+
+            events = _wait_for_events(name, is_lan)
+            lan_events = [e for e in events if is_lan(e)]
+            assert lan_events, (
+                f"Expected a threat logged for private network access. Events: {events}"
             )
-            assert any(e.get("title") == "Connection to private network" for e in high_events), (
-                high_events
-            )
-            actions = {e.get("action") for e in high_events}
+            assert all(e.get("level") == "warning" for e in lan_events), lan_events
+            actions = {e.get("action") for e in lan_events}
             assert actions <= {"alerted", "deduplicated"}, (
-                f"auto_pause_on_high=false: HIGH threats must only be alerted, "
-                f"got actions {actions}. Events: {high_events}"
+                f"WARNING threats must only be alerted, got actions {actions}. Events: {lan_events}"
             )
 
             # A pause would freeze the container within a few seconds

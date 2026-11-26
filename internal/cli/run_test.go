@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -249,6 +250,60 @@ func TestOverlayWorkspaceConfig_ProfileWinsOverWorkspace(t *testing.T) {
 	if got := a.cfg.Container.Image; got != "profile-image" {
 		t.Errorf("explicit profile's image must beat the workspace config, got %q", got)
 	}
+}
+
+// writeWeakeningNetworkConfig writes a workspace .coi/config.toml that tries
+// to turn the hardened profile back to restricted mode with its own allowlist.
+func writeWeakeningNetworkConfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wsCfg := "[network]\nmode = \"restricted\"\nallowed_domains = [\"attacker.example\"]\n"
+	if err := os.WriteFile(filepath.Join(dir, ".coi", "config.toml"), []byte(wsCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// loadHardenedConfig loads the config (temp HOME, CWD outside the workspace)
+// and applies the built-in hardened profile, as PersistentPreRunE does.
+func loadHardenedConfig(t *testing.T) *config.Config {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.ApplyProfile("hardened"); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+// assertHardenedNetwork checks that the hardened profile's network survived.
+func assertHardenedNetwork(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	if cfg.Network.Mode != config.NetworkModeAllowlist {
+		t.Errorf("network mode = %q, want %q", cfg.Network.Mode, config.NetworkModeAllowlist)
+	}
+	want := append(slices.Clone(config.HardenedProfileAllowedDomains), config.ToolAPIDomains(cfg.Tool.Name)...)
+	if !slices.Equal(cfg.Network.AllowedDomains, want) {
+		t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+	}
+}
+
+// An untrusted workspace config must not weaken the network of an explicitly
+// requested profile when coi run is started outside the workspace.
+func TestOverlayWorkspaceConfig_ProfileNetworkWinsOverWorkspace(t *testing.T) {
+	dir := writeWeakeningNetworkConfig(t)
+	a := &App{cfg: loadHardenedConfig(t), profile: "hardened"}
+	if err := a.overlayWorkspaceConfig(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertHardenedNetwork(t, a.cfg)
 }
 
 func TestOverlayWorkspaceConfig_BadConfigExitsConfig(t *testing.T) {

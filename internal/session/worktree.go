@@ -310,7 +310,9 @@ func commonDirProtectedPaths(commonDir string, writableHooks bool, sec *config.S
 // as their number grows with the worktrees.
 //
 // writableHooks mirrors the workspace `git.writable_hooks` opt-out. Returns the list of
-// protected relative paths (for logging) and an aggregated warning error.
+// protected relative paths (for logging) and an aggregated warning error, or an
+// error wrapping ErrProtectFailed when a sink could not be mounted: the caller
+// must abort the session start.
 func SetupCommonDirProtection(mgr container.ContainerDevices, commonDir string, useShift, writableHooks bool, sec *config.SecurityConfig) ([]string, error) {
 	if sec != nil && sec.DisableProtection {
 		return nil, nil
@@ -329,8 +331,7 @@ func SetupCommonDirProtection(mgr container.ContainerDevices, commonDir string, 
 	}
 	pinWarnings, err := mountNestedAndPins(mgr, mounts, parentPinMounts(commonDir, commonDir, protected, nil, useShift))
 	if err != nil {
-		warnings = append([]string{fmt.Sprintf("mount git common-dir sinks: %v", err)}, warnings...)
-		return nil, errors.New(strings.Join(warnings, "; "))
+		return nil, fmt.Errorf("%w: %v", ErrProtectFailed, err)
 	}
 	warnings = append(warnings, pinWarnings...)
 	if len(warnings) > 0 {

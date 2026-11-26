@@ -1,5 +1,5 @@
 """Test for coi shell - benign workloads in each network mode, beside positive
-controls: open mode, allowlist mode, and the hardened profile (restricted, pause
+controls: open mode, allowlist mode, and the hardened profile (allowlist, pause
 and kill). Both monitors are on and every threshold is at its default.
 
 Tests that:

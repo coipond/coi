@@ -44,6 +44,7 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 		if reason != "" {
 			connections[i].Suspicious = true
 			connections[i].SuspectReason = reason
+			connections[i].FirewallRejected = firewallRejects(connections[i], permitted)
 			suspicious++
 		}
 	}
@@ -421,6 +422,16 @@ func checkSuspicious(conn Connection, mode config.NetworkMode, allowedCIDRs []st
 	}
 
 	return ""
+}
+
+// firewallRejects reports whether the firewall rejects conn's destination
+// (permitted's verdict). No verdict (permitted nil) is not a rejection, nor is
+// a TCP socket past SYN_SENT: its handshake got through the firewall.
+func firewallRejects(conn Connection, permitted PermittedDestinationFunc) bool {
+	if permitted == nil || (strings.HasPrefix(conn.Protocol, "tcp") && conn.State != "SYN_SENT") {
+		return false
+	}
+	return !permitted(conn.Protocol, extractIP(conn.RemoteAddr), extractPort(conn.RemoteAddr))
 }
 
 // extractIP extracts IP address from "IP:port" string

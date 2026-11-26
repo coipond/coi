@@ -206,6 +206,9 @@ type Connection struct {
 	Inode         uint64 `json:"-"`                        // Socket inode (matches an fd link socket:[N])
 	Suspicious    bool   `json:"suspicious"`               // Flagged as suspicious
 	SuspectReason string `json:"suspect_reason,omitempty"` // Why flagged
+	// FirewallRejected: the firewall rejects this destination, so the flagged
+	// connection is an attempt it stopped (see firewallRejects).
+	FirewallRejected bool `json:"firewall_rejected,omitempty"`
 }
 
 // ResourceStats represents container resource usage
@@ -270,6 +273,12 @@ type DaemonConfig struct {
 	// "off". Controls the severity of interpreter one-liner reverse-shell
 	// matches (python -c, perl -e, ...). Empty string = default (critical).
 	ReverseShellOneLinerPolicy string
+
+	// Firewall-rejected attempts to this many distinct destinations within
+	// the window are HIGH, one alone WARNING ([monitoring]
+	// rejected_burst_threshold, rejected_burst_window_sec; 0 = default).
+	RejectedBurstThreshold int
+	RejectedBurstWindowSec int
 
 	// Response configuration
 	AutoPauseOnHigh    bool

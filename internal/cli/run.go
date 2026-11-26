@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -598,11 +599,15 @@ func (a *App) overlayWorkspaceConfig(absWorkspace string) error {
 	}
 	container.Configure(a.cfg.Incus.Project, a.cfg.Incus.CodeUser, a.cfg.Incus.CodeUID)
 	// An explicitly requested --profile must keep winning over the workspace
-	// overlay for [container] settings — otherwise a project config could
-	// silently override the profile the user asked for (and precedence would
-	// depend on whether the command ran from inside the workspace or not).
+	// overlay for [container] and [network] settings — otherwise a project
+	// config could silently override the profile the user asked for (and
+	// precedence would depend on whether the command ran from inside the
+	// workspace or not).
 	if a.profile != "" {
 		if err := a.cfg.ReapplyProfileContainer(a.profile); err != nil {
+			return err
+		}
+		if err := a.cfg.ReapplyProfileNetwork(a.profile); err != nil {
 			return err
 		}
 	}
@@ -728,9 +733,12 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 	// SetupSecurityMounts expands the dynamic per-worktree git configs internally
 	// (issue #545 — the single chokepoint both `coi run` and `coi shell` share) and
 	// returns the effective list to drive logging + the immutable pass over the same
-	// set. The immutable pass runs even on a partial mount error, so it is gated on
-	// the returned list rather than the error.
+	// set. The immutable pass runs even with warnings, so it is gated on the
+	// returned list rather than the error.
 	effectivePaths, err := session.SetupSecurityMounts(mgr, absWorkspace, containerWorkspacePath, protectedPaths, useShift, &a.cfg.Security, nestedScan, config.BoolVal(a.cfg.Git.WritableHooks))
+	if errors.Is(err, session.ErrProtectFailed) {
+		return err
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to setup security mounts: %v\n", err)
 	} else if len(effectivePaths) > 0 {
@@ -758,6 +766,9 @@ func (a *App) applySecurityMounts(mgr container.ContainerManager, absWorkspace, 
 		writableHooks := config.BoolVal(a.cfg.Git.WritableHooks)
 		var cErr error
 		cProtected, cErr = session.SetupCommonDirProtection(mgr, commonDir, useShift, writableHooks, &a.cfg.Security)
+		if errors.Is(cErr, session.ErrProtectFailed) {
+			return cErr
+		}
 		if cErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: some git common-dir protections not applied: %v\n", cErr)
 		}

@@ -2,7 +2,7 @@
 Built-in "hardened" profile: a one-flag hardened preset for opening untrusted /
 freshly-cloned repos (`coi shell --profile hardened`). Issue #496.
 
-It bundles Coi's strongest EXISTING controls (no new enforcement): restricted
+It bundles Coi's strongest EXISTING controls (no new enforcement): allowlist
 network, secret masking, host immutability, ephemeral container, no SSH-agent
 forwarding, and threat monitoring. It ships built-in (no disk profile needed),
 so these checks need neither incus nor sudo — they assert the preset is present
@@ -30,7 +30,9 @@ def test_hardened_profile_hardened_settings(coi_binary):
     out = r.stdout
 
     expected = [
-        'mode = "restricted"',  # no exfil path
+        'mode = "allowlist"',  # no exfil path
+        '"rubygems.org"',  # default allowlist: package hosts
+        '"api.anthropic.com"',  # default allowlist: the configured tool's API
         "persistent = false",  # ephemeral
         "forward_agent = false",  # never forward host SSH agent
         "host_immutable = true",  # host-side immutability
