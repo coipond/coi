@@ -243,11 +243,12 @@ func toolConfigSeeded(mgr containerCommandRunner, homeDir string, tcf tool.ToolW
 // code user, root only for a /root home): the paths sit in a dir the agent
 // controls, and root would follow a planted symlink out of it. Paths are
 // coi-controlled (home + config dir + fixed names), so no shell-quoting is
-// needed. Saved sessions on the host are not touched.
-func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, logger func(string)) error {
+// needed. Saved sessions on the host are not touched. It reports whether it
+// removed anything (false for a tool without memory paths).
+func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, logger func(string)) (bool, error) {
 	tmp, ok := t.(tool.ToolWithMemoryPaths)
 	if !ok || t.ConfigDirName() == "" {
-		return nil
+		return false, nil
 	}
 	dir := filepath.Join(homeDir, t.ConfigDirName())
 	args := make([]string, 0, len(tmp.MemoryPaths()))
@@ -255,14 +256,14 @@ func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, lo
 		args = append(args, filepath.Join(dir, p))
 	}
 	if len(args) == 0 {
-		return nil
+		return false, nil
 	}
 	logger(fmt.Sprintf("Starting %s without memory of earlier sessions ([tool] memory = \"fresh\")", t.Name()))
 	uid := homeFileOwner(homeDir)
 	if _, err := mgr.ExecCommand("rm -rf -- "+strings.Join(args, " "), container.ExecCommandOptions{User: &uid, Capture: true}); err != nil {
-		return fmt.Errorf("failed to clear %s memory: %w", t.Name(), err)
+		return false, fmt.Errorf("failed to clear %s memory: %w", t.Name(), err)
 	}
-	return nil
+	return true, nil
 }
 
 // toolSessionLive reports whether the tool may still run in the container:

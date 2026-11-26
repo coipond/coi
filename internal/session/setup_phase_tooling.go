@@ -30,7 +30,7 @@ func (st *setupState) phaseResumeRestore(_ context.Context) (Teardown, error) {
 			// session's memory (a later fresh session removed this one's), so
 			// put back exactly the resumed session's memory files. The rest of
 			// the config dir stays as the later sessions left it.
-			if err := clearToolMemory(st.result.Manager, st.result.HomeDir, st.opts.Tool, st.opts.Logger); err != nil {
+			if _, err := clearToolMemory(st.result.Manager, st.result.HomeDir, st.opts.Tool, st.opts.Logger); err != nil {
 				return nil, err
 			}
 			if err := restoreToolMemory(st.result.Manager, st.opts.ResumeFromID, st.result.HomeDir, st.opts.SessionsDir, st.opts.Tool, st.opts.Logger); err != nil {
@@ -117,9 +117,11 @@ func (st *setupState) freshMemory() bool {
 // 11. Setup CLI tool config (skip if resuming — config already restored).
 func (st *setupState) phaseSetupCLIConfig(_ context.Context) (Teardown, error) {
 	if st.freshMemory() && st.opts.ResumeFromID == "" {
-		if err := clearToolMemory(st.result.Manager, st.result.HomeDir, st.opts.Tool, st.opts.Logger); err != nil {
+		cleared, err := clearToolMemory(st.result.Manager, st.result.HomeDir, st.opts.Tool, st.opts.Logger)
+		if err != nil {
 			return nil, err
 		}
+		st.result.freshMemory = cleared
 	}
 	if st.opts.Tool != nil {
 		if tcf, ok := st.opts.Tool.(tool.ToolWithConfigDirFiles); ok {

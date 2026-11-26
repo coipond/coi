@@ -772,6 +772,33 @@ func TestRenderContextFileContent_SudoUnavailable(t *testing.T) {
 	}
 }
 
+func TestRenderContextFileContent_FreshMemory(t *testing.T) {
+	const reset = "started without your history and memory of earlier sessions"
+	cases := []struct {
+		name        string
+		persistent  bool
+		freshMemory bool
+		want        bool
+	}{
+		{"reused with fresh memory", true, true, true},
+		{"persistent, memory kept", true, false, false},
+		{"ephemeral", false, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			content := RenderContextFileContent(ContextInfo{Persistent: c.persistent, FreshMemory: c.freshMemory})
+			if got := strings.Contains(content, reset); got != c.want {
+				t.Errorf("memory reset note = %v, want %v:\n%s", got, c.want, content)
+			}
+			if c.want && !strings.Contains(content, "- **Mode**: Persistent (survives between sessions) — reused container, "+reset+
+				"; what they installed and set up (packages, runtimes, files outside the workspace, tool settings, credentials) "+
+				"is still here: check before installing it again\n") {
+				t.Errorf("unexpected Mode line:\n%s", content)
+			}
+		})
+	}
+}
+
 func TestRenderContextFileContent_Persistent(t *testing.T) {
 	info := ContextInfo{
 		WorkspacePath: "/workspace",

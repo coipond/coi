@@ -630,6 +630,7 @@ type ContextInfo struct {
 	WorkspacePath      string      // Mount point inside container (e.g., "/workspace")
 	HomeDir            string      // Home directory inside container (e.g., "/home/code")
 	Persistent         bool        // Whether the container persists between sessions
+	FreshMemory        bool        // [tool] memory = "fresh" removed the tool's memory in this reused container
 	NetworkMode        string      // "restricted", "open", "allowlist", or ""
 	AllowedPorts       []int       // Egress destination-port allowlist (empty = all ports)
 	DNSServers         []string    // Pinned DNS resolvers, :53 restricted to these (empty = unrestricted)
@@ -764,6 +765,11 @@ func RenderContextFileContent(info ContextInfo) string {
 
 	if info.Persistent {
 		data.PersistenceDesc = "Persistent (survives between sessions)"
+		if info.FreshMemory {
+			data.PersistenceDesc += " — reused container, started without your history and memory of earlier sessions; " +
+				"what they installed and set up (packages, runtimes, files outside the workspace, tool settings, credentials) " +
+				"is still here: check before installing it again"
+		}
 	}
 
 	switch info.NetworkMode {
