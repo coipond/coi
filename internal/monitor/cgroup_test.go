@@ -13,12 +13,17 @@ import (
 	"github.com/coipond/coi/internal/container"
 )
 
-func TestInitPIDFromCgroupProcs_SingleProc(t *testing.T) {
-	dir := t.TempDir()
+func TestGetContainerInitPID_SingleProc(t *testing.T) {
+	root := fakeCgroupRoot(t)
+	fakeDfIncus(t, "exit 1")
+	dir := filepath.Join(root, "lxc.payload.c1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "cgroup.procs"), []byte("1234\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pid, err := initPIDFromCgroupProcs(dir)
+	pid, err := GetContainerInitPID(t.Context(), "c1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -27,18 +32,19 @@ func TestInitPIDFromCgroupProcs_SingleProc(t *testing.T) {
 	}
 }
 
-func TestInitPIDFromCgroupProcs_ReturnsMinimum(t *testing.T) {
+func TestGetContainerInitPID_ReturnsMinimum(t *testing.T) {
 	// Simulate a systemd container: PID 1 is in init.scope, other processes
 	// are in sub-cgroups with higher PIDs.
-	dir := t.TempDir()
-
-	// Root cgroup.procs is empty (systemd moves all procs to sub-cgroups).
-	if err := os.WriteFile(filepath.Join(dir, "cgroup.procs"), []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	root := fakeCgroupRoot(t)
+	fakeDfIncus(t, "exit 1")
+	dir := filepath.Join(root, "lxc.payload.c1")
 
 	initScope := filepath.Join(dir, "init.scope")
 	if err := os.MkdirAll(initScope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Root cgroup.procs is empty (systemd moves all procs to sub-cgroups).
+	if err := os.WriteFile(filepath.Join(dir, "cgroup.procs"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(initScope, "cgroup.procs"), []byte("500\n"), 0o644); err != nil {
@@ -53,7 +59,7 @@ func TestInitPIDFromCgroupProcs_ReturnsMinimum(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pid, err := initPIDFromCgroupProcs(dir)
+	pid, err := GetContainerInitPID(t.Context(), "c1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,21 +68,11 @@ func TestInitPIDFromCgroupProcs_ReturnsMinimum(t *testing.T) {
 	}
 }
 
-func TestInitPIDFromCgroupProcs_EmptyDir(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "cgroup.procs"), []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := initPIDFromCgroupProcs(dir)
-	if err == nil {
-		t.Error("expected error for empty cgroup.procs, got nil")
-	}
-}
-
-func TestInitPIDFromCgroupProcs_NonexistentPath(t *testing.T) {
-	_, err := initPIDFromCgroupProcs("/nonexistent/cgroup/path")
-	if err == nil {
-		t.Error("expected error for nonexistent path, got nil")
+func TestGetContainerInitPID_NoCgroupAndIncusFails(t *testing.T) {
+	fakeCgroupRoot(t)
+	fakeDfIncus(t, "exit 1")
+	if _, err := GetContainerInitPID(t.Context(), "c1"); err == nil {
+		t.Error("expected error with no cgroup tree and a failing incus info, got nil")
 	}
 }
 

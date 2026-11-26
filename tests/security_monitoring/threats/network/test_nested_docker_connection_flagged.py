@@ -10,18 +10,28 @@ The registry is not needed: the Docker container runs an image imported
 offline from symlinks, with the container's /usr mounted read-only. Connected
 UDP sends nothing."""
 
-from pathlib import Path
-
 from support.helpers import import_nested_docker_image
 from support.monitoring import (
-    cleanup_container,
     get_threat_events,
     hold_script,
+    monitored_shell,
     poll_network_threats,
-    start_shell,
 )
 
 SLOT = 78
+
+CONFIG = """
+[network]
+mode = "open"
+
+[monitoring]
+enabled = true
+auto_pause_on_high = false
+auto_kill_on_critical = false
+poll_interval_sec = 1
+file_read_threshold_mb = 500
+file_read_rate_mb_per_sec = 1000
+"""
 
 HOLD = """
 import sys
@@ -40,27 +50,7 @@ MAIN_HOST = "203.0.113.10"
 
 
 def test_nested_docker_connection_flagged(test_workspace, coi_binary):
-    config_path = Path.home() / ".coi" / "config.toml"
-    backup = config_path.read_text() if config_path.exists() else None
-
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        """
-[network]
-mode = "open"
-
-[monitoring]
-enabled = true
-auto_pause_on_high = false
-auto_kill_on_critical = false
-poll_interval_sec = 1
-file_read_threshold_mb = 500
-file_read_rate_mb_per_sec = 1000
-"""
-    )
-    container_name, proc = start_shell(test_workspace, coi_binary, SLOT)
-    holders = []
-    try:
+    with monitored_shell(test_workspace, coi_binary, SLOT, CONFIG) as (container_name, holders):
         rc, out = import_nested_docker_image(coi_binary, container_name)
         assert rc == 0, f"nested Docker image must import: {out}"
 
@@ -79,12 +69,3 @@ file_read_rate_mb_per_sec = 1000
             f"threat events: {get_threat_events(container_name)}"
         )
         assert all(t.get("level") == "high" for t in nested), nested
-    finally:
-        for h in holders:
-            h.terminate()
-        proc.terminate()
-        cleanup_container(container_name, coi_binary)
-        if backup is not None:
-            config_path.write_text(backup)
-        elif config_path.exists():
-            config_path.unlink()

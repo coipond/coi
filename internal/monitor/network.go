@@ -16,10 +16,11 @@ import (
 
 // CollectNetworkStats collects network statistics and flags suspicious connections.
 // It attempts to read /proc/<container-init-pid>/net/tcp[6] from the host so the
-// data is scoped to the container's network namespace. If PID resolution or the
-// namespaced reads fail, it falls back to host /proc/net/tcp[6] filtered by
-// containerIP (best-effort; requires a non-empty containerIP to avoid returning
-// all host connections).
+// data is scoped to the container's network namespace, plus the tables of the
+// network namespace of every other process in the container (nested Docker,
+// unshare -n). If PID resolution or the namespaced reads fail, it falls back to
+// host /proc/net/tcp[6] filtered by containerIP (best-effort; requires a
+// non-empty containerIP to avoid returning all host connections).
 func CollectNetworkStats(ctx context.Context, containerName, containerIP string, mode config.NetworkMode, allowedCIDRs []string, permitted, portPermitted PermittedDestinationFunc, gateway func() string) (NetworkStats, error) {
 	connections, pid, err := parseConnections(ctx, containerName, containerIP)
 	if err != nil {
