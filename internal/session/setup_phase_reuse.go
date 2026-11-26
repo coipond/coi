@@ -68,8 +68,9 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 					fmt.Sprintf("stop it (coi shutdown %s) and launch again", st.result.ContainerName)); err != nil {
 					return nil, err
 				}
-				// Also for an explicit --container: the keys cannot be set on
-				// a running NIC, and the egress rules rely on them.
+				// Also for an explicit --container: the egress rules rely on
+				// the keys, and coi does not change a running container's NIC
+				// (applying port_isolation re-plugs eth0 mid-session).
 				if err := refuseMissingNICSecurity(st.result.ContainerName, networkMode(st.opts.Network.Config),
 					nicSecurityRemedy(st.result.ContainerName, st.opts.ContainerName != "")); err != nil {
 					return nil, err

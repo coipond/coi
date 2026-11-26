@@ -53,9 +53,10 @@ func ReconcileNICSecurity(containerName string, mode config.NetworkMode, logger 
 
 // refuseMissingNICSecurity fails a restricted/allowlist session that would use
 // a container coi does not reconcile (a running one, or a stopped one named
-// with --container) while its eth0 lacks the anti-spoofing keys: a read-only
-// check, since a running NIC cannot take them. remedy tells the user what to
-// do instead.
+// with --container) while its eth0 lacks the anti-spoofing keys. It is a
+// read-only check: coi does not change a running container's NIC (applying
+// port_isolation re-plugs eth0 mid-session), nor a --container one it does not
+// manage. remedy tells the user what to do instead.
 func refuseMissingNICSecurity(containerName string, mode config.NetworkMode, remedy string) error {
 	if !nicSecurityRequired(mode) {
 		return nil

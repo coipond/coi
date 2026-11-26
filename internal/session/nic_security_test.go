@@ -204,6 +204,42 @@ func TestPhaseReconcileExisting_NICSecurityRefusal(t *testing.T) {
 	}
 }
 
+// A running container whose config cannot be read is refused in
+// restricted/allowlist mode: the anti-spoofing check fails closed.
+func TestPhaseReconcileExisting_NICSecurityReadError(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
+			name := fmt.Sprintf("nic-read-%v", explicit)
+			dir := t.TempDir()
+			logPath := filepath.Join(dir, "calls")
+			script := "#!/bin/sh\necho \"$*\" >> " + logPath + "\ncase \"$*\" in\n" +
+				"  *\"config show \"*) echo \"Error: refused\" >&2; exit 1 ;;\n" +
+				"  *\"list \"*\"--columns=ns\"*) echo \"" + name + ",RUNNING\" ;;\n" +
+				"  *\"list \"*\"--columns=n\"*) echo \"" + name + "\" ;;\n" +
+				"esac\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(dir, "incus"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			opts := SetupOptions{Persistent: true, WorkspacePath: t.TempDir(), Logger: func(string) {}}
+			if explicit {
+				opts.ContainerName = name
+			}
+			opts.Network.Config = &config.NetworkConfig{Mode: config.NetworkModeRestricted}
+			st := &setupState{opts: opts, result: &SetupResult{Manager: container.NewManager(name), ContainerName: name}}
+			_, err := st.phaseReconcileExisting(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "could not check the NIC anti-spoofing") {
+				t.Fatalf("want a fail-closed read error, got %v", err)
+			}
+			b, _ := os.ReadFile(logPath)
+			if strings.Contains(string(b), "start "+name) || strings.Contains(string(b), "config device override") ||
+				strings.Contains(string(b), "config device set") {
+				t.Errorf("want no start and no device write, calls:\n%s", b)
+			}
+		})
+	}
+}
+
 // failNICIncus is an incus that logs its calls and refuses the eth0 security
 // keys; every other call succeeds.
 func failNICIncus(t *testing.T) (logPath string) {
