@@ -329,6 +329,10 @@ func (c *Config) ApplyProfile(name string) error {
 	if profile.Network != nil {
 		mergeNetworkInto(&c.Network, profile.Network)
 	}
+	if profile.toolAPIDomains {
+		c.toolAPIDomains = true
+	}
+	c.syncToolAPIDomains()
 	if profile.Paths != nil {
 		mergePathsInto(&c.Paths, profile.Paths)
 	}
@@ -350,6 +354,43 @@ func (c *Config) ApplyProfile(name string) error {
 
 	expandConfigPaths(c)
 	return nil
+}
+
+// syncToolAPIDomains adds the configured tool's api_domains to allowed_domains
+// once a profile asking for them is applied, and drops those it added for a
+// previous tool. It runs after every merge that can change the tool.
+func (c *Config) syncToolAPIDomains() {
+	if !c.toolAPIDomains {
+		return
+	}
+	domains := make([]string, 0, len(c.Network.AllowedDomains))
+	for _, d := range c.Network.AllowedDomains {
+		if !slices.Contains(c.addedAPIDomains, d) {
+			domains = append(domains, d)
+		}
+	}
+	c.addedAPIDomains = nil
+	for _, d := range ToolAPIDomains(c.Tool.Name) {
+		if !slices.Contains(domains, d) {
+			domains = append(domains, d)
+			c.addedAPIDomains = append(c.addedAPIDomains, d)
+		}
+	}
+	c.Network.AllowedDomains = domains
+}
+
+// AllowedDomainsFor returns the profile's allowed_domains as ApplyProfile sets
+// them for the named tool: with the tool's api_domains when the profile adds
+// them.
+func (p *ProfileConfig) AllowedDomainsFor(toolName string) []string {
+	var domains []string
+	if p.Network != nil {
+		domains = cloneSlice(p.Network.AllowedDomains)
+	}
+	if p.toolAPIDomains {
+		domains = MergeStringSliceUnique(domains, ToolAPIDomains(toolName))
+	}
+	return domains
 }
 
 // ReapplyProfileContainer re-merges ONLY the container section of the named
@@ -523,6 +564,9 @@ func mergeProfiles(parent, child ProfileConfig) ProfileConfig {
 	if result.Mounts == nil {
 		result.Mounts = parent.Mounts
 		result.mountsFromConfig = parent.mountsFromConfig
+	}
+	if parent.toolAPIDomains {
+		result.toolAPIDomains = true
 	}
 	if result.Sockets == nil {
 		result.Sockets = parent.Sockets

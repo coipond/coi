@@ -74,6 +74,11 @@ type Config struct {
 	ProfileContextFile string                   `toml:"-"` // Set by ApplyProfile, read by session setup
 
 	pendingProfiles map[string]pendingProfile // Listed by LoadOnDemand, not read yet
+
+	// toolAPIDomains is set once a profile with toolAPIDomains is applied;
+	// addedAPIDomains are the hosts it added for the current tool.
+	toolAPIDomains  bool
+	addedAPIDomains []string
 }
 
 // PromptEntry is one entry in the [prompts] registry. It is a union that
@@ -688,6 +693,10 @@ type ProfileConfig struct {
 	// synthesized "default" profile, or a profile inheriting them from it), so
 	// ApplyProfile does not add them a second time.
 	mountsFromConfig bool
+	// toolAPIDomains makes ApplyProfile add the configured tool's api_domains
+	// to allowed_domains (the built-in "hardened" profile and the profiles
+	// inheriting it).
+	toolAPIDomains bool
 
 	// Extended fields — previously Config-only, now available in profiles
 	Paths      *PathsConfig      `toml:"paths"`

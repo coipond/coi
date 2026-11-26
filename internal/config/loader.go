@@ -181,6 +181,7 @@ func (c *Config) OverlayProjectConfig(workspaceDir string) error {
 	if err := loadConfigFileScoped(c, path, false); err != nil && !os.IsNotExist(err) {
 		return &ConfigError{Err: fmt.Errorf("failed to load project config from %s: %w", workspaceDir, err)}
 	}
+	c.syncToolAPIDomains()
 	return nil
 }
 
