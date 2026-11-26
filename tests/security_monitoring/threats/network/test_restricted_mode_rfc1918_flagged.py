@@ -2,8 +2,8 @@
 monitor flags a LAN host the firewall blocks.
 
 Tests that:
-- a connected UDP socket to a LAN host that is not permitted raises a HIGH
-  RFC1918 threat from the process monitor;
+- a connected UDP socket to a LAN host that is not permitted raises a WARNING
+  RFC1918 threat (rejected by the firewall) from the process monitor;
 - beside it, an ESTABLISHED connection to a [[network.hosts]] service on the
   same LAN raises none, so the firewall permits still reach the process
   monitor without the nft monitor."""
@@ -65,7 +65,7 @@ def test_restricted_mode_rfc1918_flagged(test_workspace, coi_binary):
             f"{blocked}:443 must be flagged as a private address in restricted mode; "
             f"threat events: {get_threat_events(container_name)}"
         )
-        assert all(t.get("level") == "high" for t in threats), threats
+        assert all(t.get("level") == "warning" for t in threats), threats
 
         time.sleep(5)
         flagged = [
