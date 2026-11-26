@@ -244,7 +244,8 @@ func toolConfigSeeded(mgr containerCommandRunner, homeDir string, tcf tool.ToolW
 // controls, and root would follow a planted symlink out of it. Paths are
 // coi-controlled (home + config dir + fixed names), so no shell-quoting is
 // needed. Saved sessions on the host are not touched. It reports whether it
-// removed anything (false for a tool without memory paths).
+// ran the removal (false for a tool without memory paths), not whether any
+// path existed: rm -rf of a missing path succeeds.
 func clearToolMemory(mgr containerCommandRunner, homeDir string, t tool.Tool, logger func(string)) (bool, error) {
 	tmp, ok := t.(tool.ToolWithMemoryPaths)
 	if !ok || t.ConfigDirName() == "" {
