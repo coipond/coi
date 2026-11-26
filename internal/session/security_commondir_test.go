@@ -857,13 +857,13 @@ func TestSetupCommonDirProtection_MountFailureFailsClosed(t *testing.T) {
 	bad := filepath.Join(common, "hooks")
 
 	for _, batch := range []bool{true, false} {
-		dev, f := newFailingDevices(batch, bad)
+		dev, f := newTakenDevices(batch, bad)
 		_, err := SetupCommonDirProtection(dev, common, false, false, nil)
-		if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), bad+": Failed to add device") {
+		if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), bad+": More than one disk device uses the same path") {
 			t.Errorf("batch=%v: want ErrProtectFailed naming %s, got %v", batch, bad, err)
 		}
-		if p := filepath.Join(common, "config"); !slices.Contains(f.mounted, p) {
-			t.Errorf("batch=%v: %s skipped after the hooks failure, mounted %v", batch, p, f.mounted)
+		if p := filepath.Join(common, "config"); !slices.Contains(f.mounted(), p) {
+			t.Errorf("batch=%v: %s skipped after the hooks failure, mounted %v", batch, p, f.mounted())
 		}
 	}
 }
@@ -875,9 +875,9 @@ func TestApplySessionSecurity_CommonDirMountFailureAbortsStart(t *testing.T) {
 	mkGitDir(t, common, ".")
 	opts := SetupOptions{WorkspacePath: t.TempDir(), Logger: func(string) {}}
 	opts.Security.ProtectedPaths = []string{".git/hooks", ".vscode"}
-	dev, _ := newFailingDevices(true, filepath.Join(common, "hooks"))
+	_, f := newTakenDevices(true, filepath.Join(common, "hooks"))
 
-	_, _, err := applySessionSecurity(dev.(container.ContainerManager), opts, "/workspace", false, &GitWorktreeLayout{CommonDir: common}, false, "c1", NestedGitScan{})
+	_, _, err := applySessionSecurity(takenManager{d: f}, opts, "/workspace", false, &GitWorktreeLayout{CommonDir: common}, false, "c1", NestedGitScan{})
 	if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), filepath.Join(common, "hooks")) {
 		t.Fatalf("want ErrProtectFailed naming the common-dir hooks, got %v", err)
 	}

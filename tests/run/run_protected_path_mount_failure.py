@@ -13,7 +13,7 @@ import subprocess
 
 from support.helpers import write_trusted_coi_config
 
-MARKER = "COMMAND_RAN_54888"
+MARKER = "COMMAND_RAN"
 
 
 def test_run_protected_path_mount_failure(coi_binary, cleanup_containers, workspace_dir, tmp_path):

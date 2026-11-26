@@ -12,9 +12,8 @@ import (
 type batchFake struct {
 	fakeDiskDevices
 	patches   [][]container.DiskMount
-	failBatch bool   // fail any MountDisks call with more than one device
-	failName  string // fail MountDisks for this device
-	failNames map[string]bool
+	failBatch bool            // fail any MountDisks call with more than one device
+	failNames map[string]bool // fail MountDisks for these devices
 }
 
 func (f *batchFake) MountDisks(mounts []container.DiskMount) error {
@@ -22,7 +21,7 @@ func (f *batchFake) MountDisks(mounts []container.DiskMount) error {
 		return errors.New("batch rejected")
 	}
 	for _, d := range mounts {
-		if d.Name == f.failName || f.failNames[d.Name] {
+		if f.failNames[d.Name] {
 			return errors.New("device rejected")
 		}
 	}
@@ -91,7 +90,7 @@ func TestDeviceBatch_RemovalOfMissingDeviceIsSkipped(t *testing.T) {
 // warning, the rest still lands.
 func TestDeviceBatch_FailedBatchRetriesPerDevice(t *testing.T) {
 	f := newBatchFake()
-	f.failBatch, f.failName = true, "pin-bad"
+	f.failBatch, f.failNames = true, map[string]bool{"pin-bad": true}
 	var warnings []string
 	b := newDeviceBatch(f, func(s string) { warnings = append(warnings, s) })
 	_ = b.MountDisk("workspace", "/new", "/workspace", true, false)

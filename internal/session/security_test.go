@@ -1172,57 +1172,6 @@ func TestSetupSecurityMounts_ExpandsWorktreeConfigsAtChokepoint(t *testing.T) {
 	}
 }
 
-// failingDevices fails, like a refused Incus device, any mount at a path in
-// fail and records the others.
-type failingDevices struct {
-	container.ContainerManager
-	fail     map[string]bool
-	attempts []string
-	mounted  []string
-}
-
-func (d *failingDevices) MountDisk(_, _, path string, _, _ bool) error {
-	d.attempts = append(d.attempts, path)
-	if d.fail[path] {
-		return errors.New("Failed to add device")
-	}
-	d.mounted = append(d.mounted, path)
-	return nil
-}
-
-// failingBatchDevices is failingDevices with the MountDisks batch method.
-type failingBatchDevices struct {
-	failingDevices
-}
-
-func (d *failingBatchDevices) MountDisks(mounts []container.DiskMount) error {
-	for _, m := range mounts {
-		if d.fail[m.Path] {
-			d.attempts = append(d.attempts, m.Path)
-			return errors.New("Failed to add device")
-		}
-	}
-	for _, m := range mounts {
-		d.attempts = append(d.attempts, m.Path)
-		d.mounted = append(d.mounted, m.Path)
-	}
-	return nil
-}
-
-// newFailingDevices returns devices failing every path in fail, with the
-// MountDisks batch method when batch is set, and their record.
-func newFailingDevices(batch bool, fail ...string) (container.ContainerDevices, *failingDevices) {
-	f := &failingDevices{fail: map[string]bool{}}
-	for _, p := range fail {
-		f.fail[p] = true
-	}
-	if !batch {
-		return f, f
-	}
-	bd := &failingBatchDevices{failingDevices: *f}
-	return bd, &bd.failingDevices
-}
-
 // A protected path that cannot be mounted fails the setup with an error
 // naming it, after every later path, the nested git entries and the parent
 // pins were tried: one failure skips nothing.
@@ -1236,14 +1185,14 @@ func TestSetupSecurityMounts_MountFailureTriesEveryPath(t *testing.T) {
 	later := []string{"/workspace/.git/config", "/workspace/.vscode", "/workspace/.git/modules/lib/hooks", "/workspace/.git/modules/lib/config", "/workspace/.git/modules"}
 
 	for _, batch := range []bool{true, false} {
-		dev, f := newFailingDevices(batch, "/workspace/.git/hooks")
+		dev, f := newTakenDevices(batch, "/workspace/.git/hooks")
 		_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", ".git/config", ".vscode"}, false, nil, NestedGitScan{}, false)
-		if want := ".git/hooks: Failed to add device"; !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), want) {
+		if want := ".git/hooks: More than one disk device uses the same path"; !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), want) {
 			t.Errorf("batch=%v: want ErrProtectFailed naming %q, got %v", batch, want, err)
 		}
 		for _, p := range later {
-			if !slices.Contains(f.mounted, p) {
-				t.Errorf("batch=%v: %s skipped after the .git/hooks failure, mounted %v", batch, p, f.mounted)
+			if !slices.Contains(f.mounted(), p) {
+				t.Errorf("batch=%v: %s skipped after the .git/hooks failure, mounted %v", batch, p, f.mounted())
 			}
 		}
 	}
@@ -1258,14 +1207,14 @@ func TestSetupSecurityMounts_NestedMountFailureNamesEntry(t *testing.T) {
 	bad := "/workspace/.git/modules/lib/config"
 
 	for _, batch := range []bool{true, false} {
-		dev, f := newFailingDevices(batch, bad)
+		dev, f := newTakenDevices(batch, bad)
 		_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks"}, false, nil, NestedGitScan{}, false)
-		if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), bad+": Failed to add device") {
+		if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), bad+": More than one disk device uses the same path") {
 			t.Errorf("batch=%v: want ErrProtectFailed naming %s, got %v", batch, bad, err)
 		}
 		for _, p := range []string{"/workspace/.git/hooks", "/workspace/.git/modules/lib/hooks", "/workspace/.git/modules/lib/commondir", "/workspace/.git/modules", "/workspace/.git/modules/lib/info"} {
-			if !slices.Contains(f.mounted, p) {
-				t.Errorf("batch=%v: %s skipped after the %s failure, mounted %v", batch, p, bad, f.mounted)
+			if !slices.Contains(f.mounted(), p) {
+				t.Errorf("batch=%v: %s skipped after the %s failure, mounted %v", batch, p, bad, f.mounted())
 			}
 		}
 	}
@@ -1274,12 +1223,12 @@ func TestSetupSecurityMounts_NestedMountFailureNamesEntry(t *testing.T) {
 // A missing protected path is still skipped silently: nothing to protect.
 func TestSetupSecurityMounts_MissingPathIsNotAFailure(t *testing.T) {
 	tmp := t.TempDir()
-	dev, f := newFailingDevices(true)
+	dev, f := newTakenDevices(true)
 	if _, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".git/hooks", "missing/dir"}, false, nil, NestedGitScan{}, false); err != nil {
 		t.Fatalf("want no error for missing paths, got %v", err)
 	}
-	if len(f.attempts) != 0 {
-		t.Errorf("want no mounts, got %v", f.attempts)
+	if len(f.mounted()) != 0 {
+		t.Errorf("want no mounts, got %v", f.mounted())
 	}
 }
 
@@ -1291,14 +1240,14 @@ func TestApplySessionSecurity_MountFailureAbortsStart(t *testing.T) {
 	var logged []string
 	opts := SetupOptions{WorkspacePath: ws, Logger: func(s string) { logged = append(logged, s) }}
 	opts.Security.ProtectedPaths = []string{".git/hooks", ".git/config"}
-	dev, f := newFailingDevices(true, "/workspace/.git/hooks")
+	_, f := newTakenDevices(true, "/workspace/.git/hooks")
 
-	_, _, err := applySessionSecurity(dev.(container.ContainerManager), opts, "/workspace", false, nil, false, "c1", NestedGitScan{})
+	_, _, err := applySessionSecurity(takenManager{d: f}, opts, "/workspace", false, nil, false, "c1", NestedGitScan{})
 	if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), ".git/hooks") {
 		t.Fatalf("want ErrProtectFailed naming .git/hooks, got %v (logged %q)", err, logged)
 	}
-	if !slices.Contains(f.mounted, "/workspace/.git/config") {
-		t.Errorf(".git/config skipped after the .git/hooks failure, mounted %v", f.mounted)
+	if !slices.Contains(f.mounted(), "/workspace/.git/config") {
+		t.Errorf(".git/config skipped after the .git/hooks failure, mounted %v", f.mounted())
 	}
 }
 
@@ -1309,7 +1258,7 @@ func TestSetupSecurityMounts_DuplicateEntriesMountOnce(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, ".vscode"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dev := &uniqueNameDevices{names: map[string]bool{}}
+	dev := &incusLikeManager{paths: map[string]string{}}
 	if err := os.MkdirAll(filepath.Join(tmp, ".husky"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1320,8 +1269,8 @@ func TestSetupSecurityMounts_DuplicateEntriesMountOnce(t *testing.T) {
 	if want := []string{".vscode", ".husky", "../x"}; !slices.Equal(eff, want) {
 		t.Errorf("want paths %v, got %v", want, eff)
 	}
-	if len(dev.names) != 2 {
-		t.Errorf("want one .vscode and one .husky mount, got %v", dev.names)
+	if len(dev.paths) != 2 {
+		t.Errorf("want one .vscode and one .husky mount, got %v", dev.paths)
 	}
 }
 
@@ -1343,7 +1292,7 @@ func TestSetupSecurityMounts_UnwritableWorkspaceWarns(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(tmp, 0o755); _ = os.Chmod(claude, 0o755) })
-	dev, f := newFailingDevices(true)
+	dev, f := newTakenDevices(true)
 	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".vscode", ".husky", ".claude/settings.json", ".git"}, false, nil, NestedGitScan{}, false)
 	if err == nil || errors.Is(err, ErrProtectFailed) {
 		t.Fatalf("want a warning, not ErrProtectFailed, got %v", err)
@@ -1353,23 +1302,9 @@ func TestSetupSecurityMounts_UnwritableWorkspaceWarns(t *testing.T) {
 			t.Errorf("warning %q does not name %s", err, want)
 		}
 	}
-	if !slices.Contains(f.mounted, "/workspace/.git") {
-		t.Errorf(".git skipped after the placeholder failures, mounted %v", f.mounted)
+	if !slices.Contains(f.mounted(), "/workspace/.git") {
+		t.Errorf(".git skipped after the placeholder failures, mounted %v", f.mounted())
 	}
-}
-
-// uniqueNameDevices refuses, like Incus, a second device with the same name.
-type uniqueNameDevices struct {
-	container.ContainerManager
-	names map[string]bool
-}
-
-func (d *uniqueNameDevices) MountDisk(name, _, _ string, _, _ bool) error {
-	if d.names[name] {
-		return errors.New("The device already exists")
-	}
-	d.names[name] = true
-	return nil
 }
 
 // Entries that name no workspace path are warnings, not failures: there is
@@ -1379,7 +1314,7 @@ func TestSetupSecurityMounts_InvalidEntriesWarn(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, ".vscode"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dev, f := newFailingDevices(true)
+	dev, f := newTakenDevices(true)
 	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{"../x", "/etc/passwd", "", ".vscode"}, false, nil, NestedGitScan{}, false)
 	if err == nil || errors.Is(err, ErrProtectFailed) {
 		t.Fatalf("want a warning, not ErrProtectFailed, got %v", err)
@@ -1389,8 +1324,8 @@ func TestSetupSecurityMounts_InvalidEntriesWarn(t *testing.T) {
 			t.Errorf("warning %q does not name %s", err, want)
 		}
 	}
-	if !slices.Contains(f.mounted, "/workspace/.vscode") {
-		t.Errorf(".vscode skipped after the invalid entries, mounted %v", f.mounted)
+	if !slices.Contains(f.mounted(), "/workspace/.vscode") {
+		t.Errorf(".vscode skipped after the invalid entries, mounted %v", f.mounted())
 	}
 }
 
@@ -1403,13 +1338,13 @@ func TestSetupSecurityMounts_ParentIsFileIsNotAFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	dev, f := newFailingDevices(true)
+	dev, f := newTakenDevices(true)
 	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".claude/settings.json", ".claude/settings.local.json", ".idea/x/y"}, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Fatalf("want no error, got %v", err)
 	}
-	if len(f.attempts) != 0 {
-		t.Errorf("want no mounts, got %v", f.attempts)
+	if len(f.mounted()) != 0 {
+		t.Errorf("want no mounts, got %v", f.mounted())
 	}
 }
 
@@ -1425,13 +1360,13 @@ func TestSetupSecurityMounts_MkdirRaceStillMounts(t *testing.T) {
 		}
 		return orig(path, perm)
 	}
-	dev, f := newFailingDevices(false)
+	dev, f := newTakenDevices(false)
 	_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".husky"}, false, nil, NestedGitScan{}, false)
 	if err != nil {
 		t.Fatalf("want no error after a lost mkdir race, got %v", err)
 	}
-	if !slices.Contains(f.mounted, "/workspace/.husky") {
-		t.Errorf(".husky not mounted after a lost mkdir race, mounted %v", f.mounted)
+	if !slices.Contains(f.mounted(), "/workspace/.husky") {
+		t.Errorf(".husky not mounted after a lost mkdir race, mounted %v", f.mounted())
 	}
 }
 
@@ -1454,12 +1389,12 @@ func TestSetupSecurityMounts_MkdirRaceNonDirFailsClosed(t *testing.T) {
 				}
 				return os.ErrExist
 			}
-			dev, f := newFailingDevices(false)
+			dev, f := newTakenDevices(false)
 			_, err := SetupSecurityMounts(dev, tmp, "/workspace", []string{".husky"}, false, nil, NestedGitScan{}, false)
 			if !errors.Is(err, ErrProtectFailed) || !strings.Contains(err.Error(), ".husky") {
 				t.Fatalf("want ErrProtectFailed naming .husky, got %v", err)
 			}
-			if slices.Contains(f.mounted, "/workspace/.husky") {
+			if slices.Contains(f.mounted(), "/workspace/.husky") {
 				t.Errorf(".husky mounted after a %s won the race", name)
 			}
 		})

@@ -80,8 +80,7 @@ func SetupSecurityMounts(mgr container.ContainerDevices, workspacePath, containe
 	var warnings, failed, prepared []string
 	var batch []container.DiskMount
 	// Entries that clean to an earlier one (".vscode", "./.vscode", ".vscode/")
-	// are skipped: Incus refuses a second device with the same name. deduped
-	// is built only once a duplicate turns up.
+	// are skipped: Incus refuses a second device with the same name.
 	var seen map[string]bool
 	var deduped []string
 	for i, relPath := range protectedPaths {
