@@ -56,22 +56,47 @@ func CollectNetworkStats(ctx context.Context, containerName, containerIP string,
 }
 
 // parseConnections reads the container's /proc/net/tcp[6] via the host-side
-// namespaced path /proc/<container-init-pid>/net/tcp[6], plus the tables of
-// the network namespace of every other process in the container. Falls back
-// to the host's /proc/net/tcp + containerIP filter when PID resolution fails
-// or when the namespaced paths cannot be read. The returned PID is the one
-// whose namespaced paths were read, or 0 for the host fallback.
+// namespaced path /proc/<container-init-pid>/net/tcp[6]. Falls back to the
+// host's /proc/net/tcp + containerIP filter when PID resolution fails or when
+// the namespaced paths cannot be read. The returned PID is the one whose
+// namespaced paths were read, or 0 for the host fallback.
 func parseConnections(ctx context.Context, containerName, containerIP string) ([]Connection, int, error) {
-	pid, pids, pidErr := containerPIDs(ctx, containerName)
+	pid, pidErr := GetContainerInitPID(ctx, containerName)
 	if pidErr != nil && ctx.Err() != nil {
 		return nil, 0, ctx.Err()
 	}
 
 	if pid > 0 {
 		// Prefer namespaced paths scoped to the container's network namespace.
-		if connections, ok := netnsConnections(pid); ok {
-			nested := nestedNetnsConnections(pid, pids)
-			return append(connections, nested...), pid, nil
+		var connections []Connection
+		namespacedOK := false
+
+		tcp4Conns, err := parseProcNetTCP(fmt.Sprintf("/proc/%d/net/tcp", pid), "tcp")
+		if err == nil {
+			connections = append(connections, tcp4Conns...)
+			namespacedOK = true
+		}
+
+		tcp6Conns, err := parseProcNetTCP(fmt.Sprintf("/proc/%d/net/tcp6", pid), "tcp6")
+		if err == nil {
+			connections = append(connections, tcp6Conns...)
+			namespacedOK = true
+		}
+
+		udpConns, err := parseProcNetTCP(fmt.Sprintf("/proc/%d/net/udp", pid), "udp")
+		if err == nil {
+			connections = append(connections, udpConns...)
+			namespacedOK = true
+		}
+
+		udp6Conns, err := parseProcNetTCP(fmt.Sprintf("/proc/%d/net/udp6", pid), "udp6")
+		if err == nil {
+			connections = append(connections, udp6Conns...)
+			namespacedOK = true
+		}
+
+		if namespacedOK {
+			return connections, pid, nil
 		}
 		// Namespaced paths unreadable — fall through to host fallback below.
 	}
@@ -111,41 +136,6 @@ func parseConnections(ctx context.Context, containerName, containerIP string) ([
 		}
 	}
 	return filtered, 0, nil
-}
-
-// netnsConnections reads the tcp, tcp6, udp and udp6 tables of the network
-// namespace of host pid. ok is false when none of them could be read.
-func netnsConnections(pid int) (connections []Connection, ok bool) {
-	for _, table := range []string{"tcp", "tcp6", "udp", "udp6"} {
-		conns, err := parseProcNetTCP(fmt.Sprintf("%s/%d/net/%s", procRoot, pid, table), table)
-		if err == nil {
-			connections = append(connections, conns...)
-			ok = true
-		}
-	}
-	return connections, ok
-}
-
-// nestedNetnsConnections reads the tables of each network namespace of pids
-// (nested Docker, unshare -n) other than the one of initPID, once per
-// namespace. A pid whose namespace cannot be identified is skipped.
-func nestedNetnsConnections(initPID int, pids []int) []Connection {
-	initKey, ok := netnsKey(initPID)
-	if !ok {
-		return nil
-	}
-	seen := map[uint64]bool{initKey: true}
-	var connections []Connection
-	for _, pid := range pids {
-		key, ok := netnsKey(pid)
-		if !ok || seen[key] {
-			continue
-		}
-		seen[key] = true
-		conns, _ := netnsConnections(pid)
-		connections = append(connections, conns...)
-	}
-	return connections
 }
 
 // containerLocalNets returns the IPv4 networks that a /proc/<pid>/net/route
