@@ -12,6 +12,8 @@ coi still handles the tool's real config dir):
    plain exit and in the restarted one, brings its memory back from the saved
    session on the host, drops the second session's memory, and keeps a config
    file the second session changed
+4. ~/SANDBOX_CONTEXT.md tells the agent about the reset only in the new
+   session of step 1, not on the first start or on --resume
 
 A plain `coi shell` reuses only a stopped persistent container (a running one
 is a live session, so it gets a new slot), so session 1 always powers off.
@@ -47,6 +49,8 @@ from support.helpers import (
 INSTALLED = "/home/code/.local/bin/installed-tool"
 # Planted memory holds this; the dummy creates an empty history.jsonl itself.
 OLD = "old"
+CONTEXT = "/home/code/SANDBOX_CONTEXT.md"
+RESET_NOTE = "started without your history and memory of earlier sessions"
 
 TOOLS = {
     "claude": {
@@ -97,6 +101,13 @@ def _has_old(coi_binary, container, path):
     return ok and out.strip() == OLD
 
 
+def _context_says_reset(coi_binary, container):
+    """Return whether the sandbox context tells the agent its memory was reset."""
+    ok, out = container_cat(coi_binary, container, CONTEXT, user=1000)
+    assert ok, f"{CONTEXT} missing: {out}"
+    return RESET_NOTE in out
+
+
 def _wait_for_saved_sessions(sessions_dir, config_dir, count, timeout=30):
     """Poll until count sessions have their config dir saved on the host."""
     deadline = time.monotonic() + timeout
@@ -140,6 +151,7 @@ def test_fresh_tool_memory_persistent(
     try:
         # === Phase 1: install something and leave memory behind ===
         child = _start(coi_binary, workspace_dir, env)
+        reset_on_first_start = _context_says_reset(coi_binary, container)
         plant = " && ".join(
             f"mkdir -p $(dirname {p}) && echo {OLD} > {p}"
             for p in [INSTALLED, spec["setup"], *spec["memory"]]
@@ -151,12 +163,14 @@ def test_fresh_tool_memory_persistent(
         sessions = _wait_for_saved_sessions(sessions_dir, config_dir, 1)
         assert len(sessions) == 1, f"expected one saved session, got: {sessions}"
         first_session = sessions[0]
+        assert not reset_on_first_start, f"{CONTEXT} must not claim a reset on the first start"
 
         # === Phase 2: a new session keeps the container, not the memory ===
         child = _start(coi_binary, workspace_dir, env)
         installed_kept = container_path_exists(coi_binary, container, INSTALLED)
         cred_kept = container_path_exists(coi_binary, container, spec["cred"])
         memory_left = [p for p in spec["memory"] if _has_old(coi_binary, container, p)]
+        reset_on_fresh = _context_says_reset(coi_binary, container)
         later = spec["later"]
         rc, out = exec_in(
             coi_binary,
@@ -172,12 +186,14 @@ def test_fresh_tool_memory_persistent(
         assert installed_kept, f"{INSTALLED} should survive in the persistent container"
         assert cred_kept, f"{spec['cred']} should be kept on a fresh session"
         assert not memory_left, f"memory files should be gone on a fresh session: {memory_left}"
+        assert reset_on_fresh, f"{CONTEXT} should say the tool's memory was reset"
 
         # === Phase 3: --resume brings the first session's memory back ===
         child = _start(coi_binary, workspace_dir, env, f"--resume={first_session}")
         memory_missing = [p for p in spec["memory"] if not _has_old(coi_binary, container, p)]
         _, setup_after_resume = container_cat(coi_binary, container, spec["setup"], user=1000)
         later_after_resume = container_path_exists(coi_binary, container, spec["later"])
+        reset_on_resume = _context_says_reset(coi_binary, container)
         _leave(coi_binary, container, child, "poweroff")
 
         assert not memory_missing, (
@@ -189,6 +205,7 @@ def test_fresh_tool_memory_persistent(
         assert setup_after_resume.strip() == "new", (
             f"--resume must not revert {spec['setup']} to the saved copy: {setup_after_resume!r}"
         )
+        assert not reset_on_resume, f"{CONTEXT} must not claim a reset on --resume"
     finally:
         subprocess.run(
             [coi_binary, "container", "delete", container, "--force"],
