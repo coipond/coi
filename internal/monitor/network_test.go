@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -442,5 +443,120 @@ func TestContainerLocalNets_DefaultRouteInterfaceIsUplink(t *testing.T) {
 func TestContainerLocalNets_MissingFile(t *testing.T) {
 	if local := containerLocalNets(filepath.Join(t.TempDir(), "none")); local != nil {
 		t.Errorf("want no networks, got %v", local)
+	}
+}
+
+// fakeNetTables gives host pid's network namespace the given lines in its tcp,
+// tcp6, udp and udp6 tables (empty tables when lines is nil).
+func fakeNetTables(t *testing.T, root string, pid int, tcpLines ...string) {
+	t.Helper()
+	dir := filepath.Join(root, strconv.Itoa(pid), "net")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"tcp", "tcp6", "udp", "udp6"} {
+		table := tcpTableHeader
+		if name == "tcp" {
+			table += strings.Join(tcpLines, "")
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(table), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// shareNetns makes host pid share the network namespace of other.
+func shareNetns(t *testing.T, root string, pid, other int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, strconv.Itoa(pid)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, strconv.Itoa(other), "net"), filepath.Join(root, strconv.Itoa(pid), "net")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNestedNetnsConnectionsReadsEachOtherNetnsOnce(t *testing.T) {
+	root := fakeSocketProc(t)
+	// 10.0.0.5:40000 -> 1.2.3.4:4444 ESTABLISHED
+	nested := "   0: 0500000A:9C40 04030201:115C 01 00000000:00000000 00:00000000 00000000     0        0 777 1 0000000000000000 20 4 30 10 -1\n"
+	main := "   0: 0500000A:9C41 08080808:01BB 01 00000000:00000000 00:00000000 00000000     0        0 555 1 0000000000000000 20 4 30 10 -1\n"
+	fakeNetTables(t, root, 40, main)
+	shareNetns(t, root, 41, 40)
+	fakeNetTables(t, root, 42, nested) // e.g. a Docker container
+	shareNetns(t, root, 43, 42)
+	// 44 exited: no /proc entry.
+
+	conns := nestedNetnsConnections(40, []int{40, 41, 42, 43, 44})
+
+	if len(conns) != 1 {
+		t.Fatalf("got %d connections, want only the nested one once: %+v", len(conns), conns)
+	}
+	if conns[0].RemoteAddr != "1.2.3.4:4444" || conns[0].Inode != 777 {
+		t.Errorf("got %+v, want the nested connection to 1.2.3.4:4444", conns[0])
+	}
+	if reason := checkSuspicious(conns[0], config.NetworkModeOpen, nil, nil, nil, nil); reason == "" {
+		t.Error("nested C2-port connection not flagged")
+	}
+}
+
+func TestNestedNetnsConnectionsWithoutInitNetns(t *testing.T) {
+	root := fakeSocketProc(t)
+	nested := "   0: 0500000A:9C40 04030201:115C 01 00000000:00000000 00:00000000 00000000     0        0 777 1 0000000000000000 20 4 30 10 -1\n"
+	fakeNetTables(t, root, 42, nested)
+	if conns := nestedNetnsConnections(40, []int{42}); conns != nil {
+		t.Errorf("got %+v, want nil when the init netns is unknown", conns)
+	}
+}
+
+func TestNetnsConnectionsReadsAllTables(t *testing.T) {
+	root := fakeSocketProc(t)
+	if _, ok := netnsConnections(50); ok {
+		t.Error("ok for a pid without tables")
+	}
+	line := "   0: 0500000A:9C40 04030201:115C 01 00000000:00000000 00:00000000 00000000     0        0 777 1 0000000000000000 20 4 30 10 -1\n"
+	dir := filepath.Join(root, "50", "net")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"tcp", "tcp6", "udp", "udp6"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(tcpTableHeader+line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conns, ok := netnsConnections(50)
+	if !ok || len(conns) != 4 {
+		t.Fatalf("got %d connections (ok=%v), want one per table", len(conns), ok)
+	}
+	for i, proto := range []string{"tcp", "tcp6", "udp", "udp6"} {
+		if conns[i].Protocol != proto {
+			t.Errorf("connection %d protocol %q, want %q", i, conns[i].Protocol, proto)
+		}
+	}
+}
+
+func TestParseConnectionsReadsNestedNetnsFromCgroupWalk(t *testing.T) {
+	procDir := fakeSocketProc(t)
+	cgroupDir := fakeCgroupRoot(t)
+	fakeDfIncus(t, "exit 1")
+	nested := "   0: 0500000A:9C40 04030201:115C 01 00000000:00000000 00:00000000 00000000     0        0 777 1 0000000000000000 20 4 30 10 -1\n"
+	fakeNetTables(t, procDir, 40)
+	fakeNetTables(t, procDir, 42, nested)
+	if err := os.MkdirAll(filepath.Join(cgroupDir, "lxc.payload.c1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cgroupDir, "lxc.payload.c1", "cgroup.procs"), []byte("42\n40\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conns, pid, err := parseConnections(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pid != 40 {
+		t.Errorf("got pid %d, want the lowest cgroup PID 40", pid)
+	}
+	if len(conns) != 1 || conns[0].Inode != 777 {
+		t.Errorf("got %+v, want only the nested connection", conns)
 	}
 }
