@@ -285,7 +285,6 @@ func TestContainerPIDs_InitPIDFromWalk(t *testing.T) {
 }
 
 func TestContainerPIDs_IncusFallbackWhenWalkFindsNone(t *testing.T) {
-	fakeSocketProc(t) // no /proc/4242/cgroup
 	root := fakeCgroupRoot(t)
 	if err := os.MkdirAll(filepath.Join(root, "lxc.payload.c1"), 0o755); err != nil {
 		t.Fatal(err)

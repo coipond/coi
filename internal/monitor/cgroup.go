@@ -61,7 +61,7 @@ func getInitPIDViaIncus(ctx context.Context, containerName string) (int, error) 
 	return parseInitPIDFromIncusInfo(output)
 }
 
-// cgroupRoot is the cgroup v2 mount the well-known container paths live under.
+// cgroupRoot is the cgroup v2 mount; tests point it at a fake tree.
 var cgroupRoot = "/sys/fs/cgroup"
 
 // wellKnownCgroupPaths returns the candidate cgroup v2 paths for a container

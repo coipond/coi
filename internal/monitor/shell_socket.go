@@ -15,7 +15,8 @@ import (
 	"github.com/coipond/coi/internal/container"
 )
 
-// procRoot is the /proc the socket check reads; tests point it at a fake tree.
+// procRoot is the /proc the monitor reads host-side (sockets, network tables,
+// cgroups of host PIDs); tests point it at a fake tree.
 var procRoot = "/proc"
 
 // fdScanTimeout bounds the incus exec fallback of the socket check: the
