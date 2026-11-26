@@ -274,11 +274,11 @@ type DaemonConfig struct {
 	// matches (python -c, perl -e, ...). Empty string = default (critical).
 	ReverseShellOneLinerPolicy string
 
-	// Connection attempts the firewall rejects are WARNING; attempts to
-	// RejectedBurstDestinations distinct destinations within
-	// RejectedBurstWindowSec are HIGH. 0 = the default.
-	RejectedBurstDestinations int
-	RejectedBurstWindowSec    int
+	// Firewall-rejected attempts to this many distinct destinations within
+	// the window are HIGH, one alone WARNING ([monitoring]
+	// rejected_burst_threshold, rejected_burst_window_sec; 0 = default).
+	RejectedBurstThreshold int
+	RejectedBurstWindowSec int
 
 	// Response configuration
 	AutoPauseOnHigh    bool

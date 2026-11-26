@@ -839,7 +839,7 @@ func startMonitoringDaemon(ctx context.Context, containerName, workspacePath str
 		AutoKillOnCritical:         config.BoolVal(cfg.Monitoring.AutoKillOnCritical),
 		ForensicsOnKill:            cfg.Monitoring.IsForensicsOnKillEnabled(),
 		ReverseShellOneLinerPolicy: config.StringVal(cfg.Monitoring.ReverseShellOneLiners),
-		RejectedBurstDestinations:  cfg.Monitoring.RejectedBurstDestinations,
+		RejectedBurstThreshold:     cfg.Monitoring.RejectedBurstThreshold,
 		RejectedBurstWindowSec:     cfg.Monitoring.RejectedBurstWindowSec,
 		OnThreat: func(threat monitor.ThreatEvent) {
 			log.Printf("[monitor] threat detected: %s severity=%s", threat.Title, threat.Level)
@@ -939,23 +939,23 @@ func startNFTMonitoringDaemon(ctx context.Context, containerName string, cfg *co
 // callbacks.
 func nftMonitorConfig(cfg *config.Config, containerName, containerIP, gatewayIP, auditLogPath string, allowedCIDRs []string, permitted, portPermitted func(proto, ip string, port int) bool) nftmonitor.Config {
 	return nftmonitor.Config{
-		ContainerName:             containerName,
-		ContainerIP:               containerIP,
-		AllowedCIDRs:              allowedCIDRs,
-		NetworkMode:               cfg.Network.Mode,
-		PermittedDestination:      permitted,
-		ExplicitPortPermit:        portPermitted,
-		GatewayIP:                 gatewayIP,
-		AuditLogPath:              auditLogPath,
-		RateLimitPerSecond:        cfg.Monitoring.NFT.RateLimitPerSecond,
-		DNSQueryThreshold:         cfg.Monitoring.NFT.DNSQueryThreshold,
-		RejectedBurstDestinations: cfg.Monitoring.RejectedBurstDestinations,
-		RejectedBurstWindowSec:    cfg.Monitoring.RejectedBurstWindowSec,
-		LogDNSQueries:             config.BoolVal(cfg.Monitoring.NFT.LogDNSQueries),
-		LimaHost:                  cfg.Monitoring.NFT.LimaHost,
-		ForensicsOnKill:           cfg.Monitoring.IsForensicsOnKillEnabled(),
-		AutoPauseOnHigh:           config.BoolVal(cfg.Monitoring.AutoPauseOnHigh),
-		AutoKillOnCritical:        config.BoolVal(cfg.Monitoring.AutoKillOnCritical),
+		ContainerName:          containerName,
+		ContainerIP:            containerIP,
+		AllowedCIDRs:           allowedCIDRs,
+		NetworkMode:            cfg.Network.Mode,
+		PermittedDestination:   permitted,
+		ExplicitPortPermit:     portPermitted,
+		GatewayIP:              gatewayIP,
+		AuditLogPath:           auditLogPath,
+		RateLimitPerSecond:     cfg.Monitoring.NFT.RateLimitPerSecond,
+		DNSQueryThreshold:      cfg.Monitoring.NFT.DNSQueryThreshold,
+		RejectedBurstThreshold: cfg.Monitoring.RejectedBurstThreshold,
+		RejectedBurstWindowSec: cfg.Monitoring.RejectedBurstWindowSec,
+		LogDNSQueries:          config.BoolVal(cfg.Monitoring.NFT.LogDNSQueries),
+		LimaHost:               cfg.Monitoring.NFT.LimaHost,
+		ForensicsOnKill:        cfg.Monitoring.IsForensicsOnKillEnabled(),
+		AutoPauseOnHigh:        config.BoolVal(cfg.Monitoring.AutoPauseOnHigh),
+		AutoKillOnCritical:     config.BoolVal(cfg.Monitoring.AutoKillOnCritical),
 	}
 }
 

@@ -149,7 +149,7 @@ file_read_rate_mb_per_sec = 10.0
 audit_log_retention_days = 30
 # A connection attempt the firewall rejects is a WARNING (audited, no pause);
 # attempts to this many distinct destinations within the window are HIGH.
-rejected_burst_destinations = 10
+rejected_burst_threshold = 10
 rejected_burst_window_sec = 60
 
 [monitoring.nft]

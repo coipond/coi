@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// Defaults for [monitoring] rejected_burst_destinations and
+// Defaults for [monitoring] rejected_burst_threshold and
 // rejected_burst_window_sec.
 const (
-	DefaultRejectedBurstDestinations = 10
-	DefaultRejectedBurstWindowSec    = 60
+	DefaultRejectedBurstThreshold = 10
+	DefaultRejectedBurstWindowSec = 60
 )
 
 // RejectedBurst rates connection attempts the firewall rejects. One is a
@@ -38,7 +38,7 @@ type rejectedAttempt struct {
 // default.
 func NewRejectedBurst(threshold int, window time.Duration) *RejectedBurst {
 	if threshold <= 0 {
-		threshold = DefaultRejectedBurstDestinations
+		threshold = DefaultRejectedBurstThreshold
 	}
 	if window <= 0 {
 		window = DefaultRejectedBurstWindowSec * time.Second

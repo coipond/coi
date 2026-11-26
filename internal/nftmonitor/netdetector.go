@@ -28,7 +28,7 @@ func NewNetworkDetector(cfg *Config) *NetworkDetector {
 		config:        cfg,
 		dnsQueryCount: make(map[string]int),
 		dnsQueryReset: time.Now(),
-		rejectedBurst: monitor.NewRejectedBurst(cfg.RejectedBurstDestinations, time.Duration(cfg.RejectedBurstWindowSec)*time.Second),
+		rejectedBurst: monitor.NewRejectedBurst(cfg.RejectedBurstThreshold, time.Duration(cfg.RejectedBurstWindowSec)*time.Second),
 	}
 }
 

@@ -45,7 +45,7 @@
       "minimum": 0,
       "description": "Maximum processes spawned per poll interval before an alert (0 = disabled)"
     },
-    "rejected_burst_destinations": {
+    "rejected_burst_threshold": {
       "type": "integer",
       "minimum": 1,
       "description": "A connection attempt the firewall rejects is a WARNING (audited, never pauses). Attempts to this many distinct destinations (IP and port) within rejected_burst_window_sec are a HIGH threat. Default: 10"
@@ -53,7 +53,7 @@
     "rejected_burst_window_sec": {
       "type": "integer",
       "minimum": 1,
-      "description": "Window in seconds for rejected_burst_destinations. Default: 60"
+      "description": "Window in seconds for rejected_burst_threshold. Default: 60"
     },
     "nft": {
       "$ref": "#/$defs/NFTMonitoringConfig"

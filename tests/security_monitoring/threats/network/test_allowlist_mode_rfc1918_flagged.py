@@ -43,8 +43,6 @@ def test_allowlist_mode_rfc1918_flagged(test_workspace, coi_binary):
             "no threat for a connection to 10.0.0.1:80 in allowlist mode; "
             f"threat events: {get_threat_events(container_name)}"
         )
-        # The firewall rejects it: a WARNING, so auto_pause_on_high leaves the
-        # container running.
         for threat in threats:
             assert threat.get("level") == "warning", (
                 f"Expected WARNING for a rejected RFC1918 attempt, got {threat.get('level')}"

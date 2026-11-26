@@ -35,24 +35,21 @@ type Config struct {
 	// ExplicitPortPermit, when set, reports whether the user permitted proto
 	// traffic to that exact ip:port ([[network.hosts]] ports, an allowed_domains
 	// :ports entry). Only such a connection skips the suspicious-port check.
-	ExplicitPortPermit func(proto, ip string, port int) bool
-	GatewayIP          string
-	AuditLogPath       string
-	RateLimitPerSecond int
-	DNSQueryThreshold  int
-	// Rejected attempts to RejectedBurstDestinations distinct destinations
-	// within RejectedBurstWindowSec are HIGH, a single one WARNING. 0 = the
-	// default.
-	RejectedBurstDestinations int
-	RejectedBurstWindowSec    int
-	LogDNSQueries             bool
-	LimaHost                  string
-	ForensicsOnKill           bool // preserve a forensic copy before the responder's auto-kill deletes the container
-	AutoPauseOnHigh           bool // pause the container on a HIGH threat ([monitoring] auto_pause_on_high)
-	AutoKillOnCritical        bool // kill the container on a CRITICAL threat ([monitoring] auto_kill_on_critical)
-	OnThreat                  func(ThreatEvent)
-	OnAction                  func(action, message string) // Called when container is paused/killed
-	OnError                   func(error)                  // Called on non-fatal errors (avoids stdout corruption)
+	ExplicitPortPermit     func(proto, ip string, port int) bool
+	GatewayIP              string
+	AuditLogPath           string
+	RateLimitPerSecond     int
+	DNSQueryThreshold      int
+	RejectedBurstThreshold int // distinct rejected destinations that make a HIGH ([monitoring] rejected_burst_threshold; 0 = default)
+	RejectedBurstWindowSec int // window for it ([monitoring] rejected_burst_window_sec; 0 = default)
+	LogDNSQueries          bool
+	LimaHost               string
+	ForensicsOnKill        bool // preserve a forensic copy before the responder's auto-kill deletes the container
+	AutoPauseOnHigh        bool // pause the container on a HIGH threat ([monitoring] auto_pause_on_high)
+	AutoKillOnCritical     bool // kill the container on a CRITICAL threat ([monitoring] auto_kill_on_critical)
+	OnThreat               func(ThreatEvent)
+	OnAction               func(action, message string) // Called when container is paused/killed
+	OnError                func(error)                  // Called on non-fatal errors (avoids stdout corruption)
 }
 
 // ThreatEvent represents a detected network threat

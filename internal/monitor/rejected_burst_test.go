@@ -188,16 +188,16 @@ func BenchmarkRejectedBurst_Scan(b *testing.B) {
 
 func TestNewRejectedBurst_Defaults(t *testing.T) {
 	b := NewRejectedBurst(0, 0)
-	if b.threshold != DefaultRejectedBurstDestinations || b.window != DefaultRejectedBurstWindowSec*time.Second {
+	if b.threshold != DefaultRejectedBurstThreshold || b.window != DefaultRejectedBurstWindowSec*time.Second {
 		t.Errorf("defaults: got %d / %s", b.threshold, b.window)
 	}
 	ts := time.Now()
-	for i := range DefaultRejectedBurstDestinations - 1 {
+	for i := range DefaultRejectedBurstThreshold - 1 {
 		if level, _ := b.Rate(fmt.Sprintf("1.1.1.%d:443", i), ts); level != ThreatLevelWarning {
 			t.Fatalf("destination %d: want WARNING, got %s", i+1, level)
 		}
 	}
 	if level, _ := b.Rate("1.1.2.1:443", ts); level != ThreatLevelHigh {
-		t.Fatalf("destination %d: want HIGH, got %s", DefaultRejectedBurstDestinations, level)
+		t.Fatalf("destination %d: want HIGH, got %s", DefaultRejectedBurstThreshold, level)
 	}
 }

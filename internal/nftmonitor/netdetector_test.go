@@ -546,7 +546,7 @@ func TestInAllowlist(t *testing.T) {
 
 // With the firewall's verdict, a packet it rejects is an attempt it stopped: a
 // single `curl --noproxy '*'` to an unlisted host is a WARNING; attempts to
-// RejectedBurstDestinations distinct destinations within the window are HIGH.
+// RejectedBurstThreshold distinct destinations within the window are HIGH.
 // Without a verdict the check stays HIGH.
 func TestNetworkDetector_RejectedAttempts(t *testing.T) {
 	event := func(dst string, port int, ts time.Time) *NetworkEvent {
@@ -557,13 +557,13 @@ func TestNetworkDetector_RejectedAttempts(t *testing.T) {
 	}
 	newDetector := func(permitted func(proto, ip string, port int) bool) *NetworkDetector {
 		return NewNetworkDetector(&Config{
-			ContainerIP:               "10.47.62.50",
-			GatewayIP:                 "10.47.62.1",
-			NetworkMode:               config.NetworkModeAllowlist,
-			AllowedCIDRs:              []string{"140.82.112.3/32"},
-			PermittedDestination:      permitted,
-			RejectedBurstDestinations: 3,
-			RejectedBurstWindowSec:    60,
+			ContainerIP:            "10.47.62.50",
+			GatewayIP:              "10.47.62.1",
+			NetworkMode:            config.NetworkModeAllowlist,
+			AllowedCIDRs:           []string{"140.82.112.3/32"},
+			PermittedDestination:   permitted,
+			RejectedBurstThreshold: 3,
+			RejectedBurstWindowSec: 60,
 		})
 	}
 	rejects := func(_, ip string, _ int) bool { return ip == "140.82.112.3" }
@@ -592,8 +592,6 @@ func TestNetworkDetector_RejectedAttempts(t *testing.T) {
 		t.Fatalf("no verdict: want HIGH, got %+v", threat)
 	}
 
-	// Only a SYN without ACK opens a flow; any other TCP packet belongs to a
-	// flow the firewall let through. UDP has no flags: an attempt.
 	for _, tc := range []struct {
 		proto, flags string
 		want         ThreatLevel

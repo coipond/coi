@@ -1,7 +1,7 @@
 """Test for coi shell - connection attempts the firewall rejects.
 
 Tests that:
-- attempts to rejected_burst_destinations distinct destinations the firewall
+- attempts to rejected_burst_threshold distinct destinations the firewall
   rejects raise a HIGH threat from the process monitor, while each attempt
   before them is a WARNING."""
 
@@ -27,7 +27,7 @@ auto_kill_on_critical = false
 poll_interval_sec = 1
 file_read_threshold_mb = 500
 file_read_rate_mb_per_sec = 1000
-rejected_burst_destinations = {len(DESTINATIONS)}
+rejected_burst_threshold = {len(DESTINATIONS)}
 
 [monitoring.nft]
 enabled = false
