@@ -10,17 +10,21 @@ import "testing"
 // second, workspace-scoped project config is overlaid), but the two paths apply
 // the profile at DIFFERENT points in the merge chain:
 //
-//	explicit --profile : ApplyProfile → (workspace overlay) Merge → ReapplyProfileContainer
+//	explicit --profile : ApplyProfile → (workspace overlay) Merge →
+//	                     ReapplyProfileContainer, ReapplyProfileNetwork
 //	[defaults] profile : (workspace overlay) Merge → ApplyProfile
 //
 // (See internal/cli: root.go applies an explicit --profile before
-// overlayWorkspaceConfig, which then re-wins only [container] via
-// ReapplyProfileContainer; applyDefaultProfileFallback applies the default
-// profile AFTER that overlay.)
+// overlayWorkspaceConfig, which then re-wins only [container] and [network]
+// via ReapplyProfileContainer and ReapplyProfileNetwork;
+// applyDefaultProfileFallback applies the default profile AFTER that
+// overlay.)
 //
 // Pinned consequences, so any future change to the merge order is a deliberate
 // decision rather than a silent behavior shift:
-//   - [container] fields: the profile wins in BOTH paths.
+//   - [container] and [network] fields: the profile wins in BOTH paths
+//     ([network]: not for a profile copying the config's, see
+//     ReapplyProfileNetwork).
 //   - other sections (here: tool.claude.model): the workspace overlay wins for
 //     an explicit --profile, but the profile wins for [defaults] profile.
 //

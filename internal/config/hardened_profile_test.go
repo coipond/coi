@@ -213,3 +213,39 @@ func TestReapplyProfileNetwork_UndoesWeakeningOverlay(t *testing.T) {
 		t.Error("ReapplyProfileNetwork(missing): want an error")
 	}
 }
+
+// The built-in "default" profile, and a profile inheriting it, copy the
+// config's network: re-applying it after a workspace overlay keeps the
+// workspace's network, as when coi starts inside the workspace.
+func TestReapplyProfileNetwork_KeepsOverlayForDefaultProfile(t *testing.T) {
+	for _, name := range []string{"default", "default-child"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := loadWithConfigs(t, "", "", map[string]string{
+				"default-child": "inherits = \"default\"\n",
+			})
+			if err := cfg.ApplyProfile(name); err != nil {
+				t.Fatalf("ApplyProfile(%s): %v", name, err)
+			}
+			workspace := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(workspace, ".coi"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			project := []byte("[network]\nmode = \"allowlist\"\nallowed_domains = [\"example.com\"]\n")
+			if err := os.WriteFile(filepath.Join(workspace, ".coi", "config.toml"), project, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.OverlayProjectConfig(workspace); err != nil {
+				t.Fatalf("OverlayProjectConfig: %v", err)
+			}
+			if err := cfg.ReapplyProfileNetwork(name); err != nil {
+				t.Fatalf("ReapplyProfileNetwork: %v", err)
+			}
+			if cfg.Network.Mode != NetworkModeAllowlist {
+				t.Errorf("network mode = %q, want %q", cfg.Network.Mode, NetworkModeAllowlist)
+			}
+			if want := []string{"example.com"}; !slices.Equal(cfg.Network.AllowedDomains, want) {
+				t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+			}
+		})
+	}
+}

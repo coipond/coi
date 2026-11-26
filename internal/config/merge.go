@@ -422,7 +422,9 @@ func (c *Config) ReapplyProfileContainer(name string) error {
 // ReapplyProfileNetwork re-merges ONLY the network section of the named
 // profile, after a workspace-config overlay, so the untrusted project config
 // cannot change the mode or allowed_domains of an explicitly requested
-// profile (e.g. turn "hardened" back to restricted). Like
+// profile (e.g. turn "hardened" back to restricted). A profile whose network
+// is a copy of the config ("default") is not re-merged: that would replace
+// the workspace's network with the one resolved without it. Like
 // ReapplyProfileContainer it is idempotent: mergeNetworkInto overrides
 // fields and syncToolAPIDomains replaces the hosts it added.
 func (c *Config) ReapplyProfileNetwork(name string) error {
@@ -433,7 +435,7 @@ func (c *Config) ReapplyProfileNetwork(name string) error {
 	if profile == nil {
 		return fmt.Errorf("profile '%s' not found", name)
 	}
-	if profile.Network != nil {
+	if profile.Network != nil && !profile.networkFromConfig {
 		mergeNetworkInto(&c.Network, profile.Network)
 	}
 	c.syncToolAPIDomains()
@@ -588,6 +590,9 @@ func mergeProfiles(parent, child ProfileConfig) ProfileConfig {
 	}
 	if parent.toolAPIDomains {
 		result.toolAPIDomains = true
+	}
+	if parent.networkFromConfig {
+		result.networkFromConfig = true
 	}
 	if result.Sockets == nil {
 		result.Sockets = parent.Sockets

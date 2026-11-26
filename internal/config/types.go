@@ -693,6 +693,10 @@ type ProfileConfig struct {
 	// synthesized "default" profile, or a profile inheriting them from it), so
 	// ApplyProfile does not add them a second time.
 	mountsFromConfig bool
+	// networkFromConfig marks Network as a copy of the config's own network
+	// (the synthesized "default" profile, or a profile inheriting it), so
+	// ReapplyProfileNetwork does not undo a workspace overlay with it.
+	networkFromConfig bool
 	// toolAPIDomains makes ApplyProfile add the configured tool's api_domains
 	// to allowed_domains (the built-in "hardened" profile and the profiles
 	// inheriting it).

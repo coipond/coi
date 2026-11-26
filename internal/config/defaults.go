@@ -143,7 +143,8 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 		Timezone:    &timezone,
 		Source:      "(built-in)",
 
-		mountsFromConfig: true,
+		mountsFromConfig:  true,
+		networkFromConfig: true,
 	}
 	return p
 }
