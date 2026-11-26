@@ -23,6 +23,15 @@ type RejectedBurst struct {
 
 	mu   sync.Mutex
 	seen map[string]time.Time // destination -> last attempt
+	// queue holds attempts in arrival order, to prune in O(1) amortized; an
+	// entry whose ts is not its destination's last attempt is stale.
+	queue []rejectedAttempt
+}
+
+// rejectedAttempt is one queued attempt of RejectedBurst.
+type rejectedAttempt struct {
+	destination string
+	ts          time.Time
 }
 
 // NewRejectedBurst creates the tracker; a threshold or window <= 0 takes its
@@ -44,14 +53,13 @@ func (b *RejectedBurst) Rate(destination string, ts time.Time) (ThreatLevel, str
 	defer b.mu.Unlock()
 	if last, ok := b.seen[destination]; !ok || ts.After(last) {
 		b.seen[destination] = ts
+		b.queue = append(b.queue, rejectedAttempt{destination, ts})
 	}
-	// Below the threshold, entries older than the window cannot change the
-	// answer, so they are pruned only once it is reached.
-	if len(b.seen) >= b.threshold {
-		for d, last := range b.seen {
-			if ts.Sub(last) > b.window {
-				delete(b.seen, d)
-			}
+	for len(b.queue) > 0 && ts.Sub(b.queue[0].ts) > b.window {
+		old := b.queue[0]
+		b.queue = b.queue[1:]
+		if b.seen[old.destination].Equal(old.ts) {
+			delete(b.seen, old.destination)
 		}
 	}
 	if n := len(b.seen); n >= b.threshold {

@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,32 @@ func TestRejectedBurst_Window(t *testing.T) {
 	}
 	if level, _ := b.Rate("1.1.1.3:443", ts.Add(12*time.Second)); level != ThreatLevelHigh {
 		t.Fatalf("two within the window: want HIGH, got %s", level)
+	}
+}
+
+// A later attempt keeps its destination in the window after its first one
+// expires, and the queue stays bounded by the attempts within the window.
+func TestRejectedBurst_RepeatKeepsDestination(t *testing.T) {
+	b := NewRejectedBurst(2, 10*time.Second)
+	ts := time.Now()
+	b.Rate("1.1.1.1:443", ts)
+	b.Rate("1.1.1.1:443", ts.Add(8*time.Second))
+	if level, _ := b.Rate("1.1.1.2:443", ts.Add(12*time.Second)); level != ThreatLevelHigh {
+		t.Fatalf("1.1.1.1 retried within the window: want HIGH, got %s", level)
+	}
+	for i := range 1000 {
+		b.Rate(fmt.Sprintf("2.2.%d.%d:443", i/256, i%256), ts.Add(time.Duration(100+i)*time.Second))
+	}
+	if len(b.queue) > 11 || len(b.seen) > 11 {
+		t.Errorf("one attempt per second, 10 s window: queue %d, seen %d", len(b.queue), len(b.seen))
+	}
+}
+
+func BenchmarkRejectedBurst_Scan(b *testing.B) {
+	rb := NewRejectedBurst(0, 0)
+	ts := time.Now()
+	for i := 0; b.Loop(); i++ {
+		rb.Rate(strconv.Itoa(i), ts.Add(time.Duration(i)*10*time.Millisecond))
 	}
 }
 
