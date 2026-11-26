@@ -103,8 +103,8 @@ func wellKnownCgroupPaths(containerName string) []string {
 // any. In cgroup v2 the container init process is started first and therefore
 // has the lowest host PID in the tree. Systemd-based containers move PID 1
 // into init.scope, so the walk covers the full tree rather than only the root
-// cgroup.procs. With no PIDs, pids is nil and the init PID comes from incus
-// info.
+// cgroup.procs. With no PIDs there, the init PID comes from incus info and
+// the PIDs from a walk of its cgroup (nil when that cannot be read).
 func containerPIDs(ctx context.Context, containerName string) (initPID int, pids []int, err error) {
 	for _, cgroupPath := range wellKnownCgroupPaths(containerName) {
 		if found, err := cgroupPIDs(cgroupPath); err == nil && len(found) > 0 {
@@ -112,7 +112,13 @@ func containerPIDs(ctx context.Context, containerName string) (initPID int, pids
 		}
 	}
 	initPID, err = getInitPIDViaIncus(ctx, containerName)
-	return initPID, nil, err
+	if err != nil {
+		return 0, nil, err
+	}
+	if path, err := cgroupPathOfPID(initPID); err == nil {
+		pids, _ = cgroupPIDs(stripSystemdScopeSuffix(path))
+	}
+	return initPID, pids, nil
 }
 
 // cgroupPIDs returns the PIDs in every cgroup.procs file under cgroupPath.
@@ -166,9 +172,13 @@ func findCgroupPathViaIncus(ctx context.Context, containerName string) (string, 
 	if err != nil {
 		return "", err
 	}
+	return cgroupPathOfPID(pid)
+}
 
-	// Read cgroup from /proc/<pid>/cgroup
-	cgroupFile := fmt.Sprintf("/proc/%d/cgroup", pid)
+// cgroupPathOfPID returns the cgroup v2 directory of host pid, read from
+// /proc/<pid>/cgroup.
+func cgroupPathOfPID(pid int) (string, error) {
+	cgroupFile := fmt.Sprintf("%s/%d/cgroup", procRoot, pid)
 	data, err := os.ReadFile(cgroupFile)
 	if err != nil {
 		return "", fmt.Errorf("failed to read cgroup file: %w", err)
@@ -179,7 +189,7 @@ func findCgroupPathViaIncus(ctx context.Context, containerName string) (string, 
 		if strings.HasPrefix(line, "0::") {
 			cgroupPath := strings.TrimPrefix(line, "0::")
 			cgroupPath = strings.TrimSpace(cgroupPath)
-			return filepath.Join("/sys/fs/cgroup", cgroupPath), nil
+			return filepath.Join(cgroupRoot, cgroupPath), nil
 		}
 	}
 
