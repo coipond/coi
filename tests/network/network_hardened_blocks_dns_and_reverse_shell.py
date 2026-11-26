@@ -4,7 +4,7 @@ Test for network isolation - the hardened profile allows only its allowlist.
 Tests that, in a `coi run --profile hardened` session:
 1. A DNS TXT query to a public resolver (8.8.8.8:53) fails
 2. A TCP connect to a non-listed public host (1.1.1.1:443) fails
-3. A reverse-shell style connect to a non-listed host:port (1.0.0.1:9001) fails
+3. A reverse-shell style connect to a non-listed host:port (1.0.0.1:80) fails
 4. An HTTPS request to a listed host (rubygems.org) works
 """
 
@@ -46,7 +46,7 @@ def connect(host, port):
 
 check("DNS_TXT", dns_txt)
 check("TCP_UNLISTED", lambda: connect("1.1.1.1", 443))
-check("REVERSE_SHELL", lambda: connect("1.0.0.1", 9001))
+check("REVERSE_SHELL", lambda: connect("1.0.0.1", 80))
 check("LISTED_HOST", lambda: urllib.request.urlopen("https://rubygems.org", timeout=20))
 """
 
@@ -88,6 +88,7 @@ def test_hardened_blocks_dns_and_reverse_shell(coi_binary, cleanup_containers, w
         capture_output=True,
         text=True,
         timeout=300,
+        cwd=workspace_dir,
     )
 
     combined_output = result.stdout + result.stderr
