@@ -74,6 +74,12 @@ type Config struct {
 	ProfileContextFile string                   `toml:"-"` // Set by ApplyProfile, read by session setup
 
 	pendingProfiles map[string]pendingProfile // Listed by LoadOnDemand, not read yet
+
+	// addsToolAPIDomains is set once a profile that adds the tool's
+	// api_domains is applied; addedAPIDomains are the hosts it added for the
+	// current tool.
+	addsToolAPIDomains bool
+	addedAPIDomains    []string
 }
 
 // PromptEntry is one entry in the [prompts] registry. It is a union that
@@ -688,6 +694,17 @@ type ProfileConfig struct {
 	// synthesized "default" profile, or a profile inheriting them from it), so
 	// ApplyProfile does not add them a second time.
 	mountsFromConfig bool
+	// networkFromConfig marks Network as a copy of the config's own network
+	// (the synthesized "default" profile, or a profile inheriting it), so
+	// ReapplyProfileNetwork does not undo a workspace overlay with it;
+	// ownNetwork is the network the inheriting profiles set themselves, which
+	// it re-merges.
+	networkFromConfig bool
+	ownNetwork        *NetworkConfig
+	// addsToolAPIDomains makes ApplyProfile add the configured tool's
+	// api_domains to allowed_domains (the built-in "hardened" profile and the
+	// profiles inheriting it).
+	addsToolAPIDomains bool
 
 	// Extended fields — previously Config-only, now available in profiles
 	Paths      *PathsConfig      `toml:"paths"`
