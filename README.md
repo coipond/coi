@@ -134,7 +134,7 @@ coi list --all            # active containers + saved sessions
 coi attach                # attach to a running session
 coi audit                 # stream the JSONL threat-event log (pipe into a SIEM or jq)
 coi shutdown / coi kill   # stop or force-kill containers
-coi clean                 # remove stopped containers and orphaned resources
+coi clean                 # remove stopped containers (--orphans or --all: also orphaned resources)
 ```
 
 Drop a `.coi/config.toml` in any repo to auto-configure `coi` for that project, so teams share one image, network mode, and limits. Run `coi <command> --help` for any command. To run agents unattended with headless prompts and cron, see [Headless Orchestration](https://github.com/coipond/coi/wiki/Headless-Orchestration).
