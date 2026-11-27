@@ -5,7 +5,7 @@ tmp_max_age).
 Tests that:
 1. Unset limits give the defaults (4GiB, 7d) in the container
 2. Over tmp_max_size, coi-tmp-cleanup removes the least recently used files
-   until /tmp holds under three quarters of it, and keeps recent files
+   until /tmp holds under half of it, and keeps recent files
 3. tmp_max_age removes files not used for that long, and keeps newer ones
 4. "0" turns both limits off: nothing is removed
 5. A restarted persistent container gets a changed limit
@@ -74,14 +74,14 @@ def test_run_tmp_cleanup_size_removes_least_recently_used(
     coi_binary, cleanup_containers, workspace_dir
 ):
     """
-    Over tmp_max_size the oldest files go first, until /tmp is under 3/4 of it.
+    Over tmp_max_size the oldest files go first, until /tmp is under half of it.
 
     Flow:
-    1. tmp_max_size = 64MiB (low mark 48MiB), age limit off
+    1. tmp_max_size = 64MiB (low mark 32MiB), age limit off
     2. Fill /tmp with 80 MiB: nine old files and one fresh one
     3. Run coi-tmp-cleanup.service once (a oneshot: start waits for it)
     4. Verify the oldest files were removed, oldest first, and enough of them
-       to get under 48 MiB, while the newest old file and the fresh one stay
+       to get under 32 MiB, while the newest old file and the fresh one stay
     """
     _write_limits(workspace_dir, ['tmp_max_size = "64MiB"', 'tmp_max_age = "0"'])
 
@@ -98,8 +98,8 @@ def test_run_tmp_cleanup_size_removes_least_recently_used(
     assert f"TMP_MAX_BYTES={64 << 20}" in out, f"tmp_max_size not applied. Output:\n{out}"
     left = _left(out)
     removed = [f"old{i}" for i in range(1, 10) if f"old{i}" not in left]
-    # 80 MiB down to under 48 MiB: at least four 8 MiB files.
-    assert len(removed) >= 4, f"expected at least 4 files removed, left: {left}\n{out}"
+    # 80 MiB down to under 32 MiB: at least six 8 MiB files.
+    assert len(removed) >= 6, f"expected at least 6 files removed, left: {left}\n{out}"
     assert removed == [f"old{i}" for i in range(1, len(removed) + 1)], (
         f"files must be removed oldest first, removed: {removed}\n{out}"
     )

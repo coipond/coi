@@ -1130,9 +1130,11 @@ install_github_cli() {
 # /tmp and may not touch them for hours):
 #   1. Age: files not used for 7 days (default) are removed by Ubuntu's daily
 #      systemd-tmpfiles-clean.timer (stock is 30 days).
-#   2. Size: every 2 minutes coi-tmp-cleanup measures /tmp and, once it
-#      holds more than 4 GiB (default), removes the least recently used files until
-#      it holds under 3 GiB. Files used in the last 15 minutes are kept.
+#   2. Size: every 15 minutes coi-tmp-cleanup measures /tmp (du walks the
+#      whole tree, so not more often) and, once it holds more than 4 GiB
+#      (default), removes the least recently used files until it holds
+#      under half of that, so the next cleanup is not due at once. Files
+#      used in the last 15 minutes are kept.
 #
 # coi rewrites both limits at each session start from [limits.disk]
 # tmp_max_age and tmp_max_size (Manager.SetTmpCleanup).
@@ -1159,7 +1161,7 @@ EOF
     mkdir -p /usr/local/libexec
     cat > /usr/local/libexec/coi-tmp-cleanup << 'SCRIPT_EOF'
 #!/bin/bash
-high=${TMP_MAX_BYTES:-0} low=$((${TMP_MAX_BYTES:-0} / 4 * 3)) grace_min=15
+high=${TMP_MAX_BYTES:-0} low=$((${TMP_MAX_BYTES:-0} / 2)) grace_min=15
 [ "$high" -gt 0 ] || exit 0
 used=$(du -sx -B1 /tmp 2>/dev/null | cut -f1)
 [ "${used:-0}" -gt "$high" ] || exit 0
@@ -1190,12 +1192,11 @@ UNIT_EOF
 
     cat > /etc/systemd/system/coi-tmp-cleanup.timer << 'UNIT_EOF'
 [Unit]
-Description=Check /tmp size every 2 minutes
+Description=Check /tmp size every 15 minutes
 
 [Timer]
-OnBootSec=1min
-OnUnitActiveSec=2min
-AccuracySec=15s
+OnBootSec=5min
+OnUnitActiveSec=15min
 
 [Install]
 WantedBy=timers.target

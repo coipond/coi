@@ -31,7 +31,7 @@
     },
     "tmp_max_size": {
       "type": "string",
-      "description": "When /tmp holds more than this, e.g. \"4GiB\", the least recently used files are removed until it holds under three quarters of it. Files used in the last 15 minutes are kept. \"0\" turns it off. Unset: 4GiB."
+      "description": "When /tmp holds more than this, e.g. \"4GiB\", the least recently used files are removed until it holds under half of it. Checked every 15 minutes. Files used in the last 15 minutes are kept. \"0\" turns it off. Unset: 4GiB."
     },
     "tmp_max_age": {
       "type": "string",
