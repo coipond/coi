@@ -38,6 +38,10 @@ runs:
           echo "WARNING: Zabbly repo unreachable"
         fi
 
+        # The runner image's packages.microsoft.com source is not needed, and
+        # its outages (403, "no longer signed") fail apt-get update.
+        sudo grep -rlZ packages.microsoft.com /etc/apt/sources.list.d | xargs -0r sudo rm -f || true
+
         # nftables is pre-installed on Ubuntu 24.04 runners; install incus only
         # Install with fallback: try with Zabbly, if it fails remove Zabbly and use Ubuntu native
         sudo apt-get update
