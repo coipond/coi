@@ -81,6 +81,12 @@ type tmpfsManager struct {
 	container.ContainerManager
 	size    string
 	removed bool
+	cleanup string // tmp_max_size passed to SetTmpCleanup
+}
+
+func (m *tmpfsManager) SetTmpCleanup(maxSize, _ string) error {
+	m.cleanup = maxSize
+	return nil
 }
 
 func (m *tmpfsManager) SetTmpfsSize(size string) error {
@@ -96,6 +102,7 @@ func (m *tmpfsManager) RemoveTmpfsSize() (bool, error) {
 func TestSizeTmpfsAndRemapUser(t *testing.T) {
 	sized := &config.LimitsConfig{}
 	sized.Disk.TmpfsSize = "1GiB"
+	sized.Disk.TmpMaxSize = "2GiB"
 	for _, tc := range []struct {
 		name         string
 		cfg          *config.LimitsConfig
@@ -115,6 +122,9 @@ func TestSizeTmpfsAndRemapUser(t *testing.T) {
 			}
 			if mgr.size != tc.wantSize || mgr.removed != tc.wantRemoved {
 				t.Errorf("SetTmpfsSize(%q) removed=%v, want %q removed=%v", mgr.size, mgr.removed, tc.wantSize, tc.wantRemoved)
+			}
+			if mgr.cleanup != tc.cfg.Disk.TmpMaxSize {
+				t.Errorf("SetTmpCleanup(%q), want %q", mgr.cleanup, tc.cfg.Disk.TmpMaxSize)
 			}
 		})
 	}

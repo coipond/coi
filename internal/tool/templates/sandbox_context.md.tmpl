@@ -87,6 +87,9 @@ Ports not listed here are not reachable from the host.
 {{- if .HasMaxDuration}}
 - **Session timeout**: this session ends automatically after {{.MaxDuration}}
 {{- end}}
+{{- if .TmpCleanup}}
+- **/tmp cleanup**: {{.TmpCleanup}} — keep anything you need later in the workspace or home directory
+{{- end}}
 {{- if .ProtectedPaths}}
 - **Protected paths** (read-only): {{.ProtectedPaths}}
 {{- end}}

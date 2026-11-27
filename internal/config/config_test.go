@@ -532,6 +532,25 @@ func TestDefaultTmpfsSize(t *testing.T) {
 	}
 }
 
+// The default profile ships the /tmp cleanup limits configure_tmp_cleanup
+// bakes into the image, so `coi profile info default` shows them.
+func TestDefaultTmpCleanupLimits(t *testing.T) {
+	cfg := GetDefaultConfig()
+	if cfg.Limits.Disk.TmpMaxSize != "4GiB" || cfg.Limits.Disk.TmpMaxAge != "7d" {
+		t.Errorf("default tmp_max_size/tmp_max_age = %q/%q, want 4GiB/7d", cfg.Limits.Disk.TmpMaxSize, cfg.Limits.Disk.TmpMaxAge)
+	}
+}
+
+func TestLimitsMergeTmpCleanup(t *testing.T) {
+	base := GetDefaultConfig()
+	other := &Config{}
+	other.Limits.Disk.TmpMaxSize = "0"
+	base.Merge(other)
+	if base.Limits.Disk.TmpMaxSize != "0" || base.Limits.Disk.TmpMaxAge != "7d" {
+		t.Errorf("after merge tmp_max_size/tmp_max_age = %q/%q, want 0/7d", base.Limits.Disk.TmpMaxSize, base.Limits.Disk.TmpMaxAge)
+	}
+}
+
 // TestLimitsHasAny pins the single limit-presence predicate shared by the shell
 // and run launch paths. The size-only case is the regression guard: a disk size
 // quota must trigger the applier (and its dir-pool safety check) on BOTH paths,

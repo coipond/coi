@@ -127,6 +127,8 @@ max = ""
 priority = 0
 size = ""          # whole-container rootfs quota, e.g. "20GiB"; needs a btrfs/zfs/lvm pool (rejected on a dir pool)
 tmpfs_size = ""    # opt-in RAM-backed /tmp of this size (e.g. "4GiB"); "" = /tmp stays disk-backed
+tmp_max_size = "4GiB"  # above this, the least recently used files in /tmp are removed; "0" = off
+tmp_max_age = "7d"     # files in /tmp unused this long are removed ("12h", "30d"); "0" = off
 
 [limits.runtime]
 max_duration = ""

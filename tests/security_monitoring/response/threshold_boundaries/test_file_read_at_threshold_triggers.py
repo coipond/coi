@@ -9,8 +9,10 @@ import pytest
 from support.monitoring import (
     cleanup_container,
     container_io_stat,
+    direct_read_output,
     get_container_name_from_workspace,
     get_threat_events,
+    start_direct_read,
     wait_for_container_running,
     wait_for_frozen,
 )
@@ -63,21 +65,7 @@ def test_file_read_at_threshold_triggers(
     time.sleep(10)
 
     # Read the 75MB file using dd with direct I/O to bypass cache
-    subprocess.Popen(
-        [
-            "incus",
-            "exec",
-            container_name,
-            "--",
-            "dd",
-            "if=/workspace/data75mb.bin",
-            "of=/dev/null",
-            "bs=1M",
-            "iflag=direct",  # Bypass cache to ensure actual I/O
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    dd_proc = start_direct_read(container_name, "/workspace/data75mb.bin")
 
     paused = wait_for_frozen(container_name)
 
@@ -90,8 +78,10 @@ def test_file_read_at_threshold_triggers(
         print(stderr_file.read_text())
     print("=== End Debug Log ===\n")
 
-    assert paused, "Container should be paused on 75MB read (above threshold)" + container_io_stat(
-        container_name
+    assert paused, (
+        "Container should be paused on 75MB read (above threshold)"
+        + container_io_stat(container_name, test_workspace)
+        + direct_read_output(dd_proc)
     )
 
     # Verify HIGH threat logged

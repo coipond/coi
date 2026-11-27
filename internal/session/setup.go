@@ -894,10 +894,17 @@ func contextInfoFor(result *SetupResult, opts SetupOptions) tool.ContextInfo {
 	}
 
 	var cpuLimit, memoryLimit, maxDuration string
+	tmpMaxSize, tmpMaxAge := container.DefaultTmpMaxSize, container.DefaultTmpMaxAge
 	if opts.LimitsConfig != nil {
 		cpuLimit = opts.LimitsConfig.CPU.Count
 		memoryLimit = opts.LimitsConfig.Memory.Limit
 		maxDuration = opts.LimitsConfig.Runtime.MaxDuration
+		if s := opts.LimitsConfig.Disk.TmpMaxSize; s != "" {
+			tmpMaxSize = s
+		}
+		if a := opts.LimitsConfig.Disk.TmpMaxAge; a != "" {
+			tmpMaxAge = a
+		}
 	}
 
 	// Read profile context file content if configured
@@ -932,6 +939,8 @@ func contextInfoFor(result *SetupResult, opts SetupOptions) tool.ContextInfo {
 		CPULimit:           cpuLimit,
 		MemoryLimit:        memoryLimit,
 		MaxDuration:        maxDuration,
+		TmpMaxSize:         tmpMaxSize,
+		TmpMaxAge:          tmpMaxAge,
 		ToolName:           toolName,
 		ContainerName:      result.ContainerName,
 		ProfileContext:     profileContext,

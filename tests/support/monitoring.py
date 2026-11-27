@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -203,17 +204,61 @@ def wait_for_frozen(container_name, max_wait=45):
     return get_container_state(container_name) == "Frozen"
 
 
-def container_io_stat(container_name):
-    """The container cgroup's io.stat, for a failure message about an I/O
-    threshold."""
+def container_io_stat(container_name, workspace=None):
+    """The container cgroup's io.stat, and the mount holding workspace when
+    given, for a failure message about an I/O threshold."""
+    mount = ""
+    if workspace is not None:
+        result = subprocess.run(
+            ["findmnt", "-T", str(workspace), "-o", "TARGET,SOURCE,FSTYPE"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        mount = f"\n--- workspace mount ---\n{result.stdout or result.stderr}"
     path = find_container_cgroup_path(container_name)
     if path is None:
-        return "\n(container cgroup not found)"
+        return "\n(container cgroup not found)" + mount
     try:
         stat = Path(path, "io.stat").read_text()
     except OSError as e:
         stat = f"(unreadable: {e})"
-    return f"\n--- {path}/io.stat ---\n{stat or '(empty)'}"
+    return f"\n--- {path}/io.stat ---\n{stat or '(empty)'}" + mount
+
+
+def start_direct_read(container_name, path):
+    """Start `dd iflag=direct` of path in the container, in the background (the
+    monitor may freeze the container mid-read). direct_read_output reports it.
+
+    Ubuntu 26.04's dd is uutils', which fails such a read on GitHub's runners
+    on AWS with "IO error: Invalid input" (their root disk takes no O_DIRECT
+    buffer it gets), so the read never happens; GNU dd, gnudd there, works."""
+    log = tempfile.TemporaryFile(mode="w+")  # noqa: SIM115 - closed with the process
+    proc = subprocess.Popen(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--",
+            "sh",
+            "-c",
+            # iflag=direct bypasses the page cache, so the read reaches the disk
+            'exec "$(command -v gnudd || echo dd)" if="$1" of=/dev/null bs=1M iflag=direct',
+            "sh",
+            path,
+        ],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    proc.log = log
+    return proc
+
+
+def direct_read_output(proc):
+    """The exit status and output of a start_direct_read, for a failure message."""
+    status = "still running" if proc.poll() is None else f"exit {proc.returncode}"
+    proc.log.seek(0)
+    return f"\n--- dd ({status}) ---\n{proc.log.read() or '(no output)'}"
 
 
 def cleanup_container(name, coi_binary):

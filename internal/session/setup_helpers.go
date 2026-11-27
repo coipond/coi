@@ -669,6 +669,29 @@ func ReapplyTmpfsSizing(mgr tmpfsSizer, limitsCfg *config.LimitsConfig, logger f
 	}
 }
 
+// tmpCleaner is implemented by a container whose /tmp cleanup limits can be set.
+type tmpCleaner interface {
+	SetTmpCleanup(maxSize, maxAge string) error
+}
+
+// ApplyTmpCleanup sets the /tmp cleanup limits from [limits.disk]
+// tmp_max_size and tmp_max_age (defaults when unset) in a freshly launched or
+// restarted, RUNNING container, on both the shell and run launch paths.
+// Non-fatal: logs a warning.
+func ApplyTmpCleanup(mgr any, limitsCfg *config.LimitsConfig, logger func(string)) {
+	c, ok := mgr.(tmpCleaner)
+	if !ok {
+		return
+	}
+	var maxSize, maxAge string
+	if limitsCfg != nil {
+		maxSize, maxAge = limitsCfg.Disk.TmpMaxSize, limitsCfg.Disk.TmpMaxAge
+	}
+	if err := c.SetTmpCleanup(maxSize, maxAge); err != nil {
+		logger(fmt.Sprintf("Warning: Failed to set /tmp cleanup limits: %v", err))
+	}
+}
+
 // shouldSuppressClaudeAutoMode reports whether coi should write the Claude
 // managed-settings policy that disables auto mode. It is Claude-specific and,
 // per #764, deliberately skipped under interactive permission mode: managed

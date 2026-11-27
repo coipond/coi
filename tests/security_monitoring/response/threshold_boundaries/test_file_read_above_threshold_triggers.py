@@ -9,8 +9,10 @@ import pytest
 from support.monitoring import (
     cleanup_container,
     container_io_stat,
+    direct_read_output,
     get_container_name_from_workspace,
     get_threat_events,
+    start_direct_read,
     wait_for_container_running,
     wait_for_frozen,
 )
@@ -65,21 +67,7 @@ def test_file_read_above_threshold_triggers(
     # Use Popen (non-blocking) because the security monitor may freeze the
     # container mid-read, which would cause a blocking subprocess.run to
     # hang until timeout.
-    dd_proc = subprocess.Popen(
-        [
-            "incus",
-            "exec",
-            container_name,
-            "--",
-            "dd",
-            "if=/workspace/data250mb.bin",
-            "of=/dev/null",
-            "bs=1M",
-            "iflag=direct",  # Bypass cache to ensure actual I/O
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    dd_proc = start_direct_read(container_name, "/workspace/data250mb.bin")
 
     # Poll for the container to be frozen.  The security monitor (1s poll
     # interval) will detect the >50MB delta and freeze the container either
@@ -96,8 +84,10 @@ def test_file_read_above_threshold_triggers(
         print(stderr_file.read_text())
     print("=== End Debug Log ===\n")
 
-    assert paused, "Container should be paused on 250MB read (above threshold)" + container_io_stat(
-        container_name
+    assert paused, (
+        "Container should be paused on 250MB read (above threshold)"
+        + container_io_stat(container_name, test_workspace)
+        + direct_read_output(dd_proc)
     )
 
     # Verify HIGH threat logged

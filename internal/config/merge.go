@@ -113,6 +113,12 @@ func mergeLimits(base *LimitsConfig, other *LimitsConfig) {
 	if other.Disk.TmpfsSize != "" {
 		base.Disk.TmpfsSize = other.Disk.TmpfsSize
 	}
+	if other.Disk.TmpMaxSize != "" {
+		base.Disk.TmpMaxSize = other.Disk.TmpMaxSize
+	}
+	if other.Disk.TmpMaxAge != "" {
+		base.Disk.TmpMaxAge = other.Disk.TmpMaxAge
+	}
 
 	// Merge runtime limits
 	if other.Runtime.MaxDuration != "" {
