@@ -41,6 +41,9 @@ type Bundle struct {
 	// tools without a Keychain-backed credential.
 	KeychainService string `toml:"keychain_service"`
 	KeychainFile    string `toml:"keychain_file"`
+	// APIDomains lists the hosts the tool's API and sign-in use (hostnames,
+	// allowed_domains syntax). Empty for tools with a user-chosen provider.
+	APIDomains []string `toml:"api_domains"`
 }
 
 var catalog map[string]Bundle

@@ -89,5 +89,25 @@ var HardenedProfileSecretPaths = []string{
 	"secrets/**",
 }
 
+// HardenedProfileAllowedDomains is the allowed_domains set bundled by the
+// built-in "hardened" profile: the package registries and code hosts an agent
+// needs to install dependencies and fetch code. The configured tool's
+// api_domains (internal/tool/credentials/catalog.toml) are added to it. A
+// profile that inherits "hardened" and sets allowed_domains replaces the list,
+// so it lists these hosts again with its own.
+var HardenedProfileAllowedDomains = []string{
+	// Ruby
+	"rubygems.org", "index.rubygems.org",
+	// JavaScript
+	"registry.npmjs.org",
+	// Python
+	"pypi.org", "files.pythonhosted.org",
+	// Go
+	"proxy.golang.org", "sum.golang.org",
+	// GitHub
+	"github.com", "codeload.github.com", "objects.githubusercontent.com",
+	"raw.githubusercontent.com",
+}
+
 // maxInheritanceDepth is the maximum allowed inheritance chain depth
 const maxInheritanceDepth = 10

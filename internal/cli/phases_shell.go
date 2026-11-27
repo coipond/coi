@@ -101,13 +101,16 @@ func (a *App) resolveWorkspacePhase(cmd *cobra.Command, s *shellState) session.P
 			}
 
 			// An explicitly requested --profile must keep winning over the
-			// workspace/alias overlays for [container] settings — otherwise a
-			// project config could silently override the profile the user
-			// asked for, with precedence depending on the invocation
+			// workspace/alias overlays for [container] and [network] settings —
+			// otherwise a project config could silently override the profile
+			// the user asked for, with precedence depending on the invocation
 			// directory. (The alias branch above re-applies a saved profile
 			// only when --profile was NOT given, so this covers the rest.)
 			if cmd.Flags().Changed("profile") && a.profile != "" {
 				if err := a.cfg.ReapplyProfileContainer(a.profile); err != nil {
+					return nil, err
+				}
+				if err := a.cfg.ReapplyProfileNetwork(a.profile); err != nil {
 					return nil, err
 				}
 			}

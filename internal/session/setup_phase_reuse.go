@@ -68,6 +68,13 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 					fmt.Sprintf("stop it (coi shutdown %s) and launch again", st.result.ContainerName)); err != nil {
 					return nil, err
 				}
+				// Also for an explicit --container: the egress rules rely on
+				// the keys, and coi does not change a running container's NIC
+				// (applying port_isolation re-plugs eth0 mid-session).
+				if err := refuseMissingNICSecurity(st.result.ContainerName, networkMode(st.opts.Network.Config),
+					nicSecurityRemedy(st.result.ContainerName, st.opts.ContainerName != "")); err != nil {
+					return nil, err
+				}
 				st.opts.Logger("Container already running, reusing...")
 				// A RUNNING container's kernel-surface settings cannot be
 				// changed (nesting is rejected, the deny list is racy), so
@@ -109,6 +116,10 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 				if st.opts.ContainerName != "" {
 					if err := refuseDockerWithoutSudo(st.result.ContainerName, hardeningPolicyFrom(&st.opts),
 						fmt.Sprintf("unset the listed keys (incus config unset %s <key>) or launch without --container", st.result.ContainerName)); err != nil {
+						return nil, err
+					}
+					if err := refuseMissingNICSecurity(st.result.ContainerName, networkMode(st.opts.Network.Config),
+						nicSecurityRemedy(st.result.ContainerName, true)); err != nil {
 						return nil, err
 					}
 				}

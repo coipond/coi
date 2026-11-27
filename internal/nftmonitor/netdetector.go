@@ -3,10 +3,14 @@ package nftmonitor
 import (
 	"fmt"
 	"net"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/coipond/coi/internal/config"
+	"github.com/coipond/coi/internal/monitor"
 )
 
 // NetworkDetector analyzes network events for threats
@@ -14,6 +18,7 @@ type NetworkDetector struct {
 	config        *Config
 	dnsQueryCount map[string]int // containerIP -> count
 	dnsQueryReset time.Time
+	rejectedBurst *monitor.RejectedBurst
 	mu            sync.Mutex
 }
 
@@ -23,7 +28,22 @@ func NewNetworkDetector(cfg *Config) *NetworkDetector {
 		config:        cfg,
 		dnsQueryCount: make(map[string]int),
 		dnsQueryReset: time.Now(),
+		rejectedBurst: monitor.NewRejectedBurst(cfg.RejectedBurstThreshold, time.Duration(cfg.RejectedBurstWindowSec)*time.Second),
 	}
+}
+
+// rejectedLevel returns the severity of a HIGH check that fired for event,
+// with a description suffix. The rule logs packets before the filter runs, so
+// one the firewall rejects (PermittedDestination's verdict) is an attempt it
+// stopped: rated by the rejected-burst tracker. No verdict, or a TCP packet
+// other than a SYN without ACK (its flow got through): HIGH.
+func (nd *NetworkDetector) rejectedLevel(event *NetworkEvent) (ThreatLevel, string) {
+	if nd.config.PermittedDestination == nil || !isConnectionAttempt(event) {
+		return ThreatLevelHigh, ""
+	}
+	dst := net.JoinHostPort(event.DstIP, strconv.Itoa(event.DstPort))
+	level, suffix := nd.rejectedBurst.Rate(dst, event.Timestamp)
+	return ThreatLevel(level), suffix
 }
 
 // Analyze examines a network event and returns a threat if detected
@@ -46,12 +66,13 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 
 	// 1. Private addresses (blocked by the firewall unless in open mode)
 	if nd.config.NetworkMode != config.NetworkModeOpen && config.IsPrivateNetworkIP(event.DstIP) && event.DstIP != nd.config.GatewayIP && !permitted() {
+		level, rejected := nd.rejectedLevel(event)
 		return &ThreatEvent{
 			Timestamp:   event.Timestamp,
-			Level:       ThreatLevelHigh,
+			Level:       level,
 			Category:    "network",
 			Title:       "Connection to private network",
-			Description: fmt.Sprintf("Private address: %s:%d (should be blocked by firewall)", event.DstIP, event.DstPort),
+			Description: fmt.Sprintf("Private address: %s:%d (should be blocked by firewall)%s", event.DstIP, event.DstPort, rejected),
 			Evidence:    event,
 		}
 	}
@@ -84,12 +105,13 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 
 	// 4. Allowlist violations (if in allowlist mode)
 	if len(nd.config.AllowedCIDRs) > 0 && !inAllowlist(event.DstIP, nd.config.AllowedCIDRs) && !permitted() {
+		level, rejected := nd.rejectedLevel(event)
 		return &ThreatEvent{
 			Timestamp:   event.Timestamp,
-			Level:       ThreatLevelHigh,
+			Level:       level,
 			Category:    "network",
 			Title:       "Unauthorized connection attempt",
-			Description: fmt.Sprintf("IP not in allowlist: %s:%d", event.DstIP, event.DstPort),
+			Description: fmt.Sprintf("IP not in allowlist: %s:%d%s", event.DstIP, event.DstPort, rejected),
 			Evidence:    event,
 		}
 	}
@@ -100,6 +122,16 @@ func (nd *NetworkDetector) Analyze(event *NetworkEvent) *ThreatEvent {
 	}
 
 	return nil
+}
+
+// isConnectionAttempt reports whether event opens a flow: any non-TCP packet,
+// or a TCP SYN without ACK.
+func isConnectionAttempt(event *NetworkEvent) bool {
+	if !strings.EqualFold(event.Protocol, "TCP") {
+		return true
+	}
+	flags := strings.Split(event.Flags, ",")
+	return slices.Contains(flags, "SYN") && !slices.Contains(flags, "ACK")
 }
 
 // analyzeDNSQuery checks DNS queries for anomalies

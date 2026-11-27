@@ -207,9 +207,19 @@ func cachedConfigValue(ctx context.Context, name, key string, expanded bool) (st
 // InstanceDevices returns the instance's own (non-profile) devices and their
 // config, from the cache when fresh.
 func InstanceDevices(name string) (map[string]map[string]string, error) {
-	c, ok := loadInstanceConfig(context.Background(), name, false)
+	return instanceDevices(name, false)
+}
+
+// instanceDevices returns the instance's devices and their config, with the
+// profile-inherited ones when expanded is true, from the cache when fresh.
+func instanceDevices(name string, expanded bool) (map[string]map[string]string, error) {
+	c, ok := loadInstanceConfig(context.Background(), name, expanded)
 	if !ok {
-		out, err := incusOutputUncached(context.Background(), "config", "show", name)
+		args := []string{"config", "show"}
+		if expanded {
+			args = append(args, "--expanded")
+		}
+		out, err := incusOutputUncached(context.Background(), append(args, name)...)
 		if err != nil {
 			return nil, err
 		}

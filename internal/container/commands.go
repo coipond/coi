@@ -877,14 +877,12 @@ func IsolateUIDNamespace(containerName string) error {
 //
 // eth0 is inherited from the default profile, so it is first overridden onto the
 // instance (Incus refuses `config device set` on a profile-supplied device).
-// Returns an error if any key cannot be set; callers treat it as non-fatal so
-// unmanaged/static/macvlan NICs degrade to nft-only enforcement.
+// Returns an error if any key cannot be set. Restricted/allowlist callers
+// abort on it; open mode degrades to a warning.
 func EnableNICSecurity(containerName string) error {
-	const nic = "eth0"
-	keys := []string{
-		"security.ipv4_filtering=true",
-		"security.mac_filtering=true",
-		"security.port_isolation=true",
+	keys := make([]string, len(nicSecurityKeys))
+	for i, k := range nicSecurityKeys {
+		keys[i] = k + "=true"
 	}
 	// Not an `incus init -d eth0,...` override: a key Incus rejects (e.g. on a
 	// macvlan NIC) would abort the creation, but this hardening is non-fatal.
@@ -893,6 +891,7 @@ func EnableNICSecurity(containerName string) error {
 	// overridden reports "already exists"), fall back to a plain override,
 	// ignored on failure, and set the keys on the instance device: that
 	// `config device set` surfaces any real problem.
+	const nic = nicSecurityDevice
 	if IncusExecQuiet(append([]string{"config", "device", "override", containerName, nic}, keys...)...) == nil {
 		return nil
 	}
@@ -901,6 +900,65 @@ func EnableNICSecurity(containerName string) error {
 		return fmt.Errorf("failed to set %s on %s: %w", strings.Join(keys, " "), nic, err)
 	}
 	return nil
+}
+
+// nicSecurityDevice and nicSecurityKeys are the NIC and the keys
+// EnableNICSecurity sets.
+const nicSecurityDevice = "eth0"
+
+var nicSecurityKeys = []string{
+	"security.ipv4_filtering",
+	"security.mac_filtering",
+	"security.port_isolation",
+}
+
+// ReconcileNICSecurity brings a STOPPED reused container's eth0 to the keys
+// EnableNICSecurity sets at creation. A persistent container created by an
+// older coi, or one where the creation-time hardening failed, lacks them, and
+// in-container root can then send from a second source IP that no saddr-keyed
+// nft rule matches. Reads the expanded devices (a profile-inherited eth0 counts)
+// and writes only when a key is not effective. Returns whether it wrote, and an
+// error when the keys cannot be set or are still not effective after the
+// write.
+func ReconcileNICSecurity(containerName string) (changed bool, err error) {
+	missing, err := MissingNICSecurityKeys(containerName)
+	if err != nil {
+		return false, err
+	}
+	if len(missing) == 0 {
+		return false, nil
+	}
+	if err := EnableNICSecurity(containerName); err != nil {
+		return false, err
+	}
+	if missing, err = MissingNICSecurityKeys(containerName); err != nil {
+		return true, err
+	}
+	if len(missing) > 0 {
+		return true, fmt.Errorf("%s on %s not in effect after setting them", strings.Join(missing, ", "), nicSecurityDevice)
+	}
+	return true, nil
+}
+
+// MissingNICSecurityKeys lists the anti-spoofing keys that are not true on the
+// container's expanded eth0. A container without eth0 is an error: the
+// anti-spoofing cannot be checked.
+func MissingNICSecurityKeys(containerName string) ([]string, error) {
+	devices, err := instanceDevices(containerName, true)
+	if err != nil {
+		return nil, fmt.Errorf("read devices of %s: %w", containerName, err)
+	}
+	nic, ok := devices[nicSecurityDevice]
+	if !ok {
+		return nil, fmt.Errorf("%s has no %s device", containerName, nicSecurityDevice)
+	}
+	var missing []string
+	for _, k := range nicSecurityKeys {
+		if !incusTruthy(nic[k]) {
+			missing = append(missing, k)
+		}
+	}
+	return missing, nil
 }
 
 // DisableIPv6AtBoot disables IPv6 inside the container from the kernel's first

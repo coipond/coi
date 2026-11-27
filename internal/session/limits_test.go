@@ -26,15 +26,23 @@ func fakeLimitsIncus(t *testing.T, name, configYAML string) (logPath string) {
 // key, and a home/ dir is what a session save's tar pull streams.
 func fakeLimitsIncusStatus(t *testing.T, name, configYAML, status string) (logPath string) {
 	t.Helper()
+	return fakeLimitsIncusCases(t, name, configYAML, status, "")
+}
+
+// fakeLimitsIncusCases is fakeLimitsIncusStatus with extra shell `case` lines
+// tried first; they can use $d, the directory of the returned log.
+func fakeLimitsIncusCases(t *testing.T, name, configYAML, status, cases string) (logPath string) {
+	t.Helper()
 	dir := t.TempDir()
 	logPath = filepath.Join(dir, "calls")
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	script := `#!/bin/sh
+d=` + dir + `
 echo "$*" >> ` + logPath + `
 case "$*" in
-  *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
+` + cases + `  *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
   *"config get "*` + name + `" "*) k=${*##* }; [ -f ` + filepath.Join(dir, "keys") + `/"$k" ] && cat ` + filepath.Join(dir, "keys") + `/"$k" ;;
   *" exec "*"coi-tar-pull"*) [ -d ` + filepath.Join(dir, "home") + ` ] && exec tar -C ` + filepath.Join(dir, "home") + ` -cf - "${*##* }" ;;
   *"list "*"--columns=ns"*) [ -n "` + status + `" ] && echo "` + name + `,` + status + `" ;;

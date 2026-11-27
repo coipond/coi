@@ -26,6 +26,9 @@ type Detector struct {
 	// class (nc -e, /dev/tcp/, socat EXEC:, bash -i, ...) is always CRITICAL and
 	// unaffected by this setting.
 	reverseShellOneLinerLevel ThreatLevel
+
+	// rejectedBurst rates connections the firewall rejects.
+	rejectedBurst *RejectedBurst
 }
 
 // NewDetector creates a new threat detector
@@ -37,7 +40,16 @@ func NewDetector(fileReadThresholdMB, fileReadRateMBPerSec float64) *Detector {
 		fileWriteRateMBPerSec:     fileReadRateMBPerSec, // Default: same as read rate threshold
 		previousProcessCount:      -1,
 		reverseShellOneLinerLevel: ThreatLevelCritical, // safe default: kill on critical
+		rejectedBurst:             NewRejectedBurst(0, 0),
 	}
+}
+
+// WithRejectedBurst sets when connection attempts the firewall rejects escalate
+// from WARNING to HIGH: threshold distinct destinations within window (<= 0:
+// the default).
+func (d *Detector) WithRejectedBurst(threshold int, window time.Duration) *Detector {
+	d.rejectedBurst = NewRejectedBurst(threshold, window)
+	return d
 }
 
 // WithReverseShellOneLinerPolicy sets how interpreter one-liner reverse-shell
@@ -142,9 +154,13 @@ func (d *Detector) Analyze(snapshot MonitorSnapshot) []ThreatEvent {
 			extractIP(conn.RemoteAddr) == "169.254.169.254" {
 			level = ThreatLevelCritical
 		}
+		var rejected string
+		if level == ThreatLevelHigh && conn.FirewallRejected {
+			level, rejected = d.rejectedBurst.Rate(conn.RemoteAddr, snapshot.Timestamp)
+		}
 
-		threats = append(threats, newThreatEvent(snapshot.Timestamp, level, "network", "Unexpected network connection", fmt.Sprintf("Connection to %s: %s",
-			conn.RemoteAddr, conn.SuspectReason), Evidence{Network: &NetworkThreat{
+		threats = append(threats, newThreatEvent(snapshot.Timestamp, level, "network", "Unexpected network connection", fmt.Sprintf("Connection to %s: %s%s",
+			conn.RemoteAddr, conn.SuspectReason, rejected), Evidence{Network: &NetworkThreat{
 			Connection: conn,
 			Reason:     conn.SuspectReason,
 			RemoteHost: extractIP(conn.RemoteAddr),
