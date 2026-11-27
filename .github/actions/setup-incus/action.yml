@@ -1,8 +1,8 @@
 name: Set up Incus
 description: >-
   Install Incus and nftables, initialise Incus (btrfs pool, incusbr0 bridge with
-  NAT), open container networking, and import the Ubuntu 24.04 base image as
-  coi-ubuntu-24.04 (cached). Shared by the integration lanes in ci.yml and
+  NAT), open container networking, and import the Ubuntu 26.04 base image as
+  coi-ubuntu-26.04 (cached). Shared by the integration lanes in ci.yml and
   agent-installers.yml.
 inputs:
   channel:
@@ -143,23 +143,23 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: /tmp/ubuntu-base-image.tar.gz
-        key: ${{ runner.os }}-ubuntu-24.04-base-image
+        key: ${{ runner.os }}-ubuntu-26.04-base-image
 
     - name: Import or download base Ubuntu image
       shell: bash
       run: |
-        # Import with alias coi-ubuntu-24.04 so EnsureLocalUbuntuImage finds it
+        # Import with alias coi-ubuntu-26.04 so EnsureLocalUbuntuImage finds it
         # without downloading 500 MB from Canonical's CDN on every CI run.
         if [ -f /tmp/ubuntu-base-image.tar.gz ]; then
-          echo "Restoring Ubuntu 24.04 base image from cache..."
-          incus image import /tmp/ubuntu-base-image.tar.gz --alias coi-ubuntu-24.04
+          echo "Restoring Ubuntu 26.04 base image from cache..."
+          incus image import /tmp/ubuntu-base-image.tar.gz --alias coi-ubuntu-26.04
         else
-          echo "Downloading Ubuntu 24.04 base image from remote..."
+          echo "Downloading Ubuntu 26.04 base image from remote..."
           for attempt in 1 2 3; do
-            if incus image copy images:ubuntu/24.04 local: --alias coi-ubuntu-24.04 --auto-update=false; then
+            if incus image copy images:ubuntu/26.04 local: --alias coi-ubuntu-26.04 --auto-update=false; then
               echo "Image downloaded on attempt $attempt"
               # Export for caching
-              incus image export coi-ubuntu-24.04 /tmp/ubuntu-base-image
+              incus image export coi-ubuntu-26.04 /tmp/ubuntu-base-image
               break
             fi
             if [ "$attempt" -eq 3 ]; then
@@ -177,4 +177,4 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: /tmp/ubuntu-base-image.tar.gz
-        key: ${{ runner.os }}-ubuntu-24.04-base-image
+        key: ${{ runner.os }}-ubuntu-26.04-base-image

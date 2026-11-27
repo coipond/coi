@@ -3,6 +3,10 @@ description: >-
   Set up Go, install the cgo build dependency (libsystemd-dev, for sdjournal)
   plus any extra apt packages, and stage the embedded assets `go build` needs.
 inputs:
+  go-version:
+    description: Go version for actions/setup-go.
+    required: false
+    default: '1.27'
   packages:
     description: Extra apt packages to install alongside libsystemd-dev.
     required: false
@@ -13,7 +17,7 @@ runs:
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: '1.26'
+        go-version: ${{ inputs.go-version }}
         check-latest: true
         cache: true
 

@@ -149,7 +149,7 @@ python3 -m venv "$HOME/venv"
 
 echo "=== images: import staged cache tarballs, else build in-guest with retries (mirrors ci.yml) ==="
 if [ -n "$BASE_TARBALL" ] && [ -f "$BASE_TARBALL" ]; then
-    incus image import "$BASE_TARBALL" --alias coi-ubuntu-24.04 || echo "WARNING: base image import failed (smoke tests don't need it)"
+    incus image import "$BASE_TARBALL" --alias coi-ubuntu-26.04 || echo "WARNING: base image import failed (smoke tests don't need it)"
 else
     echo "no staged base image tarball (smoke tests don't need it)"
 fi

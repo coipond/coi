@@ -48,15 +48,22 @@ jobs:
 
   # Go unit tests run in parallel with integration tests (after build passes)
   unit-tests:
-    name: Unit Tests
+    name: Unit Tests (Go ${{ matrix.go }})
     runs-on: ubuntu-24.04
     needs: build
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both supported Go minors: go.mod's floor and the latest release.
+        go: ['1.26', '1.27']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Go build
         uses: ./.github/actions/setup-go-build
+        with:
+          go-version: ${{ matrix.go }}
 
       - name: Run unit tests with coverage and race detector
         run: |
@@ -96,7 +103,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26'
+          go-version: '1.27'
           check-latest: true
           cache: true
 
@@ -149,6 +156,10 @@ jobs:
           - name: core-run
             path: tests/run
             description: "Run command tests"
+          - name: core-run-incus-lts
+            path: tests/run
+            incus_channel: lts-7.0
+            description: "Run command tests on Incus LTS 7.0"
           - name: misc-cli
             path: tests/cli
             description: "CLI flag/format/output tests"
@@ -330,8 +341,8 @@ jobs:
         continue-on-error: true
         run: |
           # Skip if base image is not available (e.g., remote was unreachable and no cache)
-          if ! incus image info coi-ubuntu-24.04 >/dev/null 2>&1; then
-            echo "WARNING: coi-ubuntu-24.04 image not available, skipping bind mount test"
+          if ! incus image info coi-ubuntu-26.04 >/dev/null 2>&1; then
+            echo "WARNING: coi-ubuntu-26.04 image not available, skipping bind mount test"
             exit 0
           fi
 
@@ -342,7 +353,7 @@ jobs:
           echo "test-content" > /tmp/test-bind-mount/test-file.txt
 
           # Launch test container (use local alias to avoid external network dependency)
-          incus launch coi-ubuntu-24.04 test-bind-mount-container
+          incus launch coi-ubuntu-26.04 test-bind-mount-container
           sleep 5
 
           # Add bind mount with shift=true
@@ -558,7 +569,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/ubuntu-base-image.tar.gz
-          key: ${{ runner.os }}-ubuntu-24.04-base-image
+          key: ${{ runner.os }}-ubuntu-26.04-base-image
 
       - name: Stage image tarballs under $HOME (the guest sees only the ~ mount, not /tmp)
         run: |
