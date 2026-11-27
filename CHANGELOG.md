@@ -4,6 +4,7 @@
 
 ### Features
 
+- [Feature] **The sandbox context says when `[tool] memory = "fresh"` reset the tool's memory** — in a reused persistent container whose tool memory coi removed for a new session, the Mode line in `~/SANDBOX_CONTEXT.md` (and the tool's auto-context block) says the container is reused, the history and memory of earlier sessions are gone, and what those sessions installed and set up (packages, runtimes, files outside the workspace, tool settings, credentials) is still there, so the agent checks before installing it again. A first start, `"keep"`, `--resume` and ephemeral containers keep the old text.
 - [Feature] **`[container] keep_on_failed_save` keeps a non-persistent container when its session save fails** — after `close` or a poweroff, coi deletes a non-persistent container even when saving its session data failed (for example the host disk is full), so the conversation since the last saved copy is lost. With `keep_on_failed_save = true` (also in profiles), coi keeps the stopped container and says how to save it later (fix the cause, then `coi shell --resume=<session-id>`, with the session id it prints) or remove it (`coi kill <container>` or `coi clean`). Off by default, because kept containers use disk until removed. Without the setting, the message after the delete now names why the save failed and says that the conversation since the last saved copy is lost.
 
 ### Breaking

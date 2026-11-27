@@ -24,8 +24,8 @@ func mustTool(t *testing.T, name string) tool.Tool {
 func TestClearToolMemory_RemovesOnlyMemoryPaths(t *testing.T) {
 	ti := mustTool(t, "claude")
 	m := &memoryManager{}
-	if err := clearToolMemory(m, "/home/code", ti, func(string) {}); err != nil {
-		t.Fatalf("clearToolMemory: %v", err)
+	if cleared, err := clearToolMemory(m, "/home/code", ti, func(string) {}); err != nil || !cleared {
+		t.Fatalf("clearToolMemory = %v, %v; want true, nil", cleared, err)
 	}
 	if len(m.execs) != 1 {
 		t.Fatalf("want one exec, got %d: %q", len(m.execs), m.execs)
@@ -55,7 +55,7 @@ func TestClearToolMemory_RemovesOnlyMemoryPaths(t *testing.T) {
 
 func TestClearToolMemory_RootHomeRunsAsRoot(t *testing.T) {
 	m := &memoryManager{}
-	if err := clearToolMemory(m, "/root", mustTool(t, "codex"), func(string) {}); err != nil {
+	if _, err := clearToolMemory(m, "/root", mustTool(t, "codex"), func(string) {}); err != nil {
 		t.Fatalf("clearToolMemory: %v", err)
 	}
 	if len(m.execs) != 1 || !strings.Contains(m.execs[0], " /root/.codex/sessions") {
@@ -68,8 +68,8 @@ func TestClearToolMemory_RootHomeRunsAsRoot(t *testing.T) {
 
 func TestClearToolMemory_ToolWithoutMemoryPathsIsNoop(t *testing.T) {
 	m := &memoryManager{}
-	if err := clearToolMemory(m, "/home/code", mustTool(t, "pi"), func(string) {}); err != nil {
-		t.Fatalf("clearToolMemory: %v", err)
+	if cleared, err := clearToolMemory(m, "/home/code", mustTool(t, "pi"), func(string) {}); err != nil || cleared {
+		t.Fatalf("clearToolMemory = %v, %v; want false, nil", cleared, err)
 	}
 	if len(m.execs) != 0 {
 		t.Errorf("want no exec for a tool without memory paths, got %q", m.execs)
@@ -78,8 +78,8 @@ func TestClearToolMemory_ToolWithoutMemoryPathsIsNoop(t *testing.T) {
 
 func TestClearToolMemory_ExecErrorFails(t *testing.T) {
 	m := &memoryManager{err: errors.New("exit status 1")}
-	err := clearToolMemory(m, "/home/code", mustTool(t, "claude"), func(string) {})
-	if err == nil || !strings.Contains(err.Error(), "failed to clear claude memory") {
+	cleared, err := clearToolMemory(m, "/home/code", mustTool(t, "claude"), func(string) {})
+	if cleared || err == nil || !strings.Contains(err.Error(), "failed to clear claude memory") {
 		t.Fatalf("want a clear-memory error, got %v", err)
 	}
 }
@@ -279,13 +279,15 @@ func TestPhaseResumeRestore_FreshClearsBeforeRestore(t *testing.T) {
 func TestPhaseSetupCLIConfig_FreshClearsOnNewSession(t *testing.T) {
 	cases := []struct {
 		name     string
+		tool     string
 		fresh    bool
 		resumeID string
 		wantRm   bool
 	}{
-		{"fresh new session", true, "", true},
-		{"fresh resume (restored in phaseResumeRestore)", true, "s1", false},
-		{"keep", false, "", false},
+		{"fresh new session", "claude", true, "", true},
+		{"fresh resume (restored in phaseResumeRestore)", "claude", true, "s1", false},
+		{"keep", "claude", false, "", false},
+		{"fresh, tool without memory paths", "pi", true, "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -297,7 +299,7 @@ func TestPhaseSetupCLIConfig_FreshClearsOnNewSession(t *testing.T) {
 			}
 			st.opts.FreshToolMemory = c.fresh
 			st.opts.Persistent = true
-			st.opts.Tool = mustTool(t, "claude")
+			st.opts.Tool = mustTool(t, c.tool)
 			st.opts.ResumeFromID = c.resumeID
 			st.opts.Logger = func(string) {}
 
@@ -312,6 +314,9 @@ func TestPhaseSetupCLIConfig_FreshClearsOnNewSession(t *testing.T) {
 			}
 			if rm != c.wantRm {
 				t.Errorf("memory removed = %v, want %v; execs: %q", rm, c.wantRm, m.execs)
+			}
+			if got := contextInfoFor(st.result, st.opts).MemoryCleared; got != c.wantRm {
+				t.Errorf("context MemoryCleared = %v, want %v", got, c.wantRm)
 			}
 		})
 	}
