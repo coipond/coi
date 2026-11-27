@@ -203,17 +203,26 @@ def wait_for_frozen(container_name, max_wait=45):
     return get_container_state(container_name) == "Frozen"
 
 
-def container_io_stat(container_name):
-    """The container cgroup's io.stat, for a failure message about an I/O
-    threshold."""
+def container_io_stat(container_name, workspace=None):
+    """The container cgroup's io.stat, and the mount holding workspace when
+    given, for a failure message about an I/O threshold."""
+    mount = ""
+    if workspace is not None:
+        result = subprocess.run(
+            ["findmnt", "-T", str(workspace), "-o", "TARGET,SOURCE,FSTYPE"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        mount = f"\n--- workspace mount ---\n{result.stdout or result.stderr}"
     path = find_container_cgroup_path(container_name)
     if path is None:
-        return "\n(container cgroup not found)"
+        return "\n(container cgroup not found)" + mount
     try:
         stat = Path(path, "io.stat").read_text()
     except OSError as e:
         stat = f"(unreadable: {e})"
-    return f"\n--- {path}/io.stat ---\n{stat or '(empty)'}"
+    return f"\n--- {path}/io.stat ---\n{stat or '(empty)'}" + mount
 
 
 def cleanup_container(name, coi_binary):

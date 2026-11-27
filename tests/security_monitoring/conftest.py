@@ -1,6 +1,8 @@
 """Fixtures for the security-monitoring integration tests: each one writes a
 monitoring config to ~/.coi/config.toml for the test and restores it after."""
 
+import shutil
+import uuid
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,23 @@ def test_workspace(tmp_path):
     workspace.mkdir()
     (workspace / "README.md").write_text("# Test")
     return str(workspace)
+
+
+@pytest.fixture
+def disk_workspace():
+    """Create a test workspace on a block device, for I/O threshold tests.
+
+    pytest's tmp_path is under /tmp. Where /tmp is not on a block device (a
+    tmpfs), a read from it, also with iflag=direct, never reaches a disk, so
+    the cgroup's io.stat, which the I/O thresholds count, does not see it.
+    The read tests failed on GitHub's ubuntu-24.04 runners on AWS and passed
+    on those on Azure. The home directory is on the runner's disk.
+    """
+    workspace = Path.home() / ".cache" / "coi-test-workspaces" / uuid.uuid4().hex / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "README.md").write_text("# Test")
+    yield str(workspace)
+    shutil.rmtree(workspace.parent, ignore_errors=True)
 
 
 @pytest.fixture

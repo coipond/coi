@@ -18,24 +18,24 @@ from support.monitoring import (
 
 
 def test_large_file_read_triggers_auto_pause(
-    test_workspace, enable_monitoring_low_thresholds, coi_binary
+    disk_workspace, enable_monitoring_low_thresholds, coi_binary
 ):
     """Test large file read detection (HIGH) triggers auto-pause."""
     # Create a 200MB binary file (well above the 50MB threshold).
     # Using a binary file with write_bytes and direct dd (same pattern as the
     # reliably passing test_file_read_above_threshold_triggers) to ensure
     # O_DIRECT succeeds and block I/O is counted by the cgroup monitor.
-    large_file = Path(test_workspace) / "secrets.bin"
+    large_file = Path(disk_workspace) / "secrets.bin"
     large_file.write_bytes(b"S" * (200 * 1024 * 1024))
 
     proc = subprocess.Popen(
-        [coi_binary, "shell", "--workspace", str(test_workspace), "--slot", "6"],
+        [coi_binary, "shell", "--workspace", str(disk_workspace), "--slot", "6"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
-    container_name = get_container_name_from_workspace(str(test_workspace)).rsplit("-", 1)[0] + "-6"
+    container_name = get_container_name_from_workspace(str(disk_workspace)).rsplit("-", 1)[0] + "-6"
 
     if not wait_for_container_running(container_name):
         proc.terminate()
@@ -84,7 +84,7 @@ def test_large_file_read_triggers_auto_pause(
 
     assert paused, (
         "Container should be auto-paused on HIGH threat (large file read)"
-        + container_io_stat(container_name)
+        + container_io_stat(container_name, disk_workspace)
     )
 
     # Verify HIGH threat in audit log
