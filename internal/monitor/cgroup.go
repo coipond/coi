@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,26 +27,17 @@ func GetCgroupPath(ctx context.Context, containerName string) (string, error) {
 }
 
 // GetContainerInitPID returns the host PID of the container's init process.
-// It first attempts a host-side read from the container's cgroup.procs files,
-// which requires no subprocess. Only if that fails does it fall back to
-// parsing `incus info` output.
+// It takes the lowest PID of the container's cgroup tree (containerPIDs),
+// which requires no subprocess, and falls back to parsing `incus info` output
+// only when the tree holds no PIDs.
 //
-// The cgroup path probe uses the well-known paths in GetCgroupPath (no incus
-// subprocess). The incus fallback path is taken only when none of those paths
-// exist — it calls incus info directly rather than going through GetCgroupPath
-// to avoid the mutual recursion that would occur if GetCgroupPath's own
-// fallback (findCgroupPathViaIncus) called back into GetContainerInitPID.
+// The incus fallback calls incus info directly rather than going through
+// GetCgroupPath to avoid the mutual recursion that would occur if
+// GetCgroupPath's own fallback (findCgroupPathViaIncus) called back into
+// GetContainerInitPID.
 func GetContainerInitPID(ctx context.Context, containerName string) (int, error) {
-	for _, cgroupPath := range wellKnownCgroupPaths(containerName) {
-		if _, err := os.Stat(cgroupPath); err != nil {
-			continue
-		}
-		if pid, err := initPIDFromCgroupProcs(cgroupPath); err == nil {
-			return pid, nil
-		}
-	}
-	// Fallback: parse PID from incus info output.
-	return getInitPIDViaIncus(ctx, containerName)
+	pid, _, err := containerPIDs(ctx, containerName)
+	return pid, err
 }
 
 // initPIDInfoTimeout bounds the incus info fallback: the collector waits for
@@ -68,6 +60,9 @@ func getInitPIDViaIncus(ctx context.Context, containerName string) (int, error) 
 	}
 	return parseInitPIDFromIncusInfo(output)
 }
+
+// cgroupRoot is the cgroup v2 mount; tests point it at a fake tree.
+var cgroupRoot = "/sys/fs/cgroup"
 
 // wellKnownCgroupPaths returns the candidate cgroup v2 paths for a container
 // in the order they should be probed. Shared with GetCgroupPath so both
@@ -93,24 +88,48 @@ func wellKnownCgroupPaths(containerName string) []string {
 		containerName = container.IncusProject + "_" + containerName
 	}
 	return []string{
-		fmt.Sprintf("/sys/fs/cgroup/lxc.payload.%s", containerName),
-		fmt.Sprintf("/sys/fs/cgroup/incus.payload/%s", containerName),
-		fmt.Sprintf("/sys/fs/cgroup/lxc.payload/%s", containerName),
-		fmt.Sprintf("/sys/fs/cgroup/lxc/%s", containerName),
-		fmt.Sprintf("/sys/fs/cgroup/incus/%s", containerName),
-		fmt.Sprintf("/sys/fs/cgroup/incus.monitor/%s", containerName),
-		fmt.Sprintf("/sys/fs/cgroup/lxc.monitor/%s", containerName),
+		fmt.Sprintf("%s/lxc.payload.%s", cgroupRoot, containerName),
+		fmt.Sprintf("%s/incus.payload/%s", cgroupRoot, containerName),
+		fmt.Sprintf("%s/lxc.payload/%s", cgroupRoot, containerName),
+		fmt.Sprintf("%s/lxc/%s", cgroupRoot, containerName),
+		fmt.Sprintf("%s/incus/%s", cgroupRoot, containerName),
+		fmt.Sprintf("%s/incus.monitor/%s", cgroupRoot, containerName),
+		fmt.Sprintf("%s/lxc.monitor/%s", cgroupRoot, containerName),
 	}
 }
 
-// initPIDFromCgroupProcs walks all cgroup.procs files under cgroupPath and
-// returns the minimum PID found. In cgroup v2 the container init process is
-// started first and therefore has the lowest host PID among all processes in
-// the container's cgroup hierarchy. Systemd-based containers move PID 1 into
-// init.scope, so walking the full tree (rather than reading only the root
-// cgroup.procs) is necessary.
-func initPIDFromCgroupProcs(cgroupPath string) (int, error) {
-	var minPID int
+// containerPIDs returns the container's init PID and the host PIDs in its
+// cgroup tree from one walk of the first well-known cgroup path that holds
+// any. In cgroup v2 the container init process is started first and therefore
+// has the lowest host PID in the tree. Systemd-based containers move PID 1
+// into init.scope, so the walk covers the full tree rather than only the root
+// cgroup.procs. With no PIDs there, pids is nil and the init PID comes from
+// incus info.
+func containerPIDs(ctx context.Context, containerName string) (initPID int, pids []int, err error) {
+	for _, cgroupPath := range wellKnownCgroupPaths(containerName) {
+		if found, err := cgroupPIDs(cgroupPath); err == nil && len(found) > 0 {
+			return slices.Min(found), found, nil
+		}
+	}
+	initPID, err = getInitPIDViaIncus(ctx, containerName)
+	return initPID, nil, err
+}
+
+// pidCgroupPIDs returns the PIDs in the cgroup tree of host pid (its
+// systemd scope stripped), for a container outside the well-known cgroup
+// paths. nil when the cgroup cannot be read.
+func pidCgroupPIDs(pid int) []int {
+	path, err := cgroupPathOfPID(pid)
+	if err != nil {
+		return nil
+	}
+	pids, _ := cgroupPIDs(stripSystemdScopeSuffix(path))
+	return pids
+}
+
+// cgroupPIDs returns the PIDs in every cgroup.procs file under cgroupPath.
+func cgroupPIDs(cgroupPath string) ([]int, error) {
+	var pids []int
 	err := filepath.WalkDir(cgroupPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Name() != "cgroup.procs" {
 			return nil
@@ -124,19 +143,11 @@ func initPIDFromCgroupProcs(cgroupPath string) (int, error) {
 			if err != nil || pid <= 0 {
 				continue
 			}
-			if minPID == 0 || pid < minPID {
-				minPID = pid
-			}
+			pids = append(pids, pid)
 		}
 		return nil
 	})
-	if err != nil {
-		return 0, err
-	}
-	if minPID == 0 {
-		return 0, fmt.Errorf("no PIDs found in cgroup %s", cgroupPath)
-	}
-	return minPID, nil
+	return pids, err
 }
 
 // parseInitPIDFromIncusInfo extracts the container init PID from `incus info`
@@ -167,9 +178,13 @@ func findCgroupPathViaIncus(ctx context.Context, containerName string) (string, 
 	if err != nil {
 		return "", err
 	}
+	return cgroupPathOfPID(pid)
+}
 
-	// Read cgroup from /proc/<pid>/cgroup
-	cgroupFile := fmt.Sprintf("/proc/%d/cgroup", pid)
+// cgroupPathOfPID returns the cgroup v2 directory of host pid, read from
+// /proc/<pid>/cgroup.
+func cgroupPathOfPID(pid int) (string, error) {
+	cgroupFile := fmt.Sprintf("%s/%d/cgroup", procRoot, pid)
 	data, err := os.ReadFile(cgroupFile)
 	if err != nil {
 		return "", fmt.Errorf("failed to read cgroup file: %w", err)
@@ -180,7 +195,7 @@ func findCgroupPathViaIncus(ctx context.Context, containerName string) (string, 
 		if strings.HasPrefix(line, "0::") {
 			cgroupPath := strings.TrimPrefix(line, "0::")
 			cgroupPath = strings.TrimSpace(cgroupPath)
-			return filepath.Join("/sys/fs/cgroup", cgroupPath), nil
+			return filepath.Join(cgroupRoot, cgroupPath), nil
 		}
 	}
 

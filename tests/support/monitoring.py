@@ -141,15 +141,16 @@ def poll_network_threats(container_name, max_wait=45, match=None):
     )
 
 
-def hold_script(container_name, script, *args):
+def hold_script(container_name, script, *args, prefix=()):
     """Run python3 script args... in the container in the background, to hold
     sockets open while the monitor polls. Returns the Popen; terminate it.
+    prefix wraps the python3 command, e.g. `docker run -i ... <image>`.
 
     The script goes in on stdin, not as `python3 -c`: the process monitor flags
     a `python3 -c` command line that names a socket or tcp/udp as a reverse
     shell (critical, auto-kill)."""
     holder = subprocess.Popen(
-        ["incus", "exec", container_name, "--", "python3", "-", *args],
+        ["incus", "exec", container_name, "--", *prefix, "python3", "-", *args],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
