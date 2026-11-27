@@ -18,7 +18,7 @@
 
 ### Bug Fixes
 
-- [Bug Fix] **Session start now fails when a protected path cannot be protected, instead of continuing without it** — when Incus refused to protect an existing protected path (e.g. a `[[mounts]]` entry uses the same container path), coi printed a warning and started the session with that path and every later protected path writable. `coi shell` and `coi run` now stop with an error that names each path that could not be protected and Incus's reason. This also covers the git common dir of a worktree workspace. A protected path that does not exist is still skipped; an invalid entry (empty, absolute or outside the workspace) or a read-only workspace still gives a warning; entries naming the same path (`.vscode`, `./.vscode/`) are protected once.
+- [Bug Fix] **Session start now fails when a protected path cannot be protected, instead of continuing without it** — when Incus refused to protect an existing protected path (e.g. a `[[mounts]]` entry uses the same container path), coi printed a warning and started the session with that path and every later protected path writable. `coi shell` and `coi run` now stop with an error that names each path that could not be protected and Incus's reason. This also covers the git common dir of a worktree workspace. A protected path you added that does not exist is still skipped; a missing default path is created and protected (a default file only when its parent directory exists); an invalid entry (empty, absolute or outside the workspace) or a read-only workspace still gives a warning; entries naming the same path (`.vscode`, `./.vscode/`) are protected once.
 - [Bug Fix] **Session save no longer hangs on special files (FIFOs, sockets) in the tool config directory** — when the fast save is unavailable, the `incus file pull` fallback opened every file in the tool config directory, so a FIFO there blocked the save, and coi, forever, and a socket failed it. In a running container the fallback now skips FIFOs, sockets and devices (they are never session data). In a stopped container, an entry the pull is stuck on for 15 seconds, or cannot open (a socket), is skipped with a warning; after 2 minutes of such waits, or more than 16 such entries that cannot be opened, the save stops and keeps what it pulled.
 - [Bug Fix] **`coi shell --resume` saves a stopped session container before it removes it** — after a host reboot or a killed coi, a non-persistent session's container is left stopped and holds the session's latest turns. `--resume` deleted it without saving them and restored the older saved copy, so the latest conversation was lost. coi now saves the container's session data first, then removes it and resumes from that copy. If the save fails, coi keeps the container and the older copy and stops with an error; run `--resume` again, or remove the container with `coi kill <container>` to resume from the older copy.
 - [Bug Fix] **`coi update patterns` updates existing databases** — it failed with `Not possible to fast-forward` whenever GTFOBins or Sigma had new commits or rewrote their history, so the databases never updated after the first clone. coi now moves its clones to the latest upstream commit.
@@ -83,7 +83,7 @@
 - [Bug Fix] **The security monitor no longer pauses containers for harmless traffic (#1041, #1005, #972)** — nested Docker, DNS lookups in allowlist mode, and systemd-resolved. Fixes #995.
 - [Bug Fix] **Long-lived allowlisted connections no longer pause the container (#1044)**
 - [Bug Fix] **Blocked DNS lookups in allowlist mode fail at once (#972)**
-- [Bug Fix] **More git files are protected from the container (#945, #954, #1063, #1071, #1079, #1084, #1097, #1099, #1113, #1117)** — submodule and nested repositories, linked worktrees, `commondir`, and paths with special characters.
+- [Bug Fix] **More git files are protected from the container (#945, #954, #1063, #1071, #1079, #1084, #1097, #1098, #1099, #1113, #1117)** — submodule and nested repositories, linked worktrees, `commondir`, and paths with special characters.
 - [Bug Fix] **A slow `poweroff` no longer leaves an ephemeral container running (#1054)**
 - [Bug Fix] **Containers from OCI registry images work with network rules and host entries (#1047)** — fixes #977.
 - [Bug Fix] **OpenCode no longer asks for confirmation in bypass mode (#1046)** — fixes #1045.
@@ -93,6 +93,8 @@
 - [Bug Fix] **The container hostname resolves from the start (#1060)** — takes effect after `coi build --force`.
 - [Bug Fix] **The mouse wheel scrolls `coi shell` history (#948, #969)** — takes effect after `coi build`. Fixes #930.
 - [Bug Fix] **Image builds no longer hang on a slow apt mirror (#943)**
+- [Bug Fix] **`coi build` and `coi health` work for host UIDs above 65535 (#1043)** — `coi build` no longer fails to push its build files, and `coi health` skips the secret masking check with a warning instead of failing it.
+- [Bug Fix] **Image builds with pi no longer fail with "pi binary not found" (#1035)**
 - [Bug Fix] **pnpm works in the image again (#967)** — rebuild with `coi build --force`.
 - [Bug Fix] **Files written to `/tmp` at startup are kept (#955)**
 - [Bug Fix] **Network fixes for containers on a non-default network (#1024, #1032)**
@@ -107,6 +109,7 @@
 - [Bug Fix] **`coi shell --resume=<id> --continue` resumes `<id>` (#1078)**
 - [Bug Fix] **`coi run` rejects `--resume` and `--continue` (#968)**
 - [Bug Fix] **`coi file` fixes (#1051, #1077)** — relative container paths in `pull -r`, and a usage error instead of a crash for an empty path.
+- [Bug Fix] **An explicit `max_processes = 0` overrides an earlier limit (#936)** — `0` (unlimited) in a later config or profile layer was ignored, so a limit from an earlier layer stayed.
 - [Bug Fix] **Config fixes (#1033, #1126, #1128)** — a config file named twice loads once, an unknown `permission_mode` warns, and a bad workspace config exits 5.
 - [Bug Fix] **`coi shell --resume` no longer prints a misleading persistent-mode message (#1019)**
 - [Bug Fix] **Help and messages are accurate (#998, #1107, #1127)**
