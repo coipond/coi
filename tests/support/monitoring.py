@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -223,6 +224,36 @@ def container_io_stat(container_name, workspace=None):
     except OSError as e:
         stat = f"(unreadable: {e})"
     return f"\n--- {path}/io.stat ---\n{stat or '(empty)'}" + mount
+
+
+def start_direct_read(container_name, path):
+    """Start `dd iflag=direct` of path in the container, in the background (the
+    monitor may freeze the container mid-read). direct_read_output reports it."""
+    log = tempfile.TemporaryFile(mode="w+")  # noqa: SIM115 - closed with the process
+    proc = subprocess.Popen(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--",
+            "dd",
+            f"if={path}",
+            "of=/dev/null",
+            "bs=1M",
+            "iflag=direct",  # Bypass the page cache so the read reaches the disk
+        ],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    proc.log = log
+    return proc
+
+
+def direct_read_output(proc):
+    """The exit status and output of a start_direct_read, for a failure message."""
+    status = "still running" if proc.poll() is None else f"exit {proc.returncode}"
+    proc.log.seek(0)
+    return f"\n--- dd ({status}) ---\n{proc.log.read() or '(no output)'}"
 
 
 def cleanup_container(name, coi_binary):
