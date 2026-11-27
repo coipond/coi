@@ -148,7 +148,7 @@ func (a *App) profileInfoRunE(cmd *cobra.Command, args []string) error {
 	printProfileTool(p)
 	printProfileBuild(p)
 	printProfileMounts(p)
-	printProfileNetwork(p)
+	printProfileNetwork(p, a.profileToolName(p))
 	if p.Limits != nil {
 		printLimits(p.Limits)
 	}
@@ -691,16 +691,27 @@ func printProfileMounts(p *config.ProfileConfig) {
 	}
 }
 
+// profileToolName returns the tool the profile runs: its own [tool] name, else
+// the configured one.
+func (a *App) profileToolName(p *config.ProfileConfig) string {
+	if p.Tool != nil && p.Tool.Name != "" {
+		return p.Tool.Name
+	}
+	return a.cfg.Tool.Name
+}
+
 // printProfileNetwork prints its section of a profile's config, if present.
-func printProfileNetwork(p *config.ProfileConfig) {
+// allowed_domains includes the api_domains of toolName when the profile adds
+// them.
+func printProfileNetwork(p *config.ProfileConfig, toolName string) {
 	if p.Network != nil {
 		fmt.Println()
 		fmt.Println("[network]")
 		if p.Network.Mode != "" {
 			fmt.Printf("mode = %q\n", string(p.Network.Mode))
 		}
-		if len(p.Network.AllowedDomains) > 0 {
-			fmt.Printf("allowed_domains = [%s]\n", formatStringSlice(p.Network.AllowedDomains))
+		if domains := p.AllowedDomainsFor(toolName); len(domains) > 0 {
+			fmt.Printf("allowed_domains = [%s]\n", formatStringSlice(domains))
 		}
 	}
 }

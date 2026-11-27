@@ -10,7 +10,7 @@ imported offline from symlinks, with the container's /usr mounted read-only."""
 import time
 from pathlib import Path
 
-from support.helpers import exec_in
+from support.helpers import exec_in, import_nested_docker_image
 from support.monitoring import (
     cleanup_container,
     get_container_state,
@@ -24,10 +24,6 @@ SLOT = 73
 
 START_NESTED = """
 set -e
-timeout 90 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
-mkdir -p ~/rootfs && cd ~/rootfs
-ln -sfn usr/bin bin && ln -sfn usr/lib lib && ln -sfn usr/lib64 lib64
-tar -c bin lib lib64 | docker import - coi-usr >/dev/null
 docker run -d --name srv -p 15432:5432 -v /usr:/usr:ro coi-usr python3 -m http.server 5432 >/dev/null
 docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' srv
 """
@@ -80,6 +76,8 @@ file_read_rate_mb_per_sec = 1000
     container_name, proc = start_shell(test_workspace, coi_binary, SLOT)
     holders = []
     try:
+        rc, out = import_nested_docker_image(coi_binary, container_name)
+        assert rc == 0, f"nested Docker image must import: {out}"
         rc, out = exec_in(coi_binary, container_name, START_NESTED, timeout=180)
         assert rc == 0, f"nested Docker container must start: {out}"
         nested_ip = out.strip().splitlines()[-1]

@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -21,8 +24,8 @@ func TestHardenedProfile_HardensResolvedConfig(t *testing.T) {
 		t.Fatalf("ApplyProfile(hardened): %v", err)
 	}
 
-	if cfg.Network.Mode != NetworkModeRestricted {
-		t.Errorf("network mode = %q, want restricted (override open)", cfg.Network.Mode)
+	if cfg.Network.Mode != NetworkModeAllowlist {
+		t.Errorf("network mode = %q, want allowlist (override open)", cfg.Network.Mode)
 	}
 	if !BoolVal(cfg.Network.BlockMetadataEndpoint) {
 		t.Error("block_metadata_endpoint should be true")
@@ -76,8 +79,38 @@ func TestHardenedProfile_InjectedAsBuiltin(t *testing.T) {
 	if p.Source != "(built-in)" {
 		t.Errorf("hardened profile Source = %q, want (built-in)", p.Source)
 	}
-	if p.Network == nil || p.Network.Mode != NetworkModeRestricted {
-		t.Fatal("hardened profile must pin restricted network mode")
+	if p.Network == nil || p.Network.Mode != NetworkModeAllowlist {
+		t.Fatal("hardened profile must pin allowlist network mode")
+	}
+}
+
+// The hardened allowlist is the package/code hosts plus the configured tool's
+// api_domains; it replaces the allowed_domains set before the profile is
+// applied. A later workspace overlay is undone by ReapplyProfileNetwork.
+func TestHardenedProfile_AllowedDomains(t *testing.T) {
+	tests := []struct {
+		tool  string
+		extra []string
+	}{
+		{"claude", []string{"api.anthropic.com", "platform.claude.com"}},
+		{"codex", []string{"api.openai.com", "auth.openai.com", "chatgpt.com"}},
+		{"opencode", nil},
+		{"no-such-tool", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			cfg := GetDefaultConfig()
+			cfg.Tool.Name = tt.tool
+			cfg.Network.AllowedDomains = []string{"attacker.example"}
+			cfg.Profiles["hardened"] = synthesizeHardenedProfile()
+			if err := cfg.ApplyProfile("hardened"); err != nil {
+				t.Fatalf("ApplyProfile(hardened): %v", err)
+			}
+			want := append(cloneSlice(HardenedProfileAllowedDomains), tt.extra...)
+			if !slices.Equal(cfg.Network.AllowedDomains, want) {
+				t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+			}
+		})
 	}
 }
 
@@ -94,5 +127,163 @@ func TestIsBuiltinProfile(t *testing.T) {
 		if p := synthesize(GetDefaultConfig()); p.Source != "(built-in)" {
 			t.Errorf("built-in profile %q Source = %q, want (built-in)", name, p.Source)
 		}
+	}
+}
+
+// The tool API hosts follow the tool the session runs: a profile inheriting
+// hardened that sets its own [tool] gets that tool's hosts, not the config's.
+func TestHardenedProfile_AllowedDomainsFollowProfileTool(t *testing.T) {
+	cfg := loadWithConfigs(t, "", "", map[string]string{
+		"hardened-codex": "inherits = \"hardened\"\n\n[tool]\nname = \"codex\"\n",
+	})
+	if err := cfg.ApplyProfile("hardened-codex"); err != nil {
+		t.Fatalf("ApplyProfile(hardened-codex): %v", err)
+	}
+	want := append(cloneSlice(HardenedProfileAllowedDomains), ToolAPIDomains("codex")...)
+	if !slices.Equal(cfg.Network.AllowedDomains, want) {
+		t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+	}
+	p := cfg.Profiles["hardened-codex"]
+	if got := p.AllowedDomainsFor("codex"); !slices.Equal(got, want) {
+		t.Errorf("AllowedDomainsFor(codex) = %v, want %v", got, want)
+	}
+}
+
+// A workspace overlay (alias launch) that changes the tool after the profile is
+// applied swaps the tool API hosts and keeps the ones the user listed.
+func TestHardenedProfile_AllowedDomainsFollowOverlayTool(t *testing.T) {
+	cfg := loadWithConfigs(t, "", "", map[string]string{
+		"hardened-own": "inherits = \"hardened\"\n\n[network]\n" +
+			"allowed_domains = [\"example.com\", \"api.openai.com\"]\n",
+	})
+	if err := cfg.ApplyProfile("hardened-own"); err != nil {
+		t.Fatalf("ApplyProfile(hardened-own): %v", err)
+	}
+	want := []string{"example.com", "api.openai.com", "api.anthropic.com", "platform.claude.com"}
+	if !slices.Equal(cfg.Network.AllowedDomains, want) {
+		t.Fatalf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+	}
+
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := []byte("[tool]\nname = \"codex\"\n")
+	if err := os.WriteFile(filepath.Join(workspace, ".coi", "config.toml"), project, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.OverlayProjectConfig(workspace); err != nil {
+		t.Fatalf("OverlayProjectConfig: %v", err)
+	}
+	want = []string{"example.com", "api.openai.com", "auth.openai.com", "chatgpt.com"}
+	if !slices.Equal(cfg.Network.AllowedDomains, want) {
+		t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+	}
+}
+
+// ReapplyProfileNetwork undoes a workspace overlay that turns hardened back to
+// restricted mode with its own allowlist, and keeps the tool API hosts.
+func TestReapplyProfileNetwork_UndoesWeakeningOverlay(t *testing.T) {
+	cfg := loadWithConfigs(t, "", "", nil)
+	if err := cfg.ApplyProfile("hardened"); err != nil {
+		t.Fatalf("ApplyProfile(hardened): %v", err)
+	}
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".coi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := []byte("[network]\nmode = \"restricted\"\nallowed_domains = [\"attacker.example\"]\n")
+	if err := os.WriteFile(filepath.Join(workspace, ".coi", "config.toml"), project, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.OverlayProjectConfig(workspace); err != nil {
+		t.Fatalf("OverlayProjectConfig: %v", err)
+	}
+	if err := cfg.ReapplyProfileNetwork("hardened"); err != nil {
+		t.Fatalf("ReapplyProfileNetwork: %v", err)
+	}
+	if cfg.Network.Mode != NetworkModeAllowlist {
+		t.Errorf("network mode = %q, want %q", cfg.Network.Mode, NetworkModeAllowlist)
+	}
+	want := append(cloneSlice(HardenedProfileAllowedDomains), ToolAPIDomains(cfg.Tool.Name)...)
+	if !slices.Equal(cfg.Network.AllowedDomains, want) {
+		t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+	}
+	if err := cfg.ReapplyProfileNetwork("missing"); err == nil {
+		t.Error("ReapplyProfileNetwork(missing): want an error")
+	}
+}
+
+// The built-in "default" profile, and a profile inheriting it, copy the
+// config's network: re-applying it after a workspace overlay keeps the
+// workspace's network, as when coi starts inside the workspace.
+func TestReapplyProfileNetwork_KeepsOverlayForDefaultProfile(t *testing.T) {
+	for _, name := range []string{"default", "default-child"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := loadWithConfigs(t, "", "", map[string]string{
+				"default-child": "inherits = \"default\"\n",
+			})
+			if err := cfg.ApplyProfile(name); err != nil {
+				t.Fatalf("ApplyProfile(%s): %v", name, err)
+			}
+			workspace := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(workspace, ".coi"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			project := []byte("[network]\nmode = \"allowlist\"\nallowed_domains = [\"example.com\"]\n")
+			if err := os.WriteFile(filepath.Join(workspace, ".coi", "config.toml"), project, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.OverlayProjectConfig(workspace); err != nil {
+				t.Fatalf("OverlayProjectConfig: %v", err)
+			}
+			if err := cfg.ReapplyProfileNetwork(name); err != nil {
+				t.Fatalf("ReapplyProfileNetwork: %v", err)
+			}
+			if cfg.Network.Mode != NetworkModeAllowlist {
+				t.Errorf("network mode = %q, want %q", cfg.Network.Mode, NetworkModeAllowlist)
+			}
+			if want := []string{"example.com"}; !slices.Equal(cfg.Network.AllowedDomains, want) {
+				t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+			}
+		})
+	}
+}
+
+// A profile inheriting "default" keeps the network it sets itself (also in a
+// grandchild) over a workspace overlay, as when coi starts inside the
+// workspace.
+func TestReapplyProfileNetwork_DefaultChildKeepsOwnNetwork(t *testing.T) {
+	for _, name := range []string{"own-net", "own-net-child"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := loadWithConfigs(t, "", "", map[string]string{
+				"own-net": "inherits = \"default\"\n\n[network]\nmode = \"allowlist\"\n" +
+					"allowed_domains = [\"example.com\"]\n",
+				"own-net-child": "inherits = \"own-net\"\n",
+			})
+			if err := cfg.ApplyProfile(name); err != nil {
+				t.Fatalf("ApplyProfile(%s): %v", name, err)
+			}
+			workspace := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(workspace, ".coi"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			project := []byte("[network]\nmode = \"restricted\"\nallowed_domains = [\"attacker.example\"]\n")
+			if err := os.WriteFile(filepath.Join(workspace, ".coi", "config.toml"), project, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.OverlayProjectConfig(workspace); err != nil {
+				t.Fatalf("OverlayProjectConfig: %v", err)
+			}
+			if err := cfg.ReapplyProfileNetwork(name); err != nil {
+				t.Fatalf("ReapplyProfileNetwork: %v", err)
+			}
+			if cfg.Network.Mode != NetworkModeAllowlist {
+				t.Errorf("network mode = %q, want %q", cfg.Network.Mode, NetworkModeAllowlist)
+			}
+			if want := []string{"example.com"}; !slices.Equal(cfg.Network.AllowedDomains, want) {
+				t.Errorf("allowed_domains = %v, want %v", cfg.Network.AllowedDomains, want)
+			}
+		})
 	}
 }

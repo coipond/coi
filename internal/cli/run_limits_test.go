@@ -15,6 +15,17 @@ import (
 // name as an existing, stopped container whose own config is configYAML.
 func fakeStoppedIncus(t *testing.T, name, configYAML string) (logPath string) {
 	t.Helper()
+	return fakeIncusCases(t, name, configYAML, "STOPPED", "")
+}
+
+// refuseNICCase is a fakeIncusCases line that refuses the eth0 security keys.
+const refuseNICCase = `  *"eth0 security"*) echo "Error: refused" >&2; exit 1 ;;
+`
+
+// fakeIncusCases is fakeStoppedIncus with the container's status (none when
+// empty) and extra shell `case` lines tried first.
+func fakeIncusCases(t *testing.T, name, configYAML, status, cases string) (logPath string) {
+	t.Helper()
 	dir := t.TempDir()
 	logPath = filepath.Join(dir, "calls")
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
@@ -23,9 +34,9 @@ func fakeStoppedIncus(t *testing.T, name, configYAML string) (logPath string) {
 	script := `#!/bin/sh
 echo "$*" >> ` + logPath + `
 case "$*" in
-  *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
-  *"list "*"--columns=ns"*) echo "` + name + `,STOPPED" ;;
-  *"list "*"--columns=n"*) echo "` + name + `" ;;
+` + cases + `  *"config show "*` + name + `) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
+  *"list "*"--columns=ns"*) [ -n "` + status + `" ] && echo "` + name + `,` + status + `" ;;
+  *"list "*"--columns=n"*) [ -n "` + status + `" ] && echo "` + name + `" ;;
 esac
 exit 0
 `
@@ -104,6 +115,61 @@ func TestSizeTmpfsAndRemapUser(t *testing.T) {
 			}
 			if mgr.size != tc.wantSize || mgr.removed != tc.wantRemoved {
 				t.Errorf("SetTmpfsSize(%q) removed=%v, want %q removed=%v", mgr.size, mgr.removed, tc.wantSize, tc.wantRemoved)
+			}
+		})
+	}
+}
+
+// A reused container whose eth0 anti-spoofing keys cannot be set does not
+// start in restricted mode.
+func TestLaunchContainerRunPhase_RestartNICSecurityFailsClosed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ws := t.TempDir()
+	logPath := fakeIncusCases(t, "run-nic",
+		"config: {}\ndevices:\n  eth0:\n    type: nic\n  workspace:\n    path: /workspace\n    source: "+ws+"\n    type: disk\n", "STOPPED", refuseNICCase)
+	cfg := config.GetDefaultConfig()
+	cfg.Network.Mode = config.NetworkModeRestricted
+	cfg.Security.DisableProtection = true
+	a := &App{cfg: cfg, persistent: true}
+	s := &runState{absWorkspace: ws, containerName: "run-nic", img: "coi-default", slot: 1}
+
+	_, err := a.launchContainerRunPhase(s).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "restricted mode") {
+		t.Fatalf("want a fail-closed error, got %v", err)
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "start run-nic") {
+		t.Errorf("want no start; calls:\n%s", b)
+	}
+}
+
+// A fresh container whose eth0 anti-spoofing keys cannot be set does not
+// start in restricted/allowlist mode; open mode warns and starts it.
+func TestLaunchContainerRunPhase_CreateNICSecurity(t *testing.T) {
+	for _, mode := range []config.NetworkMode{config.NetworkModeRestricted, config.NetworkModeAllowlist, config.NetworkModeOpen} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			logPath := fakeIncusCases(t, "run-nic-create", "", "", refuseNICCase)
+			a := runWorkspaceKeyApp(false)
+			a.cfg.Network.Mode = mode
+			s := &runState{absWorkspace: t.TempDir(), containerName: "run-nic-create", img: "coi-default", slot: 1}
+
+			var err error
+			stderr := captureOutput(t, &os.Stderr, func() {
+				_, err = a.launchContainerRunPhase(s).Run(context.Background())
+			})
+			b, _ := os.ReadFile(logPath)
+			started := strings.Contains(string(b), "start run-nic-create")
+			if mode == config.NetworkModeOpen {
+				if err != nil || !started || !strings.Contains(stderr, "Warning: NIC security hardening not applied") {
+					t.Errorf("want a warning and a start, got err %v, stderr %q, calls:\n%s", err, stderr, b)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), string(mode)+" mode") {
+				t.Fatalf("want a fail-closed error, got %v", err)
+			}
+			if started {
+				t.Errorf("want no start, calls:\n%s", b)
 			}
 		})
 	}

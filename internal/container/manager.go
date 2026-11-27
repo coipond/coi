@@ -148,7 +148,7 @@ func (m *Manager) MountDisk(name, source, path string, shift, readonly bool) err
 		args = append(args, "readonly=true")
 	}
 
-	return IncusExec(args...)
+	return incusExecWithCause(args...)
 }
 
 // DiskMount is one disk device for MountDisks.

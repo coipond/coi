@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/coipond/coi/internal/alias"
 	"github.com/coipond/coi/internal/session"
 )
@@ -54,4 +56,20 @@ func TestResolveWorkspacePhase_BadProjectConfigExitsConfig(t *testing.T) {
 			t.Errorf("exit code = %d, want %d (ExitConfig); err: %v", got, ExitConfig, err)
 		}
 	})
+}
+
+// An untrusted -w workspace config must not weaken the network of an
+// explicitly requested --profile when coi shell is started outside it.
+func TestResolveWorkspacePhase_ProfileNetworkWinsOverWorkspace(t *testing.T) {
+	dir := writeWeakeningNetworkConfig(t)
+	a := &App{cfg: loadHardenedConfig(t), workspace: dir}
+	cmd := &cobra.Command{Use: "shell"}
+	cmd.Flags().StringVar(&a.profile, "profile", "", "")
+	if err := cmd.Flags().Set("profile", "hardened"); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&session.Pipeline{}).Run(t.Context(), a.resolveWorkspacePhase(cmd, &shellState{})); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertHardenedNetwork(t, a.cfg)
 }

@@ -7,6 +7,8 @@ import (
 	"slices"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/coipond/coi/internal/tool/credentials"
 )
 
 // GetDefaultConfig returns the default configuration by parsing the embedded default config TOML.
@@ -141,7 +143,8 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 		Timezone:    &timezone,
 		Source:      "(built-in)",
 
-		mountsFromConfig: true,
+		mountsFromConfig:  true,
+		networkFromConfig: true,
 	}
 	return p
 }
@@ -163,16 +166,19 @@ func synthesizeDefaultProfile(cfg *Config) ProfileConfig {
 func synthesizeHardenedProfile() ProfileConfig {
 	t, f := true, false
 	return ProfileConfig{
-		Source: "(built-in)",
+		Source:             "(built-in)",
+		addsToolAPIDomains: true,
 		// Ephemeral: nothing from a risky session persists. Docker/nesting is
 		// left off by reduce_kernel_surface below (the single hardening switch),
 		// so no explicit docker flag is needed here — and omitting it lets an
 		// explicit user `docker = true` surface the override warning rather than
 		// being silently masked.
 		Container: ContainerConfig{Persistent: &f},
-		// No exfil path: internet-only, block LAN + cloud metadata endpoints.
+		// No exfil path: only the allowlisted hosts are reachable, all DNS
+		// egress is blocked, and LAN + cloud metadata endpoints stay blocked.
 		Network: &NetworkConfig{
-			Mode:                    NetworkModeRestricted,
+			Mode:                    NetworkModeAllowlist,
+			AllowedDomains:          cloneSlice(HardenedProfileAllowedDomains),
 			BlockPrivateNetworks:    &t,
 			BlockMetadataEndpoint:   &t,
 			AllowLocalNetworkAccess: &f,
@@ -207,6 +213,15 @@ func synthesizeHardenedProfile() ProfileConfig {
 		// need longer can override max_duration in their own config/profile.
 		Limits: &LimitsConfig{Runtime: RuntimeLimits{MaxDuration: "4h"}},
 	}
+}
+
+// ToolAPIDomains returns the api_domains of the named tool's catalog bundle
+// (none for an unknown tool).
+func ToolAPIDomains(toolName string) []string {
+	if b, ok := credentials.Lookup(toolName); ok {
+		return b.APIDomains
+	}
+	return nil
 }
 
 // GetConfigPaths returns the list of config file paths to check (in order).

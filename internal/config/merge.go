@@ -164,6 +164,12 @@ func mergeMonitoring(base *MonitoringConfig, other *MonitoringConfig) {
 	if other.AuditLogRetentionDays != 0 {
 		base.AuditLogRetentionDays = other.AuditLogRetentionDays
 	}
+	if other.RejectedBurstThreshold != 0 {
+		base.RejectedBurstThreshold = other.RejectedBurstThreshold
+	}
+	if other.RejectedBurstWindowSec != 0 {
+		base.RejectedBurstWindowSec = other.RejectedBurstWindowSec
+	}
 
 	// Merge NFT monitoring
 	if other.NFT.Enabled != nil {
@@ -329,6 +335,10 @@ func (c *Config) ApplyProfile(name string) error {
 	if profile.Network != nil {
 		mergeNetworkInto(&c.Network, profile.Network)
 	}
+	if profile.addsToolAPIDomains {
+		c.addsToolAPIDomains = true
+	}
+	c.syncToolAPIDomains()
 	if profile.Paths != nil {
 		mergePathsInto(&c.Paths, profile.Paths)
 	}
@@ -350,6 +360,43 @@ func (c *Config) ApplyProfile(name string) error {
 
 	expandConfigPaths(c)
 	return nil
+}
+
+// syncToolAPIDomains adds the configured tool's api_domains to allowed_domains
+// once a profile asking for them is applied, and drops those it added for a
+// previous tool. It runs after every merge that can change the tool.
+func (c *Config) syncToolAPIDomains() {
+	if !c.addsToolAPIDomains {
+		return
+	}
+	domains := make([]string, 0, len(c.Network.AllowedDomains))
+	for _, d := range c.Network.AllowedDomains {
+		if !slices.Contains(c.addedAPIDomains, d) {
+			domains = append(domains, d)
+		}
+	}
+	c.addedAPIDomains = nil
+	for _, d := range ToolAPIDomains(c.Tool.Name) {
+		if !slices.Contains(domains, d) {
+			domains = append(domains, d)
+			c.addedAPIDomains = append(c.addedAPIDomains, d)
+		}
+	}
+	c.Network.AllowedDomains = domains
+}
+
+// AllowedDomainsFor returns the profile's allowed_domains as ApplyProfile sets
+// them for the named tool: with the tool's api_domains when the profile adds
+// them.
+func (p *ProfileConfig) AllowedDomainsFor(toolName string) []string {
+	var domains []string
+	if p.Network != nil {
+		domains = cloneSlice(p.Network.AllowedDomains)
+	}
+	if p.addsToolAPIDomains {
+		domains = MergeStringSliceUnique(domains, ToolAPIDomains(toolName))
+	}
+	return domains
 }
 
 // ReapplyProfileContainer re-merges ONLY the container section of the named
@@ -375,6 +422,34 @@ func (c *Config) ReapplyProfileContainer(name string) error {
 	if projectAlias != "" {
 		c.Container.Alias = projectAlias
 	}
+	return nil
+}
+
+// ReapplyProfileNetwork re-merges ONLY the network section of the named
+// profile, after a workspace-config overlay, so the untrusted project config
+// cannot change the mode or allowed_domains of an explicitly requested
+// profile (e.g. turn "hardened" back to restricted). For a profile whose
+// network is a copy of the config ("default" and its children) only the
+// network the profiles set themselves is re-merged: the copy would replace
+// the workspace's network with the one resolved without it. Like
+// ReapplyProfileContainer it is idempotent: mergeNetworkInto overrides
+// fields and syncToolAPIDomains replaces the hosts it added.
+func (c *Config) ReapplyProfileNetwork(name string) error {
+	profile, err := c.LookupProfile(name)
+	if err != nil {
+		return err
+	}
+	if profile == nil {
+		return fmt.Errorf("profile '%s' not found", name)
+	}
+	network := profile.Network
+	if profile.networkFromConfig {
+		network = profile.ownNetwork
+	}
+	if network != nil {
+		mergeNetworkInto(&c.Network, network)
+	}
+	c.syncToolAPIDomains()
 	return nil
 }
 
@@ -524,6 +599,9 @@ func mergeProfiles(parent, child ProfileConfig) ProfileConfig {
 		result.Mounts = parent.Mounts
 		result.mountsFromConfig = parent.mountsFromConfig
 	}
+	if parent.addsToolAPIDomains {
+		result.addsToolAPIDomains = true
+	}
 	if result.Sockets == nil {
 		result.Sockets = parent.Sockets
 	}
@@ -540,6 +618,10 @@ func mergeProfiles(parent, child ProfileConfig) ProfileConfig {
 	// Struct pointers: deep field-by-field merge if child defines section
 	result.Limits = mergeStructPtr(parent.Limits, result.Limits, mergeLimitsInto)
 	result.Tool = mergeStructPtr(parent.Tool, result.Tool, mergeToolInto)
+	if parent.networkFromConfig {
+		result.networkFromConfig = true
+		result.ownNetwork = mergeStructPtr(parent.ownNetwork, child.Network, mergeNetworkInto)
+	}
 	result.Network = mergeStructPtr(parent.Network, result.Network, mergeNetworkInto)
 	result.Monitoring = mergeStructPtr(parent.Monitoring, result.Monitoring, mergeMonitoringInto)
 

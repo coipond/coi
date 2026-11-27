@@ -522,6 +522,9 @@ func restartStoppedContainer(result *SetupResult, opts *SetupOptions, containerN
 		if err := ReconcileLimits(result.ContainerName, opts.IncusProject, opts.LimitsConfig, opts.Logger); err != nil {
 			return err
 		}
+		if err := ReconcileNICSecurity(result.ContainerName, networkMode(opts.Network.Config), opts.Logger); err != nil {
+			return err
+		}
 	}
 	// Decide the shift flag the same way a fresh launch does (issue
 	// #685). The old `!opts.DisableShift` ignored both cases that turn
@@ -772,8 +775,12 @@ func createAndStartContainer(result *SetupResult, opts *SetupOptions, image, con
 	// Harden the bridge NIC against egress-isolation bypass: anti-spoof the
 	// source IP/MAC (so saddr-keyed nft rules can't be dodged) and isolate the
 	// bridge port (so the container can't reach sibling containers at L2).
-	// Non-fatal: unmanaged/static/macvlan NICs degrade to nft-only enforcement.
+	// Fail closed in restricted/allowlist mode: without it a second source IP
+	// bypasses every egress rule. Open mode degrades to a warning.
 	if err := container.EnableNICSecurity(result.ContainerName); err != nil {
+		if err := NICSecurityError(networkMode(opts.Network.Config), err); err != nil {
+			return err
+		}
 		opts.Logger(fmt.Sprintf("Warning: NIC security hardening not applied: %v", err))
 	}
 

@@ -303,8 +303,11 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				// isolate the bridge port (no L2 reach to sibling containers). The
 				// shell path applies this; coi run must too, or a restricted/allowlist
 				// run can bypass its own egress allowlist (#726 follow-up). Must be set
-				// before first boot; non-fatal on unmanaged/static NICs.
+				// before first boot. Fails closed in restricted/allowlist mode.
 				if err := container.EnableNICSecurity(s.containerName); err != nil {
+					if err := session.NICSecurityError(a.cfg.Network.Mode, err); err != nil {
+						return err
+					}
 					logFn(fmt.Sprintf("Warning: NIC security hardening not applied: %v", err))
 				}
 				// Restricted/allowlist: kill IPv6 from the kernel's first instant so
@@ -353,6 +356,9 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 					logFn("Reconciled docker/kernel-hardening settings to the current config (any manual security.nesting/syscalls overrides were reset)")
 				}
 				if err := session.ReconcileLimits(s.containerName, a.cfg.Incus.Project, &a.cfg.Limits, logFn); err != nil {
+					return err
+				}
+				if err := session.ReconcileNICSecurity(s.containerName, a.cfg.Network.Mode, logFn); err != nil {
 					return err
 				}
 				// A persistent container from an older coi lacks the keys.
