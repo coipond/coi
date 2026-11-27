@@ -19,7 +19,7 @@ from support.monitoring import (
 
 
 def test_file_read_at_threshold_triggers(
-    disk_workspace, enable_monitoring_low_thresholds, coi_binary
+    test_workspace, enable_monitoring_low_thresholds, coi_binary
 ):
     """Test that reading above 50MB threshold triggers HIGH threat."""
     # Create 75MB file (above 50MB threshold).
@@ -29,7 +29,7 @@ def test_file_read_at_threshold_triggers(
     # 75MB ensures the first monitoring poll captures ≥50MB delta regardless
     # of when the poll fires, while still being a "near threshold" test
     # (vs the 100MB "well above threshold" test).
-    large_file = Path(disk_workspace) / "data75mb.bin"
+    large_file = Path(test_workspace) / "data75mb.bin"
     large_file.write_bytes(b"B" * (75 * 1024 * 1024))
 
     # Capture stderr for debugging
@@ -41,7 +41,7 @@ def test_file_read_at_threshold_triggers(
             coi_binary,
             "shell",
             "--workspace",
-            disk_workspace,
+            test_workspace,
             "--slot",
             "28",
         ],
@@ -50,7 +50,7 @@ def test_file_read_at_threshold_triggers(
         stderr=stderr_fd,
     )
 
-    container_name = get_container_name_from_workspace(disk_workspace).rsplit("-", 1)[0] + "-28"
+    container_name = get_container_name_from_workspace(test_workspace).rsplit("-", 1)[0] + "-28"
 
     if not wait_for_container_running(container_name):
         proc.terminate()
@@ -80,7 +80,7 @@ def test_file_read_at_threshold_triggers(
 
     assert paused, (
         "Container should be paused on 75MB read (above threshold)"
-        + container_io_stat(container_name, disk_workspace)
+        + container_io_stat(container_name, test_workspace)
         + direct_read_output(dd_proc)
     )
 

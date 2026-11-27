@@ -228,7 +228,11 @@ def container_io_stat(container_name, workspace=None):
 
 def start_direct_read(container_name, path):
     """Start `dd iflag=direct` of path in the container, in the background (the
-    monitor may freeze the container mid-read). direct_read_output reports it."""
+    monitor may freeze the container mid-read). direct_read_output reports it.
+
+    Ubuntu 26.04's dd is uutils', which fails such a read on GitHub's runners
+    on AWS with "IO error: Invalid input" (their root disk takes no O_DIRECT
+    buffer it gets), so the read never happens; GNU dd, gnudd there, works."""
     log = tempfile.TemporaryFile(mode="w+")  # noqa: SIM115 - closed with the process
     proc = subprocess.Popen(
         [
@@ -236,11 +240,12 @@ def start_direct_read(container_name, path):
             "exec",
             container_name,
             "--",
-            "dd",
-            f"if={path}",
-            "of=/dev/null",
-            "bs=1M",
-            "iflag=direct",  # Bypass the page cache so the read reaches the disk
+            "sh",
+            "-c",
+            # iflag=direct bypasses the page cache, so the read reaches the disk
+            'exec "$(command -v gnudd || echo dd)" if="$1" of=/dev/null bs=1M iflag=direct',
+            "sh",
+            path,
         ],
         stdout=log,
         stderr=subprocess.STDOUT,
