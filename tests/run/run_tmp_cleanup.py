@@ -104,7 +104,7 @@ def test_run_tmp_cleanup_size_removes_least_recently_used(
         f"files must be removed oldest first, removed: {removed}\n{out}"
     )
     assert "old9" in left, f"the newest old file should stay, left: {left}\n{out}"
-    assert "fresh" in left, f"a file used in the last 15 minutes must stay, left: {left}\n{out}"
+    assert "fresh" in left, f"a file used in the last hour must stay, left: {left}\n{out}"
 
 
 def test_run_tmp_cleanup_age_removes_old_files(coi_binary, cleanup_containers, workspace_dir):

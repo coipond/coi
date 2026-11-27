@@ -1134,7 +1134,7 @@ install_github_cli() {
 #      whole tree, so not more often) and, once it holds more than 4 GiB
 #      (default), removes the least recently used files until it holds
 #      under half of that, so the next cleanup is not due at once. Files
-#      used in the last 15 minutes are kept.
+#      used in the last hour are kept.
 #
 # coi rewrites both limits at each session start from [limits.disk]
 # tmp_max_age and tmp_max_size (Manager.SetTmpCleanup).
@@ -1161,7 +1161,7 @@ EOF
     mkdir -p /usr/local/libexec
     cat > /usr/local/libexec/coi-tmp-cleanup << 'SCRIPT_EOF'
 #!/bin/bash
-high=${TMP_MAX_BYTES:-0} low=$((${TMP_MAX_BYTES:-0} / 2)) grace_min=15
+high=${TMP_MAX_BYTES:-0} low=$((${TMP_MAX_BYTES:-0} / 2)) grace_min=60
 [ "$high" -gt 0 ] || exit 0
 used=$(du -sx -B1 /tmp 2>/dev/null | cut -f1)
 [ "${used:-0}" -gt "$high" ] || exit 0

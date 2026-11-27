@@ -932,7 +932,7 @@ func RenderContextFileContent(info ContextInfo) string {
 	}
 	if info.TmpMaxSize != "" && info.TmpMaxSize != "0" {
 		tmpParts = append(tmpParts, "once /tmp holds over "+info.TmpMaxSize+
-			", the least recently used files are deleted (those used in the last 15 minutes are kept)")
+			", the least recently used files are deleted (those used in the last hour are kept)")
 	}
 	data.TmpCleanup = strings.Join(tmpParts, "; ")
 
