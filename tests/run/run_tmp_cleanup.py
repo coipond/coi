@@ -92,7 +92,7 @@ def test_run_tmp_cleanup_size_removes_least_recently_used(
         + FILL_TMP
         + "sudo systemctl start coi-tmp-cleanup.service; "
         + LIST_TMP
-        + "journalctl -u coi-tmp-cleanup.service --no-pager -o cat | tail -3",
+        + "sudo journalctl -u coi-tmp-cleanup.service --no-pager -o cat | tail -3",
     )
 
     assert f"TMP_MAX_BYTES={64 << 20}" in out, f"tmp_max_size not applied. Output:\n{out}"

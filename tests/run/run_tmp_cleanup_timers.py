@@ -127,7 +127,8 @@ def test_run_tmp_cleanup_size_timer_removes_files(coi_binary, cleanup_containers
         + _speed_up("coi-tmp-cleanup.timer")
         + _wait_gone(f"{D}/old1", 60)
         + LIST_TMP
-        + "journalctl -u coi-tmp-cleanup.service --no-pager -o cat | grep 'held' | tail -1",
+        # The code user cannot read the system journal.
+        + "sudo journalctl -u coi-tmp-cleanup.service --no-pager -o cat | grep held | tail -1",
     )
 
     assert "still-there-old1" not in out, f"the timer never removed the oldest file:\n{out}"
