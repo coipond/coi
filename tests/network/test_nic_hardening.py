@@ -175,3 +175,60 @@ def test_sibling_container_isolation_in_restricted_mode(
         os.unlink(cfg1)
         if cfg2:
             os.unlink(cfg2)
+
+
+def test_nic_keys_restored_on_persistent_reuse(coi_binary, workspace_dir, cleanup_containers):
+    """A stopped persistent restricted container without the eth0 keys (as one
+    created by an older coi) gets them back when coi shell restarts it."""
+    container_name, config_file = _start_background_container(
+        coi_binary, workspace_dir, "restricted", "\n[container]\npersistent = true\n"
+    )
+    try:
+        stop = subprocess.run(
+            [coi_binary, "container", "stop", container_name],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert stop.returncode == 0, f"stop should succeed: {stop.stderr}"
+        # Without coi's override, eth0 comes from the profile without the keys.
+        removed = subprocess.run(
+            ["incus", "config", "device", "remove", container_name, "eth0"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        assert removed.returncode == 0, f"could not remove the eth0 override: {removed.stderr}"
+        assert container_device_get(container_name, "eth0", "security.ipv4_filtering") != "true"
+
+        env = os.environ.copy()
+        env["COI_CONFIG"] = config_file
+        resumed = subprocess.run(
+            [coi_binary, "shell", "--workspace", workspace_dir, "--background"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+            check=False,
+        )
+        assert resumed.returncode == 0, f"the reused container should start: {resumed.stderr}"
+        assert f"Container: {container_name}" in resumed.stdout + resumed.stderr, (
+            f"want the same container reused: {resumed.stdout + resumed.stderr}"
+        )
+        for key in (
+            "security.ipv4_filtering",
+            "security.mac_filtering",
+            "security.port_isolation",
+        ):
+            value = container_device_get(container_name, "eth0", key)
+            assert value == "true", f"eth0 {key} should be 'true' after reuse, got {value!r}"
+    finally:
+        os.unlink(config_file)
+        subprocess.run(
+            [coi_binary, "container", "delete", container_name, "--force"],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
