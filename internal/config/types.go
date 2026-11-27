@@ -1032,12 +1032,14 @@ type MemoryLimits struct {
 
 // DiskLimits contains disk I/O and disk-size resource limits
 type DiskLimits struct {
-	Read      string `toml:"read"`       // I/O rate: "10MiB/s", "1000iops", "" (unlimited)
-	Write     string `toml:"write"`      // I/O rate: "5MiB/s", "1000iops", "" (unlimited)
-	Max       string `toml:"max"`        // combined read+write I/O rate limit
-	Priority  int    `toml:"priority"`   // 0-10
-	Size      string `toml:"size"`       // whole-container rootfs quota: "20GiB", "" (unlimited). Requires a quota-capable pool (btrfs/zfs/lvm); rejected on a dir pool (#728).
-	TmpfsSize string `toml:"tmpfs_size"` // opt-in RAM-backed /tmp of this size (systemd tmpfs mount): "2GiB", "1024MiB", "" (unset = /tmp stays disk-backed; use [limits.disk] size to bound total disk — #728)
+	Read       string `toml:"read"`         // I/O rate: "10MiB/s", "1000iops", "" (unlimited)
+	Write      string `toml:"write"`        // I/O rate: "5MiB/s", "1000iops", "" (unlimited)
+	Max        string `toml:"max"`          // combined read+write I/O rate limit
+	Priority   int    `toml:"priority"`     // 0-10
+	Size       string `toml:"size"`         // whole-container rootfs quota: "20GiB", "" (unlimited). Requires a quota-capable pool (btrfs/zfs/lvm); rejected on a dir pool (#728).
+	TmpfsSize  string `toml:"tmpfs_size"`   // opt-in RAM-backed /tmp of this size (systemd tmpfs mount): "2GiB", "1024MiB", "" (unset = /tmp stays disk-backed; use [limits.disk] size to bound total disk — #728)
+	TmpMaxSize string `toml:"tmp_max_size"` // above this, the least recently used files in /tmp are removed: "4GiB", "0" (off), "" (unset = 4GiB)
+	TmpMaxAge  string `toml:"tmp_max_age"`  // files in /tmp unused this long are removed: "7d", "12h", "0" (off), "" (unset = 7d)
 }
 
 // RuntimeLimits contains time-based and process limits

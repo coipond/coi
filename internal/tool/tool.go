@@ -648,6 +648,8 @@ type ContextInfo struct {
 	CPULimit           string      // e.g., "2" or "0-3", empty = unlimited
 	MemoryLimit        string      // e.g., "2GiB", empty = unlimited
 	MaxDuration        string      // e.g., "2h", empty = unlimited
+	TmpMaxSize         string      // [limits.disk] tmp_max_size in effect, e.g. "4GiB"; "0" = off, empty = not reported
+	TmpMaxAge          string      // [limits.disk] tmp_max_age in effect, e.g. "7d"; "0" = off, empty = not reported
 	ToolName           string      // e.g., "claude", "aider"
 	ContainerName      string      // Incus container name
 	ProfileContext     string      // User-provided profile context content (from profile CONTEXT.md)
@@ -726,6 +728,7 @@ type contextTemplateData struct {
 	HasResourceLimits     bool
 	MaxDuration           string
 	HasMaxDuration        bool
+	TmpCleanup            string // e.g., "files unused for 7d are deleted; ..."
 	ToolName              string
 	ContainerName         string
 	ProfileContext        string
@@ -921,6 +924,17 @@ func RenderContextFileContent(info ContextInfo) string {
 		data.MaxDuration = info.MaxDuration
 		data.HasMaxDuration = true
 	}
+
+	// /tmp cleanup
+	var tmpParts []string
+	if info.TmpMaxAge != "" && info.TmpMaxAge != "0" {
+		tmpParts = append(tmpParts, "files unused for "+info.TmpMaxAge+" are deleted")
+	}
+	if info.TmpMaxSize != "" && info.TmpMaxSize != "0" {
+		tmpParts = append(tmpParts, "once /tmp holds over "+info.TmpMaxSize+
+			", the least recently used files are deleted (those used in the last 15 minutes are kept)")
+	}
+	data.TmpCleanup = strings.Join(tmpParts, "; ")
 
 	// Profile context
 	if info.ProfileContext != "" {

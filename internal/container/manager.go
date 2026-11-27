@@ -18,6 +18,7 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -549,6 +550,64 @@ func (m *Manager) RemoveTmpfsSize() (bool, error) {
 		return false, fmt.Errorf("failed to remove sized /tmp tmpfs: %w", err)
 	}
 	return strings.TrimSpace(out) == "removed", nil
+}
+
+// SetTmpCleanup sets the two /tmp cleanup limits of the image inside a
+// RUNNING container: maxSize (e.g. "4GiB") for coi-tmp-cleanup.timer and
+// maxAge (e.g. "7d") for systemd-tmpfiles-clean.timer. "" is the default, "0"
+// turns a limit off. Both files stay on disk, so a persistent container keeps
+// the limits across boots.
+func (m *Manager) SetTmpCleanup(maxSize, maxAge string) error {
+	script, err := tmpCleanupScript(maxSize, maxAge)
+	if err != nil {
+		return err
+	}
+	if _, err := m.ExecCommand(script, ExecCommandOptions{Capture: true}); err != nil {
+		return fmt.Errorf("failed to configure /tmp cleanup: %w", err)
+	}
+	return nil
+}
+
+// Defaults for an unset [limits.disk] tmp_max_size / tmp_max_age; the image
+// build (configure_tmp_cleanup) uses the same values.
+const (
+	DefaultTmpMaxSize = "4GiB"
+	DefaultTmpMaxAge  = "7d"
+)
+
+// Files configure_tmp_cleanup reads: the EnvironmentFile of
+// coi-tmp-cleanup.service and the tmpfiles.d rule for /tmp.
+const (
+	tmpCleanupEnvPath  = "/etc/default/coi-tmp-cleanup"
+	tmpCleanupConfPath = "/etc/tmpfiles.d/coi-tmp-cleanup.conf"
+)
+
+// tmpAgeRegex matches a tmpfiles.d age: a whole number and one unit.
+var tmpAgeRegex = regexp.MustCompile(`^[0-9]+(s|m|min|h|d|w)$`)
+
+// tmpCleanupScript writes the cleanup limits for SetTmpCleanup.
+func tmpCleanupScript(maxSize, maxAge string) (string, error) {
+	if maxSize == "" {
+		maxSize = DefaultTmpMaxSize
+	}
+	if maxAge == "" {
+		maxAge = DefaultTmpMaxAge
+	}
+	sizeBytes, err := parseSizeBytes(maxSize)
+	if err != nil || sizeBytes < 0 {
+		return "", fmt.Errorf("invalid tmp_max_size %q (examples: \"4GiB\", \"512MiB\", \"0\" for off)", maxSize)
+	}
+	age := strings.TrimSpace(maxAge)
+	switch {
+	case age == "0":
+		age = "-" // tmpfiles.d: no age, files are never removed
+	case !tmpAgeRegex.MatchString(age):
+		return "", fmt.Errorf("invalid tmp_max_age %q (examples: \"7d\", \"12h\", \"30min\", \"0\" for off)", maxAge)
+	}
+	env := fmt.Sprintf("TMP_MAX_BYTES=%d\n", sizeBytes)
+	conf := "# Coi: [limits.disk] tmp_max_age\nD /tmp 1777 root root " + age + "\n"
+	return "set -e; echo '" + base64.StdEncoding.EncodeToString([]byte(env)) + "' | base64 -d > " + tmpCleanupEnvPath +
+		"; echo '" + base64.StdEncoding.EncodeToString([]byte(conf)) + "' | base64 -d > " + tmpCleanupConfPath, nil
 }
 
 const tmpMountUnitPath = "/etc/systemd/system/tmp.mount"

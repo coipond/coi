@@ -28,6 +28,14 @@
     "tmpfs_size": {
       "type": "string",
       "description": "Opt-in RAM-backed /tmp of this size, e.g. \"2GiB\". Unset: /tmp stays on disk (use size to bound total disk use)."
+    },
+    "tmp_max_size": {
+      "type": "string",
+      "description": "When /tmp holds more than this, e.g. \"4GiB\", the least recently used files are removed until it holds under three quarters of it. Files used in the last 15 minutes are kept. \"0\" turns it off. Unset: 4GiB."
+    },
+    "tmp_max_age": {
+      "type": "string",
+      "description": "Files in /tmp not used for this long are removed, e.g. \"7d\", \"12h\" or \"30min\" (units s, min, h, d, w). Checked daily. \"0\" turns it off. Unset: 7d."
     }
   }
 }

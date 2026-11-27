@@ -95,7 +95,10 @@ func (st *setupState) phaseSizeTmpfs(_ context.Context) (Teardown, error) {
 		ApplyTmpfsSizing(st.result.Manager, st.opts.LimitsConfig, st.opts.Logger)
 	case st.restarted:
 		ReapplyTmpfsSizing(st.result.Manager, st.opts.LimitsConfig, st.opts.Logger)
+	default:
+		return nil, nil
 	}
+	ApplyTmpCleanup(st.result.Manager, st.opts.LimitsConfig, st.opts.Logger)
 	return nil, nil
 }
 

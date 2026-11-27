@@ -1125,41 +1125,82 @@ install_github_cli() {
 #######################################
 # Configure /tmp auto-cleanup
 #
-# By default Ubuntu's systemd-tmpfiles-clean.timer runs daily and only
-# removes files older than 10 days. AI coding agents can fill /tmp in
-# minutes, so we:
-#   1. Lower the age threshold to 1 hour so abandoned temp files are
-#      collected promptly.
-#   2. Run the cleanup timer every 15 minutes instead of daily so recovery
-#      happens automatically between heavy operations.
+# Two rules keep /tmp from filling up without pulling files out from under
+# long-running agents (Claude Code keeps its scratchpad and task output in
+# /tmp and may not touch them for hours):
+#   1. Age: files not used for 7 days (default) are removed by Ubuntu's daily
+#      systemd-tmpfiles-clean.timer (stock is 30 days).
+#   2. Size: every 2 minutes coi-tmp-cleanup measures /tmp and, once it
+#      holds more than 4 GiB (default), removes the least recently used files until
+#      it holds under 3 GiB. Files used in the last 15 minutes are kept.
 #
-# This complements the hard tmpfs size cap set by Coi at container start.
+# coi rewrites both limits at each session start from [limits.disk]
+# tmp_max_age and tmp_max_size (Manager.SetTmpCleanup).
+#
+# This complements the tmpfs size cap set by Coi for [limits.disk]
+# tmpfs_size (with a smaller tmpfs, the tmpfs fills up first).
 #######################################
 configure_tmp_cleanup() {
     log "Configuring /tmp auto-cleanup..."
 
-    # Age threshold: remove files in /tmp not accessed for more than 1 hour.
-    # The 'D' type removes the directory contents but keeps /tmp itself.
+    # Age threshold. The 'D' type removes the directory contents but keeps
+    # /tmp itself.
     cat > /etc/tmpfiles.d/coi-tmp-cleanup.conf << 'EOF'
-# Coi: clean files in /tmp that have not been accessed for 1 hour.
-# This prevents abandoned build artefacts from exhausting the tmpfs.
-D /tmp 1777 root root 1h
-EOF
-
-    # Override the cleanup timer to run every 15 minutes.
-    mkdir -p /etc/systemd/system/systemd-tmpfiles-clean.timer.d
-    cat > /etc/systemd/system/systemd-tmpfiles-clean.timer.d/coi-interval.conf << 'EOF'
-[Timer]
-# Reset inherited values before setting our own
-OnBootSec=
-OnUnitActiveSec=
-# Start 5 minutes after boot, then every 15 minutes
-OnBootSec=5min
-OnUnitActiveSec=15min
+# Coi: [limits.disk] tmp_max_age
+D /tmp 1777 root root 7d
 EOF
 
     # Enable the timer (it is masked in some minimal Ubuntu images)
     systemctl enable systemd-tmpfiles-clean.timer 2>/dev/null || true
+
+    # Size threshold. Freed space is counted from allocated blocks (%b)
+    # rather than measured again after each delete. TMP_MAX_BYTES=0 is off.
+    echo "TMP_MAX_BYTES=$((4 << 30))" > /etc/default/coi-tmp-cleanup
+    mkdir -p /usr/local/libexec
+    cat > /usr/local/libexec/coi-tmp-cleanup << 'SCRIPT_EOF'
+#!/bin/bash
+high=${TMP_MAX_BYTES:-0} low=$((${TMP_MAX_BYTES:-0} / 4 * 3)) grace_min=15
+[ "$high" -gt 0 ] || exit 0
+used=$(du -sx -B1 /tmp 2>/dev/null | cut -f1)
+[ "${used:-0}" -gt "$high" ] || exit 0
+excess=$((used - low))
+freed=0 count=0
+while IFS=' ' read -r -d '' _ blocks path; do
+    rm -f -- "$path" || continue
+    freed=$((freed + blocks * 512)) count=$((count + 1))
+    [ "$freed" -ge "$excess" ] && break
+done < <(find /tmp -xdev -type f -amin +"$grace_min" \
+    ! -path '/tmp/systemd-private-*' ! -path '/tmp/snap-private-tmp/*' \
+    -printf '%A@ %b %p\0' 2>/dev/null | sort -zn)
+echo "/tmp held $((used >> 20)) MiB: removed $count files, $((freed >> 20)) MiB"
+SCRIPT_EOF
+    chmod 755 /usr/local/libexec/coi-tmp-cleanup
+
+    cat > /etc/systemd/system/coi-tmp-cleanup.service << 'UNIT_EOF'
+[Unit]
+Description=Free /tmp when it holds more than [limits.disk] tmp_max_size
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/coi-tmp-cleanup
+ExecStart=/usr/local/libexec/coi-tmp-cleanup
+Nice=19
+IOSchedulingClass=idle
+UNIT_EOF
+
+    cat > /etc/systemd/system/coi-tmp-cleanup.timer << 'UNIT_EOF'
+[Unit]
+Description=Check /tmp size every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+UNIT_EOF
+    systemctl enable coi-tmp-cleanup.timer
 
     # Ubuntu 25.10+ enables systemd's tmp.mount, a RAM-backed /tmp of 50% RAM.
     # It mounts over workspace paths under /tmp and over the sized tmp.mount
@@ -1168,7 +1209,7 @@ EOF
     systemctl mask tmp.mount ||
         { log "ERROR: could not mask tmp.mount"; exit 1; }
 
-    log "/tmp cleanup configured (1h age threshold, 15min timer)"
+    log "/tmp cleanup configured (7d age threshold, 4 GiB size threshold)"
 }
 
 #######################################

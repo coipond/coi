@@ -968,6 +968,29 @@ func TestRenderContextFileContent_WithMaxDuration(t *testing.T) {
 	}
 }
 
+func TestRenderContextFileContent_TmpCleanup(t *testing.T) {
+	for _, tt := range []struct {
+		size, age string
+		want      []string // "" = no /tmp cleanup line
+	}{
+		{"4GiB", "7d", []string{"files unused for 7d are deleted; once /tmp holds over 4GiB, the least recently used files are deleted"}},
+		{"0", "12h", []string{"files unused for 12h are deleted —"}},
+		{"1GiB", "0", []string{"cleanup**: once /tmp holds over 1GiB"}},
+		{"0", "0", nil},
+		{"", "", nil},
+	} {
+		content := RenderContextFileContent(ContextInfo{WorkspacePath: "/workspace", HomeDir: "/home/code", TmpMaxSize: tt.size, TmpMaxAge: tt.age})
+		if got := strings.Contains(content, "/tmp cleanup"); got != (tt.want != nil) {
+			t.Errorf("(%q, %q): /tmp cleanup line present = %v, want %v", tt.size, tt.age, got, tt.want != nil)
+		}
+		for _, w := range tt.want {
+			if !strings.Contains(content, w) {
+				t.Errorf("(%q, %q): content missing %q", tt.size, tt.age, w)
+			}
+		}
+	}
+}
+
 func TestRenderContextFileContent_WithExtraMounts(t *testing.T) {
 	info := ContextInfo{
 		WorkspacePath: "/workspace",
