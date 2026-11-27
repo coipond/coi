@@ -43,7 +43,8 @@ def _speed_up(timer):
     dropin = f"/etc/systemd/system/{timer}.d"
     return (
         f"sudo mkdir -p {dropin}; "
-        "printf '[Timer]\\nOnActiveSec=1s\\nOnUnitActiveSec=\\nOnUnitActiveSec=5s\\nAccuracySec=1s\\n' "
+        # An empty OnUnitActiveSec= clears every timer of the unit, so it goes first.
+        "printf '[Timer]\\nOnUnitActiveSec=\\nOnActiveSec=1s\\nOnUnitActiveSec=5s\\nAccuracySec=1s\\n' "
         f"| sudo tee {dropin}/coi-test-fast.conf >/dev/null; "
         f"sudo systemctl daemon-reload; sudo systemctl restart {timer}; "
     )

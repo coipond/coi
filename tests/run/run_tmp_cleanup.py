@@ -150,7 +150,7 @@ def test_run_tmp_cleanup_off(coi_binary, cleanup_containers, workspace_dir):
     assert "TMP_MAX_BYTES=0" in out, f"tmp_max_size = 0 not applied. Output:\n{out}"
     assert "D /tmp 1777 root root -" in out, f"tmp_max_age = 0 not applied. Output:\n{out}"
     left = _left(out)
-    assert left == [f"old{i}" for i in range(1, 10)] + ["fresh"], (
+    assert sorted(left) == sorted([f"old{i}" for i in range(1, 10)] + ["fresh"]), (
         f"no file should be removed with both limits off, left: {left}\n{out}"
     )
 
