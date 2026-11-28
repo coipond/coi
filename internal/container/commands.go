@@ -667,6 +667,13 @@ func startWithIsolationFallback(containerName string) error {
 // rather than predating the key.
 const ManagedConfigKey = "user.coi.managed"
 
+// BaseImageConfigKey is the key where Incus records the fingerprint of the
+// image an instance was created from.
+const BaseImageConfigKey = "volatile.base_image"
+
+// ImageAliasConfigKey records the image alias coi created the container from.
+const ImageAliasConfigKey = "user.coi.image"
+
 // LaunchContainer launches an ephemeral container on the given storage pool.
 // An empty pool means "use Incus's default pool".
 // Uses init+configure+start (not launch) so security flags are set before first boot.
@@ -1219,13 +1226,6 @@ func ImageFingerprints() (map[string]string, error) {
 	}
 	return fingerprints, nil
 }
-
-// BaseImageConfigKey is the key where Incus records the fingerprint of the
-// image an instance was created from.
-const BaseImageConfigKey = "volatile.base_image"
-
-// ImageAliasConfigKey records the image alias coi created the container from.
-const ImageAliasConfigKey = "user.coi.image"
 
 // OutdatedImageAlias returns the image alias containerName was created from
 // when that alias now names another image (e.g. `coi build --force` rebuilt

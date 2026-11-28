@@ -21,11 +21,11 @@ func TestLaunchContainerRunPhase_RestartWarnsOnOutdatedImage(t *testing.T) {
 	for _, tc := range []struct {
 		name, base string
 		persistent bool
-		wantWarn   bool
+		wantWarns  int
 	}{
-		{"image rebuilt", "oldfp", true, true},
-		{"same image", "newfp", true, false},
-		{"existing non-persistent container", "oldfp", false, false},
+		{"image rebuilt", "oldfp", true, 1},
+		{"same image", "newfp", true, 0},
+		{"existing non-persistent container", "oldfp", false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
@@ -44,8 +44,8 @@ func TestLaunchContainerRunPhase_RestartWarnsOnOutdatedImage(t *testing.T) {
 			stderr := captureOutput(t, &os.Stderr, func() {
 				_, _ = a.launchContainerRunPhase(s).Run(context.Background())
 			})
-			if got := strings.Count(stderr, "runs an older build of image "+alias); got != map[bool]int{true: 1, false: 0}[tc.wantWarn] {
-				t.Errorf("%d outdated-image warnings, want warn=%v; stderr:\n%s", got, tc.wantWarn, stderr)
+			if got := strings.Count(stderr, "runs an older build of image "+alias); got != tc.wantWarns {
+				t.Errorf("%d outdated-image warnings, want %d; stderr:\n%s", got, tc.wantWarns, stderr)
 			}
 		})
 	}
@@ -58,8 +58,9 @@ func TestListImageOutdated(t *testing.T) {
 		`{"name":"coi-c-1","status":"Running","config":{"user.coi.image":"list-rust","volatile.base_image":"rustfp"}},` +
 		`{"name":"coi-d-1","status":"Running","config":{"user.coi.image":"list-gone","volatile.base_image":"oldfp"}},` +
 		`{"name":"coi-e-1","status":"Running","config":{"volatile.base_image":"oldfp"}},` +
-		`{"name":"coi-f-1","status":"Running","config":{}}]`
-	want := map[string]bool{"coi-a-1": true, "coi-b-1": false, "coi-c-1": false, "coi-d-1": false, "coi-e-1": false, "coi-f-1": false}
+		`{"name":"coi-f-1","status":"Running","config":{}},` +
+		`{"name":"coi-g-1","status":"Running","config":{"user.coi.image":"list-img"}}]`
+	want := map[string]bool{"coi-a-1": true, "coi-b-1": false, "coi-c-1": false, "coi-d-1": false, "coi-e-1": false, "coi-f-1": false, "coi-g-1": false}
 	fakeIncusCases(t, "none", "", "",
 		`  *"image list"*) echo '[{"fingerprint":"newfp","aliases":[{"name":"list-img"}]},{"fingerprint":"rustfp","aliases":[{"name":"list-rust"}]}]' ;;
   *"list "*"--format=json"*) echo '`+listJSON+`' ;;

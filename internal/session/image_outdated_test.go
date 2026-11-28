@@ -21,16 +21,16 @@ func TestPhaseReconcileExisting_WarnsOnOutdatedImage(t *testing.T) {
 		name, status, base string
 		persistent         bool
 		explicit, resume   bool
-		wantWarn           bool
+		wantWarns          int
 	}{
-		{"stopped persistent, image rebuilt", "STOPPED", "oldfp", true, false, false, true},
-		{"running persistent, image rebuilt", "RUNNING", "oldfp", true, false, false, true},
-		{"stopped persistent, same image", "STOPPED", "newfp", true, false, false, false},
-		{"running persistent, same image", "RUNNING", "newfp", true, false, false, false},
-		{"no base image recorded", "STOPPED", "", true, false, false, false},
-		{"stopped explicit --container", "STOPPED", "oldfp", true, true, false, false},
-		{"running explicit --container", "RUNNING", "oldfp", true, true, false, false},
-		{"running non-persistent --resume", "RUNNING", "oldfp", false, false, true, false},
+		{"stopped persistent, image rebuilt", "STOPPED", "oldfp", true, false, false, 1},
+		{"running persistent, image rebuilt", "RUNNING", "oldfp", true, false, false, 1},
+		{"stopped persistent, same image", "STOPPED", "newfp", true, false, false, 0},
+		{"running persistent, same image", "RUNNING", "newfp", true, false, false, 0},
+		{"no base image recorded", "STOPPED", "", true, false, false, 0},
+		{"stopped explicit --container", "STOPPED", "oldfp", true, true, false, 0},
+		{"running explicit --container", "RUNNING", "oldfp", true, true, false, 0},
+		{"running non-persistent --resume", "RUNNING", "oldfp", false, false, true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws := t.TempDir()
@@ -70,8 +70,8 @@ func TestPhaseReconcileExisting_WarnsOnOutdatedImage(t *testing.T) {
 					}
 				}
 			}
-			if want := map[bool]int{true: 1, false: 0}[tc.wantWarn]; warnings != want {
-				t.Errorf("%d outdated-image warnings, want %d; log:\n%s", warnings, want, strings.Join(logged, "\n"))
+			if warnings != tc.wantWarns {
+				t.Errorf("%d outdated-image warnings, want %d; log:\n%s", warnings, tc.wantWarns, strings.Join(logged, "\n"))
 			}
 			b, _ := os.ReadFile(logPath)
 			calls := string(b)

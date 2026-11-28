@@ -152,7 +152,7 @@ func instanceBaseImages() (map[string]bool, error) {
 	}
 	inUse := map[string]bool{}
 	for _, inst := range instances {
-		if fp := inst.Config["volatile.base_image"]; fp != "" {
+		if fp := inst.Config[container.BaseImageConfigKey]; fp != "" {
 			inUse[fp] = true
 		}
 	}
