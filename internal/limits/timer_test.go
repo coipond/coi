@@ -106,6 +106,28 @@ func TestTimeoutMonitorCancel(t *testing.T) {
 	}
 }
 
+func TestHandleTimeout_RecordsReasonOnlyWhenStopped(t *testing.T) {
+	for _, tc := range []struct {
+		name, statusRow string
+		want            bool
+	}{
+		{"stopped", "", true},
+		{"still running", "c1,RUNNING", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := fakeIncusStatus(t, "", "", tc.statusRow)
+			tm := NewTimeoutMonitor(context.Background(), "c1", time.Hour, true, false, "", logger.NewDiscard())
+
+			tm.handleTimeout()
+
+			b, _ := os.ReadFile(logPath)
+			if got := strings.Contains(string(b), "user.coi.state_reason=max_duration"); got != tc.want {
+				t.Errorf("reason recorded = %v, want %v; calls:\n%s", got, tc.want, b)
+			}
+		})
+	}
+}
+
 func TestRecordStopReason(t *testing.T) {
 	logPath := fakeIncus(t, "", "")
 	tm := NewTimeoutMonitor(context.Background(), "c1", time.Hour, true, false, "", logger.NewDiscard())

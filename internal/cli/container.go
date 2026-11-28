@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -212,14 +213,21 @@ var containerStopCmd = &cobra.Command{
 
 		if coiContainer {
 			cleanupContainerFirewall(name, containerIP)
-			if err := container.SetStateReason(cmd.Context(), name, container.StateReasonUser); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Failed to record the stop reason: %v\n", err)
-			}
+			recordUserStop(cmd.Context(), name, "")
 		}
 
 		fmt.Fprintf(os.Stderr, "Container %s stopped\n", name)
 		return nil
 	},
+}
+
+// recordUserStop records "user" as the stop reason of name. A container
+// Incus deleted on the stop (ephemeral) is not an error.
+func recordUserStop(ctx context.Context, name, indent string) {
+	err := container.SetStateReason(ctx, name, container.StateReasonUser)
+	if err != nil && !container.IsNotFoundErr(err) {
+		fmt.Fprintf(os.Stderr, "%sWarning: Failed to record the stop reason: %v\n", indent, err)
+	}
 }
 
 // containerDeleteCmd deletes a container

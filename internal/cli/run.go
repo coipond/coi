@@ -356,6 +356,9 @@ func launchOrReuseContainer(mgr container.ContainerManager, img, pool, container
 		if err := container.StartWithIsolationFallback(containerName); err != nil {
 			return fmt.Errorf("failed to start container: %w", err)
 		}
+		if err := container.ClearStateReason(context.Background(), containerName); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to clear the stop reason: %v\n", err)
+		}
 		return nil
 	}
 	if containerExists {

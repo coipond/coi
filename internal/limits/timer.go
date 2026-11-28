@@ -130,11 +130,12 @@ func (tm *TimeoutMonitor) handleTimeout() {
 }
 
 // recordStopReason records max_duration as the stop reason. An ephemeral
-// container is already gone, so a failure is only logged.
+// container is already gone, which is not an error; other failures are
+// only logged.
 func (tm *TimeoutMonitor) recordStopReason() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := container.SetStateReason(ctx, tm.ContainerName, container.StateReasonMaxDuration); err != nil {
+	if err := container.SetStateReason(ctx, tm.ContainerName, container.StateReasonMaxDuration); err != nil && !container.IsNotFoundErr(err) {
 		tm.Logger.Errorf("[limits] Could not record the stop reason: %v", err)
 	}
 }

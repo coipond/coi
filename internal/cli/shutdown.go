@@ -120,9 +120,7 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 				}
 			}
 			// Kept only when the delete below fails.
-			if err := container.SetStateReason(context.Background(), name, container.StateReasonUser); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to record the stop reason: %v\n", err)
-			}
+			recordUserStop(context.Background(), name, "  ")
 		}
 
 		// Clean up nft rules BEFORE deleting container
