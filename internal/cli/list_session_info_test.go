@@ -174,7 +174,7 @@ func TestListActiveContainers_ReadsSessionKeys(t *testing.T) {
 	listJSON := `[{"name":"coi-aaaaaaaa-1","status":"Running","config":{"` +
 		session.WorkspaceConfigKey + `":"/home/u/proj","` + session.PersistentConfigKey + `":"true","` +
 		container.ManagedConfigKey + `":"true"}},{"name":"coi-bbbbbbbb-1","status":"Stopped","config":{"` +
-		container.StateReasonKey + `":"max_duration","` + container.StateReasonAtKey + `":"2026-11-28T03:00:00Z"}},` +
+		container.StateReasonConfigKey + `":"max_duration","` + container.StateReasonAtConfigKey + `":"2026-11-28T03:00:00Z"}},` +
 		`{"name":"coi-cccccccc-1","status":"Running","config":{"` + session.PersistentConfigKey + `":"false"}}]`
 	if err := os.WriteFile(filepath.Join(dir, "list.json"), []byte(listJSON), 0o644); err != nil {
 		t.Fatal(err)

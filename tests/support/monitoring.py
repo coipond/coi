@@ -93,6 +93,27 @@ def wait_for_container_running(name, timeout=60):
     return False
 
 
+def append_sudoers_line(container_name):
+    """Write a HIGH auth-log threat (sudo "not in the sudoers file") to the
+    container's /var/log/auth.log."""
+    subprocess.run(
+        [
+            "incus",
+            "exec",
+            container_name,
+            "--",
+            "bash",
+            "-c",
+            "mkdir -p /var/log && "
+            "echo 'Jun  5 12:00:01 coi sudo: hacker is not in the sudoers file. "
+            "This incident will be reported.' >> /var/log/auth.log",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
 def get_threat_events(container_name, nft=False):
     """Get threat events from audit log. With nft, also from the nft monitor's
     log (<container>-nft.jsonl), which sees a packet the firewall rejects."""

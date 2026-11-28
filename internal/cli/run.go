@@ -348,13 +348,13 @@ func launchOrReuseContainer(mgr container.ContainerManager, img, pool, container
 			}
 		}
 		fmt.Fprintf(os.Stderr, "Restarting existing persistent container...\n")
+		// Read before the start: the start drops the config cache.
+		reasonKeys := container.StateReasonKeysSet(context.Background(), containerName)
 		// Start with the isolation fallback: the container's disk devices (set at
 		// creation) materialize at start, and one on an idmap-incompatible
 		// filesystem (virtiofs workspace, #534) fails the start under
 		// security.idmap.isolated — same class the fresh-launch path handles.
 		// Safe for persistent containers: a failed start does not delete them.
-		// Read before the start: the start drops the config cache.
-		reasonKeys := container.StateReasonKeysSet(context.Background(), containerName)
 		if err := container.StartWithIsolationFallback(containerName); err != nil {
 			return fmt.Errorf("failed to start container: %w", err)
 		}

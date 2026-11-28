@@ -10,19 +10,6 @@ import (
 	"time"
 )
 
-// stateReasonCalls returns the logged incus calls without the project prefix.
-func stateReasonCalls(t *testing.T, logPath string) []string {
-	t.Helper()
-	b, _ := os.ReadFile(logPath)
-	var out []string
-	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-		if line != "" {
-			out = append(out, strings.TrimPrefix(line, "--project default "))
-		}
-	}
-	return out
-}
-
 func TestSetStateReason_OneCall(t *testing.T) {
 	invalidateConfigCache()
 	logPath := fakeIncusScript(t, "exit 0")
@@ -32,7 +19,7 @@ func TestSetStateReason_OneCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	calls := stateReasonCalls(t, logPath)
+	calls := incusCalls(t, logPath)
 	if len(calls) != 1 {
 		t.Fatalf("calls = %q, want one config set", calls)
 	}
@@ -84,7 +71,7 @@ func TestClearStateReason(t *testing.T) {
 			}
 
 			var writes []string
-			for _, c := range stateReasonCalls(t, logPath) {
+			for _, c := range incusCalls(t, logPath) {
 				if !strings.HasPrefix(c, "config show ") {
 					writes = append(writes, c)
 				}

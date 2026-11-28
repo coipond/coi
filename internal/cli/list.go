@@ -182,8 +182,8 @@ func listActiveContainers() ([]ContainerInfo, error) {
 		workspace, _ := config[session.WorkspaceConfigKey].(string)
 		persistentKey, persistentSet := config[session.PersistentConfigKey].(string)
 		managed, _ := config[container.ManagedConfigKey].(string)
-		stateReason, _ := config[container.StateReasonKey].(string)
-		stateReasonAt, _ := config[container.StateReasonAtKey].(string)
+		stateReason, _ := config[container.StateReasonConfigKey].(string)
+		stateReasonAt, _ := config[container.StateReasonAtConfigKey].(string)
 
 		// Parse created_at time
 		createdTime := ""

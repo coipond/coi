@@ -13,7 +13,12 @@ import subprocess
 import time
 from datetime import datetime, timedelta
 
-from support.monitoring import get_container_state, get_threat_events, monitored_shell
+from support.monitoring import (
+    append_sudoers_line,
+    get_container_state,
+    get_threat_events,
+    monitored_shell,
+)
 
 SLOT = 3
 
@@ -31,26 +36,6 @@ file_read_rate_mb_per_sec = 1000
 process_count_threshold = 9999
 process_spawn_rate_threshold = 9999
 """
-
-
-def _append_sudoers_line(container_name):
-    """Write a HIGH auth-log threat (sudo "not in the sudoers file")."""
-    subprocess.run(
-        [
-            "incus",
-            "exec",
-            container_name,
-            "--",
-            "bash",
-            "-c",
-            "mkdir -p /var/log && "
-            "echo 'Jun  5 12:00:01 coi sudo: hacker is not in the sudoers file. "
-            "This incident will be reported.' >> /var/log/auth.log",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
 
 
 def _list_item(coi_binary, container_name):
@@ -71,7 +56,7 @@ def _list_item(coi_binary, container_name):
 def test_auto_pause_records_state_reason(test_workspace, coi_binary):
     with monitored_shell(test_workspace, coi_binary, SLOT, CONFIG) as (container_name, _):
         start = datetime.now().astimezone() - timedelta(seconds=1)
-        _append_sudoers_line(container_name)
+        append_sudoers_line(container_name)
 
         # The reason is written right after `incus pause`; poll for it. The
         # LogWatcher can miss a line written during its start, so re-append
@@ -83,7 +68,7 @@ def test_auto_pause_records_state_reason(test_workspace, coi_binary):
             if item["state_reason"]:
                 break
             if item["status"] == "Running":
-                _append_sudoers_line(container_name)
+                append_sudoers_line(container_name)
             time.sleep(2)
 
         events = get_threat_events(container_name)

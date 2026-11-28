@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -120,7 +119,7 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 				}
 			}
 			// Kept only when the delete below fails.
-			recordUserStop(context.Background(), name, "  ")
+			recordUserStop(cmd.Context(), name, "  ")
 		}
 
 		// Clean up nft rules BEFORE deleting container

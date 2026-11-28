@@ -8,11 +8,11 @@ import (
 // Instance keys recording why coi last stopped or froze a container, and
 // when (UTC, RFC 3339). A new start and `coi unfreeze` clear both.
 const (
-	StateReasonKey   = "user.coi.state_reason"
-	StateReasonAtKey = "user.coi.state_reason_at"
+	StateReasonConfigKey   = "user.coi.state_reason"
+	StateReasonAtConfigKey = "user.coi.state_reason_at"
 )
 
-// StateReason is the value of StateReasonKey.
+// StateReason is the value of StateReasonConfigKey.
 type StateReason string
 
 // Reasons coi stops or freezes a container for.
@@ -32,8 +32,8 @@ func MonitorStateReason(threatTitle string) StateReason {
 // monitor while a session is attached.
 func SetStateReason(ctx context.Context, containerName string, reason StateReason) error {
 	return IncusExecQuietContext(ctx, "config", "set", containerName,
-		StateReasonKey+"="+string(reason),
-		StateReasonAtKey+"="+time.Now().UTC().Format(time.RFC3339))
+		StateReasonConfigKey+"="+string(reason),
+		StateReasonAtConfigKey+"="+time.Now().UTC().Format(time.RFC3339))
 }
 
 // ClearStateReason removes the state reason keys that are set on the
@@ -47,7 +47,7 @@ func ClearStateReason(ctx context.Context, containerName string) error {
 func StateReasonKeysSet(ctx context.Context, containerName string) []string {
 	c, ok := loadInstanceConfig(ctx, containerName, false)
 	var keys []string
-	for _, key := range []string{StateReasonKey, StateReasonAtKey} {
+	for _, key := range []string{StateReasonConfigKey, StateReasonAtConfigKey} {
 		if !ok || c.config[key] != "" {
 			keys = append(keys, key)
 		}
