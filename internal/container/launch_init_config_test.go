@@ -41,8 +41,8 @@ func TestInitAndConfigureContainer_SetsManagedAndInitConfig(t *testing.T) {
 		initConfig []string
 		want       string
 	}{
-		{"no init config", nil, "init img lic-1 --ephemeral -c user.coi.managed=true" + defaultPolicyInit},
-		{"workspace", []string{"user.coi.workspace=/home/u/my proj"}, "init img lic-1 --ephemeral -c user.coi.managed=true -c user.coi.workspace=/home/u/my proj" + defaultPolicyInit},
+		{"no init config", nil, "init img lic-1 --ephemeral -c user.coi.managed=true -c user.coi.image=img" + defaultPolicyInit},
+		{"workspace", []string{"user.coi.workspace=/home/u/my proj"}, "init img lic-1 --ephemeral -c user.coi.managed=true -c user.coi.image=img -c user.coi.workspace=/home/u/my proj" + defaultPolicyInit},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_ = os.Remove(logPath)
@@ -64,7 +64,7 @@ func TestInitAndConfigureContainer_SettingsAtInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := incusCalls(t, logPath)
-	if len(got) == 0 || got[0] != "init img c1 --ephemeral -s pool1 -c user.coi.managed=true -c security.guestapi=false" {
+	if len(got) == 0 || got[0] != "init img c1 --ephemeral -s pool1 -c user.coi.managed=true -c user.coi.image=img -c security.guestapi=false" {
 		t.Fatalf("first call = %q", got)
 	}
 	for _, c := range got[1:] {
@@ -77,7 +77,7 @@ func TestInitAndConfigureContainer_SettingsAtInit(t *testing.T) {
 func TestManagerLaunch_PassesInitConfig(t *testing.T) {
 	logPath := fakeIncusScript(t, "exit 0")
 
-	want := "init img mli-1 --ephemeral -c user.coi.managed=true -c user.coi.workspace=/home/u/proj" + defaultPolicyInit
+	want := "init img mli-1 --ephemeral -c user.coi.managed=true -c user.coi.image=img -c user.coi.workspace=/home/u/proj" + defaultPolicyInit
 	m := &Manager{ContainerName: "mli-1", InitConfig: []string{"user.coi.workspace=/home/u/proj"}}
 	for name, launch := range map[string]func() error{
 		"LaunchWithPolicy":         func() error { return m.LaunchWithPolicy("img", true, "", DefaultHardeningPolicy()) },
@@ -108,7 +108,7 @@ func TestLaunchContainer_RecreateKeepsInitConfig(t *testing.T) {
 	if err := launchContainer("img", "rli-1", "", true, nil, DefaultHardeningPolicy(), []string{"user.coi.workspace=/home/u/proj"}); err != nil {
 		t.Fatal(err)
 	}
-	want := "init img rli-1 --ephemeral -c user.coi.managed=true -c user.coi.workspace=/home/u/proj" + defaultPolicyInit
+	want := "init img rli-1 --ephemeral -c user.coi.managed=true -c user.coi.image=img -c user.coi.workspace=/home/u/proj" + defaultPolicyInit
 	got := initCalls(t, logPath)
 	if len(got) != 2 || got[0] != want || got[1] != want {
 		t.Errorf("init calls = %q, want the first init and the recreate both %q", got, want)

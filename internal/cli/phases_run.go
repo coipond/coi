@@ -189,7 +189,7 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 			}
 			s.wasRestarted = containerExists && a.persistent
 			if s.wasRestarted {
-				session.WarnOutdatedImage(s.containerName, s.img, stderrLogFn)
+				session.WarnOutdatedImage(s.containerName, stderrLogFn)
 			}
 
 			// Mount/socket config is parsed and trust-gated BEFORE launch so the

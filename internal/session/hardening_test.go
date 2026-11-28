@@ -50,7 +50,7 @@ func TestCreateAndStartContainer_SettingsAtInit(t *testing.T) {
 		t.Fatal("want the failed init to fail the create")
 	}
 	b, _ := os.ReadFile(logPath)
-	want := "init img c1 -s pool1 -c user.coi.managed=true" +
+	want := "init img c1 -s pool1 -c user.coi.managed=true -c user.coi.image=img" +
 		" -c user.coi.persistent=false" +
 		" -c security.nesting=true" +
 		" -c security.syscalls.intercept.mknod=true" +

@@ -18,33 +18,40 @@ func imageListCase(alias, fingerprint string) string {
 
 func TestPhaseReconcileExisting_WarnsOnOutdatedImage(t *testing.T) {
 	for _, tc := range []struct {
-		name, status, base, imageAlias, explicit string
-		wantWarn                                 bool
+		name, status, base string
+		persistent         bool
+		explicit, resume   bool
+		wantWarn           bool
 	}{
-		{"stopped persistent, image rebuilt", "STOPPED", "oldfp", "img", "", true},
-		{"running persistent, image rebuilt", "RUNNING", "oldfp", "img", "", true},
-		{"stopped persistent, same image", "STOPPED", "newfp", "img", "", false},
-		{"running persistent, same image", "RUNNING", "newfp", "img", "", false},
-		{"no base image recorded", "STOPPED", "", "img", "", false},
-		{"explicit --container", "STOPPED", "oldfp", "img", "set", false},
+		{"stopped persistent, image rebuilt", "STOPPED", "oldfp", true, false, false, true},
+		{"running persistent, image rebuilt", "RUNNING", "oldfp", true, false, false, true},
+		{"stopped persistent, same image", "STOPPED", "newfp", true, false, false, false},
+		{"running persistent, same image", "RUNNING", "newfp", true, false, false, false},
+		{"no base image recorded", "STOPPED", "", true, false, false, false},
+		{"stopped explicit --container", "STOPPED", "oldfp", true, true, false, false},
+		{"running explicit --container", "RUNNING", "oldfp", true, true, false, false},
+		{"running non-persistent --resume", "RUNNING", "oldfp", false, false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws := t.TempDir()
 			name := "io-" + strings.NewReplacer(" ", "-", ",", "").Replace(tc.name)
-			alias := name + "-" + tc.imageAlias
-			cfgLines := ""
+			alias := name + "-img"
+			cfgLines := "  " + container.ImageAliasConfigKey + ": " + alias + "\n"
 			if tc.base != "" {
-				cfgLines = "  volatile.base_image: " + tc.base + "\n"
+				cfgLines += "  " + container.BaseImageConfigKey + ": " + tc.base + "\n"
 			}
-			logPath := fakeLimitsIncusCases(t, name, limitsWorkspaceYAML(ws, cfgLines), tc.status, imageListCase(name+"-img", "newfp"))
+			logPath := fakeLimitsIncusCases(t, name, limitsWorkspaceYAML(ws, cfgLines), tc.status, imageListCase(alias, "newfp"))
 			// phaseResolveImage looked the alias up before this phase.
 			if _, err := container.ImageExists(alias); err != nil {
 				t.Fatal(err)
 			}
 			var logged []string
-			opts := SetupOptions{Persistent: true, WorkspacePath: ws, Logger: func(s string) { logged = append(logged, s) }}
-			if tc.explicit != "" {
+			opts := SetupOptions{Persistent: tc.persistent, WorkspacePath: ws, Logger: func(s string) { logged = append(logged, s) }}
+			if tc.explicit {
 				opts.ContainerName = name
+			}
+			if tc.resume {
+				opts.ResumeFromID = "sess-1"
 			}
 			st := &setupState{
 				opts:   opts,
@@ -71,9 +78,32 @@ func TestPhaseReconcileExisting_WarnsOnOutdatedImage(t *testing.T) {
 			if n := strings.Count(calls, "image list"); n != 1 {
 				t.Errorf("%d image lists, want only the alias lookup before the phase; calls:\n%s", n, calls)
 			}
-			if strings.Contains(calls, container.BaseImageConfigKey) {
-				t.Errorf("base image read with its own incus call, want it from the config cache; calls:\n%s", calls)
+			if strings.Contains(calls, container.BaseImageConfigKey) || strings.Contains(calls, container.ImageAliasConfigKey) {
+				t.Errorf("image keys read with their own incus call, want them from the config cache; calls:\n%s", calls)
 			}
 		})
+	}
+}
+
+func TestPhaseReconcileExisting_OtherImageIsNotOutdated(t *testing.T) {
+	// `coi shell --profile X` reuses the workspace's container created from
+	// another, current image: it was not rebuilt, so no warning.
+	ws := t.TempDir()
+	name := "io-other-image"
+	cfgLines := "  " + container.ImageAliasConfigKey + ": " + name + "-default\n  " + container.BaseImageConfigKey + ": defaultfp\n"
+	fakeLimitsIncusCases(t, name, limitsWorkspaceYAML(ws, cfgLines), "STOPPED",
+		`  *"image list"*) echo '[{"fingerprint":"defaultfp","aliases":[{"name":"`+name+`-default"}]},{"fingerprint":"rustfp","aliases":[{"name":"`+name+`-rust"}]}]' ;;
+`)
+	var logged []string
+	st := &setupState{
+		opts:   SetupOptions{Persistent: true, WorkspacePath: ws, Logger: func(s string) { logged = append(logged, s) }},
+		result: &SetupResult{Manager: container.NewManager(name), ContainerName: name},
+		image:  name + "-rust",
+	}
+	if _, err := st.phaseReconcileExisting(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if log := strings.Join(logged, "\n"); strings.Contains(log, "older build") {
+		t.Errorf("warning for a container on another, current image:\n%s", log)
 	}
 }

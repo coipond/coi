@@ -790,7 +790,7 @@ func initAndConfigureContainer(imageAlias, containerName, pool string, ephemeral
 	if pool != "" {
 		args = append(args, "-s", pool)
 	}
-	args = append(args, "-c", ManagedConfigKey+"=true")
+	args = append(args, "-c", ManagedConfigKey+"=true", "-c", ImageAliasConfigKey+"="+imageAlias)
 	for _, kv := range initConfig {
 		args = append(args, "-c", kv)
 	}
@@ -1224,19 +1224,37 @@ func ImageFingerprints() (map[string]string, error) {
 // image an instance was created from.
 const BaseImageConfigKey = "volatile.base_image"
 
-// ImageOutdated reports whether containerName was created from another image
-// than the one aliasName names now (e.g. before `coi build --force` rebuilt
-// it). False when the alias or the container's base image is unknown.
-func ImageOutdated(containerName, aliasName string) bool {
-	fingerprint, err := ImageFingerprint(aliasName)
-	if err != nil || fingerprint == "" {
-		return false
+// ImageAliasConfigKey records the image alias coi created the container from.
+const ImageAliasConfigKey = "user.coi.image"
+
+// OutdatedImageAlias returns the image alias containerName was created from
+// when that alias now names another image (e.g. `coi build --force` rebuilt
+// it), else "". A container without the alias key, a missing alias or an
+// unknown base image is never outdated.
+func OutdatedImageAlias(containerName string) string {
+	ctx := context.Background()
+	alias, err := ConfigGet(ctx, containerName, ImageAliasConfigKey)
+	if err != nil || alias == "" {
+		return ""
 	}
-	base, err := ConfigGet(context.Background(), containerName, BaseImageConfigKey)
+	base, err := ConfigGet(ctx, containerName, BaseImageConfigKey)
 	if err != nil || base == "" {
+		return ""
+	}
+	if !IsImageOutdated(base, alias, ImageFingerprint) {
+		return ""
+	}
+	return alias
+}
+
+// IsImageOutdated reports whether an instance created from the image with
+// fingerprint base, under alias, runs an older image than alias names now.
+func IsImageOutdated(base, alias string, fingerprint func(string) (string, error)) bool {
+	if base == "" || alias == "" {
 		return false
 	}
-	return base != fingerprint
+	current, err := fingerprint(alias)
+	return err == nil && current != "" && current != base
 }
 
 // ListContainers lists all containers matching a name pattern

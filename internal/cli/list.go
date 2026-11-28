@@ -97,7 +97,7 @@ func listCommand(cmd *cobra.Command, args []string) error {
 		containers = filterContainersByStatus(containers, statusFilter)
 	}
 
-	markOutdatedImages(containers, ResolveImageName(app.cfg))
+	markOutdatedImages(containers)
 
 	containerWorkspaces, containerPersistent := containerSessionInfo(containers, session.AllSessionsDirs(baseDir, toolInstance))
 
@@ -147,26 +147,28 @@ type ContainerInfo struct {
 	// last session's publications, re-resolved at the next start.
 	Ports []string
 	// BaseImage is the fingerprint of the image the container was created
-	// from (volatile.base_image). ImageOutdated is true when the configured
-	// image alias now names another image (see markOutdatedImages).
+	// from (volatile.base_image), ImageAlias the alias coi created it from
+	// (user.coi.image). ImageOutdated is true when that alias now names
+	// another image (see markOutdatedImages).
 	BaseImage     string
+	ImageAlias    string
 	ImageOutdated bool
 }
 
-// markOutdatedImages sets ImageOutdated on each container created from
-// another image than the one alias names now. Nothing is marked when the
-// alias does not exist; the image list runs only when a container has a base
-// image to compare.
-func markOutdatedImages(containers []ContainerInfo, alias string) {
-	if !slices.ContainsFunc(containers, func(c ContainerInfo) bool { return c.BaseImage != "" }) {
+// markOutdatedImages sets ImageOutdated on each container whose image alias
+// now names another image than the one it was created from. The image list
+// runs only when a container has both a base image and an alias.
+func markOutdatedImages(containers []ContainerInfo) {
+	if !slices.ContainsFunc(containers, func(c ContainerInfo) bool { return c.BaseImage != "" && c.ImageAlias != "" }) {
 		return
 	}
-	fingerprint, err := container.ImageFingerprint(alias)
-	if err != nil || fingerprint == "" {
+	fingerprints, err := container.ImageFingerprints()
+	if err != nil {
 		return
 	}
+	lookup := func(alias string) (string, error) { return fingerprints[alias], nil }
 	for i := range containers {
-		containers[i].ImageOutdated = containers[i].BaseImage != "" && containers[i].BaseImage != fingerprint
+		containers[i].ImageOutdated = container.IsImageOutdated(containers[i].BaseImage, containers[i].ImageAlias, lookup)
 	}
 }
 
@@ -203,6 +205,7 @@ func listActiveContainers() ([]ContainerInfo, error) {
 		persistentKey, persistentSet := config[session.PersistentConfigKey].(string)
 		managed, _ := config[container.ManagedConfigKey].(string)
 		baseImage, _ := config[container.BaseImageConfigKey].(string)
+		imageAlias, _ := config[container.ImageAliasConfigKey].(string)
 
 		// Parse created_at time
 		createdTime := ""
@@ -233,6 +236,7 @@ func listActiveContainers() ([]ContainerInfo, error) {
 			PersistentSet: persistentSet,
 			Managed:       managed != "",
 			BaseImage:     baseImage,
+			ImageAlias:    imageAlias,
 		})
 	}
 
@@ -624,7 +628,7 @@ func outputText(containers []ContainerInfo, sessions []SessionInfo,
 				fmt.Printf("    Image: %s\n", c.Image)
 			}
 			if c.ImageOutdated {
-				fmt.Printf("    Image outdated: rebuilt since creation (coi shutdown %s, then start again to recreate)\n", c.Name)
+				fmt.Printf("    Image outdated: %s was rebuilt since creation (coi shutdown %s, then start again to recreate)\n", c.ImageAlias, c.Name)
 			}
 			if c.Pool != "" {
 				fmt.Printf("    Pool: %s\n", c.Pool)

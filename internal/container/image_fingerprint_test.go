@@ -6,28 +6,35 @@ import (
 	"testing"
 )
 
-func TestImageOutdated(t *testing.T) {
+func TestOutdatedImageAlias(t *testing.T) {
 	for _, tc := range []struct {
-		name, alias, base string
-		want              bool
+		name, alias, base, want string
 	}{
-		{"image rebuilt", "img", "oldfp", true},
-		{"same image", "img", "newfp", false},
-		{"alias no longer exists", "gone", "oldfp", false},
-		{"no base image recorded", "img", "", false},
+		{"image rebuilt", "img", "oldfp", "img"},
+		{"same image", "img", "newfp", ""},
+		{"alias no longer exists", "gone", "oldfp", ""},
+		{"no base image recorded", "img", "", ""},
+		{"no alias recorded", "", "oldfp", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			name := "fp-" + strings.ReplaceAll(tc.name, " ", "-")
-			cfg := "config: {}"
+			lines := []string{"config:"}
+			want := ""
+			if tc.alias != "" {
+				lines = append(lines, "  "+ImageAliasConfigKey+": "+name+"-"+tc.alias)
+			}
 			if tc.base != "" {
-				cfg = "config:\n  volatile.base_image: " + tc.base
+				lines = append(lines, "  "+BaseImageConfigKey+": "+tc.base)
+			}
+			if tc.want != "" {
+				want = name + "-" + tc.want
 			}
 			fakeIncusScript(t, `case "$*" in
   *"image list"*) echo '[{"fingerprint":"newfp","aliases":[{"name":"`+name+`-img"}]},{"fingerprint":"otherfp","aliases":[]}]' ;;
-  *"config show "*) printf '%s\n' '`+strings.ReplaceAll(cfg, "\n", "' '")+`' ;;
+  *"config show "*) printf '%s\n' '`+strings.Join(lines, "' '")+`' ;;
 esac`)
-			if got := ImageOutdated(name, name+"-"+tc.alias); got != tc.want {
-				t.Errorf("ImageOutdated = %v, want %v", got, tc.want)
+			if got := OutdatedImageAlias(name); got != want {
+				t.Errorf("OutdatedImageAlias = %q, want %q", got, want)
 			}
 		})
 	}
