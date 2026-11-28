@@ -1155,48 +1155,87 @@ func DeleteImageAlias(aliasName string) error {
 }
 
 // knownImages remembers aliases ImageExists has already found in this
-// process, so a launch that checks the same image twice (the CLI's auto-build
-// check, then session setup) pays for one image list, not two. Only positive
+// process, with their fingerprints, so a launch that checks the same image
+// twice (the CLI's auto-build check, then session setup) and then compares a
+// reused container with it pays for one image list, not three. Only positive
 // answers are cached: a missing image may be built moments later.
 var knownImages sync.Map
 
 // ImageExists checks if an image with the given alias exists
 func ImageExists(aliasName string) (bool, error) {
-	if _, ok := knownImages.Load(aliasName); ok {
-		return true, nil
-	}
-	exists, err := imageExistsUncached(aliasName)
-	if exists {
-		knownImages.Store(aliasName, struct{}{})
-	}
+	_, exists, err := lookupImage(aliasName)
 	return exists, err
 }
 
-func imageExistsUncached(aliasName string) (bool, error) {
+// ImageFingerprint returns the fingerprint of the image with the given alias,
+// or "" when no image has that alias.
+func ImageFingerprint(aliasName string) (string, error) {
+	fingerprint, _, err := lookupImage(aliasName)
+	return fingerprint, err
+}
+
+// lookupImage returns whether an image has the given alias, and its
+// fingerprint, from knownImages when it was found before.
+func lookupImage(aliasName string) (string, bool, error) {
+	if fingerprint, ok := knownImages.Load(aliasName); ok {
+		return fingerprint.(string), true, nil
+	}
+	fingerprints, err := ImageFingerprints()
+	if err != nil {
+		return "", false, err
+	}
+	fingerprint, exists := fingerprints[aliasName]
+	if exists {
+		knownImages.Store(aliasName, fingerprint)
+	}
+	return fingerprint, exists, nil
+}
+
+// ImageFingerprints returns the fingerprint of every local image by alias,
+// from one image list.
+func ImageFingerprints() (map[string]string, error) {
 	output, err := IncusOutput("image", "list", "--format=json")
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
 	var images []struct {
-		Aliases []struct {
+		Fingerprint string `json:"fingerprint"`
+		Aliases     []struct {
 			Name string `json:"name"`
 		} `json:"aliases"`
 	}
 
 	if err := json.Unmarshal([]byte(output), &images); err != nil {
-		return false, err
+		return nil, err
 	}
 
+	fingerprints := map[string]string{}
 	for _, img := range images {
 		for _, alias := range img.Aliases {
-			if alias.Name == aliasName {
-				return true, nil
-			}
+			fingerprints[alias.Name] = img.Fingerprint
 		}
 	}
+	return fingerprints, nil
+}
 
-	return false, nil
+// BaseImageConfigKey is the key where Incus records the fingerprint of the
+// image an instance was created from.
+const BaseImageConfigKey = "volatile.base_image"
+
+// ImageOutdated reports whether containerName was created from another image
+// than the one aliasName names now (e.g. before `coi build --force` rebuilt
+// it). False when the alias or the container's base image is unknown.
+func ImageOutdated(containerName, aliasName string) bool {
+	fingerprint, err := ImageFingerprint(aliasName)
+	if err != nil || fingerprint == "" {
+		return false
+	}
+	base, err := ConfigGet(context.Background(), containerName, BaseImageConfigKey)
+	if err != nil || base == "" {
+		return false
+	}
+	return base != fingerprint
 }
 
 // ListContainers lists all containers matching a name pattern

@@ -97,6 +97,8 @@ func listCommand(cmd *cobra.Command, args []string) error {
 		containers = filterContainersByStatus(containers, statusFilter)
 	}
 
+	markOutdatedImages(containers, ResolveImageName(app.cfg))
+
 	containerWorkspaces, containerPersistent := containerSessionInfo(containers, session.AllSessionsDirs(baseDir, toolInstance))
 
 	// Get saved sessions if --all
@@ -144,6 +146,28 @@ type ContainerInfo struct {
 	// container is Running; on a stopped persistent container they are the
 	// last session's publications, re-resolved at the next start.
 	Ports []string
+	// BaseImage is the fingerprint of the image the container was created
+	// from (volatile.base_image). ImageOutdated is true when the configured
+	// image alias now names another image (see markOutdatedImages).
+	BaseImage     string
+	ImageOutdated bool
+}
+
+// markOutdatedImages sets ImageOutdated on each container created from
+// another image than the one alias names now. Nothing is marked when the
+// alias does not exist; the image list runs only when a container has a base
+// image to compare.
+func markOutdatedImages(containers []ContainerInfo, alias string) {
+	if !slices.ContainsFunc(containers, func(c ContainerInfo) bool { return c.BaseImage != "" }) {
+		return
+	}
+	fingerprint, err := container.ImageFingerprint(alias)
+	if err != nil || fingerprint == "" {
+		return
+	}
+	for i := range containers {
+		containers[i].ImageOutdated = containers[i].BaseImage != "" && containers[i].BaseImage != fingerprint
+	}
 }
 
 // SessionInfo holds information about a saved session
@@ -178,6 +202,7 @@ func listActiveContainers() ([]ContainerInfo, error) {
 		workspace, _ := config[session.WorkspaceConfigKey].(string)
 		persistentKey, persistentSet := config[session.PersistentConfigKey].(string)
 		managed, _ := config[container.ManagedConfigKey].(string)
+		baseImage, _ := config[container.BaseImageConfigKey].(string)
 
 		// Parse created_at time
 		createdTime := ""
@@ -207,6 +232,7 @@ func listActiveContainers() ([]ContainerInfo, error) {
 			Persistent:    persistentKey == "true",
 			PersistentSet: persistentSet,
 			Managed:       managed != "",
+			BaseImage:     baseImage,
 		})
 	}
 
@@ -522,6 +548,7 @@ func outputJSON(containers []ContainerInfo, sessions []SessionInfo,
 			"status":          c.Status,
 			"created_at":      c.CreatedAt,
 			"image":           c.Image,
+			"image_outdated":  c.ImageOutdated,
 			"persistent":      persistent[c.Name],
 			"ipv4":            c.IPv4,
 			"pool":            c.Pool,
@@ -595,6 +622,9 @@ func outputText(containers []ContainerInfo, sessions []SessionInfo,
 			fmt.Printf("    Created: %s\n", c.CreatedAt)
 			if c.Image != "" {
 				fmt.Printf("    Image: %s\n", c.Image)
+			}
+			if c.ImageOutdated {
+				fmt.Printf("    Image outdated: rebuilt since creation (coi shutdown %s, then start again to recreate)\n", c.Name)
 			}
 			if c.Pool != "" {
 				fmt.Printf("    Pool: %s\n", c.Pool)

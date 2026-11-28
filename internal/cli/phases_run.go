@@ -188,6 +188,9 @@ func (a *App) launchContainerRunPhase(s *runState) session.Phase {
 				return nil, fmt.Errorf("failed to check if container exists: %w", err)
 			}
 			s.wasRestarted = containerExists && a.persistent
+			if s.wasRestarted {
+				session.WarnOutdatedImage(s.containerName, s.img, stderrLogFn)
+			}
 
 			// Mount/socket config is parsed and trust-gated BEFORE launch so the
 			// pre-start hook below can attach every disk device to the stopped
