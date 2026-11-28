@@ -4,6 +4,7 @@
 
 ### Features
 
+- [Feature] **`coi shell` and `coi run` warn when a reused persistent container runs an outdated image** — a persistent container keeps the image it was created from, so after `coi build --force` rebuilt that image the container kept running the old build and coi did not say so. When `coi shell` or `coi run` reuses a persistent container whose image the configured image alias no longer names, coi prints one warning with the fix: `coi shutdown <container>`, then start again to recreate it. `coi list --json` has a new `image_outdated` field per container, and the text output shows an `Image outdated:` line. Nothing is flagged when the alias no longer exists.
 - [Feature] **`[container] keep_on_failed_save` keeps a non-persistent container when its session save fails** — after `close` or a poweroff, coi deletes a non-persistent container even when saving its session data failed (for example the host disk is full), so the conversation since the last saved copy is lost. With `keep_on_failed_save = true` (also in profiles), coi keeps the stopped container and says how to save it later (fix the cause, then `coi shell --resume=<session-id>`, with the session id it prints) or remove it (`coi kill <container>` or `coi clean`). Off by default, because kept containers use disk until removed. Without the setting, the message after the delete now names why the save failed and says that the conversation since the last saved copy is lost.
 
 ### Breaking

@@ -1177,8 +1177,9 @@ func ImageFingerprint(aliasName string) (string, error) {
 // lookupImage returns whether an image has the given alias, and its
 // fingerprint, from knownImages when it was found before.
 func lookupImage(aliasName string) (string, bool, error) {
-	if fingerprint, ok := knownImages.Load(aliasName); ok {
-		return fingerprint.(string), true, nil
+	if cached, ok := knownImages.Load(aliasName); ok {
+		fingerprint, _ := cached.(string)
+		return fingerprint, true, nil
 	}
 	fingerprints, err := ImageFingerprints()
 	if err != nil {
