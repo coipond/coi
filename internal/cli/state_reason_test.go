@@ -126,3 +126,31 @@ func TestLaunchContainerRunPhase_RestartClearsReason(t *testing.T) {
 		t.Errorf("want both keys unset after the restart; calls:\n%s", b)
 	}
 }
+
+func TestLaunchContainerRunPhase_RestartWithoutReasonReadsNoConfigAfterStart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ws := t.TempDir()
+	logPath := fakeStoppedIncus(t, "run-noreason",
+		"config: {}\ndevices:\n  workspace:\n    path: /workspace\n    source: "+ws+"\n    type: disk\n")
+	cfg := config.GetDefaultConfig()
+	cfg.Network.Mode = config.NetworkModeOpen
+	cfg.Security.DisableProtection = true
+	cfg.Limits = config.LimitsConfig{}
+	a := &App{cfg: cfg, persistent: true}
+	s := &runState{absWorkspace: ws, containerName: "run-noreason", img: "coi-default", slot: 1}
+
+	if _, err := a.launchContainerRunPhase(s).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	b, _ := os.ReadFile(logPath)
+	log := string(b)
+	start := strings.Index(log, "start run-noreason")
+	if start < 0 {
+		t.Fatalf("no start; calls:\n%s", log)
+	}
+	after := log[start:]
+	if strings.Contains(after, "config show") || strings.Contains(after, "config unset") {
+		t.Errorf("want no config read or unset after the start; calls:\n%s", log)
+	}
+}

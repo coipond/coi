@@ -39,11 +39,26 @@ func SetStateReason(ctx context.Context, containerName string, reason StateReaso
 // ClearStateReason removes the state reason keys that are set on the
 // container. A container without them costs one (cached) config read.
 func ClearStateReason(ctx context.Context, containerName string) error {
+	return UnsetStateReasonKeys(ctx, containerName, StateReasonKeysSet(ctx, containerName))
+}
+
+// StateReasonKeysSet returns the state reason keys set on the container,
+// read from the (cached) config. Both keys when the config cannot be read.
+func StateReasonKeysSet(ctx context.Context, containerName string) []string {
 	c, ok := loadInstanceConfig(ctx, containerName, false)
+	var keys []string
 	for _, key := range []string{StateReasonKey, StateReasonAtKey} {
-		if ok && c.config[key] == "" {
-			continue
+		if !ok || c.config[key] != "" {
+			keys = append(keys, key)
 		}
+	}
+	return keys
+}
+
+// UnsetStateReasonKeys removes keys (from StateReasonKeysSet) from the
+// container.
+func UnsetStateReasonKeys(ctx context.Context, containerName string, keys []string) error {
+	for _, key := range keys {
 		if err := IncusExecQuietContext(ctx, "config", "unset", containerName, key); err != nil {
 			return err
 		}
