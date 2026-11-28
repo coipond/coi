@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -56,6 +57,9 @@ func unfreezeContainer(name string) error {
 	_, err = container.IncusOutput("start", name)
 	if err != nil {
 		return fmt.Errorf("failed to unfreeze container: %w", err)
+	}
+	if err := container.ClearStateReason(context.Background(), name); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to clear the freeze reason of %s: %v\n", name, err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Unfroze container: %s\n", name)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -117,6 +118,10 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 				} else {
 					fmt.Printf("  Container stopped during timeout\n")
 				}
+			}
+			// Kept only when the delete below fails.
+			if err := container.SetStateReason(context.Background(), name, container.StateReasonUser); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to record the stop reason: %v\n", err)
 			}
 		}
 

@@ -126,6 +126,17 @@ func (tm *TimeoutMonitor) handleTimeout() {
 		return
 	}
 	tm.Logger.Println("[limits] Container stopped due to runtime limit")
+	tm.recordStopReason()
+}
+
+// recordStopReason records max_duration as the stop reason. An ephemeral
+// container is already gone, so a failure is only logged.
+func (tm *TimeoutMonitor) recordStopReason() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := container.SetStateReason(ctx, tm.ContainerName, container.StateReasonMaxDuration); err != nil {
+		tm.Logger.Errorf("[limits] Could not record the stop reason: %v", err)
+	}
 }
 
 // stopContainerQuietly stops the container without streaming the incus

@@ -4,6 +4,7 @@
 
 ### Features
 
+- [Feature] **`coi list` shows why coi stopped or froze a container** — a container frozen by the security monitor, one stopped by `[limits.runtime] max_duration` and one stopped by the user looked the same in `coi list`. coi now records the reason and its time (UTC) on the container: `monitor:<threat title>` after an auto-pause, `max_duration` after the runtime limit, `user` after `coi container stop` (and after `coi shutdown` when the delete fails). `coi list` shows it as a `Reason:` line, and `coi list --json` as `state_reason` and `state_reason_at` (empty when unset). `coi unfreeze`, `coi container start` and a session that reuses the container clear both. A failure to record the reason is logged and does not stop the pause or stop.
 - [Feature] **`[container] keep_on_failed_save` keeps a non-persistent container when its session save fails** — after `close` or a poweroff, coi deletes a non-persistent container even when saving its session data failed (for example the host disk is full), so the conversation since the last saved copy is lost. With `keep_on_failed_save = true` (also in profiles), coi keeps the stopped container and says how to save it later (fix the cause, then `coi shell --resume=<session-id>`, with the session id it prints) or remove it (`coi kill <container>` or `coi clean`). Off by default, because kept containers use disk until removed. Without the setting, the message after the delete now names why the save failed and says that the conversation since the last saved copy is lost.
 
 ### Breaking

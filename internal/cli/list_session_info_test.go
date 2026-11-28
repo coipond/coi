@@ -173,7 +173,8 @@ func TestListActiveContainers_ReadsSessionKeys(t *testing.T) {
 	dir := t.TempDir()
 	listJSON := `[{"name":"coi-aaaaaaaa-1","status":"Running","config":{"` +
 		session.WorkspaceConfigKey + `":"/home/u/proj","` + session.PersistentConfigKey + `":"true","` +
-		container.ManagedConfigKey + `":"true"}},{"name":"coi-bbbbbbbb-1","status":"Stopped","config":{}},` +
+		container.ManagedConfigKey + `":"true"}},{"name":"coi-bbbbbbbb-1","status":"Stopped","config":{"` +
+		container.StateReasonKey + `":"max_duration","` + container.StateReasonAtKey + `":"2026-11-28T03:00:00Z"}},` +
 		`{"name":"coi-cccccccc-1","status":"Running","config":{"` + session.PersistentConfigKey + `":"false"}}]`
 	if err := os.WriteFile(filepath.Join(dir, "list.json"), []byte(listJSON), 0o644); err != nil {
 		t.Fatal(err)
@@ -196,6 +197,12 @@ func TestListActiveContainers_ReadsSessionKeys(t *testing.T) {
 	}
 	if c := got[1]; c.Workspace != "" || c.Persistent || c.PersistentSet || c.Managed {
 		t.Errorf("keyless container = %+v; want no session keys", c)
+	}
+	if c := got[1]; c.StateReason != "max_duration" || c.StateReasonAt != "2026-11-28T03:00:00Z" {
+		t.Errorf("stopped container reason = %q at %q; want max_duration at 2026-11-28T03:00:00Z", c.StateReason, c.StateReasonAt)
+	}
+	if c := got[0]; c.StateReason != "" || c.StateReasonAt != "" {
+		t.Errorf("running container reason = %q at %q; want none", c.StateReason, c.StateReasonAt)
 	}
 	if c := got[2]; c.Persistent || !c.PersistentSet {
 		t.Errorf("ephemeral container = %+v; want the persistence key set to false", c)

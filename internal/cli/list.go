@@ -144,6 +144,10 @@ type ContainerInfo struct {
 	// container is Running; on a stopped persistent container they are the
 	// last session's publications, re-resolved at the next start.
 	Ports []string
+	// StateReason and StateReasonAt are why and when (UTC, RFC 3339) coi
+	// last stopped or froze the container; "" when it did not.
+	StateReason   string
+	StateReasonAt string
 }
 
 // SessionInfo holds information about a saved session
@@ -178,6 +182,8 @@ func listActiveContainers() ([]ContainerInfo, error) {
 		workspace, _ := config[session.WorkspaceConfigKey].(string)
 		persistentKey, persistentSet := config[session.PersistentConfigKey].(string)
 		managed, _ := config[container.ManagedConfigKey].(string)
+		stateReason, _ := config[container.StateReasonKey].(string)
+		stateReasonAt, _ := config[container.StateReasonAtKey].(string)
 
 		// Parse created_at time
 		createdTime := ""
@@ -207,6 +213,9 @@ func listActiveContainers() ([]ContainerInfo, error) {
 			Persistent:    persistentKey == "true",
 			PersistentSet: persistentSet,
 			Managed:       managed != "",
+
+			StateReason:   stateReason,
+			StateReasonAt: stateReasonAt,
 		})
 	}
 
@@ -527,6 +536,8 @@ func outputJSON(containers []ContainerInfo, sessions []SessionInfo,
 			"pool":            c.Pool,
 			"alias":           c.Alias,
 			"published_ports": append([]string{}, c.Ports...), // non-nil: stable JSON shape ([] not null)
+			"state_reason":    c.StateReason,
+			"state_reason_at": c.StateReasonAt,
 		}
 		if ws, ok := workspaces[c.Name]; ok {
 			item["workspace"] = ws
@@ -605,6 +616,9 @@ func outputText(containers []ContainerInfo, sessions []SessionInfo,
 			// Show workspace if we have it from session metadata
 			if workspace, ok := workspaces[c.Name]; ok && workspace != "" {
 				fmt.Printf("    Workspace: %s\n", workspace)
+			}
+			if c.StateReason != "" {
+				fmt.Printf("    Reason: %s (%s)\n", c.StateReason, c.StateReasonAt)
 			}
 		}
 	}

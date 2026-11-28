@@ -2,6 +2,8 @@ package limits
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,5 +103,17 @@ func TestTimeoutMonitorCancel(t *testing.T) {
 		// Good - cancelled
 	case <-time.After(100 * time.Millisecond):
 		t.Error("timeout monitor should complete after Stop()")
+	}
+}
+
+func TestRecordStopReason(t *testing.T) {
+	logPath := fakeIncus(t, "", "")
+	tm := NewTimeoutMonitor(context.Background(), "c1", time.Hour, true, false, "", logger.NewDiscard())
+
+	tm.recordStopReason()
+
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), "config set c1 user.coi.state_reason=max_duration user.coi.state_reason_at=") {
+		t.Errorf("calls = %q, want the max_duration reason", b)
 	}
 }

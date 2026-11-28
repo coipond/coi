@@ -110,6 +110,11 @@ var containerStartCmd = &cobra.Command{
 		if err := app.isolateStartedContainer(cmd, name); err != nil {
 			return stopUnisolated(name, err)
 		}
+		if isCoiContainerName(name) {
+			if err := container.ClearStateReason(cmd.Context(), name); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to clear the stop reason: %v\n", err)
+			}
+		}
 
 		fmt.Fprintf(os.Stderr, "Container %s started\n", name)
 		return nil
@@ -207,6 +212,9 @@ var containerStopCmd = &cobra.Command{
 
 		if coiContainer {
 			cleanupContainerFirewall(name, containerIP)
+			if err := container.SetStateReason(cmd.Context(), name, container.StateReasonUser); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to record the stop reason: %v\n", err)
+			}
 		}
 
 		fmt.Fprintf(os.Stderr, "Container %s stopped\n", name)
