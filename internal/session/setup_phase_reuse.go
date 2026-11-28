@@ -76,6 +76,9 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 					return nil, err
 				}
 				st.opts.Logger("Container already running, reusing...")
+				if st.opts.Persistent && st.opts.ContainerName == "" {
+					WarnOutdatedImage(st.result.ContainerName, st.opts.Logger)
+				}
 				// A RUNNING container's kernel-surface settings cannot be
 				// changed (nesting is rejected, the deny list is racy), so
 				// only surface a config mismatch instead of applying it. Skip
@@ -122,6 +125,9 @@ func (st *setupState) phaseReconcileExisting(_ context.Context) (Teardown, error
 						nicSecurityRemedy(st.result.ContainerName, true)); err != nil {
 						return nil, err
 					}
+				}
+				if st.opts.ContainerName == "" {
+					WarnOutdatedImage(st.result.ContainerName, st.opts.Logger)
 				}
 				if err := restartStoppedContainer(st.result, &st.opts, st.result.ContainerName); err != nil {
 					return nil, err

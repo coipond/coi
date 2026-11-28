@@ -3,7 +3,6 @@
 package image
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -702,42 +701,17 @@ func (b *Builder) updateAlias(versionAlias, mainAlias string) error {
 	return nil
 }
 
-// imageFingerprintListArgs builds the `incus image list` argv that
-// getImageFingerprint runs. Kept as a separate function so the project wiring is
-// unit-testable without a running Incus: the lookup MUST target the configured
-// project (container.IncusProject), not a hardcoded "default" — otherwise `coi
-// build` fails right after a successful publish on any non-default `[incus]
-// project` (#777). TestImageFingerprintListArgs_UsesConfiguredProject guards it.
-func imageFingerprintListArgs(alias string) []string {
-	return []string{"image", "list", alias, "--project", container.IncusProject, "--format=json"}
-}
-
-// getImageFingerprint gets the fingerprint of an image by alias
+// getImageFingerprint gets the fingerprint of an image by alias. It lists
+// the images again rather than using container.ImageFingerprint's cache: the
+// image was just published.
 func getImageFingerprint(alias string) (string, error) {
-	output, err := container.IncusOutput(imageFingerprintListArgs(alias)...)
+	fingerprints, err := container.ImageFingerprints()
 	if err != nil {
 		return "", err
 	}
-
-	var images []map[string]interface{}
-	if err := json.Unmarshal([]byte(output), &images); err != nil {
-		return "", err
+	if fingerprint := fingerprints[alias]; fingerprint != "" {
+		return fingerprint, nil
 	}
-
-	for _, img := range images {
-		if aliases, ok := img["aliases"].([]interface{}); ok {
-			for _, a := range aliases {
-				if aliasMap, ok := a.(map[string]interface{}); ok {
-					if name, ok := aliasMap["name"].(string); ok && name == alias {
-						if fingerprint, ok := img["fingerprint"].(string); ok {
-							return fingerprint, nil
-						}
-					}
-				}
-			}
-		}
-	}
-
 	return "", fmt.Errorf("image not found: %s", alias)
 }
 

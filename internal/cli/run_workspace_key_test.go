@@ -34,7 +34,7 @@ func TestLaunchContainerRunPhase_FreshLaunchRecordsWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(b), "init coi-default run-wsfresh --ephemeral -c user.coi.managed=true -c user.coi.workspace="+ws+" -c user.coi.persistent=false -c ") {
+	if !strings.Contains(string(b), "init coi-default run-wsfresh --ephemeral -c user.coi.managed=true -c user.coi.image=coi-default -c user.coi.workspace="+ws+" -c user.coi.persistent=false -c ") {
 		t.Errorf("want the workspace key on incus init; calls:\n%s", b)
 	}
 }

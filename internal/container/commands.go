@@ -667,6 +667,13 @@ func startWithIsolationFallback(containerName string) error {
 // rather than predating the key.
 const ManagedConfigKey = "user.coi.managed"
 
+// BaseImageConfigKey is the key where Incus records the fingerprint of the
+// image an instance was created from.
+const BaseImageConfigKey = "volatile.base_image"
+
+// ImageAliasConfigKey records the image alias coi created the container from.
+const ImageAliasConfigKey = "user.coi.image"
+
 // LaunchContainer launches an ephemeral container on the given storage pool.
 // An empty pool means "use Incus's default pool".
 // Uses init+configure+start (not launch) so security flags are set before first boot.
@@ -790,7 +797,7 @@ func initAndConfigureContainer(imageAlias, containerName, pool string, ephemeral
 	if pool != "" {
 		args = append(args, "-s", pool)
 	}
-	args = append(args, "-c", ManagedConfigKey+"=true")
+	args = append(args, "-c", ManagedConfigKey+"=true", "-c", ImageAliasConfigKey+"="+imageAlias)
 	for _, kv := range initConfig {
 		args = append(args, "-c", kv)
 	}
@@ -1155,48 +1162,99 @@ func DeleteImageAlias(aliasName string) error {
 }
 
 // knownImages remembers aliases ImageExists has already found in this
-// process, so a launch that checks the same image twice (the CLI's auto-build
-// check, then session setup) pays for one image list, not two. Only positive
+// process, with their fingerprints, so a launch that checks the same image
+// twice (the CLI's auto-build check, then session setup) and then compares a
+// reused container with it pays for one image list, not three. Only positive
 // answers are cached: a missing image may be built moments later.
 var knownImages sync.Map
 
 // ImageExists checks if an image with the given alias exists
 func ImageExists(aliasName string) (bool, error) {
-	if _, ok := knownImages.Load(aliasName); ok {
-		return true, nil
-	}
-	exists, err := imageExistsUncached(aliasName)
-	if exists {
-		knownImages.Store(aliasName, struct{}{})
-	}
+	_, exists, err := lookupImage(aliasName)
 	return exists, err
 }
 
-func imageExistsUncached(aliasName string) (bool, error) {
+// ImageFingerprint returns the fingerprint of the image with the given alias,
+// or "" when no image has that alias.
+func ImageFingerprint(aliasName string) (string, error) {
+	fingerprint, _, err := lookupImage(aliasName)
+	return fingerprint, err
+}
+
+// lookupImage returns whether an image has the given alias, and its
+// fingerprint, from knownImages when it was found before.
+func lookupImage(aliasName string) (string, bool, error) {
+	if cached, ok := knownImages.Load(aliasName); ok {
+		fingerprint, _ := cached.(string)
+		return fingerprint, true, nil
+	}
+	fingerprints, err := ImageFingerprints()
+	if err != nil {
+		return "", false, err
+	}
+	fingerprint, exists := fingerprints[aliasName]
+	if exists {
+		knownImages.Store(aliasName, fingerprint)
+	}
+	return fingerprint, exists, nil
+}
+
+// ImageFingerprints returns the fingerprint of every local image by alias,
+// from one image list.
+func ImageFingerprints() (map[string]string, error) {
 	output, err := IncusOutput("image", "list", "--format=json")
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
 	var images []struct {
-		Aliases []struct {
+		Fingerprint string `json:"fingerprint"`
+		Aliases     []struct {
 			Name string `json:"name"`
 		} `json:"aliases"`
 	}
 
 	if err := json.Unmarshal([]byte(output), &images); err != nil {
-		return false, err
+		return nil, err
 	}
 
+	fingerprints := map[string]string{}
 	for _, img := range images {
 		for _, alias := range img.Aliases {
-			if alias.Name == aliasName {
-				return true, nil
-			}
+			fingerprints[alias.Name] = img.Fingerprint
 		}
 	}
+	return fingerprints, nil
+}
 
-	return false, nil
+// OutdatedImageAlias returns the image alias containerName was created from
+// when that alias now names another image (e.g. `coi build --force` rebuilt
+// it), else "". A container without the alias key, a missing alias or an
+// unknown base image is never outdated.
+func OutdatedImageAlias(containerName string) string {
+	ctx := context.Background()
+	alias, err := ConfigGet(ctx, containerName, ImageAliasConfigKey)
+	if err != nil || alias == "" {
+		return ""
+	}
+	base, err := ConfigGet(ctx, containerName, BaseImageConfigKey)
+	if err != nil || base == "" {
+		return ""
+	}
+	if !IsImageOutdated(base, alias, ImageFingerprint) {
+		return ""
+	}
+	return alias
+}
+
+// IsImageOutdated reports whether an instance created from the image with
+// fingerprint base, under alias, runs an older image than alias names now.
+func IsImageOutdated(base, alias string, fingerprint func(string) (string, error)) bool {
+	if base == "" || alias == "" {
+		return false
+	}
+	current, err := fingerprint(alias)
+	return err == nil && current != "" && current != base
 }
 
 // ListContainers lists all containers matching a name pattern
