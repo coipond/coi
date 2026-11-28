@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -183,5 +186,38 @@ func TestContainersHeading(t *testing.T) {
 		if got := containersHeading(filter); got != want {
 			t.Errorf("containersHeading(%q) = %q, want %q", filter, got, want)
 		}
+	}
+}
+
+func TestListOutput_StateReason(t *testing.T) {
+	containers := []ContainerInfo{
+		{Name: "coi-aaaaaaaa-1", Status: "Frozen", StateReason: "monitor:Reverse shell detected", StateReasonAt: "2026-11-28T03:00:00Z"},
+		{Name: "coi-bbbbbbbb-1", Status: "Running"},
+	}
+
+	out := captureOutput(t, &os.Stdout, func() {
+		if err := outputJSON(containers, nil, nil, nil); err != nil {
+			t.Error(err)
+		}
+	})
+	var got struct {
+		Active []map[string]any `json:"active_containers"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(got.Active) != 2 || got.Active[0]["state_reason"] != "monitor:Reverse shell detected" ||
+		got.Active[0]["state_reason_at"] != "2026-11-28T03:00:00Z" ||
+		got.Active[1]["state_reason"] != "" || got.Active[1]["state_reason_at"] != "" {
+		t.Errorf("json = %s; want the reason on the frozen container, empty on the other", out)
+	}
+
+	text := captureOutput(t, &os.Stdout, func() {
+		if err := outputText(containers, nil, nil, nil, ""); err != nil {
+			t.Error(err)
+		}
+	})
+	if strings.Count(text, "Reason:") != 1 || !strings.Contains(text, "    Reason: monitor:Reverse shell detected (2026-11-28T03:00:00Z)\n") {
+		t.Errorf("text = %q; want one Reason line for the frozen container", text)
 	}
 }

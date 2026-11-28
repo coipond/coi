@@ -57,6 +57,20 @@ func TestDesiredLimits_CoversEveryLimitKey(t *testing.T) {
 // show` with configYAML and `storage list` with poolsJSON.
 func fakeIncus(t *testing.T, configYAML, poolsJSON string) (logPath string) {
 	t.Helper()
+	return fakeIncusStatus(t, configYAML, poolsJSON, "")
+}
+
+// fakeIncusStatus is fakeIncus whose `incus list --columns=ns` prints
+// statusRow ("<name>,<STATUS>") when set.
+func fakeIncusStatus(t *testing.T, configYAML, poolsJSON, statusRow string) (logPath string) {
+	t.Helper()
+	return fakeIncusCases(t, configYAML, poolsJSON, statusRow, "")
+}
+
+// fakeIncusCases is fakeIncusStatus with extra shell `case` lines tried
+// first.
+func fakeIncusCases(t *testing.T, configYAML, poolsJSON, statusRow, cases string) (logPath string) {
+	t.Helper()
 	dir := t.TempDir()
 	logPath = filepath.Join(dir, "calls")
 	for name, body := range map[string]string{"config.yaml": configYAML, "pools.json": poolsJSON} {
@@ -67,8 +81,9 @@ func fakeIncus(t *testing.T, configYAML, poolsJSON string) (logPath string) {
 	script := `#!/bin/sh
 echo "$*" >> ` + logPath + `
 case "$*" in
-  *"config show "*) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
+` + cases + `  *"config show "*) cat ` + filepath.Join(dir, "config.yaml") + ` ;;
   *"storage list"*) cat ` + filepath.Join(dir, "pools.json") + ` ;;
+  *"list "*"--columns=ns"*) [ -n "` + statusRow + `" ] && echo "` + statusRow + `" ;;
 esac
 exit 0
 `

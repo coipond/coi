@@ -141,7 +141,7 @@ func (r *Responder) Handle(ctx context.Context, threat ThreatEvent) error {
 			if err := r.logThreat(threat); err != nil {
 				return err
 			}
-			return r.pauseContainer(ctx)
+			return r.pauseContainer(ctx, threat)
 		}
 		threat.Action = "alerted"
 		r.alert(threat)
@@ -179,8 +179,8 @@ func (r *Responder) alert(threat ThreatEvent) {
 	}
 }
 
-// pauseContainer pauses the container
-func (r *Responder) pauseContainer(ctx context.Context) error {
+// pauseContainer pauses the container and records threat as the reason.
+func (r *Responder) pauseContainer(ctx context.Context, threat ThreatEvent) error {
 	r.mu.Lock()
 	if r.paused {
 		r.mu.Unlock()
@@ -209,6 +209,11 @@ func (r *Responder) pauseContainer(ctx context.Context) error {
 	r.mu.Lock()
 	r.paused = true
 	r.mu.Unlock()
+
+	// The pause already holds; a failed write must not undo or fail it.
+	if err := container.SetStateReason(ctx, r.containerName, container.MonitorStateReason(threat.Title)); err != nil {
+		r.reportError(fmt.Errorf("failed to record pause reason on %s: %w", r.containerName, err))
+	}
 
 	// Notify about the pause action
 	if r.onAction != nil {

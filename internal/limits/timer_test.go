@@ -2,6 +2,8 @@ package limits
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,5 +103,64 @@ func TestTimeoutMonitorCancel(t *testing.T) {
 		// Good - cancelled
 	case <-time.After(100 * time.Millisecond):
 		t.Error("timeout monitor should complete after Stop()")
+	}
+}
+
+func TestHandleTimeout_RecordsReasonOnlyWhenStopped(t *testing.T) {
+	for _, tc := range []struct {
+		name, statusRow string
+		want            bool
+	}{
+		{"stopped", "", true},
+		{"still running", "c1,RUNNING", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := fakeIncusStatus(t, "", "", tc.statusRow)
+			tm := NewTimeoutMonitor(context.Background(), "c1", time.Hour, true, false, "", logger.NewDiscard())
+
+			tm.handleTimeout()
+
+			b, _ := os.ReadFile(logPath)
+			if got := strings.Contains(string(b), "user.coi.state_reason=max_duration"); got != tc.want {
+				t.Errorf("reason recorded = %v, want %v; calls:\n%s", got, tc.want, b)
+			}
+		})
+	}
+}
+
+func TestRecordStopReason(t *testing.T) {
+	logPath := fakeIncus(t, "", "")
+	tm := NewTimeoutMonitor(context.Background(), "c1", time.Hour, true, false, "", logger.NewDiscard())
+
+	tm.recordStopReason()
+
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), "config set c1 user.coi.state_reason=max_duration user.coi.state_reason_at=") {
+		t.Errorf("calls = %q, want the max_duration reason", b)
+	}
+}
+
+func TestRecordStopReason_LogsOnlyRealFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, stderr string
+		wantLog      bool
+	}{
+		{"container gone", `Error: Failed to fetch instance "c1" in project "default": Instance not found`, false},
+		{"other error", "Error: boom", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeIncusCases(t, "", "", "", `  *"config set "*) echo '`+tc.stderr+`' >&2; exit 1 ;;
+`)
+			log := logger.New("c1", t.TempDir())
+			tm := NewTimeoutMonitor(context.Background(), "c1", time.Hour, true, false, "", log)
+
+			tm.recordStopReason()
+			_ = log.Close()
+
+			b, _ := os.ReadFile(log.ErrPath())
+			if got := strings.Contains(string(b), "Could not record the stop reason"); got != tc.wantLog {
+				t.Errorf("logged = %v, want %v; stderr log:\n%s", got, tc.wantLog, b)
+			}
+		})
 	}
 }

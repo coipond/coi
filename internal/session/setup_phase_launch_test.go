@@ -23,6 +23,7 @@ func TestPhaseCreateContainer_ReuseSetsWorkspaceKey(t *testing.T) {
 		{"keys missing", "pcc-missing", "config: {}\ndevices: {}\n", false, []string{"config set pcc-missing user.coi.workspace=/home/u/proj", "config set pcc-missing user.coi.persistent=false"}},
 		{"workspace moved", "pcc-moved", "config:\n  user.coi.workspace: /old\n  user.coi.persistent: \"false\"\ndevices: {}\n", false, []string{"config set pcc-moved user.coi.workspace=/home/u/proj"}},
 		{"keys current", "pcc-current", "config:\n  user.coi.workspace: /home/u/proj\n  user.coi.persistent: \"false\"\ndevices: {}\n", false, nil},
+		{"stop reason set", "pcc-reason", "config:\n  user.coi.workspace: /home/u/proj\n  user.coi.persistent: \"false\"\n  user.coi.state_reason: max_duration\n  user.coi.state_reason_at: \"2026-11-28T03:00:00Z\"\ndevices: {}\n", false, []string{"config unset pcc-reason user.coi.state_reason", "config unset pcc-reason user.coi.state_reason_at"}},
 		// --container enters the container as it is: its own workspace stays,
 		// but this session's mode is recorded.
 		{"explicit --container", "pcc-explicit", "config:\n  user.coi.workspace: /home/u/orig\n  user.coi.persistent: \"true\"\ndevices: {}\n", true, []string{"config set pcc-explicit user.coi.persistent=false"}},

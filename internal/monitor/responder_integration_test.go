@@ -96,7 +96,7 @@ func TestResponderPauseActualContainer(t *testing.T) {
 	mu.Unlock()
 
 	// Verify second pause attempt doesn't error
-	err = responder.pauseContainer(context.Background())
+	err = responder.pauseContainer(context.Background(), ThreatEvent{Title: "test"})
 	if err != nil {
 		t.Errorf("Second pause attempt should not error: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestResponderHandlesAlreadyFrozen(t *testing.T) {
 	responder := NewResponder(containerName, true, false, nil, nil)
 
 	// Attempt to pause already-frozen container
-	err = responder.pauseContainer(context.Background())
+	err = responder.pauseContainer(context.Background(), ThreatEvent{Title: "test"})
 	if err != nil {
 		t.Errorf("pauseContainer should handle already-frozen without error: %v", err)
 	}

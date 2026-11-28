@@ -348,6 +348,8 @@ func launchOrReuseContainer(mgr container.ContainerManager, img, pool, container
 			}
 		}
 		fmt.Fprintf(os.Stderr, "Restarting existing persistent container...\n")
+		// Read before the start: the start drops the config cache.
+		reasonKeys := container.StateReasonKeysSet(context.Background(), containerName)
 		// Start with the isolation fallback: the container's disk devices (set at
 		// creation) materialize at start, and one on an idmap-incompatible
 		// filesystem (virtiofs workspace, #534) fails the start under
@@ -355,6 +357,9 @@ func launchOrReuseContainer(mgr container.ContainerManager, img, pool, container
 		// Safe for persistent containers: a failed start does not delete them.
 		if err := container.StartWithIsolationFallback(containerName); err != nil {
 			return fmt.Errorf("failed to start container: %w", err)
+		}
+		if err := container.UnsetStateReasonKeys(context.Background(), containerName, reasonKeys); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to clear the stop reason: %v\n", err)
 		}
 		return nil
 	}

@@ -48,6 +48,9 @@ func (st *setupState) phaseCreateContainer(_ context.Context) (Teardown, error) 
 		if _, err := container.ConfigSetIfChanged(context.Background(), st.result.ContainerName, PersistentConfigKey, strconv.FormatBool(st.opts.Persistent)); err != nil {
 			st.opts.Logger(fmt.Sprintf("Warning: Failed to set persistence metadata: %v", err))
 		}
+		if err := container.ClearStateReason(context.Background(), st.result.ContainerName); err != nil {
+			st.opts.Logger(fmt.Sprintf("Warning: Failed to clear the stop reason: %v", err))
+		}
 	}
 	return nil, nil
 }

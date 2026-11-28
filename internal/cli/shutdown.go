@@ -118,6 +118,8 @@ func shutdownCommand(cmd *cobra.Command, args []string) error {
 					fmt.Printf("  Container stopped during timeout\n")
 				}
 			}
+			// Kept only when the delete below fails.
+			recordUserStop(cmd.Context(), name, "  ")
 		}
 
 		// Clean up nft rules BEFORE deleting container
