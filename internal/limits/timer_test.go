@@ -139,3 +139,28 @@ func TestRecordStopReason(t *testing.T) {
 		t.Errorf("calls = %q, want the max_duration reason", b)
 	}
 }
+
+func TestRecordStopReason_LogsOnlyRealFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, stderr string
+		wantLog      bool
+	}{
+		{"container gone", `Error: Failed to fetch instance "c1" in project "default": Instance not found`, false},
+		{"other error", "Error: boom", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeIncusCases(t, "", "", "", `  *"config set "*) echo '`+tc.stderr+`' >&2; exit 1 ;;
+`)
+			log := logger.New("c1", t.TempDir())
+			tm := NewTimeoutMonitor(context.Background(), "c1", time.Hour, true, false, "", log)
+
+			tm.recordStopReason()
+			_ = log.Close()
+
+			b, _ := os.ReadFile(log.ErrPath())
+			if got := strings.Contains(string(b), "Could not record the stop reason"); got != tc.wantLog {
+				t.Errorf("logged = %v, want %v; stderr log:\n%s", got, tc.wantLog, b)
+			}
+		})
+	}
+}
